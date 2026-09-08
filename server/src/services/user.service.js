@@ -113,15 +113,28 @@ class UserService {
       throw new Error(`Пользователь с логином "${username.trim()}" уже существует`);
     }
 
-    const { hash, salt } = hashPassword(password || 'admin');
+    // Whatever password an admin sets here (or the fallback, if they leave
+    // the field untouched) is only ever a starting point — must_change_password
+    // below is what actually protects the account, same as the initial seed
+    // admin and adminResetPassword.
+    const { hash, salt } = hashPassword(password || '123456');
     const assignedUin = uin ? parseInt(uin, 10) : Math.floor(1000 + Math.random() * 9000);
     const now = new Date().toISOString();
+
+    // "Сотрудник" is not reliably role id 2 — the "Контурный администратор"
+    // migration in db/index.js reserves id 3 for itself before this table is
+    // ever seeded, which pushes the seeded roles up to whatever ids are free
+    // (4/5 in practice). Look the default up by name instead of assuming a
+    // fixed numeric id, or every user created without an explicit role_id
+    // hits a foreign key violation.
+    const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
+    const resolvedRoleId = role_id ? Number(role_id) : (defaultRole ? defaultRole.id : null);
 
     const stmt = db.prepare(`
       INSERT INTO users (
         username, password_hash, salt, full_name, email, phone, job_title,
-        department_id, role_id, uin, extension, company, bound_ip, admin_scope_dept_id, status, created_at, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, 1)
+        department_id, role_id, uin, extension, company, bound_ip, admin_scope_dept_id, status, created_at, is_active, must_change_password
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, 1, 1)
     `);
 
     const info = stmt.run(
@@ -133,7 +146,7 @@ class UserService {
       phone || '',
       job_title || 'Сотрудник',
       department_id ? Number(department_id) : null,
-      role_id ? Number(role_id) : 2,
+      resolvedRoleId,
       assignedUin,
       extension ? String(extension).trim() : '',
       'АО "Страховая компания "Сентрас Иншуранс"',

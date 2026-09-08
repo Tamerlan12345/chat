@@ -82,10 +82,17 @@ class AuthService {
     const { hash, salt } = hashPassword(password);
     const now = new Date().toISOString();
 
+    // "Сотрудник" is not reliably role id 2 — a migration can reserve a
+    // lower id for another role before this ever seeds (see
+    // user.service.js createUser for the same fix), so look it up by name
+    // instead of assuming a fixed numeric id.
+    const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
+    const resolvedRoleId = role_id || (defaultRole ? defaultRole.id : null);
+
     const result = db.prepare(`
       INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, uin, company, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(username, hash, salt, full_name || username, email || null, phone || null, job_title || 'Сотрудник', department_id || null, role_id || 2, nextUin, companyName, now);
+    `).run(username, hash, salt, full_name || username, email || null, phone || null, job_title || 'Сотрудник', department_id || null, resolvedRoleId, nextUin, companyName, now);
 
     const newUserId = result.lastInsertRowid;
 

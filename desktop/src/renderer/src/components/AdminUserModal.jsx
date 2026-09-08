@@ -41,7 +41,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     uin: '',
     email: '',
     phone: '',
-    password: 'admin',
+    password: '123456',
     bound_ip: '',
     admin_scope_dept_id: ''
   });
@@ -188,7 +188,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       const res = await fetch(serverUrl + '/api/admin/org/batch-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ text: parserText, format: parserFormat, defaultPassword: 'admin' })
+        body: JSON.stringify({ text: parserText, format: parserFormat, defaultPassword: '123456' })
       });
       if (res.ok) {
         const d = await res.json();
@@ -380,7 +380,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       uin: Math.floor(1000 + Math.random() * 8999),
       email: '',
       phone: '',
-      password: 'admin'
+      password: '123456'
     });
     setEditingUser(null);
     setFormMode('create');

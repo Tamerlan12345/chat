@@ -253,10 +253,6 @@ function runMigrations(db) {
     db.prepare("UPDATE departments SET parent_id = ?, dept_type = 'branch' WHERE id = 1 AND parent_id IS NULL").run(companyId);
   }
 
-  // 4. Bind local test IP 127.0.0.1 to tamerlan if not bound
-  try {
-    db.prepare("UPDATE users SET bound_ip = '127.0.0.1' WHERE username = 'tjumagulov' AND bound_ip IS NULL").run();
-  } catch {}
 }
 
 function seedProductionData(db) {
@@ -347,7 +343,7 @@ function seedProductionData(db) {
     : pass;
   const adminId = insertUser.run(
     'admin', adminPass.hash, adminPass.salt,
-    'Администратор системы', 'admin@cic.kz', '+7 (727) 244-77-00',
+    process.env.INITIAL_ADMIN_NAME || 'Администратор системы', 'admin@cic.kz', '+7 (727) 244-77-00',
     'Главный системный администратор', dHeadOffice, rAdmin,
     'online', 1, '100', company, now, 1
   ).lastInsertRowid;

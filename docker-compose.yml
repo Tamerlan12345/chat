@@ -23,7 +23,12 @@ services:
       # Only takes effect on the very FIRST boot against an empty data volume
       # (creates the admin account) — has no effect on an already-seeded
       # database. Set it here once, then you can remove it again.
-      # INITIAL_ADMIN_PASSWORD: "replace-with-a-real-password"
+      INITIAL_ADMIN_NAME: "Тамерлан"
+      # 12345 is 5 characters and only meant as a bootstrap credential —
+      # must_change_password forces a real (6+ char) password on first login
+      # regardless, so this is intentionally short-lived. Change it here
+      # before first boot if you'd rather start with a stronger one.
+      INITIAL_ADMIN_PASSWORD: "12345"
       #
       # Comma-separated IPv4 addresses/CIDR ranges allowed to reach the
       # server AT ALL — everything else gets a flat 403 before hitting any

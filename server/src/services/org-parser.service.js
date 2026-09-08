@@ -285,7 +285,7 @@ class OrgParserService {
   /**
    * Apply parsed hierarchy and users into database
    */
-  static applyImport({ parsedData, defaultPassword = 'admin', adminScopeDeptId = null }) {
+  static applyImport({ parsedData, defaultPassword = '123456', adminScopeDeptId = null }) {
     const db = getDatabase();
     const now = new Date().toISOString();
     const { departments, employees } = parsedData;
@@ -353,9 +353,15 @@ class OrgParserService {
     const companyRow = db.prepare("SELECT value FROM server_settings WHERE key = 'company_name'").get();
     const companyName = companyRow ? companyRow.value : 'АО СК Сентрас Иншуранс';
 
+    // "Сотрудник" is not reliably role id 2 — see the same fix in
+    // user.service.js createUser for why a fixed numeric id can't be
+    // assumed here either.
+    const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
+    const defaultRoleId = defaultRole ? defaultRole.id : null;
+
     const insertUser = db.prepare(`
-      INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, bound_ip, extension, company, created_at, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, 1)
+      INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, bound_ip, extension, company, created_at, is_active, must_change_password)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
     `);
 
     const updateUser = db.prepare(`
@@ -392,7 +398,7 @@ class OrgParserService {
         const res = insertUser.run(
           emp.username, pass.hash, pass.salt, emp.full_name,
           emp.email || null, null, emp.job_title || 'Сотрудник',
-          deptId, emp.bound_ip || null, emp.extension || null,
+          deptId, defaultRoleId, emp.bound_ip || null, emp.extension || null,
           companyName, now
         );
         const newUid = Number(res.lastInsertRowid);
