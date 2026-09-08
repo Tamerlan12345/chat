@@ -1,0 +1,62 @@
+services:
+  mychat-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openmychat-server:latest
+    container_name: openmychat-server
+    restart: unless-stopped
+    ports:
+      - "2004:2004"
+    environment:
+      PORT: "2004"
+      HOST: "0.0.0.0"
+      # Optional: pin a JWT secret across container recreations instead of
+      # relying on the auto-generated file in the data volume. Either works
+      # as long as ./data below is a real persistent volume — set this only
+      # if you specifically want the secret to live outside the volume too.
+      # JWT_SECRET: "replace-with-a-long-random-value"
+      BACKUP_INTERVAL_HOURS: "24"
+      BACKUP_RETENTION_COUNT: "14"
+
+      # ── Access control (fill in before exposing this beyond a office LAN) ──
+      # Only takes effect on the very FIRST boot against an empty data volume
+      # (creates the admin account) — has no effect on an already-seeded
+      # database. Set it here once, then you can remove it again.
+      # INITIAL_ADMIN_PASSWORD: "replace-with-a-real-password"
+      #
+      # Comma-separated IPv4 addresses/CIDR ranges allowed to reach the
+      # server AT ALL — everything else gets a flat 403 before hitting any
+      # route (login page included). Empty/unset = open to everyone, which is
+      # only appropriate for a trusted LAN-only deployment. This is the
+      # control that stops someone who got hold of the installer from
+      # logging in from a personal computer with valid credentials.
+      # ALLOWED_CLIENT_IPS: "87.255.197.10,192.168.10.0/24"
+      #
+      # Only set this if you put nginx/Caddy in front for HTTPS (see the
+      # reverse-proxy discussion): the proxy's own IP, so its
+      # X-Forwarded-For header is trusted for the check above. Leave unset
+      # while the container is reachable directly, as in this compose file —
+      # otherwise ALLOWED_CLIENT_IPS could be bypassed by forging that header.
+      # TRUSTED_PROXY_IPS: "127.0.0.1"
+    volumes:
+      # THE single copy of the company's data (DB, uploads, backups, the
+      # auto-generated JWT secret) lives here, on the host, outside the
+      # container. Never delete this volume without a backup — `docker
+      # compose down -v` would wipe it.
+      - mychat-data:/app/server/data
+
+    # ── Container hardening ──
+    # Everything except the mounted data volume is read-only: even if the
+    # Node process were compromised, it cannot modify its own code or
+    # install anything into the image filesystem.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mychat-data:

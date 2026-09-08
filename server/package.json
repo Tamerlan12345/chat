@@ -1,0 +1,19 @@
+{
+  "name": "mychat-server",
+  "version": "1.0.0",
+  "description": "OpenMyChat Enterprise Server Core - Self-hosted corporate messenger",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": ["mychat", "corporate-messenger", "sqlite", "websockets", "webrtc"],
+  "author": "Antigravity Engineering",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.18.0"
+  }
+}

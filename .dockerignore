@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+server/data
+desktop/dist
+desktop/release
+desktop/electron_debug.log
+installer
+knowledge
+.git
+.gitignore
+.claude
+.agents
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+docs

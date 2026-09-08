@@ -1,0 +1,76 @@
+{
+  "name": "mychat-desktop",
+  "version": "1.0.0",
+  "description": "OpenMyChat Enterprise Desktop Application Client",
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "electron .",
+    "pack": "vite build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --win",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:nsis": "npm run build && electron-builder --win nsis"
+  },
+  "keywords": [
+    "mychat",
+    "desktop",
+    "electron",
+    "corporate-chat",
+    "enterprise"
+  ],
+  "author": "OpenMyChat Enterprise",
+  "license": "ISC",
+  "build": {
+    "appId": "com.openmychat.desktop",
+    "productName": "OpenMyChat Enterprise",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/**/*",
+      "src/preload/**/*",
+      "build/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenMyChat Enterprise",
+      "runAfterFinish": true,
+      "perMachine": false,
+      "uninstallDisplayName": "OpenMyChat Enterprise (Сентрас Иншуранс)",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Runtime data — real employee data, password hashes, chat history, uploads, backups
+server/data/
+
+# Server-generated local secrets
+server/data/.jwt_secret
+
+# Build output
+desktop/dist/
+desktop/release/
+desktop/electron_debug.log
+
+# Installer binaries (built artifacts, not source)
+installer/*.exe
+installer/*.blockmap
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
