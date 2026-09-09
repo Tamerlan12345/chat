@@ -2435,6 +2435,25 @@ input, textarea, button, select {
 
 /* Панель звонка: закреплена снизу справа, поверх интерфейса, но не
    перекрывает работу — во время разговора можно продолжать переписку. */
+/* В режиме управления курсор оператора — крестик: видно, что клик уйдёт на
+   чужую машину, а не сработает в своём окне. Выделение текста отключено,
+   иначе протяжка мышью выделяла бы интерфейс вместо перетаскивания там. */
+.rd-video-area.controllable {
+  cursor: crosshair;
+  user-select: none;
+}
+.rd-video-area.controllable:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.rd-bar-hint {
+  font-size: 11px;
+  color: #cbd5e1;
+  margin-left: 10px;
+  white-space: nowrap;
+}
+
 .call-panel {
   position: fixed;
   right: 20px;

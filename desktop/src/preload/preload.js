@@ -29,5 +29,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onToastAction: (callback) => {
     ipcRenderer.on('toast-action', (event, data) => callback(data));
+  },
+  // Управление этой машиной с другого компьютера. Включается только на время
+  // сеанса, который сотрудник подтвердил лично.
+  rdInputEnable: () => ipcRenderer.invoke('rd-input-enable'),
+  rdInputDisable: () => ipcRenderer.invoke('rd-input-disable'),
+  rdInputEvent: (payload) => ipcRenderer.send('rd-input-event', payload),
+  onRdInputRevoked: (callback) => {
+    ipcRenderer.on('rd-input-revoked', (event, data) => callback(data));
   }
 });

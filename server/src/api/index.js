@@ -15,6 +15,7 @@ const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit } = require('../services/rate-limiter');
 const { getClientIp } = require('../services/ip-access.service');
 const { getDatabase } = require('../db');
+const AuditService = require('../services/audit.service');
 const wsServer = require('../ws/server');
 const config = require('../config');
 
@@ -820,6 +821,16 @@ router.get('/settings/departments', (req, res) => {
     .prepare('SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC')
     .all();
   res.json({ departments });
+});
+
+// Журнал сеансов удалённого доступа: кто, к кому, когда, с управлением или
+// только просмотром. Читать может только суперадминистратор.
+router.get('/admin/audit', requireAuth, requireAdmin, (req, res) => {
+  try {
+    res.json(AuditService.list({ action: req.query.action || null, limit: req.query.limit }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/settings', requireAuth, (req, res) => {

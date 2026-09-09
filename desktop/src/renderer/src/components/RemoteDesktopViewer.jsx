@@ -119,24 +119,75 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     }
   };
 
+  const canControl = accessLevel === 'full';
+
+  // Переводит точку окна в долю кадра (0..1). Видео вписано с сохранением
+  // пропорций, поэтому по краям остаются поля — считать от размеров элемента
+  // напрямую нельзя, курсор уезжал бы тем сильнее, чем сильнее отличаются
+  // пропорции экранов. Точки на полях отбрасываются: там экрана нет.
+  const pointToFrame = (clientX, clientY) => {
+    const video = videoRef.current;
+    if (!video) return null;
+    const rect = video.getBoundingClientRect();
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh || !rect.width || !rect.height) return null;
+
+    const scale = Math.min(rect.width / vw, rect.height / vh);
+    const shownW = vw * scale;
+    const shownH = vh * scale;
+    const offsetX = (rect.width - shownW) / 2;
+    const offsetY = (rect.height - shownH) / 2;
+
+    const x = (clientX - rect.left - offsetX) / shownW;
+    const y = (clientY - rect.top - offsetY) / shownH;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x, y };
+  };
+
+  const MOUSE_BUTTONS = { 0: 'left', 1: 'middle', 2: 'right' };
+
   const handleMouseMove = (e) => {
-    const rect = videoRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = ((e.clientX - rect.left) / rect.width).toFixed(4);
-    const y = ((e.clientY - rect.top) / rect.height).toFixed(4);
-    sendInputEvent({ type: 'mousemove', x, y });
+    if (!canControl) return;
+    const point = pointToFrame(e.clientX, e.clientY);
+    if (point) sendInputEvent({ type: 'move', x: point.x, y: point.y });
   };
 
   const handleMouseDown = (e) => {
-    sendInputEvent({ type: 'mousedown', button: e.button });
+    if (!canControl) return;
+    e.preventDefault();
+    const point = pointToFrame(e.clientX, e.clientY);
+    sendInputEvent({ type: 'down', button: MOUSE_BUTTONS[e.button] || 'left', ...(point || {}) });
   };
 
   const handleMouseUp = (e) => {
-    sendInputEvent({ type: 'mouseup', button: e.button });
+    if (!canControl) return;
+    e.preventDefault();
+    const point = pointToFrame(e.clientX, e.clientY);
+    sendInputEvent({ type: 'up', button: MOUSE_BUTTONS[e.button] || 'left', ...(point || {}) });
+  };
+
+  const handleWheel = (e) => {
+    if (!canControl) return;
+    // deltaY вниз положительный, у колеса Windows — наоборот.
+    sendInputEvent({ type: 'wheel', delta: e.deltaY > 0 ? -1 : 1 });
+  };
+
+  const handleContextMenu = (e) => {
+    // Иначе поверх удалённого экрана открылось бы меню самого приложения.
+    if (canControl) e.preventDefault();
   };
 
   const handleKeyDown = (e) => {
-    sendInputEvent({ type: 'keydown', key: e.key, code: e.code });
+    if (!canControl) return;
+    e.preventDefault();
+    sendInputEvent({
+      type: 'key',
+      key: e.key,
+      ctrl: e.ctrlKey,
+      alt: e.altKey,
+      shift: e.shiftKey
+    });
   };
 
   return (
@@ -180,12 +231,15 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       </div>
 
       <div
-        className="rd-video-area"
+        className={`rd-video-area${canControl ? ' controllable' : ''}`}
         tabIndex={0}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
+        onWheel={handleWheel}
+        onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
+        title={canControl ? 'Кликните по экрану, чтобы управлять клавиатурой' : undefined}
       >
         {remoteStream ? (
           <video

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 export default function RemoteDesktopHostModal(props) {
   const data = props.promptData || props.request || {};
@@ -26,6 +26,11 @@ export default function RemoteDesktopHostModal(props) {
 
       streamRef.current = stream;
       setSharing(true);
+
+      // Ввод разрешается ровно на время сеанса и только при полном доступе.
+      if (accessLevel === 'full' && window.electronAPI?.rdInputEnable) {
+        await window.electronAPI.rdInputEnable();
+      }
 
       if (wsClient && wsClient.readyState === WebSocket.OPEN) {
         wsClient.send(JSON.stringify({
@@ -76,8 +81,11 @@ export default function RemoteDesktopHostModal(props) {
           } else if (msg.type === 'rd_ice_candidate' && msg.candidate) {
             await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
           } else if (msg.type === 'rd_input_event') {
-            if (accessLevel === 'full') {
-              console.log('[Remote Control Event Received]', msg.event);
+            // Ввод исполняется только при полном доступе, который сотрудник
+            // выбрал сам перед подтверждением. Раньше событие просто
+            // печаталось в консоль — управление не работало.
+            if (accessLevel === 'full' && window.electronAPI?.rdInputEvent) {
+              window.electronAPI.rdInputEvent(msg.event);
             }
           } else if (msg.type === 'rd_end') {
             handleStopSharing();
@@ -99,6 +107,9 @@ export default function RemoteDesktopHostModal(props) {
   };
 
   const handleStopSharing = () => {
+    // Ввод отключается ПЕРВЫМ делом: даже если дальше что-то не выполнится,
+    // управлять машиной уже нельзя.
+    window.electronAPI?.rdInputDisable?.();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -117,6 +128,16 @@ export default function RemoteDesktopHostModal(props) {
     setSharing(false);
     onClose && onClose();
   };
+
+  // Аварийная клавиша обрывает управление в главном процессе; здесь остаётся
+  // закрыть сам сеанс, чтобы оператор не смотрел в замерший экран.
+  useEffect(() => {
+    if (!window.electronAPI?.onRdInputRevoked) return;
+    window.electronAPI.onRdInputRevoked(() => {
+      if (streamRef.current) handleStopSharing();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleReject = () => {
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -142,6 +163,9 @@ export default function RemoteDesktopHostModal(props) {
           <button className="rd-stop-btn" onClick={handleStopSharing}>
             ⏹ Завершить доступ
           </button>
+          {accessLevel === 'full' && (
+            <span className="rd-bar-hint">Экстренно прервать: Ctrl+Alt+Shift+S</span>
+          )}
         </div>
       </div>
     );

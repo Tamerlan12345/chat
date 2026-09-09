@@ -3,6 +3,7 @@ const AuthService = require('../services/auth.service');
 const UserService = require('../services/user.service');
 const MessageService = require('../services/message.service');
 const RemoteDesktopService = require('../services/remote-desktop.service');
+const AuditService = require('../services/audit.service');
 const { checkRateLimit } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed } = require('../services/ip-access.service');
 const { getDatabase } = require('../db');
@@ -315,6 +316,12 @@ class WsServer {
       }
 
       const session = RemoteDesktopService.createSession(currentUser.id, targetUserId);
+      AuditService.log({
+        userId: currentUser.id,
+        action: 'remote_desktop_request',
+        ip: ws.remoteIp,
+        details: { sessionId: session.sessionId, targetUserId }
+      });
 
       // Send prompt modal to the target employee's desktop client
       this.sendToUser(targetUserId, {
@@ -339,6 +346,17 @@ class WsServer {
       const session = RemoteDesktopService.getSession(sessionId);
       if (session) {
         RemoteDesktopService.updateStatus(sessionId, accepted ? 'ACCEPTED' : 'REJECTED');
+        AuditService.log({
+          userId: currentUser.id,
+          action: accepted ? 'remote_desktop_accepted' : 'remote_desktop_rejected',
+          ip: ws.remoteIp,
+          details: {
+            sessionId,
+            operatorId: session.operatorId,
+            // Управление или только просмотр — важнейшая часть записи.
+            accessLevel: accepted ? accessLevel || 'full' : null
+          }
+        });
         // Notify operator of the decision
         this.sendToUser(session.operatorId, {
           type: 'rd_response',
@@ -371,6 +389,17 @@ class WsServer {
       });
       if (type === 'rd_end') {
         RemoteDesktopService.endSession(sessionId);
+        AuditService.log({
+          userId: currentUser.id,
+          action: 'remote_desktop_ended',
+          ip: ws.remoteIp,
+          details: {
+            sessionId,
+            durationSeconds: session.createdAt
+              ? Math.round((Date.now() - new Date(session.createdAt).getTime()) / 1000)
+              : null
+          }
+        });
       }
       return;
     }

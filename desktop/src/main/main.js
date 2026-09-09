@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { RemoteInput } = require('./remote-input');
 
 const logFile = path.join(__dirname, '../../electron_debug.log');
 function log(msg) {
@@ -328,6 +329,47 @@ ipcMain.handle('open-remote-desktop-viewer', (event, { sessionId, targetUser }) 
 
   return true;
 });
+
+// Remote control of this machine's mouse and keyboard, active ONLY while the
+// employee has an accepted session with full access. The renderer enables it
+// on consent and disables it the moment sharing stops, so an event arriving
+// outside a session is dropped rather than acted on.
+const remoteInput = new RemoteInput(log);
+
+// Panic key. The operator is driving this machine's mouse and keyboard, so the
+// employee needs a way out that does not depend on aiming at a button. A
+// global shortcut fires whatever window has focus.
+const PANIC_ACCELERATOR = 'Control+Alt+Shift+S';
+
+function releaseControl(reason) {
+  remoteInput.disable();
+  globalShortcut.unregister(PANIC_ACCELERATOR);
+  log(`remote control: input disabled (${reason})`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('rd-input-revoked', { reason });
+  }
+}
+
+ipcMain.handle('rd-input-enable', () => {
+  remoteInput.enable();
+  const registered = globalShortcut.register(PANIC_ACCELERATOR, () => {
+    releaseControl('panic key');
+  });
+  log(`remote control: input enabled for this session (panic key ${registered ? 'armed' : 'UNAVAILABLE'})`);
+  return { panicKeyArmed: registered };
+});
+
+ipcMain.handle('rd-input-disable', () => {
+  releaseControl('session ended');
+  return true;
+});
+
+ipcMain.on('rd-input-event', (event, payload) => {
+  remoteInput.handle(payload);
+});
+
+// Never leave the machine controllable after the app goes away.
+app.on('before-quit', () => remoteInput.disable());
 
 // Remote Desktop: Get Screen Sources for local host sharing
 ipcMain.handle('get-desktop-sources', async () => {
