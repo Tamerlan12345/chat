@@ -2475,6 +2475,37 @@ input, textarea, button, select {
   outline-offset: -2px;
 }
 
+/* Пока область не в фокусе, набор с клавиатуры уходит в приложение, а не на
+   удалённую машину — об этом нужно сказать, а не оставлять гадать. */
+.rd-focus-hint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 7px 14px;
+  background: rgba(15, 23, 42, .88);
+  color: #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.rd-video-area.controllable.focused {
+  outline: 2px solid #22c55e;
+  outline-offset: -2px;
+}
+
+.rd-transfer-note {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.rd-transfer-note.progress { background: #1e293b; color: #cbd5e1; }
+.rd-transfer-note.done { background: #14532d; color: #bbf7d0; }
+.rd-transfer-note.error { background: #7f1d1d; color: #fecaca; }
+
 .rd-bar-hint {
   font-size: 11px;
   color: #cbd5e1;

@@ -11,18 +11,24 @@ export default function RemoteDesktopHostModal(props) {
 
   const handleAccept = async () => {
     try {
-      let stream;
-      if (window.electronAPI && window.electronAPI.getDesktopSources) {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: 60, cursor: 'always' },
-          audio: false
-        });
-      } else {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: 60, cursor: 'always' },
-          audio: false
-        });
-      }
+      // 60 кадров в секунду для рабочего стола — вред, а не польза: кодировщик
+      // жертвует чёткостью ради плавности, и текст расплывается. Экран меняется
+      // редко, поэтому 15 кадров достаточно, а весь запас качества уходит в
+      // разрешение. Запрашивается полное разрешение экрана.
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          frameRate: { ideal: 15, max: 20 },
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
+          cursor: 'always'
+        },
+        audio: false
+      });
+
+      // Прямо говорим кодировщику, что это текст, а не видео: он перестаёт
+      // размывать мелкие детали. Без этой строки удалённый экран нечитаем.
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) videoTrack.contentHint = 'text';
 
       streamRef.current = stream;
       setSharing(true);
@@ -47,6 +53,20 @@ export default function RemoteDesktopHostModal(props) {
       pcRef.current = pc;
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      // По умолчанию WebRTC при нехватке канала снижает РАЗРЕШЕНИЕ, удерживая
+      // частоту кадров. Для рабочего стола нужно обратное: пусть лучше
+      // подтормаживает, но текст остаётся читаемым. Плюс поднимаем потолок
+      // битрейта — стандартных ~2.5 Мбит/с на экран 1080p не хватает.
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+      if (sender) {
+        const params = sender.getParameters();
+        params.degradationPreference = 'maintain-resolution';
+        params.encodings = [{ ...(params.encodings?.[0] || {}), maxBitrate: 8_000_000, maxFramerate: 20 }];
+        try { await sender.setParameters(params); } catch (err) {
+          console.warn('Не удалось поднять качество потока:', err);
+        }
+      }
 
       pc.onicecandidate = (e) => {
         if (e.candidate && wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -86,6 +106,15 @@ export default function RemoteDesktopHostModal(props) {
             // печаталось в консоль — управление не работало.
             if (accessLevel === 'full' && window.electronAPI?.rdInputEvent) {
               window.electronAPI.rdInputEvent(msg.event);
+            }
+          } else if (msg.type === 'rd_file') {
+            // Файл от оператора кладётся в «Загрузки» и ничем не запускается —
+            // решение открыть его остаётся за сотрудником.
+            if (window.electronAPI?.rdSaveFile && msg.data) {
+              const binary = atob(msg.data);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              window.electronAPI.rdSaveFile({ fileName: msg.fileName, data: Array.from(bytes) });
             }
           } else if (msg.type === 'rd_end') {
             handleStopSharing();

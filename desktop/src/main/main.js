@@ -368,6 +368,38 @@ ipcMain.on('rd-input-event', (event, payload) => {
   remoteInput.handle(payload);
 });
 
+// Файл, переданный оператором в ходе сеанса, кладётся в «Загрузки»
+// сотрудника. Имя очищается от путей: строка вида "..\\..\\Windows\\x.dll"
+// не должна уводить запись за пределы папки.
+ipcMain.handle('rd-save-file', async (event, { fileName, data }) => {
+  try {
+    const safeName = path.basename(String(fileName || 'файл')).replace(/[<>:"/\\|?*]/g, '_');
+    const dir = app.getPath('downloads');
+    let target = path.join(dir, safeName);
+
+    // Не затираем то, что у человека уже лежит.
+    const ext = path.extname(safeName);
+    const base = path.basename(safeName, ext);
+    let n = 1;
+    while (fs.existsSync(target)) {
+      target = path.join(dir, `${base} (${n++})${ext}`);
+    }
+
+    fs.writeFileSync(target, Buffer.from(data));
+    log(`remote file received: ${target}`);
+
+    new Notification({
+      title: 'Получен файл',
+      body: `${path.basename(target)} сохранён в папку «Загрузки»`
+    }).show();
+
+    return { success: true, path: target };
+  } catch (err) {
+    log(`rd-save-file failed: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+});
+
 // Never leave the machine controllable after the app goes away.
 app.on('before-quit', () => remoteInput.disable());
 

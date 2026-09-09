@@ -37,5 +37,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   rdInputEvent: (payload) => ipcRenderer.send('rd-input-event', payload),
   onRdInputRevoked: (callback) => {
     ipcRenderer.on('rd-input-revoked', (event, data) => callback(data));
-  }
+  },
+  rdSaveFile: (payload) => ipcRenderer.invoke('rd-save-file', payload)
 });

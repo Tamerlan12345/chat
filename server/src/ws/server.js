@@ -370,7 +370,7 @@ class WsServer {
       return;
     }
 
-    if (['rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_end'].includes(type)) {
+    if (['rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file', 'rd_end'].includes(type)) {
       const { sessionId, targetUserId } = msg;
 
       // Relay only within a session both parties actually accepted — a
@@ -381,6 +381,17 @@ class WsServer {
       const isParticipant = session && (session.operatorId === currentUser.id || session.targetUserId === currentUser.id);
       if (!session || !isParticipant || (session.status !== 'ACCEPTED' && type !== 'rd_end')) {
         return;
+      }
+
+      // Передача файла на чужую машину — то, о чём владелец компьютера должен
+      // иметь возможность узнать постфактум, поэтому пишется в журнал.
+      if (type === 'rd_file') {
+        AuditService.log({
+          userId: currentUser.id,
+          action: 'remote_desktop_file_sent',
+          ip: ws.remoteIp,
+          details: { sessionId, fileName: String(msg.fileName || '').slice(0, 260), size: msg.size || null }
+        });
       }
 
       this.sendToUser(targetUserId, {

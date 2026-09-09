@@ -1816,7 +1816,7 @@ export default function App() {
 
       {inlineRdViewer && (
         <div className="modal-backdrop">
-          <div style={{ width: '92vw', height: '90vh', background: '#0f172a', borderRadius: '8px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '8px 16px', background: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff' }}>
               <span>Удаленный рабочий стол: {inlineRdViewer.targetUser?.full_name}</span>
               <button className="btn btn-sm btn-secondary" onClick={() => setInlineRdViewer(null)}>Закрыть</button>

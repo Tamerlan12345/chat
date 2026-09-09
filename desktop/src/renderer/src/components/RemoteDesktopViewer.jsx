@@ -2,15 +2,23 @@ import React, { useState, useEffect, useRef } from 'react';
 
 export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, onEndSession }) {
   const [scaleMode, setScaleMode] = useState('fit');
-  const [latency, setLatency] = useState(null);
-  const [fps, setFps] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [statusText, setStatusText] = useState('Устанавливаем соединение с экраном сотрудника…');
   const [accessLevel, setAccessLevel] = useState('full');
   const [isRejected, setIsRejected] = useState(false);
 
+  const [keyboardCaptured, setKeyboardCaptured] = useState(false);
+  const [transferState, setTransferState] = useState(null);
+
   const videoRef = useRef(null);
+  const stageRef = useRef(null);
   const peerConnectionRef = useRef(null);
+
+  // Как только картинка пошла — сразу забираем фокус, чтобы не заставлять
+  // оператора догадываться, что по экрану нужно сначала кликнуть.
+  useEffect(() => {
+    if (remoteStream && accessLevel === 'full') stageRef.current?.focus();
+  }, [remoteStream, accessLevel]);
 
   useEffect(() => {
     const pc = new RTCPeerConnection({
@@ -121,6 +129,51 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
 
   const canControl = accessLevel === 'full';
 
+  // Передача файла на машину сотрудника. Идёт по тому же каналу сеанса, что и
+  // сигнализация: сервер уже проверяет, что оба участника подтвердили сеанс,
+  // и не нужен ни отдельный маршрут, ни прямое соединение (оно может не
+  // установиться за строгим NAT). Ограничение по размеру — чтобы одно
+  // сообщение не забило канал: сеанс идёт по нему же.
+  const MAX_TRANSFER_BYTES = 10 * 1024 * 1024;
+
+  const handleSendFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > MAX_TRANSFER_BYTES) {
+        setTransferState({ kind: 'error', text: `Файл больше 10 МБ (${Math.round(file.size / 1048576)} МБ) — передайте его через чат` });
+        return;
+      }
+      setTransferState({ kind: 'progress', text: `Передаём «${file.name}»…` });
+      try {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+          wsClient.send(JSON.stringify({
+            type: 'rd_file',
+            sessionId,
+            targetUserId: targetUser.id,
+            fileName: file.name,
+            size: file.size,
+            data: btoa(binary)
+          }));
+          setTransferState({ kind: 'done', text: `«${file.name}» отправлен в папку «Загрузки» сотрудника` });
+        } else {
+          setTransferState({ kind: 'error', text: 'Нет связи с сервером' });
+        }
+      } catch (err) {
+        setTransferState({ kind: 'error', text: 'Не удалось прочитать файл: ' + err.message });
+      }
+    };
+    input.click();
+  };
+
   // Переводит точку окна в долю кадра (0..1). Видео вписано с сохранением
   // пропорций, поэтому по краям остаются поля — считать от размеров элемента
   // напрямую нельзя, курсор уезжал бы тем сильнее, чем сильнее отличаются
@@ -156,6 +209,9 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   const handleMouseDown = (e) => {
     if (!canControl) return;
     e.preventDefault();
+    // preventDefault отменяет и установку фокуса — без этой строки область
+    // никогда его не получала, и клавиатура не работала вообще.
+    e.currentTarget.focus();
     const point = pointToFrame(e.clientX, e.clientY);
     sendInputEvent({ type: 'down', button: MOUSE_BUTTONS[e.button] || 'left', ...(point || {}) });
   };
@@ -204,19 +260,19 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         </div>
 
         <div className="rd-toolbar-center">
-          <span className="rd-metric-item">Задержка: <strong>{latency === null ? '—' : `${latency} мс`}</strong></span>
-          <span className="rd-metric-item">Частота: <strong>{fps === null ? '—' : `${fps} FPS`}</strong></span>
-          <span className="rd-metric-item">Кодек: <strong>H.264 WebRTC</strong></span>
+          {transferState && (
+            <span className={`rd-transfer-note ${transferState.kind}`}>{transferState.text}</span>
+          )}
         </div>
 
         <div className="rd-toolbar-right">
           <button
             className="rd-btn"
-            title="Отправить Ctrl+Alt+Del"
-            disabled={accessLevel !== 'full'}
-            onClick={() => sendInputEvent({ type: 'hotkey', hotkey: 'ctrl_alt_del' })}
+            title="Передать файл в папку «Загрузки» сотрудника"
+            disabled={!canControl || !remoteStream}
+            onClick={handleSendFile}
           >
-            Ctrl+Alt+Del
+            Передать файл
           </button>
           <button
             className="rd-btn"
@@ -231,7 +287,8 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       </div>
 
       <div
-        className={`rd-video-area${canControl ? ' controllable' : ''}`}
+        ref={stageRef}
+        className={`rd-video-area${canControl ? ' controllable' : ''}${keyboardCaptured ? ' focused' : ''}`}
         tabIndex={0}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
@@ -239,8 +296,12 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         onWheel={handleWheel}
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
-        title={canControl ? 'Кликните по экрану, чтобы управлять клавиатурой' : undefined}
+        onFocus={() => setKeyboardCaptured(true)}
+        onBlur={() => setKeyboardCaptured(false)}
       >
+        {canControl && !keyboardCaptured && remoteStream && (
+          <div className="rd-focus-hint">Нажмите на экран, чтобы управлять клавиатурой</div>
+        )}
         {remoteStream ? (
           <video
             ref={videoRef}
