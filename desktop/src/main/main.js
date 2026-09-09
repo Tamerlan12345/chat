@@ -68,7 +68,7 @@ function createMainWindow() {
 
   // Load UI: in development or from built files or server
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  const serverUrl = process.env.MYCHAT_SERVER_URL || 'http://localhost:2004';
+  const serverUrl = process.env.MYCHAT_SERVER_URL || 'https://chat-production-0456.up.railway.app';
 
   log(`Loading URL: ${devUrl || serverUrl}`);
   if (devUrl) {
@@ -296,7 +296,7 @@ ipcMain.handle('open-remote-desktop-viewer', (event, { sessionId, targetUser }) 
 
   viewerWindows.set(sessionId, viewer);
 
-  const viewerUrl = `${process.env.VITE_DEV_SERVER_URL || 'http://localhost:2004'}?view=remote-desktop-viewer&sessionId=${sessionId}&targetId=${targetUser.id}`;
+  const viewerUrl = `${process.env.VITE_DEV_SERVER_URL || 'https://chat-production-0456.up.railway.app'}?view=remote-desktop-viewer&sessionId=${sessionId}&targetId=${targetUser.id}`;
   viewer.loadURL(viewerUrl);
 
   viewer.on('closed', () => {

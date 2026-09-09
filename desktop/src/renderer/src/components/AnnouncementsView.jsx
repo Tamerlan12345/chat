@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function AnnouncementsView({ token, currentUser, serverUrl = 'http://localhost:2004' }) {
+export default function AnnouncementsView({ token, currentUser, serverUrl = 'https://chat-production-0456.up.railway.app' }) {
   const [announcements, setAnnouncements] = useState([]);
   const [selectedAnn, setSelectedAnn] = useState(null);
   const [auditData, setAuditData] = useState(null);

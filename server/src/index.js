@@ -76,9 +76,29 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Serve frontend if built
+// Serve frontend if built — but only to the actual desktop app, not to
+// someone who just typed the server's address into a browser. The only
+// signal available to tell them apart is the User-Agent Electron sends by
+// default ("...Electron/33.x.x..."), which the app never overrides (see
+// desktop/src/main/main.js). Be honest about what this is: a UA string is
+// trivially forged by anyone who opens devtools, so this stops a casual
+// visitor from ever seeing a branded corporate login page at a public URL —
+// it is NOT a real access control. The actual gate is the IP allowlist
+// above (ALLOWED_CLIENT_IPS); this is an extra layer of obscurity on top of
+// it, not a substitute for it. /api and /ws are untouched — the real app's
+// own requests to them still work regardless of this check.
+function isDesktopClient(req) {
+  return (req.headers['user-agent'] || '').includes('Electron');
+}
+
 const staticDir = path.resolve(__dirname, '../../desktop/dist');
 if (fs.existsSync(staticDir)) {
+  app.use((req, res, next) => {
+    if (!isDesktopClient(req)) {
+      return res.status(404).send('Not found');
+    }
+    next();
+  });
   app.use(express.static(staticDir));
   app.get('*', (req, res) => {
     res.sendFile(path.join(staticDir, 'index.html'));

@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [isRegister, setIsRegister] = useState(false);
   const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('mychat_server_url') || initialServerUrl || (window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:2004')
+    localStorage.getItem('mychat_server_url') || initialServerUrl || (window.location.origin.startsWith('http') ? window.location.origin : 'https://chat-production-0456.up.railway.app')
   );
   const [serverInfo, setServerInfo] = useState(null);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -267,11 +267,6 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
             >
               {loading ? 'Вход в систему...' : 'Войти в MyChat'}
             </button>
-
-            <div className="login-hint">
-              <span>Для первого входа администратора:</span>
-              <code>admin / 123456</code>
-            </div>
           </form>
         ) : (
           /* Registration Form */

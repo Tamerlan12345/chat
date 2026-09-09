@@ -46,10 +46,13 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
     {
       id: 'domain',
       title: 'Centras Облако/WAN',
-      host: 'ch.cic.kz',
-      port: '2004',
+      // Live Railway deployment. Point this at ch.cic.kz instead once that
+      // domain is actually configured to resolve to it — see
+      // knowledge/Architecture/Architecture - Server Deployment and Connection.md
+      host: 'chat-production-0456.up.railway.app',
+      port: '',
       protocol: 'https',
-      desc: 'Внешний корпоративный шлюз'
+      desc: 'Railway — внешний корпоративный шлюз'
     }
   ];
 

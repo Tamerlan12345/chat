@@ -54,7 +54,7 @@ export default function App() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
   const [serverInfo, setServerInfo] = useState(null);
   const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('mychat_server_url') || (window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:2004')
+    localStorage.getItem('mychat_server_url') || (window.location.origin.startsWith('http') ? window.location.origin : 'https://chat-production-0456.up.railway.app')
   );
   const [wsConnected, setWsConnected] = useState(false);
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'channels' | 'contacts' | 'important' | 'db'
