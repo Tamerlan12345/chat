@@ -15,6 +15,7 @@ import AdminUserModal from './components/AdminUserModal';
 import ServerConnectModal from './components/ServerConnectModal';
 import CommandPalette from './components/CommandPalette';
 import ToastNotificationStack, { playNotificationSound } from './components/ToastNotificationStack';
+import VoiceCallPanel from './components/VoiceCallPanel';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -134,6 +135,10 @@ export default function App() {
   const [inlineRdViewer, setInlineRdViewer] = useState(null);
   const [rdPendingTarget, setRdPendingTarget] = useState(null);
   const [rdSessionId, setRdSessionId] = useState(null);
+  const [rdPendingOffer, setRdPendingOffer] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const activeCallRef = useRef(null);
+  useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
 
   // Escape closes whichever modal/dropdown is open, so the user never has
   // to hunt for a tiny ✕ button.
@@ -332,6 +337,17 @@ export default function App() {
   // colleague for consent. Opening the viewer straight away with a locally
   // invented session id is what left it waiting forever — nothing had been
   // requested of anyone. The viewer opens on rd_accepted.
+  const handleStartCall = (targetUser) => {
+    const peer = targetUser || activeChat?.user;
+    if (!peer) return;
+    if (activeCall) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      addToast({ title: 'Нет связи с сервером', body: 'Подключение потеряно, повторите попытку', type: 'system' });
+      return;
+    }
+    setActiveCall({ direction: 'outgoing', peer });
+  };
+
   const handleRequestRemoteDesktop = (targetUser) => {
     const target = targetUser || activeChat?.user;
     if (!target) return;
@@ -574,6 +590,38 @@ export default function App() {
 
       case 'rd_requested':
         setRdSessionId(event.sessionId);
+        break;
+
+      // ── Голосовые звонки ────────────────────────────────────────────────
+      case 'call_offer': {
+        // Уже говорим с кем-то — сообщаем звонящему, что занято.
+        if (activeCallRef.current) {
+          wsRef.current?.send(JSON.stringify({ type: 'call_rejected', targetUserId: event.senderId }));
+          break;
+        }
+        const caller = usersRef.current.find((u) => u.id === event.senderId);
+        setActiveCall({
+          direction: 'incoming',
+          offer: event.sdp,
+          peer: caller || { id: event.senderId, full_name: event.senderName }
+        });
+        playNotificationSound();
+        break;
+      }
+
+      case 'call_denied':
+      case 'call_unavailable':
+        if (!activeCallRef.current) {
+          addToast({ title: 'Звонок не состоялся', body: event.reason || 'Сотрудник недоступен', type: 'system' });
+        }
+        break;
+
+      case 'rd_webrtc_offer':
+        // The host starts offering the moment it accepts, which is before the
+        // viewer component has mounted and attached its own listener. Keep the
+        // offer here and hand it over, otherwise the very first one is lost
+        // and the screen never appears.
+        setRdPendingOffer({ sessionId: event.sessionId, sdp: event.sdp });
         break;
 
       case 'rd_response': {
@@ -1418,7 +1466,7 @@ export default function App() {
                 onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
                 onSendMessage={handleSendMessage}
                 onSendFile={handleSendFile}
-                onStartCall={() => alert('Вызов начат (WebRTC peer-to-peer)')}
+                onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
                 onMarkRead={() => {}}
                 token={token}
@@ -1661,6 +1709,15 @@ export default function App() {
         />
       )}
 
+      {activeCall && (
+        <VoiceCallPanel
+          call={activeCall}
+          currentUser={currentUser}
+          wsClient={wsRef.current}
+          onEnd={() => setActiveCall(null)}
+        />
+      )}
+
       {rdPrompt && (
         <RemoteDesktopHostModal
           request={rdPrompt}
@@ -1706,7 +1763,12 @@ export default function App() {
                 sessionId={inlineRdViewer.sessionId}
                 targetUser={inlineRdViewer.targetUser}
                 wsClient={wsRef.current}
-                onEndSession={() => setInlineRdViewer(null)}
+                pendingOffer={rdPendingOffer}
+                onEndSession={() => {
+                  setInlineRdViewer(null);
+                  setRdPendingOffer(null);
+                  setRdSessionId(null);
+                }}
               />
             </div>
           </div>

@@ -262,6 +262,30 @@ class WsServer {
     // 6. WebRTC Voice / Video Call Signalling
     if (['call_offer', 'call_answer', 'ice_candidate', 'call_end', 'call_rejected'].includes(type)) {
       const { targetUserId } = msg;
+
+      // Placing a call is a per-role permission (can_call); hanging up and
+      // rejecting stay open so a call already in progress can always be
+      // ended, whatever the caller's role became meanwhile.
+      if (type === 'call_offer') {
+        if (!currentUser.permissions?.can_call) {
+          ws.send(JSON.stringify({
+            type: 'call_denied',
+            reason: 'Звонки не разрешены для вашей роли. Обратитесь к администратору.'
+          }));
+          return;
+        }
+        if (targetUserId === currentUser.id) return;
+        // Nobody is at the other end — tell the caller instead of ringing out.
+        if (!this.userSockets.get(targetUserId)?.size) {
+          ws.send(JSON.stringify({
+            type: 'call_unavailable',
+            targetUserId,
+            reason: 'Сотрудник сейчас не в сети'
+          }));
+          return;
+        }
+      }
+
       this.sendToUser(targetUserId, {
         ...msg,
         senderId: currentUser.id,

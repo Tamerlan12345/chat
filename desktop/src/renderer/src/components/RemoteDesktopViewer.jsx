@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, onEndSession }) {
+export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, onEndSession }) {
   const [scaleMode, setScaleMode] = useState('fit');
   const [latency, setLatency] = useState(null);
   const [fps, setFps] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
-  const [statusText, setStatusText] = useState('Ожидание подтверждения сотрудником...');
+  const [statusText, setStatusText] = useState('Устанавливаем соединение с экраном сотрудника…');
   const [accessLevel, setAccessLevel] = useState('full');
   const [isRejected, setIsRejected] = useState(false);
 
@@ -39,6 +39,30 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, o
       }
     };
 
+    // Answers an offer exactly once — the same offer can arrive both buffered
+    // from App (sent before this component existed) and through the live
+    // listener below, and answering twice throws on the peer connection.
+    let offerAnswered = false;
+    const answerOffer = async (sdp) => {
+      if (offerAnswered) return;
+      offerAnswered = true;
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.send(JSON.stringify({
+          type: 'rd_webrtc_answer',
+          sessionId,
+          targetUserId: targetUser.id,
+          sdp: answer
+        }));
+      }
+    };
+
+    if (pendingOffer && pendingOffer.sessionId === sessionId) {
+      answerOffer(pendingOffer.sdp).catch((err) => console.error('RD offer error:', err));
+    }
+
     const handleWsMessage = async (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -53,18 +77,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, o
             if (msg.accessLevel) setAccessLevel(msg.accessLevel);
           }
         } else if (msg.type === 'rd_webrtc_offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-
-          if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-            wsClient.send(JSON.stringify({
-              type: 'rd_webrtc_answer',
-              sessionId,
-              targetUserId: targetUser.id,
-              sdp: answer
-            }));
-          }
+          await answerOffer(msg.sdp);
         } else if (msg.type === 'rd_ice_candidate' && msg.candidate) {
           await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
         } else if (msg.type === 'rd_end') {

@@ -59,6 +59,26 @@ function createMainWindow() {
     }
   });
 
+  // Electron refuses navigator.mediaDevices.getDisplayMedia() unless the main
+  // process answers the request itself — without this the screen-sharing side
+  // of remote desktop threw before WebRTC was ever reached. The whole primary
+  // screen is offered; the employee has already consented in the app by then.
+  mainWindow.webContents.session.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      desktopCapturer
+        .getSources({ types: ['screen'] })
+        .then((sources) => {
+          if (!sources.length) return callback({});
+          callback({ video: sources[0], audio: 'loopback' });
+        })
+        .catch((err) => {
+          log(`getDisplayMedia source lookup failed: ${err.message}`);
+          callback({});
+        });
+    },
+    { useSystemPicker: false }
+  );
+
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     log(`did-fail-load: code ${errorCode}, desc: ${errorDescription}, url: ${validatedURL}`);
   });
