@@ -66,7 +66,12 @@ class AuthService {
 
   static register(userData) {
     const db = getDatabase();
-    const { username, password, full_name, email, phone, job_title, department_id, role_id } = userData;
+    // role_id is deliberately NOT read from userData: this endpoint is
+    // reachable without authentication whenever self-registration is on, so
+    // honouring a caller-supplied role let anyone register straight into
+    // Суперадминистратор. A new account is always an ordinary employee;
+    // promoting one is an administrator's action.
+    const { username, password, full_name, email, phone, job_title, department_id } = userData;
     
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) {
@@ -87,7 +92,7 @@ class AuthService {
     // user.service.js createUser for the same fix), so look it up by name
     // instead of assuming a fixed numeric id.
     const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
-    const resolvedRoleId = role_id || (defaultRole ? defaultRole.id : null);
+    const resolvedRoleId = defaultRole ? defaultRole.id : null;
 
     const result = db.prepare(`
       INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, uin, company, created_at)

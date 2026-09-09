@@ -35,8 +35,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     username: '',
     full_name: '',
     job_title: '',
-    department_id: 1,
-    role_id: 2,
+    department_id: '',
+    role_id: '',
     extension: '',
     uin: '',
     email: '',
@@ -368,14 +368,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     }
   };
 
+  // "Сотрудник" is not role id 2: a migration inserts a role with an explicit
+  // id before the rest are seeded, which shifts every later autoincrement id.
+  // Sending 2 blindly failed the foreign key and made it impossible to create
+  // anyone at all, so the id is read from the roles the server actually has.
+  const defaultRoleId = roles.find((r) => r.name === 'Сотрудник')?.id ?? roles[0]?.id ?? '';
+
   // User Add / Edit
   const openCreateForm = () => {
     setFormData({
       username: '',
       full_name: '',
       job_title: 'Сотрудник',
-      department_id: departments[0]?.id || 1,
-      role_id: 2,
+      department_id: departments[0]?.id || '',
+      role_id: defaultRoleId,
       extension: '',
       uin: Math.floor(1000 + Math.random() * 8999),
       email: '',
@@ -391,8 +397,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       username: user.username,
       full_name: user.full_name || '',
       job_title: user.job_title || '',
-      department_id: user.department_id || (departments[0]?.id || 1),
-      role_id: user.role_id || 2,
+      department_id: user.department_id || (departments[0]?.id || ''),
+      role_id: user.role_id || defaultRoleId,
       extension: user.extension || '',
       uin: user.uin || '',
       email: user.email || '',
@@ -602,12 +608,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
+        // Field names must match AnnouncementService.createAnnouncement:
+        // it reads content/priority, and content is NOT NULL — sending
+        // body/isUrgent produced a silent 400 and the button did nothing.
         body: JSON.stringify({
           title: newAnnTitle.trim(),
-          body: newAnnText.trim(),
-          isUrgent: newAnnUrgent
+          content: newAnnText.trim(),
+          priority: newAnnUrgent ? 'urgent' : 'normal'
         })
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось опубликовать оповещение');
+        return;
+      }
       if (res.ok) {
         showToast('Оповещение успешно отправлено на экраны всех сотрудников!');
         setNewAnnTitle('');

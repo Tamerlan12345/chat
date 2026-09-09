@@ -183,13 +183,15 @@ class DeviceService {
 
     const token = AuthService.generateToken(user);
 
-    // Broadcast device paired notification so client can immediately auto-login
+    // Announce the pairing WITHOUT the token or the user record. broadcast()
+    // reaches every open socket, including ones that never authenticated, so
+    // anything sent here is public — a token here handed any listener a valid
+    // 7-day session for the paired account. The waiting device collects its
+    // own token from POST /auth/knock instead.
     try {
       wsServer.broadcast({
         type: 'device_paired',
-        deviceId: device_id,
-        user,
-        token
+        deviceId: device_id
       });
     } catch {}
 
@@ -228,15 +230,11 @@ class DeviceService {
 
       db.prepare(`UPDATE pending_devices SET status = 'paired' WHERE device_id = ?`).run(m.device_id);
 
-      const user = UserService.getUserById(m.user_id);
-      const token = AuthService.generateToken(user);
-
+      // No token or user record here either — see bindDevice above.
       try {
         wsServer.broadcast({
           type: 'device_paired',
-          deviceId: m.device_id,
-          user,
-          token
+          deviceId: m.device_id
         });
       } catch {}
 

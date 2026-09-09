@@ -14,6 +14,7 @@ const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit } = require('../services/rate-limiter');
 const { getClientIp } = require('../services/ip-access.service');
+const { getDatabase } = require('../db');
 const wsServer = require('../ws/server');
 const config = require('../config');
 
@@ -46,36 +47,79 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// A department ("контурный") administrator carries is_admin as well, since it
+// administers something — the two are told apart by is_scoped_admin. Checking
+// is_admin alone therefore handed every department administrator the full
+// superadmin surface, arbitrary SQL over the whole database included.
+//
+// role_id is not consulted: a migration that inserts a role with an explicit
+// id shifts every later autoincrement id, so those numbers are not stable.
+// Neither is username — an account's powers must come from its role.
+function isSuperAdmin(user) {
+  const permissions = user?.permissions || {};
+  return Boolean(permissions.is_admin) && !permissions.is_scoped_admin;
+}
+
+function isScopedAdmin(user) {
+  return Boolean(user?.permissions?.is_scoped_admin);
+}
+
 function requireAdmin(req, res, next) {
-  const isAdmin = req.user && (
-    req.user.role_id === 1 ||
-    req.user.role_name === 'Суперадминистратор' ||
-    req.user.role_name === 'Администратор' ||
-    req.user.role_name === 'Admin' ||
-    req.user.permissions?.is_admin ||
-    req.user.username === 'admin'
-  );
-  if (!isAdmin) {
+  if (!isSuperAdmin(req.user)) {
     return res.status(403).json({ error: 'Доступ запрещен: требуются права администратора' });
   }
   next();
 }
 
 function requireAdminOrScopedAdmin(req, res, next) {
-  const user = req.user;
-  const isAdmin = user && (
-    user.role_id === 1 ||
-    user.role_id === 3 ||
-    user.role_name === 'Суперадминистратор' ||
-    user.role_name === 'Администратор' ||
-    user.role_name === 'Контурный администратор' ||
-    user.permissions?.is_admin ||
-    user.username === 'admin'
-  );
-  if (!isAdmin) {
+  if (!isSuperAdmin(req.user) && !isScopedAdmin(req.user)) {
     return res.status(403).json({ error: 'Доступ запрещен: требуются права администратора' });
   }
   next();
+}
+
+// A department administrator may only act inside its own subtree, and may
+// never hand out administrative powers. Without this it could edit anyone in
+// the company and set role_id to Суперадминистратор — on itself included.
+// Throws; callers already translate a thrown error into a 400/403 response.
+function assertWithinAdminScope(actor, { targetUserId = null, payload = null } = {}) {
+  if (isSuperAdmin(actor)) return;
+
+  const scopeRootId = actor?.admin_scope_dept_id;
+  if (!scopeRootId) {
+    throw new Error('Администратору не назначено подразделение — управление пользователями недоступно');
+  }
+  const allowed = new Set(OrgService.getSubtreeDepartmentIds(scopeRootId));
+
+  if (targetUserId !== null) {
+    const target = UserService.getUserById(targetUserId);
+    if (!target) throw new Error('Пользователь не найден');
+    if (!allowed.has(target.department_id)) {
+      throw new Error('Этот сотрудник относится к другому подразделению');
+    }
+  }
+
+  if (payload) {
+    if (payload.department_id !== undefined && payload.department_id !== null) {
+      if (!allowed.has(Number(payload.department_id))) {
+        throw new Error('Выбранное подразделение вне вашей зоны ответственности');
+      }
+    }
+    if (payload.admin_scope_dept_id) {
+      throw new Error('Назначать администраторов подразделений может только суперадминистратор');
+    }
+    if (payload.role_id !== undefined && payload.role_id !== null) {
+      const role = getRoleById(Number(payload.role_id));
+      const grants = role ? JSON.parse(role.permissions_json || '{}') : {};
+      if (grants.is_admin || grants.is_scoped_admin) {
+        throw new Error('Назначать административные роли может только суперадминистратор');
+      }
+    }
+  }
+}
+
+function getRoleById(roleId) {
+  return getDatabase().prepare('SELECT permissions_json FROM roles WHERE id = ?').get(roleId);
 }
 
 router.post('/auth/knock', (req, res) => {
@@ -182,6 +226,7 @@ router.get('/admin/users', requireAuth, requireAdminOrScopedAdmin, (req, res) =>
 
 router.post('/admin/users', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
   try {
+    assertWithinAdminScope(req.user, { payload: req.body });
     const newUser = UserService.createUser(req.body);
     wsServer.broadcast({
       type: 'user_created',
@@ -195,6 +240,7 @@ router.post('/admin/users', requireAuth, requireAdminOrScopedAdmin, (req, res) =
 
 router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
   try {
+    assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id), payload: req.body });
     const updated = UserService.adminUpdateUser(Number(req.params.id), req.body);
     wsServer.broadcast({
       type: 'user_updated',
@@ -208,6 +254,7 @@ router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, (req, res
 
 router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
   try {
+    assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id) });
     const updated = UserService.toggleUserActive(Number(req.params.id), false);
     wsServer.broadcast({
       type: 'user_updated',
