@@ -1202,8 +1202,8 @@ export default function App() {
                 const displayName = u.full_name || u.username;
 
                 const lastConvo = directConvos.find((c) => c.other_user_id === u.id);
-                const snippet = lastConvo?.last_message_text || (u.id === 2 ? 'Сегодня че идем?)' : 'Нажмите для беседы');
-                const timeStr = lastConvo?.last_message_time ? formatDialogTime(lastConvo.last_message_time) : (u.id === 2 ? '09:55' : '');
+                const snippet = lastConvo?.last_message_text || 'Нажмите для беседы';
+                const timeStr = lastConvo?.last_message_time ? formatDialogTime(lastConvo.last_message_time) : '';
                 const unreadBadge = unreadMap[u.id] !== undefined ? unreadMap[u.id] : (lastConvo?.unread_count || 0);
 
                 return (

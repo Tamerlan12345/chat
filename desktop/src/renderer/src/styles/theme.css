@@ -2139,8 +2139,17 @@ input, textarea, button, select {
 .dialog-list-item:hover {
   background-color: #f1f5f9;
 }
-.dialog-list-item.active {
-  background-color: #e2e8f0;
+/* The list is scoped here to outrank .has-unread-item, which is declared far
+   below with the same specificity and otherwise wins by order — leaving an
+   open chat that has unread messages with no selection highlight at all. */
+/* The left edge already carries the online/offline stripe, so selection is
+   signalled by the background tint and the name instead. */
+.dialogs-scrollable-list .dialog-list-item.active {
+  background-color: #dbeafe;
+}
+.dialogs-scrollable-list .dialog-list-item.active .dialog-peer-name {
+  font-weight: 700;
+  color: #1e3a8a;
 }
 .dialog-list-item.online-bar::before {
   content: '';
