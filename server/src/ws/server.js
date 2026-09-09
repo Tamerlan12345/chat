@@ -273,6 +273,23 @@ class WsServer {
     // 7. Remote Desktop Plugin Signalling
     if (type === 'rd_request') {
       const { targetUserId } = msg;
+
+      // Viewing a colleague's screen is granted per role by an administrator
+      // (can_remote_control). The employee's own consent prompt below is a
+      // second gate, not the first one — without this check any employee
+      // could pop that prompt on any other employee at will.
+      if (!currentUser.permissions?.can_remote_control) {
+        ws.send(JSON.stringify({
+          type: 'rd_denied',
+          reason: 'Удалённый доступ к рабочим столам не разрешён для вашей роли. Обратитесь к администратору.'
+        }));
+        return;
+      }
+      if (targetUserId === currentUser.id) {
+        ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Нельзя подключиться к собственному рабочему столу' }));
+        return;
+      }
+
       const session = RemoteDesktopService.createSession(currentUser.id, targetUserId);
 
       // Send prompt modal to the target employee's desktop client
@@ -398,9 +415,13 @@ class WsServer {
           department_name: user.department_name || 'Департамент',
           ip: ws.remoteIp || '127.0.0.1',
           connectedAt: ws.connectedAt || new Date().toISOString(),
-          clientType: 'MyChat Client (Win32 / Electron)',
+          clientType: ws.clientType || 'MyChat Client',
           status: user.status || 'online',
-          pingMs: Math.floor(4 + Math.random() * 8)
+          // Was Math.random(): the admin's "Активные подключения" table
+          // reported a healthy 4-12 ms for every session regardless of the
+          // real link. Nothing measures round-trip time yet, so it is null
+          // rather than invented.
+          pingMs: null
         });
       }
     }

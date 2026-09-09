@@ -7,9 +7,11 @@ export default function GreetingView({
   onOpenProfile,
   onSwitchAccount
 }) {
-  const firstName = currentUser?.full_name?.split(' ')?.[0] || 'Тамерлан';
-  const username = currentUser?.username || 'tjumagulov';
-  const uin = currentUser?.uin || 1436;
+  // No invented fallbacks: these used to name a specific employee, so a user
+  // whose profile was incomplete was greeted as somebody else.
+  const firstName = currentUser?.full_name?.split(' ')?.[0] || '';
+  const username = currentUser?.username || '';
+  const uin = currentUser?.uin || '';
 
   // Determine greeting based on time of day
   const hour = new Date().getHours();

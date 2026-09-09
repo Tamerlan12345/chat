@@ -132,6 +132,8 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [rdPrompt, setRdPrompt] = useState(null);
   const [inlineRdViewer, setInlineRdViewer] = useState(null);
+  const [rdPendingTarget, setRdPendingTarget] = useState(null);
+  const [rdSessionId, setRdSessionId] = useState(null);
 
   // Escape closes whichever modal/dropdown is open, so the user never has
   // to hunt for a tiny ✕ button.
@@ -323,6 +325,22 @@ export default function App() {
     setCurrentUser(user);
     setAuthState('authenticated');
     openSessionChannels(user, authToken);
+  };
+
+  // The operator asks the SERVER for a session and waits: it checks the
+  // can_remote_control permission an administrator granted, then prompts the
+  // colleague for consent. Opening the viewer straight away with a locally
+  // invented session id is what left it waiting forever — nothing had been
+  // requested of anyone. The viewer opens on rd_accepted.
+  const handleRequestRemoteDesktop = (targetUser) => {
+    const target = targetUser || activeChat?.user;
+    if (!target) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      addToast({ title: 'Нет связи с сервером', body: 'Подключение потеряно, повторите попытку', type: 'system' });
+      return;
+    }
+    setRdPendingTarget(target);
+    wsRef.current.send(JSON.stringify({ type: 'rd_request', targetUserId: target.id }));
   };
 
   const handleLogout = () => {
@@ -543,6 +561,39 @@ export default function App() {
       case 'new_message':
         break;
 
+      // ── Удалённый рабочий стол ──────────────────────────────────────────
+      case 'rd_prompt':
+        // Прилетает сотруднику, у которого просят доступ к экрану.
+        setRdPrompt(event);
+        break;
+
+      case 'rd_denied':
+        setRdPendingTarget(null);
+        addToast({ title: 'Удалённый доступ отклонён', body: event.reason || 'Недостаточно прав', type: 'system' });
+        break;
+
+      case 'rd_requested':
+        setRdSessionId(event.sessionId);
+        break;
+
+      case 'rd_response': {
+        setRdPendingTarget(null);
+        if (!event.accepted) {
+          addToast({
+            title: 'Запрос отклонён',
+            body: `${event.targetName || 'Сотрудник'} отказал в доступе к рабочему столу`,
+            type: 'system'
+          });
+          break;
+        }
+        setInlineRdViewer({
+          sessionId: event.sessionId,
+          accessLevel: event.accessLevel,
+          targetUser: { id: event.targetUserId, full_name: event.targetName }
+        });
+        break;
+      }
+
       case 'direct_message': {
         const msg = event.message;
         const cUser = currentUserRef.current;
@@ -747,7 +798,7 @@ export default function App() {
   // Test corner pop-up notification
   const handleTestNotification = () => {
     const otherUser = users.find((u) => u.id !== currentUser?.id) || users[0] || null;
-    const senderName = otherUser ? (otherUser.full_name || otherUser.username) : 'Айгерим Серикова (HR)';
+    const senderName = otherUser ? (otherUser.full_name || otherUser.username) : 'Коллега';
     addToast({
       title: senderName,
       body: 'Привет! Проверка всплывающего уведомления в правом углу 🚀',
@@ -758,7 +809,10 @@ export default function App() {
   };
 
   // Send Message
-  const handleSendMessage = async ({ conversationType, targetId, text, msgType, replyToId }) => {
+  // metadata carries the uploaded file's id — dropping it here (it used to be
+  // missing from this signature) meant an attachment was stored as a bare
+  // filename with nothing to download.
+  const handleSendMessage = async ({ conversationType, targetId, text, msgType, replyToId, metadata }) => {
     if (!text.trim()) return;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -771,7 +825,8 @@ export default function App() {
           channel_id: targetId,
           text,
           msgType,
-          replyToId
+          replyToId,
+          metadata
         })
       );
     } else {
@@ -1364,13 +1419,10 @@ export default function App() {
                 onSendMessage={handleSendMessage}
                 onSendFile={handleSendFile}
                 onStartCall={() => alert('Вызов начат (WebRTC peer-to-peer)')}
-                onRequestRemoteDesktop={(targetUser) => {
-                  setInlineRdViewer({
-                    sessionId: 'rd_' + Date.now(),
-                    targetUser: targetUser || activeChat.user
-                  });
-                }}
+                onRequestRemoteDesktop={handleRequestRemoteDesktop}
                 onMarkRead={() => {}}
+                token={token}
+                serverUrl={serverUrl}
               />
             ) : (
               <GreetingView
@@ -1421,7 +1473,7 @@ export default function App() {
           </span>
           <span className="status-bar-divider">|</span>
           <span className="status-bar-stat">
-            Всего: <strong>{users.length || 426}</strong>
+            Всего: <strong>{users.length}</strong>
           </span>
         </div>
 
@@ -1615,6 +1667,31 @@ export default function App() {
           wsClient={wsRef.current}
           onClose={() => setRdPrompt(null)}
         />
+      )}
+
+      {rdPendingTarget && (
+        <div className="modal-backdrop">
+          <div className="rd-waiting-card">
+            <div className="chat-loading-spinner" />
+            <div className="rd-waiting-title">Ожидаем подтверждения</div>
+            <div className="rd-waiting-text">
+              Запрос отправлен сотруднику <strong>{rdPendingTarget.full_name || rdPendingTarget.username}</strong>.
+              Подключение начнётся только после того, как он разрешит доступ к своему экрану.
+            </div>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                if (wsRef.current?.readyState === WebSocket.OPEN && rdSessionId) {
+                  wsRef.current.send(JSON.stringify({ type: 'rd_end', sessionId: rdSessionId, targetUserId: rdPendingTarget.id }));
+                }
+                setRdPendingTarget(null);
+                setRdSessionId(null);
+              }}
+            >
+              Отменить запрос
+            </button>
+          </div>
+        </div>
       )}
 
       {inlineRdViewer && (

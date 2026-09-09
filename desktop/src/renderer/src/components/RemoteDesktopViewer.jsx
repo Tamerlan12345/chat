@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 
 export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, onEndSession }) {
   const [scaleMode, setScaleMode] = useState('fit');
-  const [latency, setLatency] = useState(12);
-  const [fps, setFps] = useState(60);
+  const [latency, setLatency] = useState(null);
+  const [fps, setFps] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [statusText, setStatusText] = useState('Ожидание подтверждения сотрудником...');
   const [accessLevel, setAccessLevel] = useState('full');
@@ -80,13 +80,13 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, o
       wsClient.addEventListener('message', handleWsMessage);
     }
 
-    const interval = setInterval(() => {
-      setLatency(Math.floor(8 + Math.random() * 8));
-      setFps(Math.floor(58 + Math.random() * 3));
-    }, 2000);
+    // Latency and FPS used to be invented here with Math.random() on a timer
+    // and displayed as measurements — they read as a healthy 8-16 ms / 60 fps
+    // even when no stream existed at all. Real figures have to come from the
+    // WebRTC connection (RTCPeerConnection.getStats), so until the stream is
+    // wired up nothing is claimed.
 
     return () => {
-      clearInterval(interval);
       if (wsClient) {
         wsClient.removeEventListener('message', handleWsMessage);
       }
@@ -140,8 +140,8 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, o
         </div>
 
         <div className="rd-toolbar-center">
-          <span className="rd-metric-item">Задержка: <strong>{latency} мс</strong></span>
-          <span className="rd-metric-item">Частота: <strong>{fps} FPS</strong></span>
+          <span className="rd-metric-item">Задержка: <strong>{latency === null ? '—' : `${latency} мс`}</strong></span>
+          <span className="rd-metric-item">Частота: <strong>{fps === null ? '—' : `${fps} FPS`}</strong></span>
           <span className="rd-metric-item">Кодек: <strong>H.264 WebRTC</strong></span>
         </div>
 

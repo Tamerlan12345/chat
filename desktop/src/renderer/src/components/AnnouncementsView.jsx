@@ -8,6 +8,7 @@ export default function AnnouncementsView({ token, currentUser, serverUrl = 'htt
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
   const [newPriority, setNewPriority] = useState('urgent');
+  const [actionError, setActionError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const isAdmin = Boolean(
@@ -71,17 +72,23 @@ export default function AnnouncementsView({ token, currentUser, serverUrl = 'htt
     loadAnnouncements();
   }, [token, serverUrl]);
 
+  // Acknowledgement is a compliance record: the employee must never be left
+  // believing they confirmed something the server rejected.
   const handleAcknowledge = async (annId) => {
+    setActionError('');
     try {
       const res = await fetch(`${serverUrl}/api/announcements/${annId}/acknowledge`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        await loadAnnouncements();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || 'Не удалось зафиксировать ознакомление. Повторите попытку.');
+        return;
       }
-    } catch (err) {
-      console.error('Acknowledge failed:', err);
+      await loadAnnouncements();
+    } catch {
+      setActionError('Нет связи с сервером — ознакомление не зафиксировано.');
     }
   };
 
@@ -103,19 +110,29 @@ export default function AnnouncementsView({ token, currentUser, serverUrl = 'htt
           target_type: 'all'
         })
       });
-      if (res.ok) {
-        setShowCreateModal(false);
-        setNewTitle('');
-        setNewContent('');
-        await loadAnnouncements();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || 'Не удалось опубликовать объявление');
+        return;
       }
-    } catch (err) {
-      console.error('Create announcement failed:', err);
+      setShowCreateModal(false);
+      setNewTitle('');
+      setNewContent('');
+      await loadAnnouncements();
+    } catch {
+      setActionError('Нет связи с сервером — объявление не опубликовано.');
     }
   };
 
   return (
     <div className="announcements-container">
+      {actionError && (
+        <div className="announcements-error-banner" role="alert">
+          ⚠️ {actionError}
+          <button type="button" onClick={() => setActionError('')}>✕</button>
+        </div>
+      )}
+
       {/* 1. Left Sidebar: Announcements Master List */}
       <div className="announcements-sidebar">
         <div className="announcements-sidebar-header">

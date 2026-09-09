@@ -41,12 +41,14 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         setServerInfo(data);
         localStorage.setItem('mychat_server_url', cleanUrl);
 
-        // Also fetch public departments for registration if needed
+        // /api/org/tree needs a token nobody has yet on this screen, and it
+        // returns { tree }, not { departments } — so the select never had
+        // anything to show. This endpoint is public and returns names only.
         try {
-          const deptRes = await fetch(`${cleanUrl}/api/org/tree`);
+          const deptRes = await fetch(`${cleanUrl}/api/settings/departments`);
           if (deptRes.ok) {
-            const tree = await deptRes.json();
-            setDepartments(tree.departments || []);
+            const data = await deptRes.json();
+            setDepartments(data.departments || []);
           }
         } catch {}
       } else {

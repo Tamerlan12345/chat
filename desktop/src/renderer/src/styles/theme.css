@@ -2433,6 +2433,54 @@ input, textarea, button, select {
   white-space: nowrap;
 }
 
+.announcements-error-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 620px;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: #b91c1c;
+  font-size: 12.5px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+}
+.announcements-error-banner button {
+  border: none;
+  background: none;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+}
+
+.rd-waiting-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 28px 32px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25);
+}
+.rd-waiting-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+.rd-waiting-text {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+
 .profile-field-hint {
   margin-top: 10px;
   padding: 8px 10px;

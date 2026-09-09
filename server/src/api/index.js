@@ -808,6 +808,20 @@ router.get('/settings/info', (req, res) => {
   });
 });
 
+// Department names only, and only while self-registration is enabled: the
+// registration form has to offer this list before anyone can authenticate,
+// but the full org tree (staff, contacts, structure) must not be readable by
+// an anonymous caller.
+router.get('/settings/departments', (req, res) => {
+  const allowRegistration = SettingsService.getSetting('allow_registration', 'false') === 'true';
+  if (!allowRegistration) return res.json({ departments: [] });
+
+  const departments = getDatabase()
+    .prepare('SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC')
+    .all();
+  res.json({ departments });
+});
+
 router.get('/settings', requireAuth, (req, res) => {
   const settings = SettingsService.getAllSettings();
   res.json(settings);

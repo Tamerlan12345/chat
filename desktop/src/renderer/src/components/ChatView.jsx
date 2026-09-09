@@ -13,7 +13,9 @@ export default function ChatView({
   onSendFile,
   onStartCall,
   onRequestRemoteDesktop,
-  onMarkRead
+  onMarkRead,
+  token,
+  serverUrl
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -159,6 +161,33 @@ export default function ChatView({
     textareaRef.current?.focus();
   };
 
+  // The download route is behind requireAuth, and a plain <a href> cannot send
+  // an Authorization header — every attachment link returned 401. Fetch it with
+  // the token and hand the browser a blob instead.
+  const downloadAttachment = async (fileId, suggestedName) => {
+    if (!fileId) return;
+    try {
+      const res = await fetch(`${serverUrl}/api/files/download/${fileId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        alert(res.status === 403 ? 'Нет доступа к этому файлу' : 'Не удалось скачать файл');
+        return;
+      }
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = suggestedName || 'файл';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      alert('Не удалось скачать файл: нет связи с сервером');
+    }
+  };
+
   const isDirect = activeChat.type === 'direct';
   const chatTitle = activeChat.name || (isDirect ? activeChat.user?.full_name : `#${activeChat.channel?.name}`);
   const isOnline = isDirect ? (activeChat.user?.status === 'online') : true;
@@ -300,14 +329,14 @@ export default function ChatView({
                   <div className="chat-file-name">{m.text}</div>
                   <div className="chat-file-meta">
                     {metadata?.size ? `${Math.round(metadata.size / 1024)} КБ • ` : ''}
-                    <a
-                      href={metadata?.file_id ? `/api/files/download/${metadata.file_id}` : metadata?.url || '#'}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
                       className="chat-file-download-link"
+                      disabled={!metadata?.file_id}
+                      onClick={() => downloadAttachment(metadata?.file_id, m.text)}
                     >
-                      ⬇ Скачать файл
-                    </a>
+                      {metadata?.file_id ? '⬇ Скачать файл' : 'Файл недоступен'}
+                    </button>
                   </div>
                 </div>
               </div>

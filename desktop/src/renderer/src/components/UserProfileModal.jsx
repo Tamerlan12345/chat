@@ -203,7 +203,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
 
                   <div className="profile-field-row profile-uin-row">
                     <label className="profile-label">UIN:</label>
-                    <span className="profile-uin-text">{currentUser?.uin || 1436}</span>
+                    <span className="profile-uin-text">{currentUser?.uin || '—'}</span>
                   </div>
                 </div>
 

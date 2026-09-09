@@ -21,7 +21,7 @@ export default function PersonInfoPanel({
 
   const displayName = user.full_name || user.name || user.username;
   const email = user.email || `${user.username || 'user'}@cic.kz`;
-  const department = user.department_name || user.department || 'Департамент Методологии Бизнес-процессов';
+  const department = user.department_name || user.department || 'Подразделение не указано';
 
   return (
     <div className="person-info-sidebar">
