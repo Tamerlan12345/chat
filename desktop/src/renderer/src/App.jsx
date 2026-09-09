@@ -469,21 +469,21 @@ export default function App() {
     }
   }, [currentUser, serverInfo]);
 
+  // Ровно одно уведомление на событие. Раньше показывались оба сразу —
+  // карточка в приложении и системное окно Windows поверх неё.
+  // Окно в фокусе — человек и так смотрит в приложение, карточки достаточно.
+  // Окно свёрнуто или перекрыто — карточку никто не увидит, нужно системное.
   const addToast = ({ title, body, type = 'chat', isUrgent = false, avatarText = '', data = null }) => {
-    const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
-    const newToast = { id, title, body, type, isUrgent, avatarText, data };
-    setToasts((prev) => [newToast, ...prev].slice(0, 5));
-    playNotificationSound(isUrgent);
+    const useNative = !windowFocusedRef.current && window.electronAPI?.showNotification;
 
-    if (window.electronAPI?.showNotification) {
-      window.electronAPI.showNotification({
-        title,
-        body,
-        type,
-        isUrgent,
-        avatarText
-      });
+    if (useNative) {
+      window.electronAPI.showNotification({ title, body, type, isUrgent, avatarText });
+      return;
     }
+
+    const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
+    setToasts((prev) => [{ id, title, body, type, isUrgent, avatarText, data }, ...prev].slice(0, 5));
+    playNotificationSound(isUrgent);
   };
 
   const dismissToast = (id) => {
@@ -1111,17 +1111,42 @@ export default function App() {
     }
   };
 
-  const filteredUsers = users.filter((u) => {
-    if (u.id === currentUser?.id) return false;
-    if (!dialogSearch.trim()) return true;
-    const q = dialogSearch.toLowerCase();
-    return (
-      u.full_name?.toLowerCase().includes(q) ||
-      u.username?.toLowerCase().includes(q) ||
-      String(u.extension || '').includes(q) ||
-      String(u.uin || '').includes(q)
+  const RECENT_DIALOG_LIMIT = 10;
+
+  // Список диалогов — это переписки, а не адресная книга. Раньше сюда
+  // попадали все сотрудники компании: у крупной организации это сотни строк,
+  // среди которых не найти тех, с кем реально общаешься. Показываются
+  // последние переписки; чтобы написать новому человеку, он ищется здесь же
+  // по имени или открывается из «Контактов» и Ctrl+K.
+  const filteredUsers = (() => {
+    const others = users.filter((u) => u.id !== currentUser?.id);
+    const query = dialogSearch.trim().toLowerCase();
+
+    if (query) {
+      return others.filter(
+        (u) =>
+          u.full_name?.toLowerCase().includes(query) ||
+          u.username?.toLowerCase().includes(query) ||
+          String(u.extension || '').includes(query) ||
+          String(u.uin || '').includes(query)
+      );
+    }
+
+    const lastMessageAt = new Map(
+      directConvos.map((c) => [c.other_user_id, c.last_message_time || ''])
     );
-  });
+
+    return others
+      .filter((u) => {
+        // Открытый прямо сейчас диалог остаётся видимым, даже если в нём ещё
+        // нет ни одного сообщения — иначе собеседник пропадал бы из списка,
+        // пока ему не напишешь.
+        if (activeChat?.type === 'direct' && activeChat.id === u.id) return true;
+        return lastMessageAt.has(u.id);
+      })
+      .sort((a, b) => String(lastMessageAt.get(b.id) || '').localeCompare(String(lastMessageAt.get(a.id) || '')))
+      .slice(0, RECENT_DIALOG_LIMIT);
+  })();
 
   const isAdmin = Boolean(
     currentUser && (
@@ -1315,12 +1340,11 @@ export default function App() {
                         По запросу «{dialogSearch.trim()}» совпадений нет.
                       </div>
                     </>
-                  ) : isAdmin ? (
+                  ) : users.length <= 1 && isAdmin ? (
                     <>
                       <div className="dialogs-empty-title">Сотрудников пока нет</div>
                       <div className="dialogs-empty-text">
                         В системе заведена только ваша учётная запись — писать пока некому.
-                        Добавьте коллег, и они появятся здесь.
                       </div>
                       <button className="btn btn-primary" onClick={() => setShowAdminModal(true)}>
                         Добавить сотрудников
@@ -1328,10 +1352,11 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <div className="dialogs-empty-title">Коллеги ещё не добавлены</div>
+                      <div className="dialogs-empty-title">Переписок пока нет</div>
                       <div className="dialogs-empty-text">
-                        Обратитесь к администратору, чтобы он завёл сотрудников вашего
-                        подразделения.
+                        Здесь появятся диалоги с коллегами, которым вы писали. Чтобы начать
+                        разговор, найдите человека в поиске выше, в разделе «Контакты» или
+                        нажмите Ctrl+K.
                       </div>
                     </>
                   )}
@@ -1537,16 +1562,15 @@ export default function App() {
 
       {/* Native Windows Enterprise Status Bar */}
       <div className="native-status-bar">
-        <div
-          className="status-bar-left interactive"
-          onClick={() => setShowServerConnectModal(true)}
-          title="Нажмите для проверки связи или смены адреса сервера MyChat"
-        >
+        {/* Адрес сервера и версия здесь больше не показываются: рядовому
+            сотруднику они ни о чём не говорят, а внутренний адрес незачем
+            держать на виду. Строка перестала быть кликабельной — смена
+            сервера осталась в меню «Сетевой сервер…», куда обычный
+            пользователь не заходит. Администратору адрес виден в консоли. */}
+        <div className="status-bar-left">
           <span className={`status-net-dot ${wsConnected ? 'online' : 'offline'}`} />
           <span className="status-bar-text">
-            {wsConnected
-              ? `Подключено: ${serverUrl.replace(/^https?:\/\//, '')} [v${serverInfo?.version || '2026.1.0'}]`
-              : 'Отключено от сети — нажмите для настройки...'}
+            {wsConnected ? 'Подключено' : 'Нет связи с сервером'}
           </span>
         </div>
 

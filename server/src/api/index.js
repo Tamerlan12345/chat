@@ -170,8 +170,12 @@ router.post('/auth/register', (req, res) => {
       return res.status(429).json({ error: 'Слишком много попыток регистрации. Повторите позже.' });
     }
     const user = AuthService.register(req.body);
-    const token = AuthService.generateToken(user);
-    res.status(201).json({ user, token });
+    // Токен не выдаётся: заявка ещё не подтверждена, входить пока не с чем.
+    wsServer.broadcast({ type: 'registration_pending', username: user.username, fullName: user.full_name });
+    res.status(201).json({
+      pending: true,
+      message: 'Заявка отправлена. Вход станет возможен после подтверждения администратором.'
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -821,6 +825,67 @@ router.get('/settings/departments', (req, res) => {
     .prepare('SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC')
     .all();
   res.json({ departments });
+});
+
+// ── Заявки на регистрацию ──
+// Сотрудник регистрируется сам, но пользоваться системой начинает только
+// после подтверждения. Администратору не нужно заводить каждого руками, при
+// этом посторонний в корпоративный чат не попадает.
+router.get('/admin/registrations', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
+  try {
+    const rows = getDatabase()
+      .prepare(`
+        SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title,
+               u.department_id, d.name AS department_name, u.registered_at
+        FROM users u
+        LEFT JOIN departments d ON d.id = u.department_id
+        WHERE u.approval_status = 'pending'
+        ORDER BY u.registered_at ASC
+      `)
+      .all();
+
+    // Администратор подразделения видит только заявки своего контура.
+    if (isScopedAdmin(req.user) && req.user.admin_scope_dept_id) {
+      const allowed = new Set(OrgService.getSubtreeDepartmentIds(req.user.admin_scope_dept_id));
+      return res.json(rows.filter((r) => allowed.has(r.department_id)));
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/registrations/:id/approve', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
+  try {
+    assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id) });
+    const user = AuthService.approveUser(Number(req.params.id));
+    AuditService.log({
+      userId: req.user.id,
+      action: 'registration_approved',
+      ip: getClientIp(req),
+      details: { approvedUserId: Number(req.params.id), username: user?.username }
+    });
+    wsServer.broadcast({ type: 'user_created', user });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/admin/registrations/:id/reject', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
+  try {
+    assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id) });
+    AuthService.rejectUser(Number(req.params.id));
+    AuditService.log({
+      userId: req.user.id,
+      action: 'registration_rejected',
+      ip: getClientIp(req),
+      details: { rejectedUserId: Number(req.params.id) }
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Журнал сеансов удалённого доступа: кто, к кому, когда, с управлением или

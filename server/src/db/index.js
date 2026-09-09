@@ -253,6 +253,13 @@ function runMigrations(db) {
   // something a migration should do silently. An admin can set it per-user
   // via the existing "Edit user" admin panel once that sign-off happens.
   try { db.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0;"); } catch {}
+  // Самостоятельная регистрация ждёт подтверждения администратора. Значение
+  // по умолчанию 'approved' — все, кто уже заведён, остаются рабочими; в
+  // 'pending' попадают только новые заявки. Отдельная колонка, а не is_active:
+  // «ждёт одобрения» и «отключён администратором» — разные состояния, и
+  // сообщение при входе должно различаться.
+  try { db.exec("ALTER TABLE users ADD COLUMN approval_status TEXT DEFAULT 'approved';"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN registered_at TEXT;"); } catch {}
 
   // 2. Add Role #3: "Контурный администратор" if not exists
   const rScoped = db.prepare("SELECT id FROM roles WHERE id = 3 OR name = 'Контурный администратор'").get();

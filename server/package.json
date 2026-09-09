@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/ip-access.test.js test/rate-limiter.test.js test/admin-permissions.test.js"
+    "test": "node --test --test-concurrency=1 test/ip-access.test.js test/rate-limiter.test.js test/admin-permissions.test.js test/registration-approval.test.js"
   },
   "keywords": ["mychat", "corporate-messenger", "sqlite", "websockets", "webrtc"],
   "author": "Antigravity Engineering",

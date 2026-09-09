@@ -53,6 +53,15 @@ class AuthService {
       throw new Error('Неверный пароль');
     }
 
+    // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
+    // перебором выяснять, какие логины заведены в компании.
+    if (user.approval_status === 'pending') {
+      throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+    }
+    if (user.approval_status === 'rejected') {
+      throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
+    }
+
     // Set online status & update last seen
     const now = new Date().toISOString();
     db.prepare("UPDATE users SET status = 'online', last_seen = ? WHERE id = ?").run(now, user.id);
@@ -94,21 +103,40 @@ class AuthService {
     const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
     const resolvedRoleId = defaultRole ? defaultRole.id : null;
 
+    // Заявка, а не готовая учётная запись: войти можно только после того,
+    // как администратор её подтвердит.
     const result = db.prepare(`
-      INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, uin, company, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(username, hash, salt, full_name || username, email || null, phone || null, job_title || 'Сотрудник', department_id || null, resolvedRoleId, nextUin, companyName, now);
+      INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, uin, company, created_at, approval_status, registered_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).run(username, hash, salt, full_name || username, email || null, phone || null, job_title || 'Сотрудник', department_id || null, resolvedRoleId, nextUin, companyName, now, now);
 
     const newUserId = result.lastInsertRowid;
 
-    // Automatically join all system channels (e.g. #Общий, #Объявления)
-    const systemChannels = db.prepare("SELECT id FROM channels WHERE type = 'system'").all();
-    const insertMember = db.prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)');
-    for (const ch of systemChannels) {
-      insertMember.run(ch.id, newUserId, 'member', now);
-    }
-
+    // В общие каналы заявка не добавляется — это произойдёт при одобрении,
+    // иначе неподтверждённый человек уже числился бы среди участников.
     return this.getUserById(newUserId);
+  }
+
+  // Вызывается при одобрении заявки администратором.
+  static approveUser(userId) {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    db.prepare("UPDATE users SET approval_status = 'approved' WHERE id = ?").run(userId);
+
+    const systemChannels = db.prepare("SELECT id FROM channels WHERE type = 'system'").all();
+    const insertMember = db.prepare(
+      'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
+    );
+    for (const ch of systemChannels) {
+      insertMember.run(ch.id, userId, 'member', now);
+    }
+    return this.getUserById(userId);
+  }
+
+  static rejectUser(userId) {
+    const db = getDatabase();
+    db.prepare("UPDATE users SET approval_status = 'rejected', is_active = 0 WHERE id = ?").run(userId);
+    return true;
   }
 
   static getUserById(id) {

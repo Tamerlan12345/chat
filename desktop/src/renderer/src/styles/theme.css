@@ -2438,6 +2438,17 @@ input, textarea, button, select {
 /* В режиме управления курсор оператора — крестик: видно, что клик уйдёт на
    чужую машину, а не сработает в своём окне. Выделение текста отключено,
    иначе протяжка мышью выделяла бы интерфейс вместо перетаскивания там. */
+.login-pending-box {
+  margin: 0 0 14px;
+  padding: 11px 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  color: #15803d;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 .dialogs-empty {
   padding: 28px 20px;
   text-align: center;

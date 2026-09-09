@@ -24,6 +24,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   // UI status
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pendingMessage, setPendingMessage] = useState('');
 
   // Probe server info
   useEffect(() => {
@@ -143,10 +144,13 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         throw new Error(data.error || 'Ошибка регистрации');
       }
 
-      localStorage.setItem('mychat_token', data.token);
-      localStorage.setItem('mychat_server_url', cleanUrl);
-
-      onLoginSuccess(data.user, data.token, cleanUrl);
+      // Регистрация больше не пускает внутрь сразу: заявку должен
+      // подтвердить администратор.
+      setPendingMessage(
+        data.message || 'Заявка отправлена. Вход станет возможен после подтверждения администратором.'
+      );
+      setIsRegister(false);
+      setPassword('');
     } catch (err) {
       setError(err.message || 'Ошибка регистрации пользователя');
     } finally {
@@ -173,10 +177,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         </div>
 
         {/* Server status indicator */}
+        {/* Название сервера не показывается — сотруднику важно лишь то, есть
+            связь или нет. */}
         <div className="login-server-badge">
           <span className={`server-status-dot ${serverInfo ? 'online' : 'offline'}`} />
           <span className="server-status-text">
-            {checkingServer ? 'Проверка связи с сервером...' : serverInfo ? `Сервер в сети: ${serverInfo.server_name || 'MyChat Server'}` : 'Сервер не отвечает'}
+            {checkingServer ? 'Подключаемся…' : serverInfo ? 'Связь установлена' : 'Нет связи с сервером'}
           </span>
         </div>
 
@@ -206,23 +212,19 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
           </div>
         )}
 
+        {pendingMessage && (
+          <div className="login-pending-box">
+            ✓ {pendingMessage}
+          </div>
+        )}
+
         {/* Login Form */}
         {!isRegister ? (
           <form onSubmit={handleLoginSubmit} className="login-form">
-            <div className="form-group">
-              <label className="form-label">Адрес сервера:</label>
-              <input
-                type="text"
-                className="form-input"
-                value={serverUrl}
-                onChange={e => setServerUrl(e.target.value)}
-                onBlur={handleServerUrlBlur}
-                placeholder="http://localhost:2004 или IP сервера"
-                disabled={loading}
-                required
-              />
-            </div>
-
+            {/* Поля адреса сервера здесь нет намеренно: он зашит в приложение,
+                сотруднику вводить нечего, а показывать внутренний адрес всем
+                подряд незачем. Сменить его при необходимости можно через
+                «Сетевой сервер…» в меню. */}
             <div className="form-group">
               <label className="form-label">Логин или UIN:</label>
               <input
