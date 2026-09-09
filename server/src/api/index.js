@@ -235,8 +235,21 @@ router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, (req, r
 router.post('/admin/users/:id/reset-password', requireAuth, requireAdmin, (req, res) => {
   try {
     const { password } = req.body || {};
-    UserService.adminResetPassword(Number(req.params.id), password || '123456');
-    res.json({ success: true, message: 'Пароль успешно сброшен на 123456' });
+    const targetId = Number(req.params.id);
+    const newPassword = password || '123456';
+    UserService.adminResetPassword(targetId, newPassword);
+    // Resetting someone else's password hands them a temporary one, so they
+    // must change it at next login. An admin resetting their OWN password
+    // already chose it here — re-arming the flag would send them back to the
+    // forced-change screen on every login, and that screen 403s the admin
+    // console they'd need to clear it from.
+    if (targetId === req.user.id) {
+      UserService.setMustChangePassword(targetId, false);
+    }
+    res.json({
+      success: true,
+      message: password ? 'Пароль успешно изменён' : 'Пароль сброшен на 123456'
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

@@ -69,6 +69,7 @@ export default function App() {
   // Active Chat & UI state
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [typingMap, setTypingMap] = useState({});
   const [unreadAnnCount, setUnreadAnnCount] = useState(0);
   const [unreadMap, setUnreadMap] = useState({});
@@ -303,7 +304,9 @@ export default function App() {
     setAuthState('checking');
     const storedToken = localStorage.getItem('mychat_token');
     if (storedToken && (await tryRestoreSession(storedToken))) return;
-    if (await attemptSilentDeviceLogin()) return;
+    // A device paired by an admin logs in silently, which would otherwise
+    // undo an explicit logout on the very next launch.
+    if (localStorage.getItem('mychat_logged_out') !== '1' && (await attemptSilentDeviceLogin())) return;
     localStorage.removeItem('mychat_token');
     setToken('');
     setCurrentUser(null);
@@ -315,6 +318,7 @@ export default function App() {
       setServerUrl(cleanServerUrl);
       localStorage.setItem('mychat_server_url', cleanServerUrl);
     }
+    localStorage.removeItem('mychat_logged_out');
     setToken(authToken);
     setCurrentUser(user);
     setAuthState('authenticated');
@@ -323,6 +327,7 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('mychat_token');
+    localStorage.setItem('mychat_logged_out', '1');
     if (wsRef.current) {
       try { wsRef.current.close(); } catch {}
     }
@@ -482,7 +487,18 @@ export default function App() {
 
   // WebSocket Gateway
   const initWebSocket = (authToken) => {
-    if (wsRef.current) wsRef.current.close();
+    // Detach the old socket's handlers before closing it. Without this its
+    // own onclose still fires and reconnects 3s later, leaving an orphaned
+    // second socket alive — every server event then arrived twice. React's
+    // StrictMode double-mounts the effect that calls this in development,
+    // which is exactly how that second socket appeared.
+    const previous = wsRef.current;
+    if (previous) {
+      previous.onopen = null;
+      previous.onclose = null;
+      previous.onmessage = null;
+      previous.close();
+    }
 
     const cleanHost = serverUrl.replace(/^https?:\/\//, '');
     const protocol = serverUrl.startsWith('https') ? 'wss:' : 'ws:';
@@ -497,9 +513,12 @@ export default function App() {
     };
 
     ws.onclose = () => {
+      // Only the current socket may schedule a reconnect; a superseded one
+      // must stay dead.
+      if (wsRef.current !== ws) return;
       setWsConnected(false);
       setTimeout(() => {
-        if (localStorage.getItem('mychat_token')) initWebSocket(authToken);
+        if (localStorage.getItem('mychat_token') && wsRef.current === ws) initWebSocket(authToken);
       }, 3000);
     };
 
@@ -513,18 +532,16 @@ export default function App() {
     };
   };
 
+  // The server announces one saved message as BOTH direct_message/channel_message
+  // and new_message, so appending on every event showed each message twice.
+  // new_message is ignored here; the typed events carry the same row.
+  const appendMessage = (prev, msg) =>
+    prev.some((m) => m.id && m.id === msg.id) ? prev : [...prev, msg];
+
   const handleWsEvent = (event) => {
     switch (event.type) {
-      case 'new_message': {
-        const msg = event.message;
-        if (!msg) break;
-        if (msg.conversation_type === 'channel') {
-          handleWsEvent({ type: 'channel_message', message: msg });
-        } else {
-          handleWsEvent({ type: 'direct_message', message: msg });
-        }
+      case 'new_message':
         break;
-      }
 
       case 'direct_message': {
         const msg = event.message;
@@ -533,7 +550,7 @@ export default function App() {
 
         setMessages((prev) => {
           if (activeChatRef.current && activeChatRef.current.type === 'direct' && activeChatRef.current.id === otherUserId) {
-            return [...prev, msg];
+            return appendMessage(prev, msg);
           }
           return prev;
         });
@@ -575,7 +592,7 @@ export default function App() {
 
         setMessages((prev) => {
           if (activeChatRef.current && activeChatRef.current.type === 'channel' && activeChatRef.current.id === msg.target_id) {
-            return [...prev, msg];
+            return appendMessage(prev, msg);
           }
           return prev;
         });
@@ -668,6 +685,10 @@ export default function App() {
       name: user.full_name || user.username,
       user
     });
+    // Clear first: otherwise the previous person's thread stays on screen
+    // under the new name until the fetch resolves — and forever if it fails.
+    setMessages([]);
+    setMessagesLoading(true);
 
     try {
       const res = await fetch(`${serverUrl}/api/messages/direct/${user.id}`, {
@@ -679,6 +700,8 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to load direct messages:', err);
+    } finally {
+      setMessagesLoading(false);
     }
   };
 
@@ -690,6 +713,8 @@ export default function App() {
       name: channel.name,
       channel
     });
+    setMessages([]);
+    setMessagesLoading(true);
 
     try {
       const res = await fetch(`${serverUrl}/api/messages/channels/${channel.id}`, {
@@ -701,6 +726,8 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to load channel messages:', err);
+    } finally {
+      setMessagesLoading(false);
     }
   };
 
@@ -1329,6 +1356,7 @@ export default function App() {
               <ChatView
                 activeChat={activeChat}
                 messages={messages}
+                messagesLoading={messagesLoading}
                 currentUser={currentUser}
                 typingUsers={typingMap[activeChat.id] || []}
                 isPersonPanelOpen={isPersonPanelOpen}

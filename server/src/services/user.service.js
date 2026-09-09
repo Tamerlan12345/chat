@@ -102,6 +102,12 @@ class UserService {
     return true;
   }
 
+  static setMustChangePassword(userId, required) {
+    const db = getDatabase();
+    db.prepare('UPDATE users SET must_change_password = ? WHERE id = ?').run(required ? 1 : 0, userId);
+    return true;
+  }
+
   static createUser({ username, full_name, email, phone, job_title, department_id, role_id, extension, uin, password, bound_ip, admin_scope_dept_id }) {
     const db = getDatabase();
     if (!username || !full_name) {

@@ -2,19 +2,21 @@
 
 export default function UserProfileModal({ currentUser, serverInfo, onClose, onUpdateProfile, token, serverUrl }) {
   const [activeTab, setActiveTab] = useState('main'); // 'main' | 'home' | 'work' | 'personal' | 'interests' | 'past' | 'extra'
-  
-  const initialName = currentUser?.full_name?.split(' ')?.[0] || 'Тамерлан';
-  const initialSurname = currentUser?.full_name?.split(' ')?.slice(1)?.join(' ') || 'Джумагулов (в.н.2401)';
+
+  // Every field starts from the real account. It previously fell back to one
+  // specific employee's details, so anyone with a blank field saw — and on
+  // save wrote — somebody else's name, email and phone number.
+  const initialName = currentUser?.full_name?.split(' ')?.[0] || '';
+  const initialSurname = currentUser?.full_name?.split(' ')?.slice(1)?.join(' ') || '';
 
   const [firstName, setFirstName] = useState(initialName);
   const [patronymic, setPatronymic] = useState('');
   const [lastName, setLastName] = useState(initialSurname);
-  const [nick, setNick] = useState(currentUser?.username || 'tjumagulov');
+  const [nick] = useState(currentUser?.username || '');
   const [gender, setGender] = useState('Мужской');
-  const [email, setEmail] = useState(currentUser?.email || 'TJumagulov@cic.kz');
-  const [phone, setPhone] = useState(currentUser?.phone || '+7 (727) 244-77-77');
-  const [jobTitle, setJobTitle] = useState(currentUser?.job_title || 'Ведущий разработчик');
-  const [department, setDepartment] = useState(currentUser?.department_name || 'Департамент Web-разработок');
+  const [email, setEmail] = useState(currentUser?.email || '');
+  const [phone, setPhone] = useState(currentUser?.phone || '');
+  const [jobTitle, setJobTitle] = useState(currentUser?.job_title || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatar_url || '');
 
   const [showPwForm, setShowPwForm] = useState(false);
@@ -268,7 +270,13 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                 </div>
                 <div className="profile-field-row">
                   <label className="profile-label">Подразделение:</label>
-                  <input type="text" className="profile-input" value={department} onChange={(e) => setDepartment(e.target.value)} />
+                  <input
+                    type="text"
+                    className="profile-input"
+                    value={currentUser?.department_name || 'не назначено'}
+                    readOnly
+                    title="Подразделение назначает администратор"
+                  />
                 </div>
                 <div className="profile-field-row">
                   <label className="profile-label">Должность:</label>
@@ -276,7 +284,10 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                 </div>
                 <div className="profile-field-row">
                   <label className="profile-label">Внутренний телефон:</label>
-                  <input type="text" className="profile-input" value={currentUser?.extension || '2401'} readOnly />
+                  <input type="text" className="profile-input" value={currentUser?.extension || '—'} readOnly />
+                </div>
+                <div className="profile-field-hint">
+                  Компанию, подразделение и внутренний номер назначает администратор — обратитесь к нему для изменения.
                 </div>
               </div>
             )}

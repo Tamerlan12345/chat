@@ -4,6 +4,7 @@ import EmojiPicker from './EmojiPicker';
 export default function ChatView({
   activeChat,
   messages,
+  messagesLoading,
   currentUser,
   typingUsers,
   isPersonPanelOpen,
@@ -439,7 +440,12 @@ export default function ChatView({
 
       {/* 2. Messages Stream */}
       <div className="classic-chat-stream" ref={streamRef} onScroll={handleStreamScroll}>
-        {messages.length === 0 ? (
+        {messagesLoading ? (
+          <div className="chat-empty-state">
+            <div className="chat-loading-spinner" />
+            <div className="chat-empty-desc">Загружаю переписку…</div>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="chat-empty-state">
             <div className="chat-empty-icon">💬</div>
             <div className="chat-empty-title">Начало переписки</div>
