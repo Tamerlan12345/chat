@@ -228,6 +228,17 @@ export default function App() {
     initializeSession();
   }, [serverUrl]);
 
+  // While must_change_password is set the server rejects the WebSocket
+  // upgrade and 403s every route but /auth/me and /users/password, so
+  // connecting now would just fail — and ws.onclose would retry it every 3s
+  // for as long as the user sits on the password screen.
+  // handleForcedPasswordChange starts both once the password is changed.
+  const openSessionChannels = (user, authToken) => {
+    if (user?.must_change_password) return;
+    initWebSocket(authToken);
+    loadBaseData(authToken);
+  };
+
   const tryRestoreSession = async (authToken) => {
     try {
       const res = await fetch(`${serverUrl}/api/auth/me`, {
@@ -238,8 +249,7 @@ export default function App() {
       setToken(authToken);
       setCurrentUser(data.user);
       setAuthState('authenticated');
-      initWebSocket(authToken);
-      loadBaseData(authToken);
+      openSessionChannels(data.user, authToken);
       return true;
     } catch {
       return false;
@@ -279,8 +289,7 @@ export default function App() {
           localStorage.setItem('mychat_token', knockData.token);
           setCurrentUser(knockData.user);
           setAuthState('authenticated');
-          initWebSocket(knockData.token);
-          loadBaseData(knockData.token);
+          openSessionChannels(knockData.user, knockData.token);
           return true;
         }
       }
@@ -309,8 +318,7 @@ export default function App() {
     setToken(authToken);
     setCurrentUser(user);
     setAuthState('authenticated');
-    initWebSocket(authToken);
-    loadBaseData(authToken);
+    openSessionChannels(user, authToken);
   };
 
   const handleLogout = () => {
