@@ -62,5 +62,10 @@ module.exports = {
   // its way past the allowlist by forging this header itself.
   TRUSTED_PROXY_IPS: (process.env.TRUSTED_PROXY_IPS || '').split(',').map((s) => s.trim()).filter(Boolean),
 
+  // Whether a plain browser may load the UI, or only the desktop app (see the
+  // User-Agent check in index.js). Default false keeps the server's address
+  // from serving a branded corporate login page to anyone who types it in.
+  ALLOW_BROWSER_ACCESS: process.env.ALLOW_BROWSER_ACCESS === 'true',
+
   SERVER_VERSION: '2026.1.0-pro'
 };

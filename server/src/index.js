@@ -87,6 +87,13 @@ app.get('/health', (req, res) => {
 // above (ALLOWED_CLIENT_IPS); this is an extra layer of obscurity on top of
 // it, not a substitute for it. /api and /ws are untouched — the real app's
 // own requests to them still work regardless of this check.
+//
+// Set ALLOW_BROWSER_ACCESS=true to lift this and let a plain browser load the
+// UI too. That is the fallback when the desktop app can't be installed at all
+// on a machine — Windows Smart App Control blocks unsigned executables outright
+// and offers the user no way around it, so on such a machine the browser is the
+// only way in until the app is code-signed. Flipping it costs a redeploy of the
+// env var, not a code change.
 function isDesktopClient(req) {
   return (req.headers['user-agent'] || '').includes('Electron');
 }
@@ -94,7 +101,7 @@ function isDesktopClient(req) {
 const staticDir = path.resolve(__dirname, '../../desktop/dist');
 if (fs.existsSync(staticDir)) {
   app.use((req, res, next) => {
-    if (!isDesktopClient(req)) {
+    if (!config.ALLOW_BROWSER_ACCESS && !isDesktopClient(req)) {
       return res.status(404).send('Not found');
     }
     next();
