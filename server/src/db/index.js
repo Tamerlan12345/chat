@@ -37,8 +37,53 @@ function getDatabase() {
     initSchema(dbInstance);
     runMigrations(dbInstance);
     seedProductionData(dbInstance);
+    applyEmergencyAdminReset(dbInstance);
   }
   return dbInstance;
+}
+
+// Recovery path for a locked-out administrator: only whoever can set the
+// deployment's environment can trigger it, which is the same trust boundary
+// as ALLOWED_CLIENT_IPS. Without it a forgotten admin password is
+// unrecoverable — resetting a password requires an admin login, and there is
+// no admin left to log in with.
+//
+// Applied once per distinct value: the hash of the password that was last
+// used is recorded, so leaving the variable in place does not silently revert
+// a password the admin changes afterwards. Setting a new value resets again.
+function applyEmergencyAdminReset(db) {
+  const requested = process.env.ADMIN_PASSWORD_RESET;
+  if (!requested) return;
+
+  const username = process.env.ADMIN_PASSWORD_RESET_USER || 'admin';
+  const marker = crypto.createHash('sha256').update(`${username}:${requested}`).digest('hex');
+
+  const previous = db
+    .prepare("SELECT value FROM server_settings WHERE key = 'last_admin_password_reset'")
+    .get();
+  if (previous?.value === marker) return;
+
+  const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (!user) {
+    console.warn(`[Recovery] ADMIN_PASSWORD_RESET is set, but no user "${username}" exists — ignored.`);
+    return;
+  }
+
+  const { hash, salt } = hashPassword(requested);
+  db.prepare(
+    'UPDATE users SET password_hash = ?, salt = ?, must_change_password = 0, is_active = 1 WHERE id = ?'
+  ).run(hash, salt, user.id);
+
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO server_settings (key, value, updated_at) VALUES ('last_admin_password_reset', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(marker, now);
+
+  console.warn(
+    `[Recovery] Password for "${username}" was reset from ADMIN_PASSWORD_RESET. ` +
+      'Log in, change it, then DELETE that variable from the deployment.'
+  );
 }
 
 function initSchema(db) {
