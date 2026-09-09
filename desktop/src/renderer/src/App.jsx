@@ -1201,7 +1201,11 @@ export default function App() {
       <div className="workspace-layout">
         {/* Column 1: Leftmost Navigation Rail */}
         <div className="vertical-nav-rail">
-          <div className="rail-hamburger-item" title="Главное меню">
+          <div
+            className="rail-hamburger-item"
+            title="Мой профиль"
+            onClick={() => setShowProfileModal(true)}
+          >
             <span className="rail-hamburger-icon">☰</span>
           </div>
 
@@ -1299,6 +1303,41 @@ export default function App() {
             </div>
 
             <div className="dialogs-scrollable-list">
+              {/* Себя в списке собеседников нет намеренно. Но когда в компании
+                  заведён только администратор, список пуст — и без пояснения
+                  это выглядит как поломка, а не как «коллег ещё не завели». */}
+              {filteredUsers.length === 0 && (
+                <div className="dialogs-empty">
+                  {dialogSearch.trim() ? (
+                    <>
+                      <div className="dialogs-empty-title">Никого не найдено</div>
+                      <div className="dialogs-empty-text">
+                        По запросу «{dialogSearch.trim()}» совпадений нет.
+                      </div>
+                    </>
+                  ) : isAdmin ? (
+                    <>
+                      <div className="dialogs-empty-title">Сотрудников пока нет</div>
+                      <div className="dialogs-empty-text">
+                        В системе заведена только ваша учётная запись — писать пока некому.
+                        Добавьте коллег, и они появятся здесь.
+                      </div>
+                      <button className="btn btn-primary" onClick={() => setShowAdminModal(true)}>
+                        Добавить сотрудников
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="dialogs-empty-title">Коллеги ещё не добавлены</div>
+                      <div className="dialogs-empty-text">
+                        Обратитесь к администратору, чтобы он завёл сотрудников вашего
+                        подразделения.
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               {filteredUsers.map((u) => {
                 const isActive = activeChat?.type === 'direct' && activeChat.id === u.id;
                 const isOnline = u.status === 'online';
