@@ -13,6 +13,7 @@ const FileService = require('../services/file.service');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit } = require('../services/rate-limiter');
+const { getClientIp } = require('../services/ip-access.service');
 const wsServer = require('../ws/server');
 const config = require('../config');
 
@@ -79,7 +80,7 @@ function requireAdminOrScopedAdmin(req, res, next) {
 
 router.post('/auth/knock', (req, res) => {
   try {
-    const remoteIp = (req.socket?.remoteAddress || '127.0.0.1').replace(/^.*:/, '');
+    const remoteIp = getClientIp(req) || '127.0.0.1';
     const { device_id, device_name, platform, client_version } = req.body || {};
     const result = DeviceService.knock({
       device_id,
@@ -100,7 +101,7 @@ router.post('/auth/login', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Укажите логин и пароль' });
 
-    const remoteIp = (req.socket?.remoteAddress || '127.0.0.1').replace(/^.*:/, '');
+    const remoteIp = getClientIp(req) || '127.0.0.1';
     const rateLimitKey = `login:${remoteIp}:${String(username).toLowerCase()}`;
     if (!checkRateLimit(rateLimitKey, { maxAttempts: 5, windowMs: 60000 })) {
       return res.status(429).json({ error: 'Слишком много попыток входа. Повторите через минуту.' });
@@ -119,7 +120,7 @@ router.post('/auth/register', (req, res) => {
     if (!allowRegistration) {
       return res.status(403).json({ error: 'Самостоятельная регистрация отключена администратором' });
     }
-    const remoteIp = (req.socket?.remoteAddress || '127.0.0.1').replace(/^.*:/, '');
+    const remoteIp = getClientIp(req) || '127.0.0.1';
     if (!checkRateLimit(`register:${remoteIp}`, { maxAttempts: 10, windowMs: 600000 })) {
       return res.status(429).json({ error: 'Слишком много попыток регистрации. Повторите позже.' });
     }
@@ -710,7 +711,7 @@ router.post('/announcements', requireAuth, (req, res) => {
 
 router.post('/announcements/:id/acknowledge', requireAuth, (req, res) => {
   try {
-    const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
+    const ip = getClientIp(req) || '127.0.0.1';
     const result = AnnouncementService.acknowledgeAnnouncement(req.params.id, req.user.id, ip);
     
     // Broadcast receipt update

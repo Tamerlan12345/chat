@@ -145,9 +145,12 @@ server.listen(config.PORT, config.HOST, () => {
   [✓] Auto Backups:       every ${config.BACKUP_INTERVAL_HOURS}h, keep last ${config.BACKUP_RETENTION_COUNT} (${config.BACKUPS_DIR})
   [✓] Ready for client connections & remote desktop sessions.
 =====================================================================
-  Default SuperAdmin credentials (change on first login):
-  Username: admin
-  Password: 123456
+  SuperAdmin login: admin
+  Password:         ${process.env.INITIAL_ADMIN_PASSWORD
+    ? 'as set in INITIAL_ADMIN_PASSWORD'
+    : '123456 (default — set INITIAL_ADMIN_PASSWORD to override)'}
+  Applies to the first run only, when the database is seeded; a password
+  changed since then is unaffected. A forced change is required on first login.
 =====================================================================
   `);
 });
