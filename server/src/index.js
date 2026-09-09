@@ -15,6 +15,46 @@ const app = express();
 // Middlewares
 app.disable('x-powered-by');
 
+// Экран отказа по IP. Отдаётся вместо интерфейса, поэтому свёрстан здесь
+// целиком — до статики запрос не доходит, брать стили неоткуда.
+function renderAccessDeniedPage(ip) {
+  const safeIp = String(ip || 'неизвестен').replace(/[^0-9a-fA-F.:]/g, '');
+  return `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Доступ ограничен</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#f1f5f9; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; padding:24px; }
+  .card { background:#fff; border-radius:12px; box-shadow:0 12px 40px rgba(15,23,42,.14);
+          max-width:520px; width:100%; padding:36px 40px; text-align:center; }
+  .badge { width:56px; height:56px; border-radius:50%; background:#fef2f2; color:#dc2626;
+           display:flex; align-items:center; justify-content:center; margin:0 auto 18px;
+           font-size:26px; }
+  h1 { margin:0 0 10px; font-size:19px; color:#0f172a; }
+  p { margin:0 0 18px; font-size:14px; line-height:1.6; color:#475569; }
+  .ip { display:inline-block; margin:0 0 20px; padding:10px 18px; background:#f8fafc;
+        border:1px solid #e2e8f0; border-radius:8px; font-family:Consolas,monospace;
+        font-size:17px; font-weight:600; color:#0f172a; letter-spacing:.5px; user-select:all; }
+  .hint { font-size:12.5px; color:#64748b; line-height:1.6; border-top:1px solid #e2e8f0;
+          padding-top:16px; margin-top:4px; }
+</style></head>
+<body>
+  <div class="card">
+    <div class="badge">&#9888;</div>
+    <h1>Доступ к корпоративному чату ограничен</h1>
+    <p>Подключение разрешено только из сетей компании. Ваш текущий адрес в этот список не входит.</p>
+    <div class="ip">${safeIp}</div>
+    <div class="hint">
+      Передайте этот адрес администратору, чтобы он открыл доступ.<br>
+      Адрес меняется при смене сети — например, при переходе с кабеля на Wi&#8209;Fi
+      или при работе через мобильный интернет.
+    </div>
+  </div>
+</body></html>`;
+}
+
 // Network-level access gate — runs before EVERYTHING else (CORS, static
 // files, the API router, even /health), so a disallowed IP gets a flat 403
 // and nothing else: no login page, no version info, no route to try next.
@@ -24,10 +64,23 @@ app.disable('x-powered-by');
 // unaffected by default.
 app.use((req, res, next) => {
   const ip = getClientIp(req);
-  if (!isIpAllowed(ip)) {
-    return res.status(403).json({ error: 'Доступ запрещён с этого IP-адреса' });
+  if (isIpAllowed(ip)) return next();
+
+  // The app loads its whole interface from here, so a bare JSON body ends up
+  // rendered as raw text in the window — which is what the employee sees
+  // instead of anything explaining the situation. Programmatic callers still
+  // get JSON; anything that навигates gets a readable page. The blocked
+  // address is shown deliberately: without it the employee cannot tell the
+  // administrator what to add, and it is their own address, not a secret.
+  const wantsJson =
+    req.path.startsWith('/api') ||
+    (req.get('accept') || '').includes('application/json');
+
+  if (wantsJson) {
+    return res.status(403).json({ error: 'Доступ запрещён с этого IP-адреса', ip });
   }
-  next();
+
+  res.status(403).type('html').send(renderAccessDeniedPage(ip));
 });
 // origin:true reflects whatever Origin the caller sends — needed because
 // clients hit this server from arbitrary LAN hostnames/IPs, and there's no
