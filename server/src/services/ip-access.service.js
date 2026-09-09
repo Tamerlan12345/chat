@@ -51,19 +51,52 @@ function matchesAny(ip, list) {
   return list.some((entry) => matchesEntry(ip, entry));
 }
 
+// True when this process is a Railway deployment (Railway injects these
+// env vars into every service automatically). An HTTP service on Railway
+// has no raw-TCP path a client can use to reach the container directly —
+// every request is relayed through Railway's own edge proxy, which is why
+// that edge can be trusted here with no fixed IP/CIDR to put in
+// TRUSTED_PROXY_IPS (Railway does not publish one).
+function isRunningOnRailway() {
+  return Boolean(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID);
+}
+
+// The proxy chain in X-Forwarded-For grows by appending to the right: each
+// hop adds the peer IP *it* observed to the end. So the only entry a
+// trusted hop can vouch for is the rightmost one — anything to its left may
+// have been forged by the original client before the chain ever started.
+function rightmostXff(xffHeader) {
+  const parts = String(xffHeader)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
 // Resolves the real client IP for a request/upgrade, honoring
-// X-Forwarded-For ONLY when the immediate TCP peer is a configured trusted
-// proxy. Anyone hitting the app directly (bypassing that proxy) has their
-// own forged X-Forwarded-For ignored — their raw socket IP is used instead.
+// X-Forwarded-For (or Railway's own X-Real-Ip) ONLY when the immediate peer
+// is a trusted proxy — either one explicitly configured via
+// TRUSTED_PROXY_IPS, or Railway's edge (see isRunningOnRailway above).
+// Anyone hitting the app directly through neither has their own forged
+// X-Forwarded-For ignored — their raw socket IP is used instead.
 function getClientIp(req) {
   const socketIp = normalizeIp(req.socket?.remoteAddress);
+
   if (config.TRUSTED_PROXY_IPS.length > 0 && matchesAny(socketIp, config.TRUSTED_PROXY_IPS)) {
     const xff = req.headers?.['x-forwarded-for'];
-    if (xff) {
-      const first = String(xff).split(',')[0].trim();
-      if (first) return normalizeIp(first);
-    }
+    if (xff) return normalizeIp(rightmostXff(xff));
   }
+
+  if (isRunningOnRailway()) {
+    // Railway regenerates X-Real-Ip at its edge and does not let a client
+    // set it directly, so a single trustworthy value is available here
+    // without needing to pick a position in a comma-separated list.
+    const realIp = req.headers?.['x-real-ip'];
+    if (realIp) return normalizeIp(String(realIp).split(',')[0].trim());
+    const xff = req.headers?.['x-forwarded-for'];
+    if (xff) return normalizeIp(rightmostXff(xff));
+  }
+
   return socketIp;
 }
 
