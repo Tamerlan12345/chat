@@ -162,7 +162,35 @@ export default function ChatView({
   const chatTitle = activeChat.name || (isDirect ? activeChat.user?.full_name : `#${activeChat.channel?.name}`);
   const isOnline = isDirect ? (activeChat.user?.status === 'online') : true;
 
-  // Render message groups with distinct colors matching Screenshot 2
+  // Consecutive messages from the same person are grouped: only the first of
+  // a group carries the avatar, name and timestamp. A new group starts on a
+  // different sender, a day boundary, or a pause longer than this.
+  const GROUP_BREAK_MS = 5 * 60 * 1000;
+
+  const dayLabel = (date) => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (date.toDateString() === today.toDateString()) return 'Сегодня';
+    if (date.toDateString() === yesterday.toDateString()) return 'Вчера';
+    return date.toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {})
+    });
+  };
+
+  // Stable per-person colour so the same colleague always reads the same way
+  // down the thread, instead of every name sharing one accent.
+  const AVATAR_COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#db2777', '#4f46e5'];
+  const colorForName = (name) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  };
+  const initialsOf = (name) =>
+    name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+
   const renderMessages = () => {
     const elements = [];
     let hasDrawnUnreadSeparator = false;
@@ -170,28 +198,37 @@ export default function ChatView({
     messages.forEach((m, idx) => {
       const msgDate = new Date(m.created_at);
       const isMine = m.sender_id === currentUser.id;
-      const isToday = msgDate.toDateString() === new Date().toDateString();
-      
-      const timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const dateLabel = isToday
-        ? 'сегодня'
-        : `${msgDate.getDate()} сентября`; // formatted date like screenshot
+
+      const timeStr = msgDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+      const prev = idx > 0 ? messages[idx - 1] : null;
+      const prevDate = prev ? new Date(prev.created_at) : null;
+      const isNewDay = !prevDate || prevDate.toDateString() !== msgDate.toDateString();
+      const startsGroup =
+        isNewDay ||
+        prev.sender_id !== m.sender_id ||
+        msgDate - prevDate > GROUP_BREAK_MS;
+
+      if (isNewDay) {
+        elements.push(
+          <div key={`day_${msgDate.toDateString()}`} className="chat-day-separator">
+            <span>{dayLabel(msgDate)}</span>
+          </div>
+        );
+      }
 
       // Draw unread line before unread messages from other peer
       if (!isMine && m.is_read === 0 && !hasDrawnUnreadSeparator) {
         elements.push(
           <div key={`unread_sep_${idx}`} className="chat-unread-separator">
-            <span>--------- непрочитанные сообщения ---------</span>
+            <span>непрочитанные сообщения</span>
           </div>
         );
         hasDrawnUnreadSeparator = true;
       }
 
-      // Check sender color class (Red for current user, Blue for colleague)
-      const senderColorClass = isMine ? 'sender-tamerlan' : 'sender-colleague';
-      const senderDisplayName = isMine
-        ? (currentUser.full_name || 'Тамерлан Джумагулов (в.н.2401)')
-        : (m.sender_name || activeChat.name || 'Дильмурат Баситов (2401)');
+      const senderDisplayName =
+        (isMine ? currentUser.full_name : m.sender_name || activeChat.name) || 'Неизвестный участник';
 
       let metadata = null;
       if (m.metadata_json) {
@@ -201,23 +238,49 @@ export default function ChatView({
       }
 
       elements.push(
-        <div key={m.id || idx} className="classic-chat-message-row">
-          <div className="classic-msg-header">
-            <span className={`classic-sender-name ${senderColorClass}`}>
-              {senderDisplayName}
-            </span>
-            <div className="classic-msg-meta">
-              <span className="classic-msg-date">{dateLabel}</span>
-              <span className="classic-msg-time">{timeStr}</span>
-              {isMine && (
-                <span className="classic-msg-ticks" title="Прочитано">
-                  ✓✓
-                </span>
-              )}
-            </div>
+        <div
+          key={m.id || idx}
+          className={`classic-chat-message-row${isMine ? ' is-mine' : ''}${startsGroup ? ' starts-group' : ' continues-group'}`}
+        >
+          <div className="classic-msg-avatar-slot">
+            {startsGroup ? (
+              <span
+                className="classic-msg-avatar"
+                style={{ backgroundColor: colorForName(senderDisplayName) }}
+                title={senderDisplayName}
+              >
+                {initialsOf(senderDisplayName)}
+              </span>
+            ) : (
+              <span className="classic-msg-hover-time">{timeStr}</span>
+            )}
           </div>
 
-          <div className="classic-msg-body">
+          <div className="classic-msg-main">
+            {startsGroup && (
+              <div className="classic-msg-header">
+                <span
+                  className="classic-sender-name"
+                  style={{ color: isMine ? '#0f172a' : colorForName(senderDisplayName) }}
+                >
+                  {senderDisplayName}
+                  {isMine && <span className="classic-sender-you">вы</span>}
+                </span>
+                <div className="classic-msg-meta">
+                  <span className="classic-msg-time">{timeStr}</span>
+                  {isMine && (
+                    <span
+                      className={`classic-msg-ticks${m.is_read ? ' read' : ''}`}
+                      title={m.is_read ? 'Прочитано' : 'Доставлено'}
+                    >
+                      {m.is_read ? '✓✓' : '✓'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="classic-msg-body">
             {/* Reply Quote Banner */}
             {m.reply_to_id && (
               <div className="chat-reply-quote">
@@ -259,6 +322,7 @@ export default function ChatView({
             ) : (
               <div className="classic-msg-text">{m.text}</div>
             )}
+            </div>
           </div>
         </div>
       );

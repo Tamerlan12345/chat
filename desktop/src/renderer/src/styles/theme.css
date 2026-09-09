@@ -2407,55 +2407,155 @@ input, textarea, button, select {
 .chat-unread-separator {
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin: 12px 0;
+  gap: 10px;
+  margin: 14px 0 10px;
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 600;
+}
+.chat-unread-separator::before,
+.chat-unread-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #fecaca;
+}
+.chat-unread-separator span {
+  white-space: nowrap;
+}
+
+.chat-day-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
   color: #94a3b8;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+}
+.chat-day-separator::before,
+.chat-day-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e2e8f0;
+}
+.chat-day-separator span {
+  padding: 2px 10px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  white-space: nowrap;
 }
 
 .classic-chat-message-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  padding: 1px 8px 1px 0;
+  border-radius: 6px;
+}
+.classic-chat-message-row.starts-group {
+  margin-top: 10px;
+}
+.classic-chat-message-row:first-child {
+  margin-top: 0;
+}
+/* No tint for own messages: rows are separate grid items, so any background
+   breaks a group into stripes with gaps. The "вы" badge marks them instead. */
+.classic-chat-message-row:hover {
+  background: #f1f5f9;
+}
+
+.classic-msg-avatar-slot {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 4px;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.classic-msg-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* Timestamp on grouped messages: revealed on hover so the thread stays clean
+   but any single line can still be dated without opening anything. */
+.classic-msg-hover-time {
+  font-size: 10px;
+  color: #cbd5e1;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  padding-top: 3px;
+}
+.classic-chat-message-row:hover .classic-msg-hover-time {
+  opacity: 1;
+}
+
+.classic-msg-main {
+  min-width: 0;
 }
 
 .classic-msg-header {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
 }
 
 .classic-sender-name {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.classic-sender-name.sender-tamerlan {
-  color: #dc2626;
-}
-.classic-sender-name.sender-colleague {
-  color: #2563eb;
+
+.classic-sender-you {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  vertical-align: middle;
 }
 
 .classic-msg-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 11px;
   color: #94a3b8;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .classic-msg-ticks {
-  color: #2563eb;
+  color: #cbd5e1;
   font-weight: bold;
+}
+.classic-msg-ticks.read {
+  color: #2563eb;
 }
 
 .classic-msg-text {
-  font-size: 13px;
+  font-size: 13.5px;
   color: #1e293b;
-  line-height: 1.4;
-  padding-left: 2px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .classic-input-container {
