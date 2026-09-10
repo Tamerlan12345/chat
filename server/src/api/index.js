@@ -284,10 +284,14 @@ router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, (req, r
   }
 });
 
-router.post('/admin/users/:id/reset-password', requireAuth, requireAdmin, (req, res) => {
+// Администратор подразделения заводит и правит своих сотрудников — забытый
+// пароль он должен уметь сбросить им сам, иначе смысла в его роли мало.
+// Границы контура проверяются ниже, как и в остальных операциях.
+router.post('/admin/users/:id/reset-password', requireAuth, requireAdminOrScopedAdmin, (req, res) => {
   try {
     const { password } = req.body || {};
     const targetId = Number(req.params.id);
+    assertWithinAdminScope(req.user, { targetUserId: targetId });
     const newPassword = password || '123456';
     UserService.adminResetPassword(targetId, newPassword);
     // Resetting someone else's password hands them a temporary one, so they

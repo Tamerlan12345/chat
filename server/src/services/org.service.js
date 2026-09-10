@@ -122,17 +122,22 @@ class OrgService {
     return { id: Number(result.lastInsertRowid), parent_id, name, description, dept_type: dept_type || 'department', sort_order };
   }
 
-  static updateDepartment(id, { name, description, dept_type, sort_order, parent_id }) {
+  static updateDepartment(id, { name, description, dept_type, sort_order, parent_id } = {}) {
     const db = getDatabase();
+    // COALESCE рассчитан на NULL, а не на undefined: node:sqlite отказывается
+    // связывать undefined с параметром и бросает ошибку. Поэтому правка одного
+    // поля — например переименование отдела — падала целиком, ведь остальные
+    // поля приходили пустыми.
+    const orNull = (v) => (v === undefined ? null : v);
     db.prepare(`
-      UPDATE departments 
+      UPDATE departments
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
           dept_type = COALESCE(?, dept_type),
           sort_order = COALESCE(?, sort_order),
           parent_id = COALESCE(?, parent_id)
       WHERE id = ?
-    `).run(name, description, dept_type, sort_order, parent_id, id);
+    `).run(orNull(name), orNull(description), orNull(dept_type), orNull(sort_order), orNull(parent_id), id);
     return db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
   }
 

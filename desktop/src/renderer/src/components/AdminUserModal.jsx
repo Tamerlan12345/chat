@@ -53,6 +53,10 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // Tab 4: Rights & Groups
   const [roles, setRoles] = useState([]);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [newDeptParent, setNewDeptParent] = useState('');
+  const [renamingDeptId, setRenamingDeptId] = useState(null);
+  const [deptDraftName, setDeptDraftName] = useState('');
   const [selectedRole, setSelectedRole] = useState(null);
 
   // Tab 5: Tools (Audit, Port Test, DB, Announcements)
@@ -403,7 +407,11 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       uin: user.uin || '',
       email: user.email || '',
       phone: user.phone || '',
-      password: ''
+      password: '',
+      // Без этих двух полей форма показывала «Не назначен» даже тому, у кого
+      // контур назначен — администратор читал неверные сведения о правах.
+      bound_ip: user.bound_ip || '',
+      admin_scope_dept_id: user.admin_scope_dept_id || ''
     });
     setEditingUser(user);
     setFormMode('edit');
@@ -469,6 +477,87 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   };
 
   // Reset password
+  // ── Управление подразделениями ──
+  // Маршруты существовали с самого начала, но из приложения к ним никто не
+  // обращался: создать или переименовать отдел было нельзя вообще никак,
+  // кроме массового импорта.
+  const handleCreateDepartment = async () => {
+    const name = newDeptName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${serverUrl}/api/org/departments`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          parent_id: newDeptParent ? Number(newDeptParent) : null,
+          dept_type: 'department'
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось создать подразделение');
+        return;
+      }
+      setNewDeptName('');
+      setNewDeptParent('');
+      showToast(`Подразделение «${name}» создано`);
+      await loadOrgTree();
+      onRefreshData && onRefreshData();
+    } catch (err) {
+      showToast('Нет связи с сервером: ' + err.message);
+    }
+  };
+
+  const handleRenameDepartment = async (deptId) => {
+    const name = deptDraftName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${serverUrl}/api/org/departments/${deptId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось переименовать подразделение');
+        return;
+      }
+      setRenamingDeptId(null);
+      showToast('Название изменено');
+      await loadOrgTree();
+      onRefreshData && onRefreshData();
+    } catch (err) {
+      showToast('Нет связи с сервером: ' + err.message);
+    }
+  };
+
+  const handleDeleteDepartment = async (dept, headcount) => {
+    // Удаление обнуляет подразделение у всех, кто в нём числится, поэтому
+    // предупреждаем заранее и называем количество.
+    const warning = headcount > 0
+      ? `В подразделении «${dept.name}» числится ${headcount} чел. После удаления они останутся без подразделения. Продолжить?`
+      : `Удалить подразделение «${dept.name}»?`;
+    if (!window.confirm(warning)) return;
+
+    try {
+      const res = await fetch(`${serverUrl}/api/org/departments/${dept.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось удалить подразделение');
+        return;
+      }
+      showToast(`Подразделение «${dept.name}» удалено`);
+      await loadOrgTree();
+      onRefreshData && onRefreshData();
+    } catch (err) {
+      showToast('Нет связи с сервером: ' + err.message);
+    }
+  };
+
   const handleResetPassword = async (user) => {
     const newPass = prompt(`Введите новый пароль для сотрудника ${user.full_name} (логин: ${user.username}):`, '123456');
     if (!newPass) return;
@@ -481,11 +570,16 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         },
         body: JSON.stringify({ password: newPass })
       });
-      if (res.ok) {
-        showToast(`Пароль для ${user.full_name} успешно установлен: ${newPass}`);
+      // Отказ проглатывался целиком: администратор нажимал кнопку, ничего не
+      // происходило, и он не знал, сменился пароль или нет.
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось сбросить пароль');
+        return;
       }
+      showToast(`Пароль для ${user.full_name} установлен: ${newPass}. Сотрудник сменит его при входе.`);
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message);
     }
   };
 
@@ -1253,7 +1347,40 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                 {userSubTab === 'departments' ? (
                   <div>
-                    <h4 style={{ marginBottom: '10px' }}>Штатная структура подразделений АО СК "Сентрас Иншуранс"</h4>
+                    <h4 style={{ marginBottom: '10px' }}>Штатная структура подразделений</h4>
+
+                    <div className="dept-create-row">
+                      <input
+                        className="admin-input"
+                        placeholder="Название нового подразделения"
+                        value={newDeptName}
+                        onChange={(e) => setNewDeptName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDepartment(); }}
+                      />
+                      <select
+                        className="admin-input"
+                        value={newDeptParent}
+                        onChange={(e) => setNewDeptParent(e.target.value)}
+                        title="Вышестоящее подразделение"
+                      >
+                        <option value="">Верхний уровень</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>Внутри: {d.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn btn-primary"
+                        disabled={!newDeptName.trim()}
+                        onClick={handleCreateDepartment}
+                      >
+                        + Создать подразделение
+                      </button>
+                    </div>
+
+                    <div className="dept-hint">
+                      Чтобы перевести сотрудника в другое подразделение, откройте его карточку
+                      на вкладке «Список пользователей» и смените поле «Подразделение».
+                    </div>
                     <div className="admin-table-container">
                       <table className="admin-data-table">
                         <thead>
@@ -1261,16 +1388,59 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                             <th>ID</th>
                             <th>Название департамента / отдела</th>
                             <th>Штатная численность</th>
+                            <th>Действия</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {departments.map((d) => (
-                            <tr key={d.id}>
-                              <td>{d.id}</td>
-                              <td><strong>{d.name}</strong></td>
-                              <td>{users.filter((u) => u.department_id === d.id).length} чел.</td>
-                            </tr>
-                          ))}
+                          {departments.map((d) => {
+                            const headcount = users.filter((u) => u.department_id === d.id).length;
+                            return (
+                              <tr key={d.id}>
+                                <td>{d.id}</td>
+                                <td>
+                                  {renamingDeptId === d.id ? (
+                                    <input
+                                      className="admin-input"
+                                      autoFocus
+                                      value={deptDraftName}
+                                      onChange={(e) => setDeptDraftName(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleRenameDepartment(d.id);
+                                        if (e.key === 'Escape') setRenamingDeptId(null);
+                                      }}
+                                    />
+                                  ) : (
+                                    <strong>{d.name}</strong>
+                                  )}
+                                </td>
+                                <td>{headcount} чел.</td>
+                                <td style={{ whiteSpace: 'nowrap' }}>
+                                  {renamingDeptId === d.id ? (
+                                    <>
+                                      <button className="btn-mini" onClick={() => handleRenameDepartment(d.id)}>Сохранить</button>
+                                      <button className="btn-mini" onClick={() => setRenamingDeptId(null)}>Отмена</button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        className="btn-mini"
+                                        onClick={() => { setRenamingDeptId(d.id); setDeptDraftName(d.name); }}
+                                      >
+                                        Переименовать
+                                      </button>
+                                      <button
+                                        className="btn-mini danger"
+                                        title={headcount > 0 ? 'Сначала переведите сотрудников в другое подразделение' : 'Удалить подразделение'}
+                                        onClick={() => handleDeleteDepartment(d, headcount)}
+                                      >
+                                        Удалить
+                                      </button>
+                                    </>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

@@ -66,10 +66,15 @@ class UserService {
     return this.getUserById(userId);
   }
 
-  static updateProfile(userId, { full_name, email, phone, job_title, avatar_url, custom_status }) {
+  static updateProfile(userId, { full_name, email, phone, job_title, avatar_url, custom_status } = {}) {
     const db = getDatabase();
+    // COALESCE рассчитан на NULL; undefined node:sqlite связать не может и
+    // бросает ошибку на весь запрос. Форма профиля не отправляет
+    // custom_status — из-за этого сохранение профиля не срабатывало никогда,
+    // причём молча: ответ с ошибкой клиент не показывал.
+    const orNull = (v) => (v === undefined ? null : v);
     db.prepare(`
-      UPDATE users 
+      UPDATE users
       SET full_name = COALESCE(?, full_name),
           email = COALESCE(?, email),
           phone = COALESCE(?, phone),
@@ -77,7 +82,11 @@ class UserService {
           avatar_url = COALESCE(?, avatar_url),
           custom_status = COALESCE(?, custom_status)
       WHERE id = ?
-    `).run(full_name, email, phone, job_title, avatar_url, custom_status, userId);
+    `).run(
+      orNull(full_name), orNull(email), orNull(phone),
+      orNull(job_title), orNull(avatar_url), orNull(custom_status),
+      userId
+    );
     return this.getUserById(userId);
   }
 

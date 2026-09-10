@@ -989,13 +989,22 @@ export default function App() {
         },
         body: JSON.stringify(updatedFields)
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setCurrentUser(updated);
-        loadBaseData();
+      // Ошибка здесь проглатывалась: сохранение профиля падало на сервере, а
+      // человек видел закрывшееся окно и считал, что всё записалось.
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        addToast({
+          title: 'Профиль не сохранён',
+          body: data.error || 'Сервер отклонил изменения',
+          type: 'system'
+        });
+        return;
       }
-    } catch (err) {
-      console.error('Profile update error:', err);
+      const updated = await res.json();
+      setCurrentUser(updated);
+      loadBaseData();
+    } catch {
+      addToast({ title: 'Профиль не сохранён', body: 'Нет связи с сервером', type: 'system' });
     }
   };
 
