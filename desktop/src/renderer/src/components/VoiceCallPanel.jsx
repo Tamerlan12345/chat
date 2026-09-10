@@ -172,7 +172,7 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
           <>
             {phase === 'active' && (
               <button className={`call-btn mute ${muted ? 'on' : ''}`} onClick={toggleMute}>
-                {muted ? 'Включить микрофон' : 'Выключить микрофон'}
+                {muted ? '🔇 Микрофон выкл.' : '🎤 Микрофон'}
               </button>
             )}
             <button className="call-btn decline" onClick={() => hangUp(true)}>

@@ -5948,3 +5948,59 @@ select:focus-visible {
   from { width: 100%; }
   to   { width: 0; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Доводка после визуальной проверки
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Нижняя строка диалога: описанного класса не было, поэтому значок
+   непрочитанных наезжал на текст последнего сообщения. */
+.dialog-item-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dialog-item-bottom .dialog-snippet {
+  flex: 1;
+  min-width: 0;
+}
+.dialog-item-bottom .dialog-unread-badge {
+  flex-shrink: 0;
+}
+
+/* Индикатор набора текста. Разметка была, стилей не было вовсе — надпись
+   вылезала голым текстом у левого края. */
+.chat-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 2px 44px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 2px;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--primary);
+}
+.typing-dots span {
+  animation: typing-blink 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-blink {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+/* Панель звонка: имя собеседника вытеснялось кнопками. Кнопки теперь могут
+   ужиматься, а имя и таймер получают гарантированное место. */
+.call-panel-info { flex: 1; min-width: 120px; }
+.call-panel-actions { flex-wrap: wrap; justify-content: flex-end; }
+.call-btn { white-space: nowrap; }
