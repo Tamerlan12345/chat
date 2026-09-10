@@ -2354,8 +2354,11 @@ input, textarea, button, select {
   margin-bottom: 14px;
 }
 
+/* Обычная стрелка, а не крестик: крестик читается как «выделение области»,
+   хотя на самом деле это просто указатель, который передаётся на чужую
+   машину. Что клик уйдёт туда, видно по рамке вокруг области. */
 .rd-video-area.controllable {
-  cursor: crosshair;
+  cursor: default;
   user-select: none;
 }
 .rd-video-area.controllable:focus {
@@ -5793,3 +5796,155 @@ select:focus-visible {
 }
 .btn-sm:hover { background: var(--bg-hover); }
 .btn-sm:active { transform: translateY(1px); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Всплывающие уведомления внутри приложения
+   Компонент был свёрстан классами Tailwind, которого в проекте нет вовсе —
+   ни зависимости, ни конфига. Все классы превращались в пустоту, и вместо
+   карточки выводился голый текст столбиком.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.toast-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  pointer-events: none;
+}
+
+.toast-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 14px 15px 18px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: #e2e8f0;
+  cursor: pointer;
+  pointer-events: auto;
+  overflow: hidden;
+  animation: toast-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toast-card:hover { border-color: #475569; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+}
+.toast-card.urgent .toast-accent { background: var(--danger); }
+.toast-card.announcement .toast-accent { background: var(--warning); }
+
+.toast-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.toast-card.urgent .toast-avatar { background: var(--danger); }
+.toast-card.announcement .toast-avatar { background: var(--warning); }
+
+.toast-body { flex: 1; min-width: 0; }
+
+.toast-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-tag {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(37, 99, 235, 0.18);
+  color: #93c5fd;
+}
+.toast-card.urgent .toast-tag { background: rgba(220, 38, 38, 0.2); color: #fca5a5; }
+.toast-card.announcement .toast-tag { background: rgba(217, 119, 6, 0.2); color: #fcd34d; }
+
+.toast-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #cbd5e1;
+  /* Длинное сообщение не должно растягивать карточку на пол-экрана. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.toast-foot { margin-top: 7px; }
+
+.toast-action {
+  font-size: 11px;
+  font-weight: 500;
+  color: #60a5fa;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.toast-close:hover { color: #f1f5f9; background: rgba(255, 255, 255, 0.08); }
+
+.toast-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--primary);
+  animation: toast-progress 6s linear forwards;
+}
+.toast-card.urgent .toast-progress { background: var(--danger); }
+.toast-card.announcement .toast-progress { background: var(--warning); }
+
+@keyframes toast-progress {
+  from { width: 100%; }
+  to   { width: 0; }
+}

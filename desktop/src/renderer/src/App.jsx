@@ -247,21 +247,29 @@ export default function App() {
     loadBaseData(authToken);
   };
 
+  // Возвращает 'ok' | 'invalid' | 'offline'. Разделение важно: раньше любая
+  // неудача считалась недействительным токеном, поэтому кратковременный обрыв
+  // связи или ещё не проснувшийся сервер выбрасывали человека на экран входа
+  // и заставляли вводить пароль заново.
   const tryRestoreSession = async (authToken) => {
+    let res;
     try {
-      const res = await fetch(`${serverUrl}/api/auth/me`, {
+      res = await fetch(`${serverUrl}/api/auth/me`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
-      if (!res.ok) return false;
-      const data = await res.json();
-      setToken(authToken);
-      setCurrentUser(data.user);
-      setAuthState('authenticated');
-      openSessionChannels(data.user, authToken);
-      return true;
     } catch {
-      return false;
+      return 'offline';
     }
+
+    if (res.status === 401 || res.status === 403) return 'invalid';
+    if (!res.ok) return 'offline';
+
+    const data = await res.json();
+    setToken(authToken);
+    setCurrentUser(data.user);
+    setAuthState('authenticated');
+    openSessionChannels(data.user, authToken);
+    return 'ok';
   };
 
   const attemptSilentDeviceLogin = async () => {
@@ -310,7 +318,20 @@ export default function App() {
   const initializeSession = async () => {
     setAuthState('checking');
     const storedToken = localStorage.getItem('mychat_token');
-    if (storedToken && (await tryRestoreSession(storedToken))) return;
+
+    if (storedToken) {
+      // Повторяем несколько раз: сервер может быть ещё не поднят (в облаке
+      // контейнер просыпается не мгновенно), а сеть на ноутбуке — не готова
+      // сразу после запуска Windows. Просить пароль в этот момент неправильно:
+      // сессия-то действующая.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await tryRestoreSession(storedToken);
+        if (result === 'ok') return;
+        if (result === 'invalid') break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+
     // A device paired by an admin logs in silently, which would otherwise
     // undo an explicit logout on the very next launch.
     if (localStorage.getItem('mychat_logged_out') !== '1' && (await attemptSilentDeviceLogin())) return;
@@ -1194,8 +1215,14 @@ export default function App() {
       );
     }
 
+    // Собеседник приходит в поле user_id; чтения несуществующего
+    // other_user_id хватало, чтобы список оставался пустым всегда.
+    // Маршрут отдаёт всех сотрудников, а не только тех, с кем есть переписка,
+    // поэтому признаком служит наличие последнего сообщения.
     const lastMessageAt = new Map(
-      directConvos.map((c) => [c.other_user_id, c.last_message_time || ''])
+      directConvos
+        .filter((c) => c.last_message_time)
+        .map((c) => [c.user_id, c.last_message_time])
     );
 
     return others
@@ -1204,6 +1231,9 @@ export default function App() {
         // нет ни одного сообщения — иначе собеседник пропадал бы из списка,
         // пока ему не напишешь.
         if (activeChat?.type === 'direct' && activeChat.id === u.id) return true;
+        // Непрочитанное показывается всегда: сообщение, о котором сотрудник не
+        // узнает, — худшее, что может сделать мессенджер.
+        if (unreadMap[u.id] > 0) return true;
         return lastMessageAt.has(u.id);
       })
       .sort((a, b) => String(lastMessageAt.get(b.id) || '').localeCompare(String(lastMessageAt.get(a.id) || '')))
@@ -1430,7 +1460,7 @@ export default function App() {
                 const isOnline = u.status === 'online';
                 const displayName = u.full_name || u.username;
 
-                const lastConvo = directConvos.find((c) => c.other_user_id === u.id);
+                const lastConvo = directConvos.find((c) => c.user_id === u.id);
                 const snippet = lastConvo?.last_message_text || 'Нажмите для беседы';
                 const timeStr = lastConvo?.last_message_time ? formatDialogTime(lastConvo.last_message_time) : '';
                 const unreadBadge = unreadMap[u.id] !== undefined ? unreadMap[u.id] : (lastConvo?.unread_count || 0);
