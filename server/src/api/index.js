@@ -381,13 +381,61 @@ router.get('/admin/roles', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
+// Права ролей меняет только суперадминистратор — этим правом можно выдать
+// себе что угодно.
 router.put('/admin/roles/:id', requireAuth, requireAdmin, (req, res) => {
   try {
-    const { name, description, permissions } = req.body;
-    const db = require('../db').getDatabase();
+    const { name, description, permissions } = req.body || {};
+    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
+      return res.status(400).json({ error: 'Не переданы права роли' });
+    }
+
+    const db = getDatabase();
+    const roleId = Number(req.params.id);
+    const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(roleId);
+    if (!role) return res.status(404).json({ error: 'Роль не найдена' });
+
+    // Защита от необратимой самоблокировки: снять признак администратора у
+    // роли, кроме которой администраторов больше нет, — значит навсегда
+    // лишить систему управления. Восстановить это можно было бы только
+    // правкой базы напрямую, поэтому такая правка отклоняется.
+    const grantsFullAdmin = Boolean(permissions.is_admin) && !permissions.is_scoped_admin;
+    const roleHadFullAdmin =
+      (() => {
+        const current = JSON.parse(role.permissions_json || '{}');
+        return Boolean(current.is_admin) && !current.is_scoped_admin;
+      })();
+
+    if (roleHadFullAdmin && !grantsFullAdmin) {
+      const remaining = db
+        .prepare(`
+          SELECT COUNT(*) AS n
+          FROM users u JOIN roles r ON r.id = u.role_id
+          WHERE u.is_active = 1 AND u.role_id != ?
+            AND r.permissions_json LIKE '%"is_admin":true%'
+            AND r.permissions_json NOT LIKE '%"is_scoped_admin":true%'
+        `)
+        .get(roleId);
+
+      if (!remaining.n) {
+        return res.status(400).json({
+          error: 'Нельзя снять права администратора: в системе не останется ни одного администратора'
+        });
+      }
+    }
+
+    const orNull = (v) => (v === undefined ? null : v);
     db.prepare(
       'UPDATE roles SET name = COALESCE(?, name), description = COALESCE(?, description), permissions_json = ? WHERE id = ?'
-    ).run(name, description, JSON.stringify(permissions), req.params.id);
+    ).run(orNull(name), orNull(description), JSON.stringify(permissions), roleId);
+
+    AuditService.log({
+      userId: req.user.id,
+      action: 'role_permissions_changed',
+      ip: getClientIp(req),
+      details: { roleId, roleName: role.name, permissions }
+    });
+
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });

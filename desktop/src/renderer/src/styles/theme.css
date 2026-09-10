@@ -2496,6 +2496,45 @@ input, textarea, button, select {
   outline-offset: -2px;
 }
 
+.admin-right-item.editable {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.admin-right-item.editable:hover { color: #1e293b; }
+.admin-right-item.editable input { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+
+.right-note {
+  display: block;
+  color: #94a3b8;
+  font-size: 10.5px;
+  margin-top: 1px;
+}
+
+.rights-changed {
+  font-size: 10px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 2px 7px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.rights-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+.rights-card-actions .btn { padding: 5px 12px; font-size: 12px; }
+
 .dept-create-row {
   display: flex;
   gap: 8px;

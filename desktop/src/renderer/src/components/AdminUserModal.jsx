@@ -1,5 +1,25 @@
 import React, { useState, useEffect } from 'react';
 
+// Права, которыми управляет администратор. defaultOn — как трактуется
+// отсутствующее значение: три права считаются разрешёнными, пока их явно не
+// отключили, поэтому галочка для них должна стоять и у роли без записи.
+const PERMISSION_FIELDS = [
+  { key: 'is_admin', label: 'Доступ к консоли управления сервером', emphasis: true },
+  { key: 'can_manage_users', label: 'Управление пользователями и блокировками' },
+  { key: 'can_manage_structure', label: 'Управление подразделениями' },
+  {
+    key: 'can_remote_control',
+    label: 'Удалённый рабочий стол',
+    emphasis: true,
+    note: 'просмотр и управление чужим компьютером'
+  },
+  { key: 'can_call', label: 'Голосовые звонки', defaultOn: true },
+  { key: 'can_upload_files', label: 'Передача файлов', defaultOn: true },
+  { key: 'can_broadcast', label: 'Публикация объявлений для всех' },
+  { key: 'can_create_channels', label: 'Создание каналов', defaultOn: true },
+  { key: 'can_manage_db', label: 'Доступ к базе данных', emphasis: true, note: 'выполнение SQL-запросов' }
+];
+
 export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onClose, onRefreshData }) {
   // Official MyChat Control Panel Sections
   const [activeTab, setActiveTab] = useState('server'); 
@@ -53,6 +73,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // Tab 4: Rights & Groups
   const [roles, setRoles] = useState([]);
+  const [rightsDraft, setRightsDraft] = useState({});
+  const [savingRoleId, setSavingRoleId] = useState(null);
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptParent, setNewDeptParent] = useState('');
   const [renamingDeptId, setRenamingDeptId] = useState(null);
@@ -477,6 +499,46 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   };
 
   // Reset password
+  // ── Права ролей ──
+  // Раньше эта вкладка только показывала галочки: изменить права можно было
+  // исключительно SQL-запросом через консоль базы.
+  const toggleRight = (role, key, value) => {
+    setRightsDraft((prev) => {
+      const base = prev[role.id] || role.permissions || {};
+      return { ...prev, [role.id]: { ...base, [key]: value } };
+    });
+  };
+
+  const saveRoleRights = async (role) => {
+    const permissions = rightsDraft[role.id];
+    if (!permissions) return;
+    setSavingRoleId(role.id);
+    try {
+      const res = await fetch(`${serverUrl}/api/admin/roles/${role.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // Сюда попадает и отказ сервера снять последнего администратора.
+        showToast(data.error || 'Не удалось сохранить права');
+        return;
+      }
+      showToast(`Права роли «${role.name}» сохранены`);
+      setRightsDraft((prev) => {
+        const next = { ...prev };
+        delete next[role.id];
+        return next;
+      });
+      await loadRoles();
+    } catch (err) {
+      showToast('Нет связи с сервером: ' + err.message);
+    } finally {
+      setSavingRoleId(null);
+    }
+  };
+
   // ── Управление подразделениями ──
   // Маршруты существовали с самого начала, но из приложения к ним никто не
   // обращался: создать или переименовать отдел было нельзя вообще никак,
@@ -1819,50 +1881,59 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                   Управление группами прав и ограничениями (grouprightsmanage.html)
                 </h3>
                 <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
-                  Разграничение прав доступа для ролей пользователей: приватные диалоги, файлы, звонки и удаленный рабочий стол.
+                  Права действуют на всех сотрудников с этой ролью. Изменения вступают в силу
+                  при следующем действии пользователя — перезаходить ему не нужно.
                 </p>
 
                 <div className="admin-rights-grid">
                   {roles.map((r) => {
-                    const p = r.permissions || {};
+                    const saved = r.permissions || {};
+                    const draft = rightsDraft[r.id] || saved;
+                    const changed = JSON.stringify(draft) !== JSON.stringify(saved);
                     return (
                       <div key={r.id} className="admin-rights-card">
                         <h4>
                           <span>{r.name}</span>
-                          <span style={{ fontSize: '11px', color: '#2563eb' }}>ID: {r.id}</span>
+                          {changed && <span className="rights-changed">не сохранено</span>}
                         </h4>
                         <p style={{ fontSize: '11px', color: '#64748b', marginBottom: '12px' }}>
                           {r.description}
                         </p>
                         <div className="admin-rights-list">
-                          <div className="admin-right-item">
-                            <span>{p.is_admin ? '✅' : '❌'}</span>
-                            <span>Доступ к консоли управления сервером</span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_manage_users ? '✅' : '❌'}</span>
-                            <span>Управление пользователями и блокировками</span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_remote_control ? '✅' : '❌'}</span>
-                            <span><strong>Удаленный рабочий стол (Screen Assist)</strong></span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_call !== false ? '✅' : '❌'}</span>
-                            <span>WebRTC аудио- и видеозвонки</span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_upload_files !== false ? '✅' : '❌'}</span>
-                            <span>Передача файлов (до 100 МБ)</span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_broadcast ? '✅' : '❌'}</span>
-                            <span>Публикация на общей доске объявлений</span>
-                          </div>
-                          <div className="admin-right-item">
-                            <span>{p.can_create_channels !== false ? '✅' : '❌'}</span>
-                            <span>Создание публичных конференций</span>
-                          </div>
+                          {PERMISSION_FIELDS.map((field) => (
+                            <label key={field.key} className="admin-right-item editable">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  draft[field.key] === undefined
+                                    ? Boolean(field.defaultOn)
+                                    : Boolean(draft[field.key])
+                                }
+                                onChange={(e) => toggleRight(r, field.key, e.target.checked)}
+                              />
+                              <span>
+                                {field.emphasis ? <strong>{field.label}</strong> : field.label}
+                                {field.note && <span className="right-note">{field.note}</span>}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+
+                        <div className="rights-card-actions">
+                          <button
+                            className="btn btn-primary"
+                            disabled={!changed || savingRoleId === r.id}
+                            onClick={() => saveRoleRights(r)}
+                          >
+                            {savingRoleId === r.id ? 'Сохраняю…' : 'Сохранить'}
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            disabled={!changed}
+                            onClick={() => setRightsDraft((prev) => ({ ...prev, [r.id]: saved }))}
+                          >
+                            Отменить
+                          </button>
                         </div>
                       </div>
                     );
