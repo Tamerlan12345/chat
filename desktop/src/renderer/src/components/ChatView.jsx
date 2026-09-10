@@ -248,7 +248,7 @@ export default function ChatView({
       }
 
       // Draw unread line before unread messages from other peer
-      if (!isMine && m.is_read === 0 && !hasDrawnUnreadSeparator) {
+      if (!isMine && m.delivery_status !== 'read' && !hasDrawnUnreadSeparator) {
         elements.push(
           <div key={`unread_sep_${idx}`} className="chat-unread-separator">
             <span>непрочитанные сообщения</span>
@@ -298,14 +298,20 @@ export default function ChatView({
                 </span>
                 <div className="classic-msg-meta">
                   <span className="classic-msg-time">{timeStr}</span>
-                  {isMine && (
-                    <span
-                      className={`classic-msg-ticks${m.is_read ? ' read' : ''}`}
-                      title={m.is_read ? 'Прочитано' : 'Доставлено'}
-                    >
-                      {m.is_read ? '✓✓' : '✓'}
-                    </span>
-                  )}
+                  {isMine && (() => {
+                    // Сервер отдаёт статус в delivery_status ('delivered' |
+                    // 'read'); поля is_read, которое читалось раньше, в ответе
+                    // нет вовсе — поэтому галочка всегда оставалась одной.
+                    const isRead = m.delivery_status === 'read';
+                    return (
+                      <span
+                        className={`classic-msg-ticks${isRead ? ' read' : ''}`}
+                        title={isRead ? 'Прочитано' : 'Доставлено'}
+                      >
+                        {isRead ? '✓✓' : '✓'}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             )}

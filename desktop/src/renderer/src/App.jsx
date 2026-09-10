@@ -337,6 +337,34 @@ export default function App() {
   // colleague for consent. Opening the viewer straight away with a locally
   // invented session id is what left it waiting forever — nothing had been
   // requested of anyone. The viewer opens on rd_accepted.
+  // Отметка о прочтении. Сервер, таблица статусов и рассылка отправителю
+  // существовали и работали — не хватало ровно этого вызова, поэтому у
+  // отправителя навсегда оставалась одна галочка.
+  //
+  // Прочитанным считается только то, что человек реально мог увидеть: окно в
+  // фокусе и открыт именно этот диалог. Иначе «прочитано» означало бы лишь
+  // «приложение запущено».
+  const markConversationRead = (chat = activeChatRef.current) => {
+    if (!chat || !windowFocusedRef.current) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      type: 'mark_read',
+      conversationType: chat.type,
+      targetId: chat.id
+    }));
+    setUnreadMap((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
+  };
+
+  // ChatView вызывает markConversationRead сам при переключении диалога и
+  // когда прокрутка внизу. Здесь остаётся один случай, который он не ловит:
+  // окно свернули с открытым чатом, сообщения пришли, окно вернули — увидеть
+  // их человек мог только сейчас.
+  useEffect(() => {
+    if (authState !== 'authenticated' || !windowFocused) return;
+    markConversationRead();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowFocused, authState]);
+
   const handleStartCall = (targetUser) => {
     const peer = targetUser || activeChat?.user;
     if (!peer) return;
@@ -590,6 +618,28 @@ export default function App() {
 
       case 'rd_requested':
         setRdSessionId(event.sessionId);
+        break;
+
+      // ── Статусы доставки и прочтения ────────────────────────────────────
+      case 'messages_read': {
+        // Собеседник открыл диалог — наши сообщения у него прочитаны.
+        const ids = new Set(event.messageIds || []);
+        setMessages((prev) =>
+          prev.map((m) => (ids.has(m.id) ? { ...m, delivery_status: 'read' } : m))
+        );
+        break;
+      }
+
+      case 'message_status_updated':
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === event.messageId
+              // 'delivered' не должен затирать уже проставленное 'read':
+              // события могут прийти не в том порядке, в каком случились.
+              ? { ...m, delivery_status: m.delivery_status === 'read' ? 'read' : event.status }
+              : m
+          )
+        );
         break;
 
       // ── Голосовые звонки ────────────────────────────────────────────────
@@ -1532,7 +1582,9 @@ export default function App() {
                 onSendFile={handleSendFile}
                 onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
-                onMarkRead={() => {}}
+                onMarkRead={(conversationType, targetId) =>
+                  markConversationRead({ type: conversationType, id: targetId })
+                }
                 token={token}
                 serverUrl={serverUrl}
               />
