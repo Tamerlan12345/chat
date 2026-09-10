@@ -1,23 +1,65 @@
+/* Единый набор значений оформления.
+ *
+ * Раньше здесь были объявлены переменные, которыми почти не пользовались:
+ * на 909 записанных вручную цветов приходилось 27 обращений к переменным, а
+ * --primary не использовался ни разу. В итоге по интерфейсу разошлись два
+ * разных синих, четыре почти одинаковых серых для рамок, 20 размеров шрифта
+ * и 17 радиусов скругления.
+ *
+ * --primary приведён к #2563eb: именно он преобладает в интерфейсе
+ * (52 использования против 9 у прежнего значения), поэтому менять пришлось
+ * меньшее число мест.
+ */
 :root {
+  /* Поверхности */
   --bg-main: #ffffff;
   --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
   --bg-rail: #2d3542;
   --bg-rail-active: #3c4556;
   --bg-panel: #f8fafc;
   --bg-hover: #f1f5f9;
-  --bg-active-chat: #e8effa;
-  --border-color: #e2e5e9;
-  --border-subtle: #f1f3f5;
+  --bg-active: #e2e8f0;
+  --bg-active-chat: #dbeafe;
+
+  /* Рамки */
+  --border-color: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-subtle: #f1f5f9;
+
+  /* Текст */
   --text-main: #1e293b;
+  --text-strong: #0f172a;
   --text-muted: #64748b;
   --text-dim: #94a3b8;
-  --primary: #1e70bf;
-  --primary-hover: #175a9e;
+
+  /* Смысловые цвета */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #dbeafe;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --success: #16a34a;
+  --warning: #d97706;
+
+  /* Присутствие */
   --sender-incoming: #1d4ed8;
   --sender-outgoing: #b91c1c;
   --online: #16a34a;
   --away: #ea580c;
   --offline: #94a3b8;
+
+  /* Скругления: четыре ступени вместо семнадцати произвольных значений */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Тени */
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 12px 40px rgba(15, 23, 42, 0.18);
+
   --font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -97,18 +139,6 @@ input, textarea, button, select {
   -webkit-app-region: no-drag;
 }
 
-.win-btn {
-  background: none;
-  border: none;
-  width: 28px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #64748b;
-  cursor: pointer;
-}
 .win-btn:hover {
   background-color: #e2e8f0;
   color: #0f172a;
@@ -130,19 +160,7 @@ input, textarea, button, select {
   z-index: 1000;
 }
 
-.menu-item-wrapper {
-  position: relative;
-}
 
-.menu-bar-btn {
-  background: none;
-  border: none;
-  padding: 3px 8px;
-  font-size: 12px;
-  color: #334155;
-  cursor: pointer;
-  border-radius: 3px;
-}
 .menu-bar-btn:hover, .menu-bar-btn.active {
   background-color: #e2e8f0;
   color: #0f172a;
@@ -388,11 +406,6 @@ input, textarea, button, select {
   margin-right: 10px;
   overflow: hidden;
 }
-.dialog-avatar-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 .dialog-avatar-camera {
   color: #94a3b8;
   font-size: 18px;
@@ -406,11 +419,6 @@ input, textarea, button, select {
   gap: 2px;
 }
 
-.dialog-row-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
 .dialog-name {
   font-size: 12.5px;
   font-weight: 600;
@@ -426,11 +434,6 @@ input, textarea, button, select {
   margin-left: 6px;
 }
 
-.dialog-row-bottom {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .dialog-checkmarks {
   color: #3b82f6;
   font-size: 11px;
@@ -438,38 +441,10 @@ input, textarea, button, select {
   letter-spacing: -2px;
   margin-right: 2px;
 }
-.dialog-snippet {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* 3. Center Greeting Screen (Screenshot 2) */
-.greeting-container {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: #ffffff;
-  padding: 40px;
-}
 
-.greeting-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  max-width: 520px;
-}
 
-.greeting-title {
-  font-size: 26px;
-  font-weight: 600;
-  color: #2c3e50;
-  margin-bottom: 24px;
-}
 
 .greeting-illustration {
   margin-bottom: 16px;
@@ -516,13 +491,6 @@ input, textarea, button, select {
 }
 
 /* 4. Active Chat View (Screenshot 3) */
-.chat-view-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  flex: 1;
-  background-color: #ffffff;
-}
 
 .chat-header-bar {
   height: 52px;
@@ -588,13 +556,6 @@ input, textarea, button, select {
   background-color: #ffffff;
 }
 
-.chat-date-divider {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  margin: 14px 0 8px;
-}
 .chat-date-divider::before {
   content: '';
   position: absolute;
@@ -605,48 +566,15 @@ input, textarea, button, select {
   background-color: #e2e8f0;
   z-index: 1;
 }
-.chat-date-text {
-  background-color: #ffffff;
-  padding: 0 12px;
-  font-size: 11px;
-  color: #64748b;
-  position: relative;
-  z-index: 2;
-}
 
-.chat-message-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
 
-.chat-sender-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-top: 6px;
-  margin-bottom: 2px;
-}
-.chat-sender-name {
-  font-size: 12px;
-  font-weight: 700;
-}
 .chat-sender-name.blue {
   color: var(--sender-incoming);
 }
 .chat-sender-name.red {
   color: var(--sender-outgoing);
 }
-.chat-sender-time {
-  font-size: 11px;
-  color: #94a3b8;
-}
 
-.chat-message-bubble {
-  font-size: 13px;
-  color: #1e293b;
-  line-height: 1.45;
-}
 
 .chat-text-line {
   display: flex;
@@ -674,12 +602,6 @@ input, textarea, button, select {
 .chat-inline-time {
   font-size: 11px;
   color: #94a3b8;
-}
-.chat-read-status {
-  color: #3b82f6;
-  font-weight: 700;
-  font-size: 11px;
-  letter-spacing: -2px;
 }
 
 /* Security Auth Card Container (Screenshot 3) */
@@ -844,19 +766,6 @@ input, textarea, button, select {
   gap: 8px;
 }
 
-.chat-textarea {
-  flex: 1;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 13px;
-  outline: none;
-  resize: none;
-  min-height: 38px;
-  max-height: 120px;
-  color: #1e293b;
-  background-color: #ffffff;
-}
 .chat-textarea:focus {
   border-color: #1e70bf;
 }
@@ -1358,6 +1267,8 @@ input, textarea, button, select {
   background-color: #f8fafc;
   padding: 40px 20px;
   overflow-y: auto;
+  /* перенесено из более раннего объявления того же селектора */
+  flex: 1;
 }
 
 .greeting-content {
@@ -1514,6 +1425,9 @@ input, textarea, button, select {
   height: 100%;
   width: 100%;
   background: #ffffff;
+  /* перенесено из более раннего объявления того же селектора */
+  flex: 1;
+  background-color: #ffffff;
 }
 
 .chat-header {
@@ -1645,6 +1559,8 @@ input, textarea, button, select {
   align-items: center;
   justify-content: center;
   margin: 16px 0 8px;
+  /* перенесено из более раннего объявления того же селектора */
+  position: relative;
 }
 
 .chat-date-text {
@@ -1654,12 +1570,18 @@ input, textarea, button, select {
   font-weight: 600;
   padding: 3px 12px;
   border-radius: 12px;
+  /* перенесено из более раннего объявления того же селектора */
+  background-color: #ffffff;
+  position: relative;
+  z-index: 2;
 }
 
 .chat-message-row {
   display: flex;
   flex-direction: column;
   max-width: 78%;
+  /* перенесено из более раннего объявления того же селектора */
+  gap: 3px;
 }
 
 .chat-message-row.outgoing {
@@ -1678,6 +1600,9 @@ input, textarea, button, select {
   gap: 8px;
   margin-bottom: 2px;
   padding: 0 4px;
+  /* перенесено из более раннего объявления того же селектора */
+  justify-content: space-between;
+  margin-top: 6px;
 }
 
 .chat-sender-name {
@@ -1700,6 +1625,8 @@ input, textarea, button, select {
   word-break: break-word;
   position: relative;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  /* перенесено из более раннего объявления того же селектора */
+  color: #1e293b;
 }
 
 .chat-message-row.outgoing .chat-message-bubble {
@@ -1747,6 +1674,9 @@ input, textarea, button, select {
 .chat-read-status {
   color: #0284c7;
   font-weight: 700;
+  /* перенесено из более раннего объявления того же селектора */
+  font-size: 11px;
+  letter-spacing: -2px;
 }
 
 /* File and Image Attachments */
@@ -1892,6 +1822,13 @@ input, textarea, button, select {
   line-height: 1.4;
   outline: none;
   max-height: 120px;
+  /* перенесено из более раннего объявления того же селектора */
+  flex: 1;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 38px;
+  color: #1e293b;
+  background-color: #ffffff;
 }
 
 .chat-send-btn {
@@ -2024,20 +1961,6 @@ input, textarea, button, select {
   align-items: center;
 }
 
-.rail-tab-btn {
-  width: 50px;
-  height: 50px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #9ca3af;
-  cursor: pointer;
-  border-radius: 4px;
-  position: relative;
-  gap: 2px;
-  transition: all 0.15s;
-}
 .rail-tab-btn:hover {
   color: #ffffff;
   background-color: #3b4455;
@@ -2126,16 +2049,6 @@ input, textarea, button, select {
   background-color: #ffffff;
 }
 
-.dialog-list-item {
-  display: flex;
-  align-items: center;
-  padding: 6px 8px;
-  border-bottom: 1px solid #f1f5f9;
-  cursor: pointer;
-  position: relative;
-  transition: background-color 0.1s;
-  gap: 8px;
-}
 .dialog-list-item:hover {
   background-color: #f1f5f9;
 }
@@ -2237,6 +2150,8 @@ input, textarea, button, select {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* перенесено из более раннего объявления того же селектора */
+  gap: 4px;
 }
 
 .dialog-snippet {
@@ -2248,20 +2163,6 @@ input, textarea, button, select {
   flex: 1;
 }
 
-.dialog-unread-badge {
-  background-color: #2563eb;
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 700;
-  border-radius: 10px;
-  min-width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  margin-left: 6px;
-}
 
 .dialog-read-ticks {
   font-size: 11px;
@@ -2380,19 +2281,6 @@ input, textarea, button, select {
   gap: 8px;
 }
 
-.classic-action-icon-btn {
-  background: none;
-  border: 1px solid transparent;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  cursor: pointer;
-  color: #475569;
-}
 .classic-action-icon-btn:hover {
   background-color: #f1f5f9;
   border-color: #cbd5e1;
@@ -2899,15 +2787,6 @@ input, textarea, button, select {
   font-size: 12px;
 }
 
-.classic-tool-item {
-  background: none;
-  border: none;
-  font-size: 16px;
-  cursor: pointer;
-  color: #475569;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
 .classic-tool-item:hover, .classic-tool-item.active {
   background-color: #e2e8f0;
 }
@@ -2916,18 +2795,6 @@ input, textarea, button, select {
   position: relative;
 }
 
-.classic-tool-item-with-arrow {
-  background: none;
-  border: none;
-  font-size: 12px;
-  color: #334155;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
 .classic-tool-item-with-arrow:hover {
   background-color: #e2e8f0;
 }
@@ -2977,16 +2844,6 @@ input, textarea, button, select {
   max-height: 100px;
 }
 
-.classic-send-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border-radius: 4px;
-}
 .classic-send-btn:hover {
   background-color: #eff6ff;
 }
@@ -3086,18 +2943,6 @@ input, textarea, button, select {
   border-top: 1px solid #f1f5f9;
 }
 
-.person-tool-btn {
-  background-color: #f8fafc;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  padding: 5px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  color: #334155;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 .person-tool-btn:hover {
   background-color: #e2e8f0;
 }
@@ -3654,13 +3499,16 @@ input, textarea, button, select {
   font-weight: 600;
 }
 
+/* flex-shrink: 0 вместе с max-width обрезал ФИО на 180px независимо от того,
+   сколько места есть на самом деле, а должность рядом сжималась до многоточия.
+   Русские ФИО с отчеством в 180px не помещаются почти никогда. */
 .tree-emp-name {
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
-  max-width: 180px;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .tree-emp-job {
@@ -3673,14 +3521,6 @@ input, textarea, button, select {
   min-width: 0;
 }
 
-.tree-emp-ext {
-  font-size: 10px;
-  color: #475569;
-  background: #f1f5f9;
-  padding: 1px 4px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
 
 /* Compact mode */
 .is-compact-mode .tree-root-row,
@@ -4038,6 +3878,8 @@ input, textarea, button, select {
   transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
   outline: none;
+  /* перенесено из более раннего объявления того же селектора */
+  padding: 4px;
 }
 .classic-send-btn svg {
   stroke: #ffffff !important;
@@ -4096,6 +3938,11 @@ input, textarea, button, select {
   color: #94a3b8;
   font-size: 11px;
   margin-left: 4px;
+  /* перенесено из более раннего объявления того же селектора */
+  background: #f1f5f9;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 /* 6. Person Info Panel Status & Buttons */
@@ -4150,6 +3997,8 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   gap: 4px;
+  /* перенесено из более раннего объявления того же селектора */
+  background-color: #f8fafc;
 }
 .person-tool-btn:hover {
   background-color: #f8fafc;
@@ -5437,6 +5286,8 @@ input, textarea, button, select {
   margin-left: auto;
   box-shadow: 0 2px 4px rgba(239, 68, 68, 0.4) !important;
   animation: pulse-unread 2s infinite ease-in-out;
+  /* перенесено из более раннего объявления того же селектора */
+  background-color: #2563eb;
 }
 
 @keyframes pulse-unread {
@@ -5602,6 +5453,18 @@ select:focus-visible {
 .rail-hamburger-item,
 .rail-tab-btn {
   transition: all 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+  /* перенесено из более раннего объявления того же селектора */
+  width: 50px;
+  height: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  cursor: pointer;
+  border-radius: 4px;
+  position: relative;
+  gap: 2px;
 }
 .rail-hamburger-item:active {
   background-color: #2f3746;
@@ -5614,6 +5477,14 @@ select:focus-visible {
 
 .dialog-list-item {
   cursor: pointer;
+  /* перенесено из более раннего объявления того же селектора */
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  position: relative;
+  transition: background-color 0.1s;
+  gap: 8px;
 }
 .dialog-list-item:active {
   background-color: #e2e8f0;
@@ -5621,6 +5492,17 @@ select:focus-visible {
 
 .win-btn {
   transition: background-color 0.12s ease, color 0.12s ease;
+  /* перенесено из более раннего объявления того же селектора */
+  background: none;
+  border: none;
+  width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
 }
 .win-btn:active {
   filter: brightness(0.92);
@@ -5629,6 +5511,14 @@ select:focus-visible {
 .menu-top-btn,
 .menu-bar-btn {
   transition: background-color 0.12s ease;
+  /* перенесено из более раннего объявления того же селектора */
+  background: none;
+  border: none;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+  border-radius: 3px;
 }
 .menu-top-btn:active,
 .menu-bar-btn:active {
@@ -5832,3 +5722,74 @@ select:focus-visible {
 .cp-item-snippet {
   font-style: italic;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Узкие экраны
+   Стилей адаптации не было вовсе. На типовом корпоративном ноутбуке
+   1366×768 неподвижные панели занимали 928px из 1366 — на саму переписку
+   оставалось 438px. Здесь панели ужимаются и отключаются по мере сужения
+   окна, начиная с наименее нужных.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 1500px) {
+  .person-info-sidebar { width: 190px; }
+}
+
+@media (max-width: 1366px) {
+  /* Карточка сотрудника справа — первое, чем можно пожертвовать: те же
+     сведения открываются по клику на имени. */
+  .person-info-sidebar { display: none; }
+  .sub-panel-dialogs { max-width: 300px; }
+}
+
+@media (max-width: 1180px) {
+  .sub-panel-dialogs { max-width: 250px; }
+  .rd-toolbar-center { display: none; }
+  .call-panel { min-width: 0; left: 20px; right: 20px; }
+}
+
+@media (max-width: 980px) {
+  /* Совсем узкое окно: остаётся навигация и переписка. */
+  .vertical-nav-rail { width: 48px; }
+  .rail-tab-label { display: none; }
+  .sub-panel-dialogs { max-width: 210px; }
+}
+
+@media (max-height: 700px) {
+  .profile-modal-dialog,
+  .server-connect-dialog { max-height: 92vh; overflow-y: auto; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Раздел базы данных
+   Компонент ссылался на переменные --bg-card, --bg-active, --radius-md и
+   --radius-sm, которых в наборе не было, и на классы, не описанные нигде.
+   Всё это молча превращалось в пустоту: панели без фона, углы без скругления.
+   Переменные теперь объявлены выше, здесь описаны недостающие классы.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.sub-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-main);
+  cursor: pointer;
+}
+.btn-sm:hover { background: var(--bg-hover); }
+.btn-sm:active { transform: translateY(1px); }
