@@ -58,8 +58,10 @@ class WsServer {
       });
     });
 
-    // Heartbeat to detect dead connections
-    setInterval(() => {
+    // Heartbeat to detect dead connections. unref'd so it never becomes the
+    // only reason the process stays alive — otherwise Node cannot exit after
+    // the server closes, which is what a test run does.
+    this.heartbeat = setInterval(() => {
       if (!this.wss) return;
       this.wss.clients.forEach((ws) => {
         if (!ws.isAlive) {
@@ -69,6 +71,7 @@ class WsServer {
         ws.ping();
       });
     }, 30000);
+    this.heartbeat.unref();
 
     console.log('[WS Server] Realtime WebSocket gateway ready at /ws');
   }

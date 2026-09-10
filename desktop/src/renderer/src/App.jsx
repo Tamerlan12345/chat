@@ -965,11 +965,14 @@ export default function App() {
           targetId,
           text: file.name,
           msgType: isImage ? 'image' : 'file',
+          // Сервер отдаёт данные файла верхним уровнем, без обёртки: чтение
+          // fData.file.id давало undefined, ссылка получалась
+          // /api/files/download/undefined, и вложение нельзя было скачать.
           metadata: {
-            file_id: fData.file.id,
+            file_id: fData.id,
             size: file.size,
             mimeType: file.type,
-            url: `/api/files/download/${fData.file.id}`
+            url: `/api/files/download/${fData.id}`
           }
         });
       }
