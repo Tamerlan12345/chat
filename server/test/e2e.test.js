@@ -491,6 +491,86 @@ test('28. без токена файл не скачать', async () => {
   assert.strictEqual(res.status, 401, 'ссылка без авторизации работать не должна');
 });
 
+// ── 12. Передача голоса через сервер ────────────────────────────────────────
+
+test('31. звук не пересылается, пока разговор не начат', async () => {
+  // Пара регистрируется только когда вызываемый ответил. До этого кадры
+  // должны отбрасываться, иначе любой авторизованный мог бы вещать кому угодно.
+  const frame = Buffer.alloc(12);
+  frame.writeUInt32BE(state.employeeId, 0);
+  state.sockets.admin.send(frame, { binary: true });
+
+  await new Promise((r) => setTimeout(r, 300));
+  const leaked = state.inbox.employee.find((m) => m.__binary);
+  assert.ok(!leaked, 'до ответа на звонок звук проходить не должен');
+});
+
+test('32. после ответа звук доходит до собеседника', async () => {
+  // Собеседник отвечает — сервер запоминает пару.
+  state.sockets.employee.send(JSON.stringify({
+    type: 'call_answer',
+    targetUserId: state.adminId
+  }));
+  await waitFor(state.inbox.admin, (m) => m.type === 'call_answer');
+
+  const received = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('звук не дошёл')), 3000);
+    state.sockets.employee.on('message', function handler(raw, isBinary) {
+      if (!isBinary) return;
+      clearTimeout(timer);
+      state.sockets.employee.off('message', handler);
+      resolve(Buffer.from(raw));
+    });
+  });
+
+  const frame = Buffer.alloc(12);
+  frame.writeUInt32BE(state.employeeId, 0);
+  frame.writeInt16BE(1234, 4);
+  state.sockets.admin.send(frame, { binary: true });
+
+  const got = await received;
+  assert.strictEqual(got.readUInt32BE(0), state.adminId, 'в кадре должен стоять отправитель');
+  assert.strictEqual(got.readInt16BE(4), 1234, 'звук должен дойти без искажений');
+});
+
+test('33. посторонний не может слать звук в чужой разговор', async () => {
+  const outsider = await connectWs(state.outsiderToken);
+  const frame = Buffer.alloc(12);
+  frame.writeUInt32BE(state.employeeId, 0);
+  outsider.sock.send(frame, { binary: true });
+
+  const leaked = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 600);
+    state.sockets.employee.on('message', function handler(raw, isBinary) {
+      if (!isBinary) return;
+      clearTimeout(timer);
+      state.sockets.employee.off('message', handler);
+      resolve(true);
+    });
+  });
+  outsider.sock.close();
+  assert.strictEqual(leaked, false, 'звук от постороннего проходить не должен');
+});
+
+test('34. завершение звонка прекращает передачу звука', async () => {
+  state.sockets.admin.send(JSON.stringify({ type: 'call_end', targetUserId: state.employeeId }));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const leaked = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 600);
+    state.sockets.employee.on('message', function handler(raw, isBinary) {
+      if (!isBinary) return;
+      clearTimeout(timer);
+      state.sockets.employee.off('message', handler);
+      resolve(true);
+    });
+    const frame = Buffer.alloc(12);
+    frame.writeUInt32BE(state.employeeId, 0);
+    state.sockets.admin.send(frame, { binary: true });
+  });
+  assert.strictEqual(leaked, false, 'после завершения разговора звук идти не должен');
+});
+
 // ── 11. Ограничение доступа ─────────────────────────────────────────────────
 
 test('29. отключённый сотрудник теряет доступ', async () => {

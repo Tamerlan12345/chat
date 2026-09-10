@@ -1,21 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { AudioRelay } from '../lib/audioRelay';
 
 // Голосовой звонок между двумя сотрудниками.
 //
-// Сигнализация идёт по тому же WebSocket, что и переписка: call_offer /
-// call_answer / ice_candidate / call_end / call_rejected. Медиа передаётся
-// напрямую между машинами (WebRTC), через сервер идут только служебные
-// сообщения — голос на сервер не попадает и им не хранится.
-//
-// Ограничение: настроен только STUN. Внутри офисной сети и для большинства
-// домашних подключений этого достаточно, но при симметричном NAT (часть
-// мобильных операторов, строгие корпоративные сети) соединение не установится
-// — для таких случаев нужен TURN-сервер, его адрес добавляется в ICE_SERVERS.
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
-];
-
+// Звук идёт через сервер по тому же WebSocket, что и переписка. Прямое
+// соединение (WebRTC) в корпоративных сетях, как правило, не устанавливается:
+// исходящий UDP закрыт, NAT симметричный. Лечится это TURN-сервером — то есть
+// отдельной службой, портами и расходами. Здесь достаточно того, что уже
+// работает: если открыт чат, открыт и звонок.
 const RING_TIMEOUT_MS = 45000;
 
 export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
@@ -25,10 +17,7 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
-  const pcRef = useRef(null);
-  const localStreamRef = useRef(null);
-  const audioRef = useRef(null);
-  const pendingIceRef = useRef([]);
+  const relayRef = useRef(null);
 
   const send = (payload) => {
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -37,15 +26,8 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
   };
 
   const cleanup = () => {
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
-    if (pcRef.current) {
-      pcRef.current.onicecandidate = null;
-      pcRef.current.ontrack = null;
-      pcRef.current.onconnectionstatechange = null;
-      pcRef.current.close();
-      pcRef.current = null;
-    }
+    relayRef.current?.stop();
+    relayRef.current = null;
   };
 
   const hangUp = (notifyPeer = true) => {
@@ -54,78 +36,35 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
     onEnd();
   };
 
-  const buildPeer = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localStreamRef.current = stream;
-
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    pcRef.current = pc;
-    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate) send({ type: 'ice_candidate', candidate: e.candidate });
-    };
-
-    pc.ontrack = (e) => {
-      if (audioRef.current && e.streams[0]) {
-        audioRef.current.srcObject = e.streams[0];
-        audioRef.current.play().catch(() => {});
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'connected') setPhase('active');
-      if (pc.connectionState === 'failed') {
-        setError('Не удалось установить прямое соединение. Возможно, сеть блокирует звонки.');
-        setPhase('failed');
-      }
-    };
-
-    return pc;
-  };
-
-  // ICE-кандидаты могут прийти раньше, чем описание соединения — до этого
-  // момента добавлять их нельзя, поэтому они копятся здесь.
-  const drainPendingIce = async (pc) => {
-    for (const candidate of pendingIceRef.current) {
-      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
-    }
-    pendingIceRef.current = [];
-  };
-
-  const startOutgoing = async () => {
+  // Микрофон открывается только когда разговор реально начался — не в момент
+  // набора и не при входящем звонке, на который ещё не ответили.
+  const startAudio = async () => {
     try {
-      const pc = await buildPeer();
-      const offer = await pc.createOffer({ offerToReceiveAudio: true });
-      await pc.setLocalDescription(offer);
-      send({ type: 'call_offer', sdp: offer });
+      const relay = new AudioRelay({ ws: wsClient, peerId: call.peer.id });
+      await relay.start();
+      relayRef.current = relay;
+      relay.setMuted(muted);
+      setPhase('active');
+      return true;
     } catch (err) {
       setError(
-        err.name === 'NotAllowedError'
-          ? 'Нет доступа к микрофону. Разрешите его в настройках Windows.'
-          : 'Не удалось начать звонок: ' + err.message
+        err.name === 'NotAllowedError' || err.name === 'NotFoundError'
+          ? 'Нет доступа к микрофону. Проверьте: Параметры → Конфиденциальность → Микрофон.'
+          : 'Не удалось включить микрофон: ' + err.message
       );
       setPhase('failed');
+      return false;
     }
+  };
+
+  const startOutgoing = () => {
+    // Описание соединения не передаётся: звук идёт через сервер, договариваться
+    // о прямом канале не о чем. Сообщение служит только вызовом.
+    send({ type: 'call_offer' });
   };
 
   const acceptIncoming = async () => {
-    try {
-      const pc = await buildPeer();
-      await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
-      await drainPendingIce(pc);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      send({ type: 'call_answer', sdp: answer });
-      setPhase('active');
-    } catch (err) {
-      setError(
-        err.name === 'NotAllowedError'
-          ? 'Нет доступа к микрофону. Разрешите его в настройках Windows.'
-          : 'Не удалось принять звонок: ' + err.message
-      );
-      setPhase('failed');
-    }
+    if (await startAudio()) send({ type: 'call_answer' });
   };
 
   const rejectIncoming = () => {
@@ -145,22 +84,15 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
     if (!wsClient) return;
 
     const onMessage = async (e) => {
+      // Двоичные кадры — это сам звук, его разбирает AudioRelay.
+      if (typeof e.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.senderId && msg.senderId !== call.peer.id) return;
 
-      const pc = pcRef.current;
-
-      if (msg.type === 'call_answer' && pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        await drainPendingIce(pc);
-        setPhase('active');
-      } else if (msg.type === 'ice_candidate' && msg.candidate) {
-        if (pc && pc.remoteDescription) {
-          try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
-        } else {
-          pendingIceRef.current.push(msg.candidate);
-        }
+      if (msg.type === 'call_answer') {
+        // Собеседник взял трубку — теперь можно включать микрофон.
+        await startAudio();
       } else if (msg.type === 'call_rejected') {
         setError('Сотрудник отклонил звонок');
         setPhase('failed');
@@ -200,10 +132,9 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
   }, [phase]);
 
   const toggleMute = () => {
-    const track = localStreamRef.current?.getAudioTracks()?.[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    setMuted(!track.enabled);
+    const next = !muted;
+    setMuted(next);
+    relayRef.current?.setMuted(next);
   };
 
   const duration = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -218,8 +149,6 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
 
   return (
     <div className="call-panel">
-      <audio ref={audioRef} autoPlay />
-
       <div className="call-panel-avatar">{peerName.slice(0, 1).toUpperCase()}</div>
 
       <div className="call-panel-info">

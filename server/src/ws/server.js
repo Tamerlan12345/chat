@@ -13,6 +13,9 @@ class WsServer {
     this.wss = null;
     this.userSockets = new Map(); // userId -> Set of WebSockets
     this.socketUser = new Map();  // WebSocket -> user object
+    // Кто с кем сейчас разговаривает. Только эти пары могут обмениваться
+    // звуком — см. relayAudioFrame.
+    this.activeCalls = new Map(); // userId -> userId
   }
 
   init(httpServer) {
@@ -40,7 +43,15 @@ class WsServer {
         ws.isAlive = true;
       });
 
-      ws.on('message', (raw) => {
+      ws.on('message', (raw, isBinary) => {
+        // Двоичные кадры — это звук разговора. Он идёт по тому же соединению,
+        // что и переписка, и по тому же 443 порту: прямое соединение между
+        // компьютерами (WebRTC) в корпоративных сетях обычно не устанавливается,
+        // а TURN-сервер — отдельная служба и отдельные расходы.
+        if (isBinary) {
+          this.relayAudioFrame(ws, raw);
+          return;
+        }
         try {
           const data = JSON.parse(raw.toString('utf8'));
           this.handleMessage(ws, data);
@@ -74,6 +85,36 @@ class WsServer {
     this.heartbeat.unref();
 
     console.log('[WS Server] Realtime WebSocket gateway ready at /ws');
+  }
+
+  // Кадр звука: 4 байта — кому, дальше сам звук. Пересылается только между
+  // участниками разговора, который обе стороны подтвердили: иначе любой
+  // авторизованный пользователь мог бы вещать кому угодно.
+  relayAudioFrame(ws, raw) {
+    const sender = this.socketUser.get(ws);
+    if (!sender || raw.length < 5) return;
+
+    const targetUserId = raw.readUInt32BE(0);
+    if (this.activeCalls.get(sender.id) !== targetUserId) return;
+
+    const out = Buffer.allocUnsafe(raw.length);
+    out.writeUInt32BE(sender.id, 0);
+    raw.copy(out, 4, 4);
+
+    for (const socket of this.userSockets.get(targetUserId) || []) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(out, { binary: true });
+    }
+  }
+
+  setCallPair(a, b) {
+    this.activeCalls.set(a, b);
+    this.activeCalls.set(b, a);
+  }
+
+  clearCallPair(a) {
+    const b = this.activeCalls.get(a);
+    this.activeCalls.delete(a);
+    if (b !== undefined) this.activeCalls.delete(b);
   }
 
   handleMessage(ws, msg) {
@@ -290,6 +331,12 @@ class WsServer {
         }
       }
 
+      // Разговор считается начатым, когда вызываемый ответил, и завершённым
+      // при отказе или завершении с любой стороны. Только пока пара
+      // зарегистрирована, звук между этими двумя пересылается.
+      if (type === 'call_answer') this.setCallPair(currentUser.id, targetUserId);
+      if (type === 'call_end' || type === 'call_rejected') this.clearCallPair(currentUser.id);
+
       this.sendToUser(targetUserId, {
         ...msg,
         senderId: currentUser.id,
@@ -421,6 +468,9 @@ class WsServer {
 
   handleDisconnect(ws) {
     const user = this.socketUser.get(ws);
+    // Оборвалась связь — разговор окончен; иначе пара осталась бы
+    // зарегистрированной и принимала бы звук после ухода собеседника.
+    if (user) this.clearCallPair(user.id);
     if (!user) return;
 
     this.socketUser.delete(ws);
