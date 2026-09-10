@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test --test-concurrency=1 test/ip-access.test.js test/rate-limiter.test.js test/admin-permissions.test.js test/registration-approval.test.js test/read-receipts.test.js test/admin-flows.test.js test/role-permissions.test.js"
+    "test": "node --test --test-concurrency=1 test/ip-access.test.js test/rate-limiter.test.js test/admin-permissions.test.js test/registration-approval.test.js test/read-receipts.test.js test/admin-flows.test.js test/role-permissions.test.js test/http-routes.test.js"
   },
   "keywords": [
     "mychat",
@@ -19,7 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.21.2",
+    "express": "^5.2.1",
     "multer": "^1.4.5-lts.1",
     "ws": "^8.18.0"
   }
