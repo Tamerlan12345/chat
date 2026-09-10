@@ -38,5 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRdInputRevoked: (callback) => {
     ipcRenderer.on('rd-input-revoked', (event, data) => callback(data));
   },
-  rdSaveFile: (payload) => ipcRenderer.invoke('rd-save-file', payload)
+  rdSaveFile: (payload) => ipcRenderer.invoke('rd-save-file', payload),
+  rdListScreens: () => ipcRenderer.invoke('rd-list-screens'),
+  rdSelectScreen: (screenId) => ipcRenderer.invoke('rd-select-screen', screenId),
+  rdClipboardRead: () => ipcRenderer.invoke('rd-clipboard-read'),
+  rdClipboardWrite: (text) => ipcRenderer.invoke('rd-clipboard-write', text)
 });

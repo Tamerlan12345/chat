@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { RemoteInput } = require('./remote-input');
@@ -70,7 +70,11 @@ function createMainWindow() {
         .getSources({ types: ['screen'] })
         .then((sources) => {
           if (!sources.length) return callback({});
-          callback({ video: sources[0], audio: 'loopback' });
+          // Отдаётся экран, выбранный оператором. Раньше всегда брался
+          // первый: если сотрудник работает на втором мониторе, оператор
+          // смотрел в пустой рабочий стол и не понимал, почему.
+          const chosen = sources.find((s) => s.id === selectedScreenId) || sources[0];
+          callback({ video: chosen, audio: 'loopback' });
         })
         .catch((err) => {
           log(`getDisplayMedia source lookup failed: ${err.message}`);
@@ -335,6 +339,35 @@ ipcMain.handle('open-remote-desktop-viewer', (event, { sessionId, targetUser }) 
 // on consent and disables it the moment sharing stops, so an event arriving
 // outside a session is dropped rather than acted on.
 const remoteInput = new RemoteInput(log);
+
+// Экран, который сейчас транслируется. Читается обработчиком getDisplayMedia
+// выше при каждом новом захвате — так работает переключение монитора.
+let selectedScreenId = null;
+
+ipcMain.handle('rd-list-screens', async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 240, height: 135 }
+  });
+  return sources.map((s, index) => ({
+    id: s.id,
+    name: s.name || `Экран ${index + 1}`,
+    thumbnail: s.thumbnail.toDataURL()
+  }));
+});
+
+ipcMain.handle('rd-select-screen', (event, screenId) => {
+  selectedScreenId = screenId || null;
+  return true;
+});
+
+// Буфер обмена сеанса. Синхронизируется только пока сеанс идёт и только
+// текстом: файлы и картинки через буфер — отдельная история с иными рисками.
+ipcMain.handle('rd-clipboard-read', () => clipboard.readText());
+ipcMain.handle('rd-clipboard-write', (event, text) => {
+  clipboard.writeText(String(text ?? '').slice(0, 100000));
+  return true;
+});
 
 // Panic key. The operator is driving this machine's mouse and keyboard, so the
 // employee needs a way out that does not depend on aiming at a button. A

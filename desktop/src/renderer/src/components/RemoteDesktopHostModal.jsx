@@ -6,8 +6,40 @@ export default function RemoteDesktopHostModal(props) {
 
   const [sharing, setSharing] = useState(false);
   const [accessLevel, setAccessLevel] = useState('full');
+  const [clipboardSync, setClipboardSync] = useState(false);
   const streamRef = useRef(null);
   const pcRef = useRef(null);
+  const clipboardSyncRef = useRef(false);
+  const lastClipboardRef = useRef('');
+  const wsRef = useRef(null);
+
+  useEffect(() => { clipboardSyncRef.current = clipboardSync; }, [clipboardSync]);
+
+  // Обратная сторона синхронизации: то, что сотрудник копирует у себя,
+  // становится доступно оператору. Опрос — единственный способ: события
+  // изменения буфера в Windows приложению не приходят.
+  useEffect(() => {
+    if (!sharing || !clipboardSync || !window.electronAPI?.rdClipboardRead) return;
+    const id = setInterval(async () => {
+      try {
+        const text = await window.electronAPI.rdClipboardRead();
+        if (typeof text === 'string' && text && text !== lastClipboardRef.current) {
+          lastClipboardRef.current = text;
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'rd_clipboard',
+              sessionId: data.sessionId,
+              targetUserId: data.operatorId,
+              text
+            }));
+          }
+        }
+      } catch {}
+    }, 1200);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharing, clipboardSync]);
 
   const handleAccept = async () => {
     try {
@@ -31,7 +63,21 @@ export default function RemoteDesktopHostModal(props) {
       if (videoTrack) videoTrack.contentHint = 'text';
 
       streamRef.current = stream;
+      wsRef.current = wsClient;
       setSharing(true);
+
+      // Оператору отправляется список мониторов, чтобы он мог выбрать нужный.
+      try {
+        const screens = await window.electronAPI?.rdListScreens?.();
+        if (screens?.length > 1 && wsClient?.readyState === WebSocket.OPEN) {
+          wsClient.send(JSON.stringify({
+            type: 'rd_screens',
+            sessionId: data.sessionId,
+            targetUserId: data.operatorId,
+            screens: screens.map(({ id, name }) => ({ id, name }))
+          }));
+        }
+      } catch {}
 
       // Ввод разрешается ровно на время сеанса и только при полном доступе.
       if (accessLevel === 'full' && window.electronAPI?.rdInputEnable) {
@@ -107,6 +153,33 @@ export default function RemoteDesktopHostModal(props) {
             if (accessLevel === 'full' && window.electronAPI?.rdInputEvent) {
               window.electronAPI.rdInputEvent(msg.event);
             }
+          } else if (msg.type === 'rd_select_screen') {
+            // Оператор выбрал другой монитор. Захватываем заново и подменяем
+            // дорожку в уже установленном соединении — пересогласовывать
+            // соединение целиком не нужно, картинка не прерывается.
+            await window.electronAPI?.rdSelectScreen?.(msg.screenId);
+            const next = await navigator.mediaDevices.getDisplayMedia({
+              video: { frameRate: { ideal: 15, max: 20 }, width: { ideal: 3840 }, height: { ideal: 2160 }, cursor: 'always' },
+              audio: false
+            });
+            const nextTrack = next.getVideoTracks()[0];
+            if (nextTrack) {
+              nextTrack.contentHint = 'text';
+              const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video');
+              await videoSender?.replaceTrack(nextTrack);
+              streamRef.current?.getTracks().forEach((t) => t.stop());
+              streamRef.current = next;
+              nextTrack.onended = () => handleStopSharing();
+            }
+          } else if (msg.type === 'rd_clipboard') {
+            // Оператор скопировал текст у себя — кладём его в буфер сотрудника.
+            if (clipboardSyncRef.current) {
+              await window.electronAPI?.rdClipboardWrite?.(msg.text);
+              lastClipboardRef.current = String(msg.text ?? '');
+            }
+          } else if (msg.type === 'rd_clipboard_mode') {
+            clipboardSyncRef.current = Boolean(msg.enabled);
+            setClipboardSync(Boolean(msg.enabled));
           } else if (msg.type === 'rd_file') {
             // Файл от оператора кладётся в «Загрузки» и ничем не запускается —
             // решение открыть его остаётся за сотрудником.
@@ -192,6 +265,11 @@ export default function RemoteDesktopHostModal(props) {
           <button className="rd-stop-btn" onClick={handleStopSharing}>
             ⏹ Завершить доступ
           </button>
+          {clipboardSync && (
+            <span className="rd-bar-mode-badge" title="Скопированный текст передаётся между компьютерами">
+              📋 Буфер обмена общий
+            </span>
+          )}
           {accessLevel === 'full' && (
             <span className="rd-bar-hint">Экстренно прервать: Ctrl+Alt+Shift+S</span>
           )}

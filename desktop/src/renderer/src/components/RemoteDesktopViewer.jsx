@@ -9,6 +9,12 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
 
   const [keyboardCaptured, setKeyboardCaptured] = useState(false);
   const [transferState, setTransferState] = useState(null);
+  const [screens, setScreens] = useState([]);
+  const [activeScreenId, setActiveScreenId] = useState(null);
+  const [clipboardSync, setClipboardSync] = useState(false);
+  const [linkStats, setLinkStats] = useState(null);
+  const clipboardSyncRef = useRef(false);
+  const lastClipboardRef = useRef('');
 
   const videoRef = useRef(null);
   const stageRef = useRef(null);
@@ -86,6 +92,15 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
           }
         } else if (msg.type === 'rd_webrtc_offer') {
           await answerOffer(msg.sdp);
+        } else if (msg.type === 'rd_screens') {
+          setScreens(msg.screens || []);
+          setActiveScreenId((prev) => prev || msg.screens?.[0]?.id || null);
+        } else if (msg.type === 'rd_clipboard') {
+          // Сотрудник скопировал текст у себя — кладём его в буфер оператора.
+          if (clipboardSyncRef.current && typeof msg.text === 'string') {
+            lastClipboardRef.current = msg.text;
+            window.electronAPI?.rdClipboardWrite?.(msg.text);
+          }
         } else if (msg.type === 'rd_ice_candidate' && msg.candidate) {
           await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
         } else if (msg.type === 'rd_end') {
@@ -135,6 +150,75 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   // установиться за строгим NAT). Ограничение по размеру — чтобы одно
   // сообщение не забило канал: сеанс идёт по нему же.
   const MAX_TRANSFER_BYTES = 10 * 1024 * 1024;
+
+  useEffect(() => { clipboardSyncRef.current = clipboardSync; }, [clipboardSync]);
+
+  const toggleClipboardSync = () => {
+    const next = !clipboardSync;
+    setClipboardSync(next);
+    // Сотрудник обязан видеть, что буфер стал общим — у него в панели сеанса
+    // появляется отметка. Молча читать чужой буфер недопустимо.
+    if (wsClient?.readyState === WebSocket.OPEN) {
+      wsClient.send(JSON.stringify({
+        type: 'rd_clipboard_mode',
+        sessionId,
+        targetUserId: targetUser.id,
+        enabled: next
+      }));
+    }
+  };
+
+  // Свой буфер опрашивается: событий об изменении Windows не присылает.
+  useEffect(() => {
+    if (!clipboardSync || !window.electronAPI?.rdClipboardRead) return;
+    const id = setInterval(async () => {
+      try {
+        const text = await window.electronAPI.rdClipboardRead();
+        if (typeof text === 'string' && text && text !== lastClipboardRef.current) {
+          lastClipboardRef.current = text;
+          if (wsClient?.readyState === WebSocket.OPEN) {
+            wsClient.send(JSON.stringify({ type: 'rd_clipboard', sessionId, targetUserId: targetUser.id, text }));
+          }
+        }
+      } catch {}
+    }, 1200);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipboardSync, sessionId]);
+
+  const switchScreen = (screenId) => {
+    setActiveScreenId(screenId);
+    if (wsClient?.readyState === WebSocket.OPEN) {
+      wsClient.send(JSON.stringify({ type: 'rd_select_screen', sessionId, targetUserId: targetUser.id, screenId }));
+    }
+  };
+
+  // Настоящие показатели связи вместо удалённых выдуманных: берутся из самого
+  // соединения. Пока данных нет, ничего не заявляется.
+  useEffect(() => {
+    if (!remoteStream) return;
+    const id = setInterval(async () => {
+      const pc = peerConnectionRef.current;
+      if (!pc) return;
+      try {
+        const stats = await pc.getStats();
+        let fps = null;
+        let rttMs = null;
+        let width = null;
+        stats.forEach((report) => {
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            if (typeof report.framesPerSecond === 'number') fps = Math.round(report.framesPerSecond);
+            if (typeof report.frameWidth === 'number') width = report.frameWidth;
+          }
+          if (report.type === 'candidate-pair' && report.nominated && typeof report.currentRoundTripTime === 'number') {
+            rttMs = Math.round(report.currentRoundTripTime * 1000);
+          }
+        });
+        setLinkStats({ fps, rttMs, width });
+      } catch {}
+    }, 2000);
+    return () => clearInterval(id);
+  }, [remoteStream]);
 
   const handleSendFile = () => {
     const input = document.createElement('input');
@@ -260,12 +344,38 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         </div>
 
         <div className="rd-toolbar-center">
-          {transferState && (
+          {transferState ? (
             <span className={`rd-transfer-note ${transferState.kind}`}>{transferState.text}</span>
-          )}
+          ) : linkStats ? (
+            <span className="rd-metric-item">
+              {linkStats.rttMs !== null && <>Задержка: <strong>{linkStats.rttMs} мс</strong>&nbsp;&nbsp;</>}
+              {linkStats.fps !== null && <>Кадры: <strong>{linkStats.fps}/с</strong>&nbsp;&nbsp;</>}
+              {linkStats.width && <>Разрешение: <strong>{linkStats.width}px</strong></>}
+            </span>
+          ) : null}
         </div>
 
         <div className="rd-toolbar-right">
+          {screens.length > 1 && (
+            <select
+              className="rd-screen-select"
+              value={activeScreenId || ''}
+              onChange={(e) => switchScreen(e.target.value)}
+              title="Какой монитор сотрудника показывать"
+            >
+              {screens.map((s, i) => (
+                <option key={s.id} value={s.id}>{s.name || `Экран ${i + 1}`}</option>
+              ))}
+            </select>
+          )}
+          <button
+            className={`rd-btn${clipboardSync ? ' active' : ''}`}
+            title="Общий буфер обмена: скопированный текст переносится между компьютерами"
+            disabled={!canControl || !remoteStream}
+            onClick={toggleClipboardSync}
+          >
+            {clipboardSync ? '📋 Буфер: общий' : '📋 Буфер'}
+          </button>
           <button
             className="rd-btn"
             title="Передать файл в папку «Загрузки» сотрудника"

@@ -370,7 +370,7 @@ class WsServer {
       return;
     }
 
-    if (['rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file', 'rd_end'].includes(type)) {
+    if (['rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file', 'rd_screens', 'rd_select_screen', 'rd_clipboard', 'rd_clipboard_mode', 'rd_end'].includes(type)) {
       const { sessionId, targetUserId } = msg;
 
       // Relay only within a session both parties actually accepted — a
