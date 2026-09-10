@@ -14,6 +14,7 @@ export default function ChatView({
   onStartCall,
   onRequestRemoteDesktop,
   onMarkRead,
+  onTyping,
   token,
   serverUrl
 }) {
@@ -124,8 +125,35 @@ export default function ChatView({
     }
   };
 
+  // Сообщаем собеседнику, что печатаем. Индикатор и его обработка на сервере
+  // существовали, но клиент никогда ничего не отправлял — надпись «печатает»
+  // не появлялась ни разу.
+  //
+  // Событие уходит не на каждую букву: одно на начало набора, потом не чаще
+  // раза в три секунды, и «перестал печатать» через секунду после последнего
+  // нажатия.
+  const typingSentAtRef = useRef(0);
+  const typingStopRef = useRef(null);
+
+  const notifyTyping = () => {
+    if (!onTyping || !activeChat) return;
+    const now = Date.now();
+    if (now - typingSentAtRef.current > 3000) {
+      typingSentAtRef.current = now;
+      onTyping(activeChat.type, activeChat.id, true);
+    }
+    clearTimeout(typingStopRef.current);
+    typingStopRef.current = setTimeout(() => {
+      typingSentAtRef.current = 0;
+      onTyping(activeChat.type, activeChat.id, false);
+    }, 1000);
+  };
+
+  useEffect(() => () => clearTimeout(typingStopRef.current), []);
+
   const handleTextareaInput = (e) => {
     setInputText(e.target.value);
+    notifyTyping();
     e.target.style.height = 'auto';
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   };
@@ -138,15 +166,17 @@ export default function ChatView({
     }
   };
 
+  // Готовые фразы для деловой переписки. «Сегодня че идем?)» отсюда убрана:
+  // в корпоративном мессенджере страховой компании ей не место.
   const corporatePhrases = [
     'Добрый день!',
-    'Салам!',
-    'Сегодня че идем?)',
-    'Принято в работу, делаю.',
+    'Принято в работу.',
+    'Готово.',
     'Спасибо!',
     'Ок, договорились.',
-    'Уточняю информацию у коллег.',
-    'Буду на рабочем месте через 10 минут.'
+    'Уточняю у коллег, вернусь с ответом.',
+    'Буду на месте через 10 минут.',
+    'Прошу согласовать.'
   ];
 
   const handleInsertEmoji = (emoji) => {
@@ -348,11 +378,12 @@ export default function ChatView({
               </div>
             ) : m.type === 'image' || (metadata?.mimeType && metadata.mimeType.startsWith('image/')) ? (
               <div className="chat-image-attachment">
-                <img
-                  src={metadata?.url || (metadata?.file_id ? `/api/files/download/${metadata.file_id}` : '')}
+                <ChatImage
+                  fileId={metadata?.file_id}
                   alt={m.text || 'Изображение'}
-                  className="chat-embedded-image"
-                  onClick={() => window.open(metadata?.url || `/api/files/download/${metadata?.file_id}`, '_blank')}
+                  token={token}
+                  serverUrl={serverUrl}
+                  onOpen={() => downloadAttachment(metadata?.file_id, m.text)}
                 />
               </div>
             ) : (
@@ -672,4 +703,44 @@ export default function ChatView({
       </div>
     </div>
   );
+}
+
+// Картинка из переписки. Маршрут скачивания требует токен, а тег <img>
+// заголовок авторизации отправить не может — поэтому каждое присланное
+// изображение отображалось как «битая картинка». Загружаем запросом и
+// показываем уже полученные данные.
+function ChatImage({ fileId, alt, token, serverUrl, onOpen }) {
+  const [src, setSrc] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!fileId) { setFailed(true); return; }
+    let objectUrl = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`${serverUrl}/api/files/download/${fileId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const blob = await res.blob();
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fileId, token, serverUrl]);
+
+  if (failed) return <div className="chat-image-failed">Изображение недоступно</div>;
+  if (!src) return <div className="chat-image-loading">Загружаю изображение…</div>;
+
+  return <img src={src} alt={alt} className="chat-embedded-image" onClick={onOpen} />;
 }

@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 
-export default function AnnouncementsView({ token, currentUser, serverUrl = 'https://chat-production-0456.up.railway.app' }) {
+export default function AnnouncementsView({
+  token,
+  currentUser,
+  serverUrl = 'https://chat-production-0456.up.railway.app',
+  onAcknowledged
+}) {
   const [announcements, setAnnouncements] = useState([]);
   const [selectedAnn, setSelectedAnn] = useState(null);
   const [auditData, setAuditData] = useState(null);
@@ -87,6 +92,8 @@ export default function AnnouncementsView({ token, currentUser, serverUrl = 'htt
         return;
       }
       await loadAnnouncements();
+      // Гасим отметку на значке «Важное»: без этого она висела до перезапуска.
+      onAcknowledged?.();
     } catch {
       setActionError('Нет связи с сервером — ознакомление не зафиксировано.');
     }

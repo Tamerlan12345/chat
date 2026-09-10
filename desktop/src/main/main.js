@@ -520,10 +520,10 @@ ipcMain.handle('show-notification', (event, data) => {
     mainWindow.flashFrame(true);
   }
 
-  // 1. Show floating popup window in corner of screen
-  showToastNotification(data);
-
-  // 2. Trigger native OS notification
+  // Раньше здесь показывалось СВОЁ плавающее окно и вдобавок системное
+  // уведомление Windows — две карточки на одно событие, одна поверх другой.
+  // Оставлено системное: оно подчиняется настройкам уведомлений Windows,
+  // попадает в центр уведомлений и не перекрывает чужие окна самовольно.
   if (Notification.isSupported()) {
     try {
       let notifIcon = null;

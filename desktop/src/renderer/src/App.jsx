@@ -79,6 +79,15 @@ export default function App() {
   const activeChatRef = useRef(activeChat);
 
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
+
+  // Открытый чат ещё не значит «виден»: на вкладках «Важное» или «База данных»
+  // он не отрисовывается вовсе. Без этой проверки пришедшее сообщение
+  // считалось прочитанным на месте — ни счётчика, ни уведомления, ни звука,
+  // при том что показать его было негде.
+  const isChatVisibleRef = useRef(false);
+  useEffect(() => {
+    isChatVisibleRef.current = ['chats', 'channels', 'contacts'].includes(activeTab);
+  }, [activeTab]);
   useEffect(() => { windowFocusedRef.current = windowFocused; }, [windowFocused]);
   const [isPersonPanelOpen, setIsPersonPanelOpen] = useState(true);
 
@@ -366,7 +375,7 @@ export default function App() {
   // фокусе и открыт именно этот диалог. Иначе «прочитано» означало бы лишь
   // «приложение запущено».
   const markConversationRead = (chat = activeChatRef.current) => {
-    if (!chat || !windowFocusedRef.current) return;
+    if (!chat || !windowFocusedRef.current || !isChatVisibleRef.current) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({
       type: 'mark_read',
@@ -409,6 +418,12 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Кнопка выхода стоит рядом с именем в строке состояния и выглядит как
+    // переход в профиль. Выйти по неосторожности — значит заново вводить
+    // пароль, поэтому спрашиваем.
+    if (!window.confirm('Выйти из учётной записи? Для продолжения работы потребуется снова ввести пароль.')) {
+      return;
+    }
     localStorage.removeItem('mychat_token');
     localStorage.setItem('mychat_logged_out', '1');
     if (wsRef.current) {
@@ -526,7 +541,10 @@ export default function App() {
     const useNative = !windowFocusedRef.current && window.electronAPI?.showNotification;
 
     if (useNative) {
-      window.electronAPI.showNotification({ title, body, type, isUrgent, avatarText });
+      // data обязательно передаётся дальше: главный процесс возвращает этот
+      // же объект при клике по уведомлению, и по нему открывается нужный чат.
+      // Без него клик просто разворачивал окно и ничего не открывал.
+      window.electronAPI.showNotification({ title, body, type, isUrgent, avatarText, data });
       return;
     }
 
@@ -537,6 +555,31 @@ export default function App() {
 
   const dismissToast = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // Пришло сообщение — обновить нужно только список переписок: порядок,
+  // последнюю строку и счётчик непрочитанных. Раньше здесь вызывался
+  // loadBaseData, то есть на КАЖДОЕ сообщение заново тянулись оргструктура,
+  // весь список сотрудников, каналы и объявления — пять запросов вместо
+  // одного, и в оживлённой переписке это заметно и на сервере, и на связи.
+  const refreshConversations = async (authToken = token) => {
+    try {
+      const res = await fetch(`${serverUrl}/api/conversations/direct`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      if (res.ok) setDirectConvos(await res.json());
+    } catch {}
+  };
+
+  const refreshAnnouncementCount = async (authToken = token) => {
+    try {
+      const res = await fetch(`${serverUrl}/api/announcements`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      if (!res.ok) return;
+      const list = await res.json();
+      setUnreadAnnCount(list.filter((a) => a.is_confirmed !== 1).length);
+    } catch {}
   };
 
   const loadBaseData = async (authToken = token) => {
@@ -641,6 +684,20 @@ export default function App() {
         setRdSessionId(event.sessionId);
         break;
 
+      // ── Кто печатает ────────────────────────────────────────────────────
+      case 'user_typing': {
+        if (event.userId === currentUserRef.current?.id) break;
+        // В личной переписке сервер шлёт targetId получателя — то есть мой
+        // собственный. Диалог же в интерфейсе привязан к собеседнику, поэтому
+        // ключом служит тот, кто печатает. В канале targetId — это сам канал.
+        const key = event.conversationType === 'channel' ? event.targetId : event.userId;
+        setTypingMap((prev) => {
+          const without = (prev[key] || []).filter((name) => name !== event.userName);
+          return { ...prev, [key]: event.isTyping ? [...without, event.userName] : without };
+        });
+        break;
+      }
+
       // ── Статусы доставки и прочтения ────────────────────────────────────
       case 'messages_read': {
         // Собеседник открыл диалог — наши сообщения у него прочитаны.
@@ -725,10 +782,14 @@ export default function App() {
           return prev;
         });
 
-        loadBaseData();
+        refreshConversations();
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive = activeChatRef.current && activeChatRef.current.type === 'direct' && activeChatRef.current.id === msg.sender_id && windowFocusedRef.current;
+          const isCurrentActive =
+            isChatVisibleRef.current &&
+            activeChatRef.current?.type === 'direct' &&
+            activeChatRef.current.id === msg.sender_id &&
+            windowFocusedRef.current;
 
           if (!isCurrentActive) {
             setUnreadMap((prev) => ({
@@ -768,7 +829,11 @@ export default function App() {
         });
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive = activeChatRef.current && activeChatRef.current.type === 'channel' && activeChatRef.current.id === msg.target_id && windowFocusedRef.current;
+          const isCurrentActive =
+            isChatVisibleRef.current &&
+            activeChatRef.current?.type === 'channel' &&
+            activeChatRef.current.id === msg.target_id &&
+            windowFocusedRef.current;
           if (!isCurrentActive) {
             const ch = channelsRef.current.find((c) => c.id === msg.target_id);
             addToast({
@@ -788,6 +853,11 @@ export default function App() {
         break;
       }
 
+      // Сервер шлёт new_announcement; клиент слушал announcement_created —
+      // название не совпадало, поэтому объявления приходили молча: ни
+      // уведомления, ни отметки в разделе «Важное». Для приказов с
+      // обязательным ознакомлением это недопустимо.
+      case 'new_announcement':
       case 'announcement_created': {
         setUnreadAnnCount((prev) => prev + 1);
         addToast({
@@ -849,6 +919,10 @@ export default function App() {
     if (window.electronAPI && window.electronAPI.flashFrame) {
       window.electronAPI.flashFrame(false);
     }
+    // Без переключения вкладки чат открывался «в никуда»: если человек в этот
+    // момент читал объявления или базу, экран не менялся вовсе, и клик
+    // выглядел потерянным.
+    setActiveTab('chats');
     setActiveChat({
       type: 'direct',
       id: user.id,
@@ -877,6 +951,7 @@ export default function App() {
 
   // Open Channel Chat
   const openChannelChat = async (channel) => {
+    setActiveTab('channels');
     setActiveChat({
       type: 'channel',
       id: channel.id,
@@ -954,14 +1029,27 @@ export default function App() {
           ? `${serverUrl}/api/messages/channels/${targetId}`
           : `${serverUrl}/api/messages/direct/${targetId}`;
 
-      await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ text, type: msgType, reply_to_id: replyToId })
-      });
+      // Поле ввода очищается сразу при отправке, поэтому молча потерянное
+      // сообщение человек уже не восстановит: он уверен, что написал.
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ text, type: msgType, reply_to_id: replyToId })
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        refreshConversations();
+      } catch {
+        addToast({
+          title: 'Сообщение не отправлено',
+          body: `Нет связи с сервером. Текст: «${text.slice(0, 80)}»`,
+          type: 'system',
+          isUrgent: true
+        });
+      }
     }
   };
 
@@ -1598,7 +1686,12 @@ export default function App() {
 
         {activeTab === 'important' && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-            <AnnouncementsView token={token} currentUser={currentUser} serverUrl={serverUrl} />
+            <AnnouncementsView
+              token={token}
+              currentUser={currentUser}
+              serverUrl={serverUrl}
+              onAcknowledged={refreshAnnouncementCount}
+            />
           </div>
         )}
 
@@ -1613,6 +1706,10 @@ export default function App() {
           <div className="main-center-workspace">
             {activeChat ? (
               <ChatView
+                // Ключ по переписке: без него набранный, но не отправленный
+                // текст и выбранный ответ переезжали в следующий чат — и
+                // сообщение уходило не тому, кому его писали.
+                key={`${activeChat.type}:${activeChat.id}`}
                 activeChat={activeChat}
                 messages={messages}
                 messagesLoading={messagesLoading}
@@ -1627,6 +1724,11 @@ export default function App() {
                 onMarkRead={(conversationType, targetId) =>
                   markConversationRead({ type: conversationType, id: targetId })
                 }
+                onTyping={(conversationType, targetId, isTyping) => {
+                  if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify({ type: 'typing', conversationType, targetId, isTyping }));
+                  }
+                }}
                 token={token}
                 serverUrl={serverUrl}
               />
