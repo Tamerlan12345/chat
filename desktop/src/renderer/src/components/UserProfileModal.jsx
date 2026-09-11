@@ -1,4 +1,5 @@
 ﻿import React, { useState } from 'react';
+import { parseFullName, formatFullName } from '../lib/person-name.mjs';
 
 export default function UserProfileModal({ currentUser, serverInfo, onClose, onUpdateProfile, token, serverUrl, onTokenRenewed }) {
   const [activeTab, setActiveTab] = useState('main'); // 'main' | 'home' | 'work' | 'personal' | 'interests' | 'past' | 'extra'
@@ -6,14 +7,16 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
   // Every field starts from the real account. It previously fell back to one
   // specific employee's details, so anyone with a blank field saw — and on
   // save wrote — somebody else's name, email and phone number.
-  const initialName = currentUser?.full_name?.split(' ')?.[0] || '';
-  const initialSurname = currentUser?.full_name?.split(' ')?.slice(1)?.join(' ') || '';
+  //
+  // ФИО хранится строкой в порядке «Фамилия Имя Отчество». Разбиралось оно
+  // как «первое слово — имя, остальное — фамилия»: сотрудник открывал свою
+  // карточку и видел фамилию в поле «Имя», а отчество — в поле «Фамилия».
+  const initialName = parseFullName(currentUser?.full_name);
 
-  const [firstName, setFirstName] = useState(initialName);
-  const [patronymic, setPatronymic] = useState('');
-  const [lastName, setLastName] = useState(initialSurname);
+  const [firstName, setFirstName] = useState(initialName.firstName);
+  const [patronymic, setPatronymic] = useState(initialName.patronymic);
+  const [lastName, setLastName] = useState(initialName.lastName);
   const [nick] = useState(currentUser?.username || '');
-  const [gender, setGender] = useState('Мужской');
   const [email, setEmail] = useState(currentUser?.email || '');
   const [phone, setPhone] = useState(currentUser?.phone || '');
   const [jobTitle, setJobTitle] = useState(currentUser?.job_title || '');
@@ -27,18 +30,19 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
   const [pwSuccess, setPwSuccess] = useState('');
   const [pwSubmitting, setPwSubmitting] = useState(false);
 
+  // Вкладок было семь, но пять из них — «Дом», «Личное», «Интересы»,
+  // «Прошлое», «Дополнительно» — не отрисовывали ничего: сотрудник нажимал и
+  // получал пустое окно с заголовком. Оставлены те, за которыми есть поля.
   const tabs = [
     { id: 'main', icon: '👤', label: 'Основное' },
-    { id: 'home', icon: '🏠', label: 'Дом' },
-    { id: 'work', icon: '💼', label: 'Место работы' },
-    { id: 'personal', icon: '❤️', label: 'Личное' },
-    { id: 'interests', icon: '★', label: 'Интересы' },
-    { id: 'past', icon: '📖', label: 'Прошлое' },
-    { id: 'extra', icon: '➕', label: 'Дополнительно' }
+    { id: 'work', icon: '💼', label: 'Место работы' }
   ];
 
   const handleSave = () => {
-    const updatedFullName = `${firstName} ${lastName}`.trim();
+    // Отчество собиралось в одну строку с именем и фамилией — точнее, не
+    // собиралось вовсе: поле было, его заполняли, и при сохранении оно
+    // пропадало.
+    const updatedFullName = formatFullName({ lastName, firstName, patronymic });
     if (onUpdateProfile) {
       onUpdateProfile({
         full_name: updatedFullName,
@@ -182,17 +186,9 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                     />
                   </div>
 
-                  <div className="profile-field-row">
-                    <label className="profile-label">Пол:</label>
-                    <select
-                      className="profile-select"
-                      value={gender}
-                      onChange={(e) => setGender(e.target.value)}
-                    >
-                      <option value="Мужской">Мужской</option>
-                      <option value="Женский">Женский</option>
-                    </select>
-                  </div>
+                  {/* Поле «Пол» убрано: колонки под него нет, выбранное
+                      значение никуда не сохранялось и нигде не читалось.
+                      Форма не должна обещать того, чего не делает. */}
 
                   <div className="profile-field-row">
                     <label className="profile-label">Электронная почта:</label>

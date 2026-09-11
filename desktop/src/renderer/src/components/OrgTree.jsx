@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMap = {} }) {
+export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMap = {}, error = null, onRetry = null }) {
   const [expandedNodes, setExpandedNodes] = useState({
     root: true,
     17: true,
@@ -249,6 +249,22 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
       <div className="org-tree-scrollable">
         {departments.length > 0 ? (
           departments.map((dept) => renderDepartment(dept, 0))
+        ) : error ? (
+          // Раньше здесь в любом случае висела «Загрузка…»: при отказе сервера
+          // она не сменялась никогда, и понять, что произошло, было нельзя.
+          <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px' }}>
+            <div style={{ fontSize: '28px', marginBottom: '10px' }}>⚠️</div>
+            <div style={{ color: '#b91c1c', fontWeight: 600, marginBottom: '6px' }}>{error}</div>
+            <div style={{ color: '#64748b', marginBottom: '14px', lineHeight: 1.6 }}>
+              Структура компании не загрузилась. Переписка и уже открытые
+              диалоги при этом работают.
+            </div>
+            {onRetry && (
+              <button className="btn btn-secondary btn-sm" onClick={onRetry}>
+                Повторить попытку
+              </button>
+            )}
+          </div>
         ) : (
           <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
             Загрузка оргструктуры...

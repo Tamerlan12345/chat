@@ -20,7 +20,7 @@ const PERMISSION_FIELDS = [
   { key: 'can_manage_db', label: 'Доступ к базе данных', emphasis: true, note: 'выполнение SQL-запросов' }
 ];
 
-export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onClose, onRefreshData }) {
+export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onClose, onRefreshData, focusUserId = null }) {
   // Official MyChat Control Panel Sections
   const [activeTab, setActiveTab] = useState('server'); 
   // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'licenses'
@@ -491,6 +491,19 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     setEditingUser(user);
     setFormMode('edit');
   };
+
+  // Консоль открыли из карточки конкретного сотрудника — значит и показать
+  // надо его, а не начальную вкладку. Ждём загрузки списка: до неё открывать
+  // нечего.
+  useEffect(() => {
+    if (!focusUserId || !users.length) return;
+    const target = users.find((u) => Number(u.id) === Number(focusUserId));
+    if (!target) return;
+    setActiveTab('users');
+    setUserSubTab('list');
+    openEditForm(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUserId, users]);
 
   const handleSaveUser = async (e) => {
     e.preventDefault();

@@ -66,6 +66,7 @@ export default function App() {
   const [channels, setChannels] = useState([]);
   const [directConvos, setDirectConvos] = useState([]);
   const [dialogSearch, setDialogSearch] = useState('');
+  const [channelSearch, setChannelSearch] = useState('');
   
   // Active Chat & UI state
   const [activeChat, setActiveChat] = useState(null);
@@ -135,6 +136,11 @@ export default function App() {
   const [newChannelTopic, setNewChannelTopic] = useState('');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  // Сотрудник, чью карточку надо открыть сразу при входе в консоль.
+  const [adminFocusUserId, setAdminFocusUserId] = useState(null);
+  // Отказ при загрузке базовых данных. Без него боковая панель показывала
+  // «Загрузка…» вечно и ничего не объясняла.
+  const [baseDataError, setBaseDataError] = useState(null);
   const [showServerConnectModal, setShowServerConnectModal] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
@@ -630,8 +636,14 @@ export default function App() {
         const unconfirmed = anns.filter((a) => a.is_confirmed !== 1).length;
         setUnreadAnnCount(unconfirmed);
       }
+
+      // Оргструктура — единственное, без чего боковая панель остаётся пустой.
+      // Раньше при отказе она просто показывала «Загрузка…» бесконечно: ни
+      // объяснения, ни возможности повторить.
+      setBaseDataError(treeRes.ok ? null : 'Не удалось получить структуру компании');
     } catch (err) {
       console.error('Base data load error:', err);
+      setBaseDataError('Нет связи с сервером');
     }
   };
 
@@ -1317,6 +1329,18 @@ export default function App() {
   // среди которых не найти тех, с кем реально общаешься. Показываются
   // последние переписки; чтобы написать новому человеку, он ищется здесь же
   // по имени или открывается из «Контактов» и Ctrl+K.
+  // Поиск идёт и по названию, и по теме: в списке видно и то, и другое,
+  // значит искать логично по обоим.
+  const filteredChannels = (() => {
+    const query = channelSearch.trim().toLowerCase();
+    if (!query) return channels;
+    return channels.filter(
+      (ch) =>
+        String(ch.name || '').toLowerCase().includes(query) ||
+        String(ch.topic || '').toLowerCase().includes(query)
+    );
+  })();
+
   const filteredUsers = (() => {
     const others = users.filter((u) => u.id !== currentUser?.id);
     const query = dialogSearch.trim().toLowerCase();
@@ -1642,10 +1666,14 @@ export default function App() {
                 <span className="arrow-down">⌵</span>
               </div>
               <div className="sub-panel-search-box">
+                {/* Поле было ни к чему не подключено: набранное в нём не
+                    влияло ни на что, и список оставался прежним. */}
                 <input
                   type="text"
                   className="sub-panel-search-input"
-                  placeholder="Поиск..."
+                  placeholder="Поиск конференции..."
+                  value={channelSearch}
+                  onChange={(e) => setChannelSearch(e.target.value)}
                 />
                 <span className="search-icon">🔍</span>
               </div>
@@ -1653,7 +1681,7 @@ export default function App() {
 
             <div className="conferences-container">
               <div className="conference-items-list">
-                {channels.map((ch) => (
+                {filteredChannels.map((ch) => (
                   <div
                     key={ch.id}
                     className={`dialog-list-item ${activeChat?.type === 'channel' && activeChat.id === ch.id ? 'active' : ''}`}
@@ -1674,22 +1702,34 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="no-conferences-box">
-                <p className="no-conf-title">У вас нет конференций.</p>
-                <p className="no-conf-desc">
-                  <button className="conf-link-btn" onClick={() => setShowCreateChannelModal(true)}>
-                    Создайте новую
-                  </button>{' '}
-                  и пригласите туда людей, либо{' '}
-                  {/* Кнопка ничего не делала вовсе. Войти в существующую
-                      конференцию — значит увидеть список открытых: он на
-                      вкладке «Конференции», там же и вход в каждую. */}
-                  <button className="conf-link-btn" onClick={() => setActiveTab('channels')}>
-                    войдите
-                  </button>{' '}
-                  в существующую.
-                </p>
-              </div>
+              {/* Подсказка показывалась всегда — даже когда прямо над ней шёл
+                  список конференций. «У вас нет конференций» поверх списка
+                  конференций читается как поломка. */}
+              {filteredChannels.length === 0 && (
+                <div className="no-conferences-box">
+                  {channelSearch.trim() ? (
+                    <>
+                      <p className="no-conf-title">Ничего не найдено.</p>
+                      <p className="no-conf-desc">
+                        По запросу «{channelSearch.trim()}» конференций нет.{' '}
+                        <button className="conf-link-btn" onClick={() => setChannelSearch('')}>
+                          Показать все
+                        </button>
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="no-conf-title">У вас нет конференций.</p>
+                      <p className="no-conf-desc">
+                        <button className="conf-link-btn" onClick={() => setShowCreateChannelModal(true)}>
+                          Создайте новую
+                        </button>{' '}
+                        и пригласите туда коллег.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div
               className={`sidebar-resizer ${isDraggingSidebar ? 'is-dragging' : ''}`}
@@ -1704,6 +1744,11 @@ export default function App() {
           <div className="sub-panel-dialogs" style={{ width: `${sidebarWidth}px` }}>
             <OrgTree
               treeData={treeData}
+              error={baseDataError}
+              onRetry={() => {
+                setBaseDataError(null);
+                loadBaseData();
+              }}
               onSelectUser={openDirectChat}
               activeUserId={activeChat?.type === 'direct' ? activeChat.id : null}
               unreadMap={unreadMap}
@@ -1784,7 +1829,13 @@ export default function App() {
             currentUser={currentUser}
             onClose={() => setIsPersonPanelOpen(false)}
             onOpenProfile={() => setShowProfileModal(true)}
-            onOpenAdminUser={() => setShowAdminModal(true)}
+            onOpenAdminUser={(person) => {
+              // Кнопка называется «открыть карточку сотрудника», но человек
+              // до сих пор терялся по дороге: консоль открывалась на своей
+              // начальной вкладке, и администратор искал его заново руками.
+              setAdminFocusUserId(person?.id || null);
+              setShowAdminModal(true);
+            }}
           />
         )}
       </div>
@@ -1995,7 +2046,11 @@ export default function App() {
           currentUser={currentUser}
           serverInfo={serverInfo}
           serverUrl={serverUrl}
-          onClose={() => setShowAdminModal(false)}
+          focusUserId={adminFocusUserId}
+          onClose={() => {
+            setShowAdminModal(false);
+            setAdminFocusUserId(null);
+          }}
           onRefreshData={() => {
             loadBaseData();
           }}
