@@ -369,6 +369,57 @@ test('19. администратор видит заявку и одобряет
   assert.strictEqual(login.status, 200, 'после одобрения вход открыт');
 });
 
+test('19а. заявка содержит всё, что нужно администратору для решения', async () => {
+  // Консоль показывает эти поля в таблице заявок. Если сервер перестанет их
+  // отдавать, администратор будет одобрять неизвестно кого.
+  const reg = await api('POST', '/api/auth/register', {
+    body: {
+      username: 'kandidat',
+      password: 'парольканидата',
+      full_name: 'Кандидатов Кандидат',
+      job_title: 'Специалист',
+      email: 'k.kandidatov@cic.kz',
+      phone: '+7 700 111 22 33',
+      department_id: state.deptId
+    }
+  });
+  assert.strictEqual(reg.status, 201, reg.text);
+
+  const pending = await api('GET', '/api/admin/registrations', { token: state.adminToken });
+  const entry = pending.json.find((u) => u.username === 'kandidat');
+  assert.ok(entry, 'заявка должна быть видна');
+
+  for (const field of ['id', 'full_name', 'username', 'job_title', 'department_name', 'email', 'registered_at']) {
+    assert.ok(entry[field], `в заявке должно быть поле ${field}`);
+  }
+  state.rejectId = entry.id;
+});
+
+test('19б. отклонённая заявка исчезает из списка и не пускает в систему', async () => {
+  const rejected = await api('POST', `/api/admin/registrations/${state.rejectId}/reject`, {
+    token: state.adminToken
+  });
+  assert.strictEqual(rejected.status, 200, rejected.text);
+
+  const pending = await api('GET', '/api/admin/registrations', { token: state.adminToken });
+  assert.ok(
+    !pending.json.some((u) => u.id === state.rejectId),
+    'решённая заявка не должна оставаться в очереди'
+  );
+
+  const login = await api('POST', '/api/auth/login', {
+    body: { username: 'kandidat', password: 'парольканидата' }
+  });
+  assert.strictEqual(login.status, 400);
+});
+
+test('19в. решение по заявке попадает в журнал', async () => {
+  const audit = await api('GET', '/api/admin/audit', { token: state.adminToken });
+  const actions = audit.json.map((r) => r.action);
+  assert.ok(actions.includes('registration_approved'), 'подтверждение должно фиксироваться');
+  assert.ok(actions.includes('registration_rejected'), 'отказ тем более');
+});
+
 // ── 8. Удалённый рабочий стол ───────────────────────────────────────────────
 
 test('20. сотруднику без права отказано в удалённом доступе', async () => {

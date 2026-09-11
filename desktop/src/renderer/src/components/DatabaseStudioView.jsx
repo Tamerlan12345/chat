@@ -1,20 +1,56 @@
 import React, { useState, useEffect } from 'react';
 
-export default function DatabaseStudioView({ token }) {
+export default function DatabaseStudioView({ token, serverUrl = '' }) {
   const [stats, setStats] = useState(null);
   const [tables, setTables] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
   const [tableData, setTableData] = useState(null);
   const [tableSchema, setTableSchema] = useState(null);
-  const [sqlQuery, setSqlQuery] = useState('SELECT id, username, full_name, job_title, status FROM users;');
+  // Пример ссылался на таблицу users, которой в базе переписки больше нет:
+  // учётные записи вынесены в отдельное хранилище и отсюда недостижимы.
+  const [sqlQuery, setSqlQuery] = useState(
+    'SELECT id, conversation_type, target_id, sender_id, substr(text, 1, 60) AS text, created_at FROM messages ORDER BY id DESC LIMIT 20;'
+  );
   const [queryResult, setQueryResult] = useState(null);
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
+  const [downloading, setDownloading] = useState(null);
   const [activeTab, setActiveTab] = useState('browser'); // 'browser' | 'sql' | 'backups'
+
+  // Резервная копия отдаётся только с токеном в заголовке, а обычная ссылка
+  // заголовков не шлёт — кнопка «Скачать» молча отвечала отказом. Забираем
+  // файл запросом и отдаём его браузеру уже готовым.
+  const downloadBackup = async (fileName) => {
+    setDownloading(fileName);
+    try {
+      const res = await fetch(`${serverUrl}/api/admin/db/backups/${encodeURIComponent(fileName)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        alert(res.status === 401 ? 'Сессия истекла — войдите заново' : 'Не удалось скачать копию');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Ссылку на объект надо отпустить, иначе файл целиком останется в памяти
+      // окна до его закрытия.
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      alert('Не удалось скачать копию: ' + err.message);
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   const loadStats = async () => {
     try {
-      const res = await fetch('/api/admin/db/stats', {
+      const res = await fetch(serverUrl + '/api/admin/db/stats', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -26,7 +62,7 @@ export default function DatabaseStudioView({ token }) {
 
   const loadTables = async () => {
     try {
-      const res = await fetch('/api/admin/db/tables', {
+      const res = await fetch(serverUrl + '/api/admin/db/tables', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -41,7 +77,7 @@ export default function DatabaseStudioView({ token }) {
 
   const loadBackups = async () => {
     try {
-      const res = await fetch('/api/admin/db/backups', {
+      const res = await fetch(serverUrl + '/api/admin/db/backups', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -55,8 +91,8 @@ export default function DatabaseStudioView({ token }) {
     setSelectedTable(tableName);
     try {
       const [schemaRes, dataRes] = await Promise.all([
-        fetch(`/api/admin/db/tables/${tableName}/schema`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/admin/db/tables/${tableName}/data?limit=50`, { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`${serverUrl}/api/admin/db/tables/${tableName}/schema`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${serverUrl}/api/admin/db/tables/${tableName}/data?limit=50`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
       setTableSchema(await schemaRes.json());
       setTableData(await dataRes.json());
@@ -76,7 +112,7 @@ export default function DatabaseStudioView({ token }) {
     if (!sqlQuery.trim()) return;
 
     try {
-      const res = await fetch('/api/admin/db/query', {
+      const res = await fetch(serverUrl + '/api/admin/db/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,7 +132,7 @@ export default function DatabaseStudioView({ token }) {
   const handleCreateBackup = async () => {
     setBackupLoading(true);
     try {
-      const res = await fetch('/api/admin/db/backup', {
+      const res = await fetch(serverUrl + '/api/admin/db/backup', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -346,14 +382,13 @@ export default function DatabaseStudioView({ token }) {
                   </div>
                 </div>
 
-                <a
-                  href={`/api/admin/db/backups/${b.fileName}`}
-                  download
+                <button
                   className="btn btn-secondary btn-sm"
-                  style={{ textDecoration: 'none' }}
+                  disabled={downloading === b.fileName}
+                  onClick={() => downloadBackup(b.fileName)}
                 >
-                  ⬇️ Скачать .db файл
-                </a>
+                  {downloading === b.fileName ? 'Скачиваем…' : '⬇️ Скачать .db файл'}
+                </button>
               </div>
             ))}
           </div>

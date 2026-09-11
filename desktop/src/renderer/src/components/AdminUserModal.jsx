@@ -32,6 +32,10 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   const [serverOverview, setServerOverview] = useState(null);
   const [onlineList, setOnlineList] = useState([]);
 
+  // Заявки на самостоятельную регистрацию, ожидающие решения администратора.
+  const [registrations, setRegistrations] = useState([]);
+  const [registrationBusy, setRegistrationBusy] = useState(null);
+
   // Tab 2: Users Management
   const [users, setUsers] = useState([]);
   const [userSubTab, setUserSubTab] = useState('list');
@@ -246,6 +250,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   useEffect(() => {
     loadServerOverview();
     loadUsers();
+    loadRegistrations();
     loadOrgTree();
     loadChannels();
     loadRoles();
@@ -253,6 +258,51 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     loadSettings();
     loadLicenses();
   }, []);
+
+  // ── Заявки на регистрацию ──────────────────────────────────────────────
+  // Сотрудник регистрируется сам, но пользоваться системой начинает только
+  // после подтверждения. Сервер это умел с самого начала, а кнопок не было —
+  // заявки копились там, где их никто не видел.
+  const loadRegistrations = async () => {
+    try {
+      const res = await fetch(`${serverUrl}/api/admin/registrations`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) setRegistrations(await res.json());
+    } catch (err) {
+      console.error('Error fetching registrations:', err);
+    }
+  };
+
+  const decideRegistration = async (user, approve) => {
+    if (!approve && !window.confirm(
+      `Отклонить заявку «${user.full_name}» (логин ${user.username})?\n` +
+      'Войти этот человек не сможет. Решение отменяется только заведением учётной записи заново.'
+    )) return;
+
+    setRegistrationBusy(user.id);
+    try {
+      const res = await fetch(
+        `${serverUrl}/api/admin/registrations/${user.id}/${approve ? 'approve' : 'reject'}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Не удалось обработать заявку');
+        return;
+      }
+      showToast(approve
+        ? `${user.full_name} подтверждён — теперь может входить`
+        : `Заявка «${user.full_name}» отклонена`);
+      await loadRegistrations();
+      await loadUsers();
+      onRefreshData && onRefreshData();
+    } catch (err) {
+      showToast('Нет связи с сервером: ' + err.message);
+    } finally {
+      setRegistrationBusy(null);
+    }
+  };
 
   // ── DATA FETCHING ──
   const loadServerOverview = async () => {
@@ -933,6 +983,16 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                 onClick={() => setActiveTab('users')}
               >
                 <span>👥</span> <span>Пользователи</span>
+              </button>
+
+              <button
+                className={`admin-nav-item ${activeTab === 'registrations' ? 'active' : ''}`}
+                onClick={() => setActiveTab('registrations')}
+              >
+                <span>📝</span> <span>Заявки</span>
+                {registrations.length > 0 && (
+                  <span className="admin-nav-badge">{registrations.length}</span>
+                )}
               </button>
 
               <button
@@ -1818,6 +1878,87 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         </div>
                       </form>
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ЗАЯВКИ НА РЕГИСТРАЦИЮ */}
+            {activeTab === 'registrations' && (
+              <div className="admin-tab-pane">
+                <h3 style={{ marginBottom: '6px', color: '#1e293b' }}>Заявки на регистрацию</h3>
+                <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px', lineHeight: 1.6 }}>
+                  Сотрудник заполняет форму сам, но войти сможет только после вашего
+                  подтверждения. Пока заявка ждёт решения, учётной записи фактически нет:
+                  ни в справочнике, ни в общих каналах человек не появляется.
+                  {sysSettings.allow_registration !== 'true' && (
+                    <>
+                      <br />
+                      <strong style={{ color: '#b45309' }}>
+                        Самостоятельная регистрация сейчас отключена — новых заявок не появится.
+                      </strong>{' '}
+                      Включить её можно в разделе «Настройки».
+                    </>
+                  )}
+                </p>
+
+                {registrations.length === 0 ? (
+                  <div style={{
+                    padding: '32px', textAlign: 'center', background: '#f8fafc',
+                    border: '1px dashed #cbd5e1', borderRadius: '8px', color: '#64748b', fontSize: '13px'
+                  }}>
+                    Заявок, ожидающих решения, нет.
+                  </div>
+                ) : (
+                  <div className="admin-table-container">
+                    <table className="admin-data-table">
+                      <thead>
+                        <tr>
+                          <th>ФИО</th>
+                          <th>Логин</th>
+                          <th>Должность</th>
+                          <th>Подразделение</th>
+                          <th>Контакты</th>
+                          <th>Подана</th>
+                          <th style={{ width: '210px' }}>Решение</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {registrations.map((r) => (
+                          <tr key={r.id}>
+                            <td style={{ fontWeight: 600 }}>{r.full_name}</td>
+                            <td><code>{r.username}</code></td>
+                            <td>{r.job_title || '—'}</td>
+                            <td>{r.department_name || <span style={{ color: '#b45309' }}>не указано</span>}</td>
+                            <td style={{ fontSize: '12px' }}>
+                              {r.email || '—'}
+                              {r.phone ? <><br />{r.phone}</> : null}
+                            </td>
+                            <td style={{ fontSize: '12px', color: '#64748b' }}>
+                              {r.registered_at ? new Date(r.registered_at).toLocaleString('ru-RU') : '—'}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  disabled={registrationBusy === r.id}
+                                  onClick={() => decideRegistration(r, true)}
+                                >
+                                  Подтвердить
+                                </button>
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  disabled={registrationBusy === r.id}
+                                  onClick={() => decideRegistration(r, false)}
+                                >
+                                  Отклонить
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>

@@ -6004,3 +6004,67 @@ select:focus-visible {
 .call-panel-info { flex: 1; min-width: 120px; }
 .call-panel-actions { flex-wrap: wrap; justify-content: flex-end; }
 .call-btn { white-space: nowrap; }
+
+/* ==========================================================================
+   ЗАЯВКИ НА РЕГИСТРАЦИЮ
+   Сервер умел их подтверждать с самого начала, но в консоли не было ни
+   раздела, ни кнопок — заявки копились там, где их никто не видел.
+   ========================================================================== */
+
+/* Счётчик у пункта меню: администратор должен узнавать о новой заявке, не
+   заходя в раздел специально. */
+.admin-nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Отклонение заявки и отключение сотрудника — действия, которые не отменяются
+   одним нажатием. Красная кнопка отличает их от остальных. */
+.btn-danger {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff;
+  border: 1px solid #b91c1c;
+  border-radius: 5px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 2px 5px rgba(220, 38, 38, 0.3);
+}
+.btn-danger:active:not(:disabled) {
+  transform: scale(0.97) translateY(1px);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.btn-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Нажатие должно быть заметно сразу, не дожидаясь ответа сервера: иначе
+   человек жмёт второй раз, решив, что не сработало. */
+.btn:disabled,
+.btn-sm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Пункт меню, недоступный по правам роли. Раньше такие пункты выглядели
+   рабочими и молча ничего не делали — человек нажимал и решал, что сломалось. */
+.menu-drop-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.menu-drop-item.disabled:hover {
+  background: transparent;
+}

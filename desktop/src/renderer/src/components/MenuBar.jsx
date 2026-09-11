@@ -11,8 +11,16 @@ export default function MenuBar({
   onOpenAdminConsole,
   onOpenWhatIsNew,
   onOpenServerConnect,
-  onTestNotification
+  onTestNotification,
+  onOpenAbout,
+  onNotice
 }) {
+  // Права роли решают, доступны ли звонки и удалённый доступ. Пункт меню,
+  // который для этого сотрудника ничего не сделает, честнее показать
+  // недоступным с объяснением, чем дать нажать и промолчать.
+  const permissions = currentUser?.permissions || {};
+  const canCall = Boolean(permissions.can_call || permissions.is_admin);
+  const canRemoteControl = Boolean(permissions.can_remote_control || permissions.is_admin);
   const [openMenu, setOpenMenu] = useState(null);
   const menuBarRef = useRef(null);
 
@@ -252,7 +260,9 @@ export default function MenuBar({
               className="menu-drop-item"
               onClick={() => {
                 localStorage.removeItem('mychat_channels_cache');
-                alert('Локальный кэш успешно очищен.');
+                // alert останавливает всё окно; для подтверждения мелкого
+                // действия это чересчур.
+                onNotice && onNotice('Локальный кэш очищен');
                 setOpenMenu(null);
               }}
             >
@@ -273,25 +283,37 @@ export default function MenuBar({
         </button>
         {openMenu === 'plugins' && (
           <div className="menu-dropdown-layer">
+            {/* Пункты открывают список сотрудников — оттуда и начинается и
+                звонок, и запрос доступа к рабочему столу. Раньше здесь стояло
+                окно с текстом «плагин активен»: оно ничего не делало и никуда
+                не вело. */}
             <div
-              className="menu-drop-item"
+              className={`menu-drop-item${canRemoteControl ? '' : ' disabled'}`}
+              title={canRemoteControl
+                ? 'Выберите сотрудника и нажмите значок монитора в шапке диалога'
+                : 'Удалённый доступ не разрешён для вашей роли — обратитесь к администратору'}
               onClick={() => {
-                alert('Плагин удаленного рабочего стола активен. Нажмите иконку монитора в шапке любого личного диалога.');
+                if (!canRemoteControl) return;
+                onSelectTab && onSelectTab('contacts');
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              <span>Удаленный рабочий стол (Screen Assist)</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={canRemoteControl ? '#2563eb' : '#94a3b8'} strokeWidth="2" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <span>Удалённый рабочий стол{canRemoteControl ? '' : ' — недоступно'}</span>
             </div>
             <div
-              className="menu-drop-item"
+              className={`menu-drop-item${canCall ? '' : ' disabled'}`}
+              title={canCall
+                ? 'Выберите сотрудника и нажмите значок трубки в шапке диалога'
+                : 'Звонки не разрешены для вашей роли — обратитесь к администратору'}
               onClick={() => {
-                alert('Плагин голосовых и видеовызовов WebRTC готов к использованию.');
+                if (!canCall) return;
+                onSelectTab && onSelectTab('contacts');
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-              <span>Аудио / Видеозвонки WebRTC</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={canCall ? '#16a34a' : '#94a3b8'} strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <span>Голосовой звонок{canCall ? '' : ' — недоступно'}</span>
             </div>
           </div>
         )}
@@ -320,7 +342,10 @@ export default function MenuBar({
             <div
               className="menu-drop-item"
               onClick={() => {
-                alert('OpenMyChat Enterprise Client 2026.1.0\nАО «Страховая компания «Сентрас Иншуранс»\nКорпоративная коммуникационная платформа.');
+                // Тот же экран, что и «Что нового»: он и так содержит версию
+                // и название компании, а окно alert останавливает всё
+                // приложение до нажатия «ОК».
+                (onOpenAbout || onOpenWhatIsNew) && (onOpenAbout || onOpenWhatIsNew)();
                 setOpenMenu(null);
               }}
             >

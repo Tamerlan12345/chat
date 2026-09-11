@@ -1429,6 +1429,8 @@ export default function App() {
         onOpenWhatIsNew={() => setShowAboutModal(true)}
         onOpenServerConnect={() => setShowServerConnectModal(true)}
         onTestNotification={handleTestNotification}
+        onOpenAbout={() => setShowAboutModal(true)}
+        onNotice={(text) => addToast({ title: text, type: 'system' })}
       />
 
       <div className="workspace-layout">
@@ -1679,7 +1681,10 @@ export default function App() {
                     Создайте новую
                   </button>{' '}
                   и пригласите туда людей, либо{' '}
-                  <button className="conf-link-btn" onClick={() => {}}>
+                  {/* Кнопка ничего не делала вовсе. Войти в существующую
+                      конференцию — значит увидеть список открытых: он на
+                      вкладке «Конференции», там же и вход в каждую. */}
+                  <button className="conf-link-btn" onClick={() => setActiveTab('channels')}>
                     войдите
                   </button>{' '}
                   в существующую.
@@ -1725,7 +1730,7 @@ export default function App() {
 
         {activeTab === 'db' && isAdmin && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-            <DatabaseStudioView token={token} />
+            <DatabaseStudioView token={token} serverUrl={serverUrl} />
           </div>
         )}
 
