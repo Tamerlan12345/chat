@@ -4,8 +4,35 @@ const UserService = require('../services/user.service');
 const MessageService = require('../services/message.service');
 const RemoteDesktopService = require('../services/remote-desktop.service');
 const AuditService = require('../services/audit.service');
-const { checkRateLimit } = require('../services/rate-limiter');
+const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed } = require('../services/ip-access.service');
+
+// Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
+// рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
+// 100 МБ, и десяток таких сообщений съедает память сервера.
+const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+
+const ALLOWED_STATUSES = new Set(['online', 'away', 'dnd', 'offline']);
+const CUSTOM_STATUS_MAX = 200;
+const AUTH_LIMIT = { maxAttempts: 10, windowMs: 60000 };
+
+// Вызов, на который так и не ответили, перестаёт давать право «ответить».
+const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
+
+// Сообщения, которыми оператор управляет чужим компьютером. При доступе
+// «только просмотр» сервер их не пропускает: полагаться на то, что клиент
+// оператора сам их не отправит, нельзя.
+const OPERATOR_CONTROL_TYPES = new Set(['rd_input_event', 'rd_file', 'rd_clipboard', 'rd_clipboard_mode']);
+
+const RD_RELAY_TYPES = new Set([
+  'rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file',
+  'rd_screens', 'rd_select_screen', 'rd_clipboard', 'rd_clipboard_mode', 'rd_end'
+]);
+
+function authTimeoutMs() {
+  const value = Number(process.env.WS_AUTH_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 10000;
+}
 
 class WsServer {
   constructor() {
@@ -15,12 +42,15 @@ class WsServer {
     // Кто с кем сейчас разговаривает. Только эти пары могут обмениваться
     // звуком — см. relayAudioFrame.
     this.activeCalls = new Map(); // userId -> userId
+    // Кто кому звонит и ещё не получил ответа: callerId -> { targetId, at }.
+    this.pendingOffers = new Map();
   }
 
   init(httpServer) {
     this.wss = new WebSocketServer({
       server: httpServer,
       path: '/ws',
+      maxPayload: MAX_MESSAGE_BYTES,
       // Mirrors the Express-level gate in index.js: the WS upgrade never
       // passes through Express middleware, so it needs its own check.
       // verifyClient rejects at the handshake itself — the connection never
@@ -37,6 +67,16 @@ class WsServer {
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
       ws.isAlive = true;
       ws.connectedAt = new Date().toISOString();
+
+      // Соединение, которое так и не представилось, закрывается. Иначе
+      // открытый анонимный сокет — бесплатное место в памяти сервера на сколько
+      // угодно долго.
+      ws.authTimer = setTimeout(() => {
+        if (!this.socketUser.has(ws)) {
+          try { ws.close(4001, 'Authentication timeout'); } catch {}
+        }
+      }, authTimeoutMs());
+      ws.authTimer.unref?.();
 
       ws.on('pong', () => {
         ws.isAlive = true;
@@ -58,6 +98,7 @@ class WsServer {
           console.error('[WS Error] Bad JSON:', err.message);
           return;
         }
+        if (!data || typeof data !== 'object') return;
         // Обработчик обращается к двум базам и потому асинхронен. Отказ
         // обещания без перехвата завершает процесс Node — одно кривое
         // сообщение роняло бы сервер для всех.
@@ -72,6 +113,7 @@ class WsServer {
       });
 
       ws.on('close', () => {
+        clearTimeout(ws.authTimer);
         Promise.resolve(this.handleDisconnect(ws)).catch((err) =>
           console.error('[WS Error] Разрыв соединения обработан с ошибкой:', err.message)
         );
@@ -120,6 +162,10 @@ class WsServer {
   }
 
   setCallPair(a, b) {
+    // Новый разговор вытесняет прежние пары обоих участников — иначе у
+    // третьего осталась бы «висящая» половина пары.
+    this.clearCallPair(a);
+    this.clearCallPair(b);
     this.activeCalls.set(a, b);
     this.activeCalls.set(b, a);
   }
@@ -127,7 +173,12 @@ class WsServer {
   clearCallPair(a) {
     const b = this.activeCalls.get(a);
     this.activeCalls.delete(a);
-    if (b !== undefined) this.activeCalls.delete(b);
+    if (b !== undefined && this.activeCalls.get(b) === a) this.activeCalls.delete(b);
+  }
+
+  hasPendingOffer(callerId, targetId) {
+    const offer = this.pendingOffers.get(callerId);
+    return Boolean(offer && offer.targetId === targetId && Date.now() - offer.at < CALL_OFFER_TTL_MS);
   }
 
   async handleMessage(ws, msg) {
@@ -135,21 +186,37 @@ class WsServer {
 
     // 1. Authentication
     if (type === 'auth') {
-      if (!checkRateLimit(`ws_auth:${ws.remoteIp || '127.0.0.1'}`, { maxAttempts: 10, windowMs: 60000 })) {
-        return ws.send(JSON.stringify({ type: 'auth_error', message: 'Слишком много попыток. Повторите через минуту.' }));
+      // Считаются только неудачные попытки: офис за одним адресом после
+      // перезапуска сервера переподключается целиком, и это не подбор.
+      const limitKey = `ws_auth:${ws.remoteIp || '127.0.0.1'}`;
+      if (isRateLimited(limitKey, AUTH_LIMIT)) {
+        return ws.send(JSON.stringify({
+          type: 'auth_error',
+          code: 'RATE_LIMITED',
+          message: 'Слишком много попыток. Повторите через минуту.'
+        }));
       }
 
       // resolveSession проверяет и подпись, и то, что учётная запись всё ещё
       // действует, и поколение токена: выданный до смены пароля сюда не пройдёт.
       const user = await AuthService.resolveSession(msg.token);
       if (!user) {
-        return ws.send(JSON.stringify({ type: 'auth_error', message: 'Недействительный токен авторизации' }));
+        registerFailure(limitKey, AUTH_LIMIT);
+        return ws.send(JSON.stringify({
+          type: 'auth_error',
+          code: 'INVALID_TOKEN',
+          message: 'Недействительный токен авторизации'
+        }));
       }
       if (user.must_change_password) {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Требуется смена пароля перед продолжением работы', code: 'MUST_CHANGE_PASSWORD' }));
       }
 
-      // Bind user
+      // Повторная авторизация того же сокета под другим именем не должна
+      // оставлять его в списках прежнего владельца.
+      if (this.socketUser.has(ws)) this.unbindSocket(ws);
+
+      clearTimeout(ws.authTimer);
       this.socketUser.set(ws, user);
       if (!this.userSockets.has(user.id)) {
         this.userSockets.set(user.id, new Set());
@@ -204,7 +271,9 @@ class WsServer {
         });
       } catch (err) {
         const message = err.message === 'NOT_CHANNEL_MEMBER' ? 'Вы не участник этого канала' : err.message;
-        return ws.send(JSON.stringify({ type: 'error', message }));
+        // Текст возвращается клиенту: поле ввода у него уже очищено, и без
+        // этого сообщение пропало бы без следа.
+        return ws.send(JSON.stringify({ type: 'error', context: 'send_message', message, text }));
       }
 
       if (conversationType === 'channel') {
@@ -235,11 +304,15 @@ class WsServer {
 
     // 3. Mark messages as read
     if (type === 'mark_read') {
-      const { conversationType, targetId } = msg;
-      const res = MessageService.markAsRead(conversationType, Number(targetId), currentUser.id);
+      const conversationType = msg.conversationType === 'channel' ? 'channel' : 'direct';
+      const targetId = Number(msg.targetId);
+      if (!Number.isFinite(targetId)) return;
+      const res = MessageService.markAsRead(conversationType, targetId, currentUser.id);
 
-      if (conversationType === 'direct') {
-        // Notify original sender that their messages were read
+      // Рассылается только когда действительно что-то прочитано. Пустая
+      // отметка в ответ на пустую отметку — это и был бесконечный обмен между
+      // двумя открытыми диалогами.
+      if (conversationType === 'direct' && res.messageIds?.length) {
         this.sendToUser(targetId, {
           type: 'messages_read',
           byUserId: currentUser.id,
@@ -251,18 +324,26 @@ class WsServer {
 
     // 4. Typing indicator
     if (type === 'typing') {
-      const { conversationType, targetId, isTyping } = msg;
+      const conversationType = msg.conversationType === 'channel' ? 'channel' : 'direct';
+      const targetId = Number(msg.targetId);
+      if (!Number.isFinite(targetId)) return;
       const payload = {
         type: 'user_typing',
         userId: currentUser.id,
         userName: currentUser.full_name,
         conversationType,
         targetId,
-        isTyping: !!isTyping
+        isTyping: !!msg.isTyping
       };
 
       if (conversationType === 'channel') {
-        this.broadcast(payload, ws);
+        // Только участникам канала: раньше «печатает…» уходило всем
+        // подключённым, включая тех, кто канал не видит.
+        const members = MessageService.getChannelMemberIds(targetId);
+        if (!members.includes(currentUser.id)) return;
+        for (const memberId of members) {
+          if (memberId !== currentUser.id) this.sendToUser(memberId, payload);
+        }
       } else {
         this.sendToUser(targetId, payload);
       }
@@ -271,7 +352,13 @@ class WsServer {
 
     // 5. Presence Status Change (Online / Away / DND)
     if (type === 'set_status' || type === 'status_update') {
-      const { status, customStatus } = msg;
+      const status = String(msg.status || '');
+      if (!ALLOWED_STATUSES.has(status)) return;
+      const customStatus =
+        msg.customStatus === undefined || msg.customStatus === null
+          ? null
+          : String(msg.customStatus).slice(0, CUSTOM_STATUS_MAX);
+
       await UserService.updateStatus(currentUser.id, status, customStatus);
       currentUser.status = status;
       currentUser.custom_status = customStatus;
@@ -286,9 +373,10 @@ class WsServer {
       return;
     }
 
-    // 6. WebRTC Voice / Video Call Signalling
+    // 6. Voice call signalling
     if (['call_offer', 'call_answer', 'ice_candidate', 'call_end', 'call_rejected'].includes(type)) {
-      const { targetUserId } = msg;
+      const targetUserId = Number(msg.targetUserId);
+      if (!Number.isFinite(targetUserId) || targetUserId === currentUser.id) return;
 
       // Placing a call is a per-role permission (can_call); hanging up and
       // rejecting stay open so a call already in progress can always be
@@ -301,7 +389,6 @@ class WsServer {
           }));
           return;
         }
-        if (targetUserId === currentUser.id) return;
         // Nobody is at the other end — tell the caller instead of ringing out.
         if (!this.userSockets.get(targetUserId)?.size) {
           ws.send(JSON.stringify({
@@ -311,16 +398,39 @@ class WsServer {
           }));
           return;
         }
+        this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now() });
       }
 
-      // Разговор считается начатым, когда вызываемый ответил, и завершённым
-      // при отказе или завершении с любой стороны. Только пока пара
-      // зарегистрирована, звук между этими двумя пересылается.
-      if (type === 'call_answer') this.setCallPair(currentUser.id, targetUserId);
-      if (type === 'call_end' || type === 'call_rejected') this.clearCallPair(currentUser.id);
+      // Разговор начинается, только когда вызываемый отвечает на настоящий
+      // вызов. Раньше «ответ» принимался от кого угодно и переписывал пару —
+      // посторонний мог перехватить звук чужого разговора.
+      if (type === 'call_answer') {
+        if (!this.hasPendingOffer(targetUserId, currentUser.id)) return;
+        this.pendingOffers.delete(targetUserId);
+        this.setCallPair(currentUser.id, targetUserId);
+      }
+
+      // Отказ и завершение касаются только разговора с тем, кому адресованы.
+      // Занятый сотрудник автоматически отказывает третьему — и этот отказ
+      // обрывал звук его текущего разговора.
+      if (type === 'call_rejected' || type === 'call_end') {
+        if (this.hasPendingOffer(targetUserId, currentUser.id)) this.pendingOffers.delete(targetUserId);
+        if (this.pendingOffers.get(currentUser.id)?.targetId === targetUserId) this.pendingOffers.delete(currentUser.id);
+        if (this.activeCalls.get(currentUser.id) === targetUserId) this.clearCallPair(currentUser.id);
+      }
+
+      // Кандидаты соединения — только внутри вызова или разговора.
+      if (type === 'ice_candidate') {
+        const related =
+          this.activeCalls.get(currentUser.id) === targetUserId ||
+          this.hasPendingOffer(currentUser.id, targetUserId) ||
+          this.hasPendingOffer(targetUserId, currentUser.id);
+        if (!related) return;
+      }
 
       this.sendToUser(targetUserId, {
         ...msg,
+        targetUserId,
         senderId: currentUser.id,
         senderName: currentUser.full_name
       });
@@ -329,7 +439,7 @@ class WsServer {
 
     // 7. Remote Desktop Plugin Signalling
     if (type === 'rd_request') {
-      const { targetUserId } = msg;
+      const targetUserId = Number(msg.targetUserId);
 
       // Viewing a colleague's screen is granted per role by an administrator
       // (can_remote_control). The employee's own consent prompt below is a
@@ -342,8 +452,13 @@ class WsServer {
         }));
         return;
       }
-      if (targetUserId === currentUser.id) {
+      if (!Number.isFinite(targetUserId) || targetUserId === currentUser.id) {
         ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Нельзя подключиться к собственному рабочему столу' }));
+        return;
+      }
+      // Иначе оператор ждал бы подтверждения, которое некому дать.
+      if (!this.isUserOnline(targetUserId)) {
+        ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Сотрудник сейчас не в сети' }));
         return;
       }
 
@@ -374,46 +489,59 @@ class WsServer {
     }
 
     if (type === 'rd_response') {
-      const { sessionId, accepted, accessLevel } = msg;
+      const { sessionId, accepted } = msg;
       const session = RemoteDesktopService.getSession(sessionId);
-      if (session) {
-        RemoteDesktopService.updateStatus(sessionId, accepted ? 'ACCEPTED' : 'REJECTED');
-        AuditService.log({
-          userId: currentUser.id,
-          action: accepted ? 'remote_desktop_accepted' : 'remote_desktop_rejected',
-          ip: ws.remoteIp,
-          details: {
-            sessionId,
-            operatorId: session.operatorId,
-            // Управление или только просмотр — важнейшая часть записи.
-            accessLevel: accepted ? accessLevel || 'full' : null
-          }
-        });
-        // Notify operator of the decision
-        this.sendToUser(session.operatorId, {
-          type: 'rd_response',
+      // Решение принимает только тот, чей экран просят, и только пока запрос
+      // ждёт ответа. Иначе оператор подтверждал доступ сам себе, а запоздалое
+      // «Разрешить» на отменённый запрос снова открывало сеанс.
+      if (!session || session.targetUserId !== currentUser.id || session.status !== 'REQUESTED') return;
+
+      const accessLevel = accepted && msg.accessLevel === 'full' ? 'full' : 'view_only';
+      session.accessLevel = accepted ? accessLevel : null;
+      RemoteDesktopService.updateStatus(sessionId, accepted ? 'ACCEPTED' : 'REJECTED');
+      AuditService.log({
+        userId: currentUser.id,
+        action: accepted ? 'remote_desktop_accepted' : 'remote_desktop_rejected',
+        ip: ws.remoteIp,
+        details: {
           sessionId,
-          accepted,
-          accessLevel: accessLevel || 'full',
-          targetUserId: currentUser.id,
-          targetName: currentUser.full_name
-        });
-      }
+          operatorId: session.operatorId,
+          // Управление или только просмотр — важнейшая часть записи.
+          accessLevel: accepted ? accessLevel : null
+        }
+      });
+      // Notify operator of the decision
+      this.sendToUser(session.operatorId, {
+        type: 'rd_response',
+        sessionId,
+        accepted: Boolean(accepted),
+        accessLevel,
+        targetUserId: currentUser.id,
+        targetName: currentUser.full_name
+      });
       return;
     }
 
-    if (['rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file', 'rd_screens', 'rd_select_screen', 'rd_clipboard', 'rd_clipboard_mode', 'rd_end'].includes(type)) {
-      const { sessionId, targetUserId } = msg;
+    if (RD_RELAY_TYPES.has(type)) {
+      const { sessionId } = msg;
 
       // Relay only within a session both parties actually accepted — a
       // client-supplied sessionId alone must not be enough to steer input or
       // media at another user. See
       // docs/designs/auth-access-control-remediation.md item 13.
       const session = sessionId ? RemoteDesktopService.getSession(sessionId) : null;
-      const isParticipant = session && (session.operatorId === currentUser.id || session.targetUserId === currentUser.id);
-      if (!session || !isParticipant || (session.status !== 'ACCEPTED' && type !== 'rd_end')) {
+      const isOperator = session && session.operatorId === currentUser.id;
+      const isTarget = session && session.targetUserId === currentUser.id;
+      if (!session || (!isOperator && !isTarget)) return;
+
+      if (type === 'rd_end') {
+        // Отменить можно и ещё не принятый запрос.
+        if (session.status !== 'REQUESTED' && session.status !== 'ACCEPTED') return;
+      } else if (session.status !== 'ACCEPTED') {
         return;
       }
+
+      if (isOperator && session.accessLevel !== 'full' && OPERATOR_CONTROL_TYPES.has(type)) return;
 
       // Передача файла на чужую машину — то, о чём владелец компьютера должен
       // иметь возможность узнать постфактум, поэтому пишется в журнал.
@@ -426,59 +554,102 @@ class WsServer {
         });
       }
 
-      this.sendToUser(targetUserId, {
+      // Получатель определяется сеансом, а не полем, которое прислал клиент:
+      // иначе участник сеанса мог направить эти сообщения кому угодно.
+      const recipientId = isOperator ? session.targetUserId : session.operatorId;
+      this.sendToUser(recipientId, {
         ...msg,
+        targetUserId: recipientId,
         fromUserId: currentUser.id
       });
       if (type === 'rd_end') {
-        RemoteDesktopService.endSession(sessionId);
-        AuditService.log({
-          userId: currentUser.id,
-          action: 'remote_desktop_ended',
-          ip: ws.remoteIp,
-          details: {
-            sessionId,
-            durationSeconds: session.createdAt
-              ? Math.round((Date.now() - new Date(session.createdAt).getTime()) / 1000)
-              : null
-          }
-        });
+        this.finishRdSession(session, currentUser.id);
       }
       return;
     }
   }
 
-  async handleDisconnect(ws) {
-    const user = this.socketUser.get(ws);
-    // Оборвалась связь — разговор окончен; иначе пара осталась бы
-    // зарегистрированной и принимала бы звук после ухода собеседника.
-    if (user) this.clearCallPair(user.id);
-    if (!user) return;
+  finishRdSession(session, endedByUserId) {
+    RemoteDesktopService.endSession(session.sessionId);
+    AuditService.log({
+      userId: endedByUserId,
+      action: 'remote_desktop_ended',
+      details: {
+        sessionId: session.sessionId,
+        durationSeconds: session.createdAt
+          ? Math.round((Date.now() - new Date(session.createdAt).getTime()) / 1000)
+          : null
+      }
+    });
+  }
 
+  unbindSocket(ws) {
+    const user = this.socketUser.get(ws);
+    if (!user) return null;
     this.socketUser.delete(ws);
     const sockets = this.userSockets.get(user.id);
-    if (sockets) {
-      sockets.delete(ws);
-      if (sockets.size === 0) {
-        this.userSockets.delete(user.id);
-        // Mark user as offline
-        await UserService.updateStatus(user.id, 'offline').catch((err) =>
-          console.warn('[WS] не удалось отметить уход:', err.message)
-        );
-        this.broadcast({
-          type: 'user_status_changed',
-          userId: user.id,
-          user_id: user.id,
-          status: 'offline'
-        });
-        console.log(`[WS] User disconnected: ${user.full_name} (#${user.id})`);
+    if (!sockets) return { user, lastSocket: true };
+    sockets.delete(ws);
+    if (sockets.size === 0) {
+      this.userSockets.delete(user.id);
+      return { user, lastSocket: true };
+    }
+    return { user, lastSocket: false };
+  }
+
+  async handleDisconnect(ws) {
+    const unbound = this.unbindSocket(ws);
+    if (!unbound || !unbound.lastSocket) return;
+    const { user } = unbound;
+
+    // Оборвалась связь — разговор окончен, и собеседник должен об этом
+    // узнать: иначе у него идёт таймер разговора, в котором никто не говорит.
+    const peer = this.activeCalls.get(user.id);
+    if (peer !== undefined) {
+      this.clearCallPair(user.id);
+      this.sendToUser(peer, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    const outgoing = this.pendingOffers.get(user.id);
+    if (outgoing) {
+      this.pendingOffers.delete(user.id);
+      this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    for (const [callerId, offer] of this.pendingOffers) {
+      if (offer.targetId === user.id) {
+        this.pendingOffers.delete(callerId);
+        this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
       }
     }
+
+    // Сеанс удалённого доступа без одного из участников продолжаться не
+    // должен: ни трансляция экрана, ни включённый ввод у второго.
+    for (const session of RemoteDesktopService.findOpenSessionsForUser(user.id)) {
+      const otherId = session.operatorId === user.id ? session.targetUserId : session.operatorId;
+      this.sendToUser(otherId, {
+        type: 'rd_end',
+        sessionId: session.sessionId,
+        fromUserId: user.id,
+        reason: 'Второй участник потерял связь'
+      });
+      this.finishRdSession(session, user.id);
+    }
+
+    // Mark user as offline
+    await UserService.updateStatus(user.id, 'offline').catch((err) =>
+      console.warn('[WS] не удалось отметить уход:', err.message)
+    );
+    this.broadcast({
+      type: 'user_status_changed',
+      userId: user.id,
+      user_id: user.id,
+      status: 'offline'
+    });
+    console.log(`[WS] User disconnected: ${user.full_name} (#${user.id})`);
   }
 
   isUserOnline(userId) {
     const sockets = this.userSockets.get(Number(userId));
-    return sockets && sockets.size > 0;
+    return Boolean(sockets && sockets.size > 0);
   }
 
   sendToUser(userId, data) {
@@ -493,14 +664,27 @@ class WsServer {
     return true;
   }
 
+  // Только тем, кто вошёл. Рассылка по всем открытым сокетам доходила и до
+  // соединений, не прошедших авторизацию: подключиться из разрешённой сети
+  // и слушать события компании мог кто угодно.
   broadcast(data, excludeWs = null) {
-    if (!this.wss) return;
     const payload = JSON.stringify(data);
-    this.wss.clients.forEach((client) => {
+    for (const client of this.socketUser.keys()) {
       if (client !== excludeWs && client.readyState === WebSocket.OPEN) {
         client.send(payload);
       }
-    });
+    }
+  }
+
+  // Служебные события — стук устройств, заявки на регистрацию — нужны только
+  // администраторам, а для остальных это утечка.
+  broadcastToAdmins(data) {
+    const payload = JSON.stringify(data);
+    for (const [client, user] of this.socketUser) {
+      if (user.permissions?.is_admin && client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    }
   }
 
   getOnlineConnectionsList() {
@@ -529,18 +713,30 @@ class WsServer {
     return list;
   }
 
-  disconnectUser(userId) {
+  disconnectUser(userId, reason = 'Сессия принудительно завершена администратором через панель управления') {
     const sockets = this.userSockets.get(Number(userId));
     if (sockets && sockets.size > 0) {
-      for (const ws of sockets) {
+      for (const ws of [...sockets]) {
         try {
-          ws.send(JSON.stringify({ type: 'server_disconnect', reason: 'Сессия принудительно завершена администратором через панель управления' }));
+          ws.send(JSON.stringify({ type: 'server_disconnect', reason }));
           ws.close();
         } catch (e) {}
       }
       return true;
     }
     return false;
+  }
+
+  // Права роли изменились — открытые соединения её носителей закрываются.
+  // Сокет хранит снимок прав на момент входа, и без этого отозванное право
+  // (звонки, удалённый доступ) продолжало бы действовать до переподключения.
+  disconnectUsersWithRole(roleId, reason) {
+    const affected = new Set();
+    for (const user of this.socketUser.values()) {
+      if (Number(user.role_id) === Number(roleId)) affected.add(user.id);
+    }
+    for (const userId of affected) this.disconnectUser(userId, reason);
+    return affected.size;
   }
 }
 

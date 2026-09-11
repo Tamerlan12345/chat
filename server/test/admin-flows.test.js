@@ -221,7 +221,9 @@ test('отключение и включение сотрудника', async ()
 
   await UserService.toggleUserActive(user.id, false);
   assert.strictEqual((await raw(user.id)).is_active, 0);
-  await assert.rejects(() => AuthService.login('sidorov', 'ещёодинпароль'), /не найден или деактивирован/);
+  // Отключённый отвечает так же, как неверный пароль: иначе по разнице
+  // ответов видно, какие учётные записи существуют.
+  await assert.rejects(() => AuthService.login('sidorov', 'ещёодинпароль'), /Неверный логин или пароль/);
 
   await UserService.toggleUserActive(user.id, true);
   assert.strictEqual((await raw(user.id)).is_active, 1);

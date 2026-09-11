@@ -45,6 +45,14 @@ class RemoteDesktopService {
     return null;
   }
 
+  // Запросы, ждущие ответа, и идущие сеансы, где пользователь — одна из сторон.
+  findOpenSessionsForUser(userId) {
+    const num = Number(userId);
+    return [...this.sessions.values()].filter(
+      (s) => (s.operatorId === num || s.targetUserId === num) && (s.status === 'REQUESTED' || s.status === 'ACCEPTED')
+    );
+  }
+
   endSession(sessionId) {
     return this.updateStatus(sessionId, 'CLOSED');
   }

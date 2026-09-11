@@ -37,20 +37,25 @@ class FileService {
 
   // Files have no FK to the conversation they were shared in — only a free-form
   // metadata_json blob on the message that references file_id. Resolve access
-  // by scanning for that reference (unindexed LIKE scan, acceptable at this
-  // app's employee-count scale) and checking the caller is part of that
+  // by finding that reference and checking the caller is part of that
   // conversation. See docs/designs/auth-access-control-remediation.md item 8.
+  //
+  // Сравнивается само значение file_id, а не подстрока: шаблон
+  // LIKE '%"file_id":1%' находил и сообщения с файлом №12, №105 — и открывал
+  // по ним доступ к файлу №1. Ссылку на файл в сообщение может поставить
+  // только тот, кому файл уже доступен, — см. MessageService.sendMessage.
   static canUserAccessFile(userId, fileId) {
     const db = getDatabase();
-    const file = db.prepare('SELECT uploader_id FROM files WHERE id = ?').get(fileId);
+    const file = db.prepare('SELECT uploader_id FROM files WHERE id = ?').get(Number(fileId));
     if (!file) return false;
     if (Number(file.uploader_id) === Number(userId)) return true;
 
     const refs = db.prepare(`
       SELECT conversation_type, target_id, sender_id
       FROM messages
-      WHERE metadata_json LIKE ?
-    `).all(`%"file_id":${Number(fileId)}%`);
+      WHERE json_valid(metadata_json)
+        AND CAST(json_extract(metadata_json, '$.file_id') AS INTEGER) = ?
+    `).all(Number(fileId));
 
     for (const ref of refs) {
       if (ref.conversation_type === 'direct') {
@@ -79,7 +84,8 @@ class FileService {
       WHERE f.uploader_id = ?
         OR EXISTS (
           SELECT 1 FROM messages m
-          WHERE m.metadata_json LIKE '%"file_id":' || f.id || '%'
+          WHERE json_valid(m.metadata_json)
+            AND CAST(json_extract(m.metadata_json, '$.file_id') AS INTEGER) = f.id
             AND (
               (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
               OR (m.conversation_type = 'channel' AND m.target_id IN (${channelPlaceholders}))

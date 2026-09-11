@@ -69,7 +69,7 @@ class DeviceService {
     );
 
     try {
-      wsServer.broadcast({
+      wsServer.broadcastToAdmins({
         type: 'device_knock_received',
         device: {
           device_id,
@@ -183,12 +183,12 @@ class DeviceService {
       [now, String(device_id)]
     );
 
-    // Объявляется только сам факт связывания: broadcast доходит до всех
-    // открытых сокетов, включая не прошедшие авторизацию, поэтому токен здесь
-    // означал бы выдачу рабочей недельной сессии любому слушателю. Устройство
-    // забирает свой токен само, следующим «стуком».
+    // Объявляется только сам факт связывания и только администраторам.
+    // Идентификатор устройства — это и есть его пропуск: следующим «стуком» с
+    // ним выдаётся недельный токен сотрудника. Разошлись бы события всем —
+    // любой коллега дождался бы связывания и вошёл бы под чужим именем.
     try {
-      wsServer.broadcast({ type: 'device_paired', deviceId: device_id });
+      wsServer.broadcastToAdmins({ type: 'device_paired', deviceId: device_id });
     } catch {
       /* нет слушателей */
     }
@@ -232,7 +232,7 @@ class DeviceService {
       ]);
 
       try {
-        wsServer.broadcast({ type: 'device_paired', deviceId: match.device_id });
+        wsServer.broadcastToAdmins({ type: 'device_paired', deviceId: match.device_id });
       } catch {
         /* нет слушателей */
       }
@@ -250,7 +250,7 @@ class DeviceService {
     ]);
 
     try {
-      wsServer.broadcast({ type: 'device_unpaired', deviceId: device_id });
+      wsServer.broadcastToAdmins({ type: 'device_unpaired', deviceId: device_id });
     } catch {
       /* нет слушателей */
     }

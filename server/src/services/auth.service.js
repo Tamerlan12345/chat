@@ -5,6 +5,19 @@ const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
 
+const INVALID_CREDENTIALS = 'Неверный логин или пароль';
+
+// Хэш-приманка для несуществующего логина: проверка против него занимает
+// столько же, сколько настоящая, и отказ не выдаёт себя скоростью. Считается
+// один раз и лениво — чтобы не замедлять запуск сервера.
+let dummyHashPromise = null;
+function dummyHash() {
+  if (!dummyHashPromise) {
+    dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
+  }
+  return dummyHashPromise;
+}
+
 class AuthService {
   /**
    * Токен подписывается HMAC-SHA256 на серверном секрете. Помимо кто и когда,
@@ -87,10 +100,13 @@ class AuthService {
       [String(username || '').trim()]
     );
 
-    // Отсутствующий и отключённый сотрудник отвечают одинаково: по разнице
-    // ответов перебором выясняется, какие логины заведены в компании.
+    // Отсутствующий, отключённый сотрудник и неверный пароль отвечают одним и
+    // тем же сообщением и за одно и то же время: по разнице ответов (или по
+    // секундомеру — scrypt идёт сотни миллисекунд) перебором выясняется, какие
+    // логины заведены в компании.
     if (!row || !row.is_active) {
-      throw new Error('Пользователь не найден или деактивирован');
+      await verifyPassword(password, await dummyHash()).catch(() => {});
+      throw new Error(INVALID_CREDENTIALS);
     }
 
     const now = Date.now();
@@ -107,7 +123,7 @@ class AuthService {
     const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
     if (!ok) {
       await this.registerFailedAttempt(row);
-      throw new Error('Неверный пароль');
+      throw new Error(INVALID_CREDENTIALS);
     }
 
     // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы

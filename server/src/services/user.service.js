@@ -27,6 +27,24 @@ const JOINS = `
 
 const NAMED = `r.name AS role_name, r.permissions_json, d.name AS department_name, sd.name AS admin_scope_dept_name`;
 
+// Те же публичные поля, но для уже загруженной записи: рассылки по WebSocket и
+// карточка коллеги. Полная запись в рассылке уходила всем подключённым — с
+// адресом рабочего места, последним IP входа и поколением токена.
+const PUBLIC_KEYS = [
+  'id', 'username', 'full_name', 'email', 'phone', 'job_title', 'department_id',
+  'uin', 'extension', 'company', 'role_id', 'avatar_url', 'status',
+  'custom_status', 'last_seen', 'is_active', 'created_at', 'department_name', 'role_name'
+];
+
+function toPublicUser(user) {
+  if (!user) return user;
+  const out = {};
+  for (const key of PUBLIC_KEYS) {
+    if (user[key] !== undefined) out[key] = user[key];
+  }
+  return out;
+}
+
 function withPermissions(user) {
   if (!user) return user;
   user.permissions = safeParse(user.permissions_json);
@@ -44,12 +62,20 @@ function safeParse(json) {
 }
 
 class UserService {
+  static toPublicUser(user) {
+    return toPublicUser(user);
+  }
+
   /**
    * Справочник сотрудников. Администратору подразделения возвращаются только
    * его люди — иначе «контур» ничего не ограничивает.
    */
   static async getAllUsers(adminUser = null) {
     const db = identity();
+
+    // Администратор подразделения без подразделения (его удалили) не должен
+    // получать полный список сотрудников компании со служебными полями.
+    if (adminUser?.permissions?.is_scoped_admin && !adminUser.admin_scope_dept_id) return [];
 
     let allowedDeptIds = null;
     if (adminUser && adminUser.admin_scope_dept_id) {
@@ -148,6 +174,25 @@ class UserService {
   }
 
   static async updateProfile(userId, { full_name, email, phone, job_title, avatar_url, custom_status } = {}) {
+    // Фотография уходит каждому сотруднику в каждом ответе справочника. Снимок
+    // с телефона на 8 МБ в data URL превращал список сотрудников в десятки
+    // мегабайт, а произвольная строка — в ссылку куда угодно.
+    // Проверяется только новая фотография: форма профиля отправляет текущую
+    // обратно при каждом сохранении, и сотрудник со старой фотографией
+    // (ссылкой или крупным снимком) иначе не смог бы поправить даже телефон.
+    const currentAvatar =
+      avatar_url !== undefined && avatar_url !== null && avatar_url !== ''
+        ? (await identity().get('SELECT avatar_url FROM users WHERE id = $1', [Number(userId)]))?.avatar_url
+        : null;
+    if (avatar_url !== undefined && avatar_url !== null && avatar_url !== '' && String(avatar_url) !== String(currentAvatar ?? '')) {
+      const value = String(avatar_url);
+      const isImageData = /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+      if (!isImageData) throw new Error('Фотография профиля должна быть изображением PNG, JPEG, GIF или WebP');
+      if (value.length > 700 * 1024) throw new Error('Фотография слишком большая — выберите файл до 500 КБ');
+    }
+    if (custom_status !== undefined && custom_status !== null && String(custom_status).length > 200) {
+      throw new Error('Подпись статуса — не длиннее 200 символов');
+    }
     // COALESCE рассчитан на NULL: незаполненное поле формы приходит как
     // undefined, и связать его с параметром нельзя — из-за этого сохранение
     // профиля когда-то не срабатывало вовсе, причём молча.

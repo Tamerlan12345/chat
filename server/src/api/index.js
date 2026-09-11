@@ -110,7 +110,16 @@ async function assertWithinAdminScope(actor, { targetUserId = null, payload = nu
   }
 
   if (payload) {
-    if (payload.department_id !== undefined && payload.department_id !== null) {
+    // «Без подразделения» — тоже вне зоны: так администратор подразделения
+    // выводил сотрудника из своего контура, а заведённый без отдела человек
+    // оказывался вне чьего-либо контроля.
+    const creating = targetUserId === null;
+    const deptGiven = payload.department_id !== undefined;
+    if ((creating && (payload.department_id === undefined || payload.department_id === null || payload.department_id === '')) ||
+        (!creating && deptGiven && (payload.department_id === null || payload.department_id === ''))) {
+      throw new Error('Укажите подразделение из вашей зоны ответственности');
+    }
+    if (deptGiven && payload.department_id !== null && payload.department_id !== '') {
       if (!allowed.has(Number(payload.department_id))) {
         throw new Error('Выбранное подразделение вне вашей зоны ответственности');
       }
@@ -192,7 +201,7 @@ router.post('/auth/register', route(async (req, res) => {
 
     const user = await AuthService.register(req.body);
     // Токен не выдаётся: заявка ещё не подтверждена, входить пока не с чем.
-    wsServer.broadcast({ type: 'registration_pending', username: user.username, fullName: user.full_name });
+    wsServer.broadcastToAdmins({ type: 'registration_pending', username: user.username, fullName: user.full_name });
     res.status(201).json({
       pending: true,
       message: 'Заявка отправлена. Вход станет возможен после подтверждения администратором.'
@@ -214,7 +223,10 @@ router.get('/users', requireAuth, route(async (req, res) => {
 router.get('/users/:id', requireAuth, route(async (req, res) => {
   const user = await UserService.getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
-  res.json(user);
+  // Полная запись — себе и администратору. Коллеге — те же поля, что и в
+  // общем справочнике, без адресов входа и устройства прав.
+  const privileged = user.id === req.user.id || isSuperAdmin(req.user) || isScopedAdmin(req.user);
+  res.json(privileged ? user : UserService.toPublicUser(user));
 }));
 
 router.put('/users/profile', requireAuth, route(async (req, res) => {
@@ -266,7 +278,7 @@ router.post('/admin/users', requireAuth, requireAdminOrScopedAdmin, route(async 
     // Начальный пароль виден только тому, кто завёл учётную запись, и только в
     // этом ответе — в рассылке его быть не должно.
     const { initial_password, ...broadcastable } = newUser;
-    wsServer.broadcast({ type: 'user_created', user: broadcastable });
+    wsServer.broadcast({ type: 'user_created', user: UserService.toPublicUser(broadcastable) });
     res.status(201).json(newUser);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -277,7 +289,7 @@ router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(asy
   try {
     await assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id), payload: req.body });
     const updated = await UserService.adminUpdateUser(Number(req.params.id), req.body);
-    wsServer.broadcast({ type: 'user_updated', user: updated });
+    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -294,8 +306,8 @@ router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(
       ip: getClientIp(req),
       details: { targetUserId: Number(req.params.id) }
     });
-    wsServer.disconnectUser(Number(req.params.id));
-    wsServer.broadcast({ type: 'user_updated', user: updated });
+    wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json({ success: true, user: updated });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -305,8 +317,8 @@ router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(
 router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, route(async (req, res) => {
   try {
     const updated = await UserService.toggleUserActive(Number(req.params.id));
-    if (!updated.is_active) wsServer.disconnectUser(Number(req.params.id));
-    wsServer.broadcast({ type: 'user_updated', user: updated });
+    if (!updated.is_active) wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -338,7 +350,7 @@ router.post('/admin/users/:id/reset-password', requireAuth, requireAdminOrScoped
       ip: getClientIp(req),
       details: { targetUserId: targetId, generated }
     });
-    wsServer.disconnectUser(targetId);
+    wsServer.disconnectUser(targetId, 'Пароль сброшен администратором — войдите заново');
 
     res.json({
       success: true,
@@ -466,6 +478,7 @@ router.put('/admin/roles/:id', requireAuth, requireAdmin, route(async (req, res)
     // выданные токены, иначе новые ограничения вступят в силу только через
     // неделю.
     await db.run('UPDATE users SET token_version = token_version + 1 WHERE role_id = $1', [roleId]);
+    wsServer.disconnectUsersWithRole(roleId, 'Права вашей роли изменены администратором — войдите заново');
 
     AuditService.log({
       userId: req.user.id,
@@ -684,7 +697,11 @@ router.get('/admin/licenses', requireAuth, requireAdmin, route(async (req, res) 
 
 // ── 3. ОРГСТРУКТУРА ──
 router.get('/org/tree', requireAuth, route(async (req, res) => {
-  res.json(await OrgService.getOrganizationTree(req.user?.admin_scope_dept_id));
+  // Контур сужает дерево только администратору подразделения. Поле
+  // admin_scope_dept_id можно проставить и рядовому сотруднику — и его
+  // «Контакты» молча сжимались до одного отдела.
+  const scope = isScopedAdmin(req.user) ? req.user.admin_scope_dept_id : null;
+  res.json(await OrgService.getOrganizationTree(scope));
 }));
 
 router.post('/org/departments', requireAuth, requireAdmin, route(async (req, res) => {
@@ -868,6 +885,12 @@ router.post('/announcements/:id/acknowledge', requireAuth, (req, res) => {
 
 router.get('/announcements/:id/audit', requireAuth, route(async (req, res) => {
   try {
+    // Кто и когда ознакомился — сведения для тех, кто рассылает распоряжения,
+    // а не для всех сотрудников.
+    const permissions = req.user.permissions || {};
+    if (!permissions.is_admin && !permissions.can_broadcast) {
+      return res.status(403).json({ error: 'Журнал ознакомления доступен только администраторам' });
+    }
     res.json(await AnnouncementService.getAnnouncementAudit(req.params.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -913,6 +936,9 @@ router.get('/admin/registrations', requireAuth, requireAdminOrScopedAdmin, route
     ORDER BY u.registered_at ASC
   `);
 
+  // Администратор подразделения, у которого подразделение сняли (например,
+  // его удалили), не видит ничего — а не заявки всей компании.
+  if (isScopedAdmin(req.user) && !req.user.admin_scope_dept_id) return res.json([]);
   if (isScopedAdmin(req.user) && req.user.admin_scope_dept_id) {
     const allowed = new Set(await OrgService.getSubtreeDepartmentIds(req.user.admin_scope_dept_id));
     return res.json(rows.filter((row) => allowed.has(Number(row.department_id))));
@@ -930,7 +956,7 @@ router.post('/admin/registrations/:id/approve', requireAuth, requireAdminOrScope
       ip: getClientIp(req),
       details: { approvedUserId: Number(req.params.id), username: user?.username }
     });
-    wsServer.broadcast({ type: 'user_created', user });
+    wsServer.broadcast({ type: 'user_created', user: UserService.toPublicUser(user) });
     res.json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -962,7 +988,9 @@ router.get('/admin/audit', requireAuth, requireAdmin, route(async (req, res) => 
   }
 }));
 
-router.get('/settings', requireAuth, route(async (req, res) => {
+// Полные настройки содержат токен Telegram-бота и чёрный список адресов —
+// только администратору. Сотрудникам нужное отдаёт /settings/info.
+router.get('/settings', requireAuth, requireAdmin, route(async (req, res) => {
   res.json(await SettingsService.getAllSettings());
 }));
 
@@ -990,12 +1018,28 @@ router.post('/channels', requireAuth, (req, res) => {
 });
 
 // ── 8. ФАЙЛЫ ──
-router.post('/files/upload', requireAuth, upload.single('file'), (req, res) => {
+// Право проверяется до приёма тела: иначе сотрудник без права загрузки всё
+// равно заставлял сервер держать в памяти до 100 МБ, прежде чем получить 403.
+function requireUploadPermission(req, res, next) {
+  if (!req.user.permissions?.can_upload_files && !req.user.permissions?.is_admin) {
+    return res.status(403).json({ error: 'Загрузка файлов не разрешена для вашей роли' });
+  }
+  next();
+}
+
+function acceptUpload(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    res.status(tooLarge ? 413 : 400).json({
+      error: tooLarge ? 'Файл больше 100 МБ — такой файл загрузить нельзя' : `Файл не принят: ${err.message}`
+    });
+  });
+}
+
+router.post('/files/upload', requireAuth, requireUploadPermission, acceptUpload, (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не прикреплен' });
-    if (!req.user.permissions?.can_upload_files && !req.user.permissions?.is_admin) {
-      return res.status(403).json({ error: 'Загрузка файлов не разрешена для вашей роли' });
-    }
     res.status(201).json(FileService.saveUploadedFile({
       uploaderId: req.user.id,
       originalName: Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
@@ -1015,8 +1059,11 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   if (!FileService.canUserAccessFile(req.user.id, req.params.id)) {
     return res.status(403).send('Доступ запрещен: файл вне ваших диалогов и каналов');
   }
+  // Тип файла назвал тот, кто его загрузил. Отданный «inline» HTML или SVG
+  // исполнился бы в контексте приложения — поэтому только как вложение.
   res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   fs.createReadStream(file.path).pipe(res);
 });
 

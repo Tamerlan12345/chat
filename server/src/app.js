@@ -79,13 +79,6 @@ app.use((req, res, next) => {
 
   res.status(403).type('html').send(renderAccessDeniedPage(ip));
 });
-// origin:true reflects whatever Origin the caller sends — needed because
-// clients hit this server from arbitrary LAN hostnames/IPs, and there's no
-// fixed allowlist yet (see docs/designs/auth-access-control-remediation.md
-// "Open Questions" — CORS lockdown needs real Origin data first). credentials
-// is intentionally NOT enabled: auth is Bearer-token-in-header only, no
-// cookies are ever set, so reflected-origin + allow-credentials (the actually
-// dangerous combination) doesn't apply here.
 // Хранилище учётных записей поднимается асинхронно. Пока оно не готово, любой
 // запрос упёрся бы в невнятную ошибку внутри сервиса — честнее ответить, что
 // сервер ещё запускается.
@@ -94,9 +87,22 @@ app.use((req, res, next) => {
   res.status(503).json({ error: 'Сервер запускается, повторите через несколько секунд' });
 });
 
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Интерфейс загружается с этого же сервера, и его запросы — того же
+// происхождения, CORS им не нужен. Отражение любого Origin разрешало чужому
+// сайту, открытому сотрудником в офисе, обращаться к API из разрешённой сети
+// и читать ответы. Для разработки (vite на другом порту) адреса перечисляются
+// явно в CORS_ALLOWED_ORIGINS.
+const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+if (corsOrigins.length) {
+  app.use(cors({ origin: corsOrigins }));
+}
+// Самое крупное тело — фотография профиля в data URL. 50 МБ на разбор JSON до
+// всякой авторизации — готовый способ занять память сервера.
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Security headers (defense in depth — this SPA is also reachable from any
 // plain browser on the LAN via the static-file fallback below, not just

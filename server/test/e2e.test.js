@@ -630,7 +630,7 @@ test('29. отключённый сотрудник теряет доступ', 
     body: { username: 'petrova', password: 'парольанны' }
   });
   assert.strictEqual(login.status, 400);
-  assert.match(login.json.error, /не найден|деактивирован/i);
+  assert.match(login.json.error, /Неверный логин или пароль/);
 });
 
 test('30. прежний токен отключённого сотрудника перестаёт работать', async () => {

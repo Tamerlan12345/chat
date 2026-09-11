@@ -185,6 +185,22 @@ class MessageService {
       throw new Error('Пустое сообщение не отправляется');
     }
 
+    // Ссылка на вложение и есть пропуск к файлу: доступ к скачиванию выдаётся
+    // каждому участнику переписки, где файл упомянут. Без этой проверки
+    // сотрудник вписывал в своё сообщение номер чужого файла и скачивал его.
+    if (metadata !== null && metadata !== undefined) {
+      if (typeof metadata !== 'object' || Array.isArray(metadata) || JSON.stringify(metadata).length > 4096) {
+        throw new Error('Недопустимые сведения о вложении');
+      }
+      if (metadata.file_id !== undefined && metadata.file_id !== null) {
+        const fileId = Number(metadata.file_id);
+        const FileService = require('./file.service');
+        if (!Number.isInteger(fileId) || !FileService.canUserAccessFile(Number(senderId), fileId)) {
+          throw new Error('Вложение недоступно: файл не найден или относится к чужой переписке');
+        }
+      }
+    }
+
     const result = db
       .prepare(`
         INSERT INTO messages (conversation_type, target_id, sender_id, text, type, reply_to_id, metadata_json, created_at)
@@ -257,9 +273,20 @@ class MessageService {
       return { lastReadId: maxId };
     }
 
+    // Только ещё не прочитанные. Раньше возвращалась вся история собеседника, и
+    // каждая отметка порождала рассылку — на которую открытый у собеседника
+    // чат отвечал своей отметкой. Два открытых диалога гоняли так тысячи
+    // запросов в секунду, переписывая статусы всей переписки.
     const unread = db
-      .prepare(`SELECT id FROM messages WHERE conversation_type = 'direct' AND sender_id = ? AND target_id = ?`)
-      .all(target, me);
+      .prepare(`
+        SELECT m.id FROM messages m
+        WHERE m.conversation_type = 'direct' AND m.sender_id = ? AND m.target_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM message_statuses s
+            WHERE s.message_id = m.id AND s.user_id = ? AND s.status = 'read'
+          )
+      `)
+      .all(target, me, me);
 
     const insertStatus = db.prepare(`
       INSERT OR REPLACE INTO message_statuses (message_id, user_id, status, timestamp)

@@ -29,8 +29,39 @@ test('пока заявка не подтверждена, войти нельз
 });
 
 test('неверный пароль проверяется раньше статуса заявки', async () => {
-  // Иначе по разнице ответов можно было бы выяснять, какие логины заведены.
-  await assert.rejects(() => AuthService.login('ivanov', 'не тот пароль'), /Неверный пароль/);
+  // Иначе по разнице ответов можно было бы выяснять, какие заявки поданы.
+  await assert.rejects(() => AuthService.login('ivanov', 'не тот пароль'), /Неверный логин или пароль/);
+});
+
+test('несуществующий логин и неверный пароль неотличимы по ответу', async () => {
+  // Разные сообщения превращают форму входа в справочник логинов компании:
+  // перебираешь фамилии и смотришь, где ответ «неверный пароль».
+  const messageFor = async (username, password) => {
+    try {
+      await AuthService.login(username, password);
+      return null;
+    } catch (err) {
+      return err.message;
+    }
+  };
+  const unknown = await messageFor('nosuchuser', 'не тот пароль');
+  const wrongPassword = await messageFor('ivanov', 'не тот пароль');
+  assert.ok(unknown, 'вход несуществующего сотрудника обязан отклоняться');
+  assert.strictEqual(unknown, wrongPassword);
+});
+
+test('несуществующий логин проверяется так же долго, как существующий', async () => {
+  // Без хэширования отказ по неизвестному логину приходит за миллисекунды, а
+  // по известному — за время scrypt: та же утечка, только через секундомер.
+  const timeOf = async (username) => {
+    const started = process.hrtime.bigint();
+    await AuthService.login(username, 'не тот пароль').catch(() => {});
+    return Number(process.hrtime.bigint() - started) / 1e6;
+  };
+  await timeOf('ivanov');
+  const known = await timeOf('ivanov');
+  const unknown = await timeOf('nosuchuser');
+  assert.ok(unknown > known / 3, `неизвестный: ${unknown.toFixed(1)} мс, известный: ${known.toFixed(1)} мс`);
 });
 
 test('заявка не попадает в общие каналы до одобрения', async () => {
