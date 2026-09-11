@@ -14,6 +14,19 @@ const { initIdentity, identity, isIdentityReady, closeIdentity } = require('./db
 
 let started = null;
 
+// Сотрудники, заведённые через консоль до исправления, в общих каналах не
+// состояли: канал был виден, а читать и писать в него было нельзя. При каждом
+// запуске недостающее участие добавляется — повторно ничего не дублируется.
+async function syncDefaultChannelMembers() {
+  const MessageService = require('./services/message.service');
+  const members = await identity().all(
+    `SELECT id FROM users WHERE is_active = 1 AND approval_status = 'approved'`
+  );
+  const added = MessageService.addToDefaultChannels(members.map((m) => m.id));
+  if (added) console.log(`[DB] Добавлено участий в общих каналах: ${added}`);
+  return added;
+}
+
 async function bootstrap() {
   if (started) return started;
   started = (async () => {
@@ -27,6 +40,7 @@ async function bootstrap() {
        ORDER BY u.id ASC`
     );
     seedChatDefaults(chatDb, admin ? admin.id : null);
+    await syncDefaultChannelMembers();
 
     finalizeIdentitySplit(chatDb);
 
@@ -49,4 +63,4 @@ async function shutdown() {
   await closeIdentity();
 }
 
-module.exports = { bootstrap, shutdown, isReady: isIdentityReady };
+module.exports = { bootstrap, shutdown, isReady: isIdentityReady, syncDefaultChannelMembers };

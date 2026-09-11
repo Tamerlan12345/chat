@@ -257,15 +257,7 @@ class AuthService {
     await db.run(`UPDATE users SET approval_status = 'approved' WHERE id = $1`, [Number(userId)]);
 
     // Каналы лежат в базе переписки — участие добавляется там.
-    const chat = getDatabase();
-    const now = new Date().toISOString();
-    const systemChannels = chat.prepare(`SELECT id FROM channels WHERE type = 'system'`).all();
-    const insertMember = chat.prepare(
-      'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
-    );
-    for (const channel of systemChannels) {
-      insertMember.run(channel.id, Number(userId), 'member', now);
-    }
+    require('./message.service').addToDefaultChannels([userId]);
 
     return UserService.getUserById(userId);
   }

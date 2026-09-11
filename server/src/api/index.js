@@ -269,6 +269,7 @@ router.post('/admin/users', requireAuth, requireAdminOrScopedAdmin, route(async 
   try {
     await assertWithinAdminScope(req.user, { payload: req.body });
     const newUser = await UserService.createUser(req.body);
+    MessageService.addToDefaultChannels([newUser.id]);
     AuditService.log({
       userId: req.user.id,
       action: 'user_created',

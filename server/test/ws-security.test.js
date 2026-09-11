@@ -489,6 +489,48 @@ test('фотография профиля: новая проверяется, п
   assert.strictEqual(updated.avatar_url, small);
 });
 
+// ── Общие каналы ────────────────────────────────────────────────────────────
+
+test('сотрудник, заведённый администратором, сразу состоит в общих каналах', async () => {
+  // Найдено стендом: заведённый через консоль видел «Общий» в списке, а сервер
+  // отвечал 403 на чтение и не принимал его сообщения. В каналы добавляли
+  // только при одобрении заявки и при импорте.
+  const created = await api('POST', '/api/admin/users', {
+    token: people.admin.token,
+    body: { username: 'novyi', full_name: 'Новый Сотрудник', password: 'Парольнового-1' }
+  });
+  assert.strictEqual(created.status, 201, created.text);
+  await UserService.setMustChangePassword(created.json.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(created.json.id));
+
+  const channels = await api('GET', '/api/channels', { token });
+  const general = channels.json.find((c) => c.type === 'system');
+  assert.ok(general, 'системный канал должен быть в списке');
+
+  const history = await api('GET', `/api/messages/channels/${general.id}`, { token });
+  assert.strictEqual(history.status, 200, history.text);
+});
+
+test('при запуске уже заведённые сотрудники получают членство в общих каналах', async () => {
+  const { getDatabase } = require('../src/db');
+  const db = getDatabase();
+  db.prepare(`DELETE FROM channel_members WHERE user_id = ? AND channel_id IN (SELECT id FROM channels WHERE type = 'system')`)
+    .run(people.sidorov.id);
+
+  const { syncDefaultChannelMembers } = require('../src/bootstrap');
+  const added = await syncDefaultChannelMembers();
+  assert.ok(added >= 1, `добавлено ${added}`);
+
+  const systemCount = db.prepare(`SELECT COUNT(*) AS n FROM channels WHERE type = 'system'`).get().n;
+  const memberCount = db
+    .prepare(`SELECT COUNT(*) AS n FROM channel_members cm JOIN channels c ON c.id = cm.channel_id WHERE c.type = 'system' AND cm.user_id = ?`)
+    .get(people.sidorov.id).n;
+  assert.strictEqual(memberCount, systemCount);
+
+  // Повторный запуск ничего не дублирует.
+  assert.strictEqual(await syncDefaultChannelMembers(), 0);
+});
+
 test('журнал ознакомления с распоряжением сотруднику недоступен', async () => {
   const created = await api('POST', '/api/announcements', {
     token: people.admin.token,

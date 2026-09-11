@@ -375,6 +375,30 @@ class MessageService {
     return db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
   }
 
+  /**
+   * Системные каналы («Общий», «Объявления») — для всех сотрудников. Участие
+   * добавлялось только при одобрении заявки и при импорте; заведённый через
+   * консоль видел канал в списке, но читать и писать в него не мог.
+   * Возвращает число добавленных участий; повторный вызов ничего не дублирует.
+   */
+  static addToDefaultChannels(userIds) {
+    const ids = [...new Set((userIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!ids.length) return 0;
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    const systemChannels = db.prepare(`SELECT id FROM channels WHERE type = 'system'`).all();
+    const insertMember = db.prepare(
+      'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
+    );
+    let added = 0;
+    for (const userId of ids) {
+      for (const channel of systemChannels) {
+        added += Number(insertMember.run(channel.id, userId, 'member', now).changes || 0);
+      }
+    }
+    return added;
+  }
+
   static getChannelMemberIds(channelId) {
     return getDatabase()
       .prepare('SELECT user_id FROM channel_members WHERE channel_id = ?')
