@@ -1,62 +1,89 @@
 const http = require('node:http');
 const config = require('./config');
-const { getDatabase } = require('./db');
+const { bootstrap, shutdown } = require('./bootstrap');
 const wsServer = require('./ws/server');
 const backupScheduler = require('./services/backup-scheduler.service');
+const SettingsService = require('./services/settings.service');
 
-// Приложение собирается в app.js и экспортируется без запуска — так его
-// можно поднять в тестах на произвольном порту, не трогая расписание
-// резервных копий и WebSocket.
+// Приложение собирается в app.js и экспортируется без запуска — так его можно
+// поднять в тестах на произвольном порту, не трогая расписание резервных копий
+// и WebSocket.
 const app = require('./app');
 
-// Create HTTP server
 const server = http.createServer(app);
-
-// Initialize WebSocket Gateway
 wsServer.init(server);
 
-// Start listening
-server.listen(config.PORT, config.HOST, () => {
-  // Ensure DB is initialized
-  const db = getDatabase();
-  db.prepare("UPDATE users SET status = 'offline'").run();
+async function start() {
+  // Сначала базы, потом приём соединений: запросы, пришедшие раньше готовности
+  // хранилища учётных записей, всё равно пришлось бы отклонять.
+  await bootstrap();
+  await SettingsService.load();
+  SettingsService.startAutoRefresh();
 
-  backupScheduler.start();
+  server.listen(config.PORT, config.HOST, () => {
+    backupScheduler.start();
 
-  console.log(`
+    const identityLine =
+      config.IDENTITY_DRIVER === 'postgres'
+        ? 'PostgreSQL (DATABASE_URL)'
+        : `SQLite ${config.IDENTITY_DB_PATH} — задайте DATABASE_URL для рабочей установки`;
+
+    console.log(`
 =====================================================================
   ███╗   ███╗██╗   ██╗ ██████╗██╗  ██╗ █████╗ ████████╗
   ████╗ ████║╚██╗ ██╔╝██╔════╝██║  ██║██╔══██╗╚══██╔══╝
-  ██╔████╔██║ ╚████╔╝ ██║     ███████║███████║   ██║   
-  ██║╚██╔╝██║  ╚██╔╝  ██║     ██╔══██║██╔══██║   ██║   
-  ██║ ╚═╝ ██║   ██║   ╚██████╗██║  ██║██║  ██║   ██║   
-  ╚═╝     ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   
+  ██╔████╔██║ ╚████╔╝ ██║     ███████║███████║   ██║
+  ██║╚██╔╝██║  ╚██╔╝  ██║     ██╔══██║██╔══██║   ██║
+  ██║ ╚═╝ ██║   ██║   ╚██████╗██║  ██║██║  ██║   ██║
+  ╚═╝     ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
        OpenMyChat Enterprise Server Core v${config.SERVER_VERSION}
 =====================================================================
-  [✓] Server Port:        ${config.PORT} (TCP / HTTP & WebSocket)
-  [✓] Local Address:      http://localhost:${config.PORT}
-  [✓] Web Management:     http://localhost:${config.PORT}/admin
-  [✓] Web Database Studio:http://localhost:${config.PORT}/api/admin/db
-  [✓] WebSocket Endpoint: ws://localhost:${config.PORT}/ws
-  [✓] Database Path:      ${config.DB_PATH} (SQLite WAL)
-  [✓] Auto Backups:       every ${config.BACKUP_INTERVAL_HOURS}h, keep last ${config.BACKUP_RETENTION_COUNT} (${config.BACKUPS_DIR})
-  [✓] Ready for client connections & remote desktop sessions.
+  [✓] Порт:                ${config.PORT} (HTTP и WebSocket)
+  [✓] Локальный адрес:     http://localhost:${config.PORT}
+  [✓] WebSocket:           ws://localhost:${config.PORT}/ws
+  [✓] Переписка:           ${config.DB_PATH} (SQLite WAL)
+  [✓] Учётные записи:      ${identityLine}
+  [✓] Резервные копии:     каждые ${config.BACKUP_INTERVAL_HOURS} ч, хранить ${config.BACKUP_RETENTION_COUNT} (${config.BACKUPS_DIR})
 =====================================================================
-  SuperAdmin login: admin
-  Password:         ${process.env.INITIAL_ADMIN_PASSWORD
-    ? 'as set in INITIAL_ADMIN_PASSWORD'
-    : '123456 (default — set INITIAL_ADMIN_PASSWORD to override)'}
-  Applies to the first run only, when the database is seeded; a password
-  changed since then is unaffected. A forced change is required on first login.
+  Вход администратора: admin
+  Пароль:              ${process.env.INITIAL_ADMIN_PASSWORD
+    ? 'как задано в INITIAL_ADMIN_PASSWORD'
+    : '123456 (по умолчанию — задайте INITIAL_ADMIN_PASSWORD)'}
+  Относится только к первому запуску, когда база заполняется впервые;
+  уже изменённый пароль это не затрагивает. При первом входе система
+  потребует его сменить.
 =====================================================================
-  `);
+    `);
+  });
+}
+
+start().catch((err) => {
+  console.error('[MyChat Server] Запуск не удался:', err);
+  process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n[MyChat Server] Stopping server gracefully...');
-  server.close(() => {
-    console.log('[MyChat Server] Stopped.');
+let stopping = false;
+async function stop(signal) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`\n[MyChat Server] ${signal}: останавливаюсь…`);
+
+  // Соединение с PostgreSQL закрывается явно: незакрытый пул держит процесс
+  // живым, и контейнер снимается по таймауту вместо штатного завершения.
+  server.close(async () => {
+    SettingsService.stopAutoRefresh();
+    try {
+      await shutdown();
+    } catch (err) {
+      console.warn('[MyChat Server] Ошибка при закрытии хранилища:', err.message);
+    }
+    console.log('[MyChat Server] Остановлен.');
     process.exit(0);
   });
-});
+
+  // Если соединения не закрылись за 10 секунд — выходим принудительно.
+  setTimeout(() => process.exit(0), 10000).unref();
+}
+
+process.on('SIGINT', () => stop('SIGINT'));
+process.on('SIGTERM', () => stop('SIGTERM'));

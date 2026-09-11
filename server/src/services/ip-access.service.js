@@ -100,8 +100,12 @@ function getClientIp(req) {
   return socketIp;
 }
 
+// Синхронная по необходимости: вызывается из middleware до всего остального и
+// из проверки рукопожатия WebSocket. Чёрный список берётся из снимка настроек
+// в памяти — обращаться за ним в базу на каждом входящем запросе значило бы
+// подарить любому желающему способ нагрузить её без авторизации.
 function isIpAllowed(ip) {
-  const blacklist = (SettingsService.getSetting('ip_blacklist', '') || '')
+  const blacklist = (SettingsService.getSettingSync('ip_blacklist', '') || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);

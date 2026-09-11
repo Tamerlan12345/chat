@@ -63,15 +63,19 @@ class FileService {
     return false;
   }
 
-  static getRecentFiles(userId, limit = 50) {
+  // Имя загрузившего лежит в другой базе — подставляется отдельным запросом,
+  // одним на всю выдачу.
+  static async getRecentFiles(userId, limit = 50) {
     const db = getDatabase();
-    const memberChannels = db.prepare('SELECT channel_id FROM channel_members WHERE user_id = ?').all(userId).map(r => r.channel_id);
+    const memberChannels = db
+      .prepare('SELECT channel_id FROM channel_members WHERE user_id = ?')
+      .all(Number(userId))
+      .map((r) => r.channel_id);
     const channelPlaceholders = memberChannels.length ? memberChannels.map(() => '?').join(',') : 'NULL';
 
-    return db.prepare(`
-      SELECT f.*, u.full_name as uploader_name
+    const rows = db.prepare(`
+      SELECT f.*
       FROM files f
-      LEFT JOIN users u ON f.uploader_id = u.id
       WHERE f.uploader_id = ?
         OR EXISTS (
           SELECT 1 FROM messages m
@@ -82,7 +86,14 @@ class FileService {
             )
         )
       ORDER BY f.id DESC LIMIT ?
-    `).all(userId, userId, userId, ...memberChannels, limit);
+    `).all(Number(userId), Number(userId), Number(userId), ...memberChannels, Number(limit) || 50);
+
+    const UserService = require('./user.service');
+    const directory = await UserService.getDirectory(rows.map((r) => r.uploader_id));
+    return rows.map((row) => ({
+      ...row,
+      uploader_name: directory.get(Number(row.uploader_id))?.full_name || 'Удалённый сотрудник'
+    }));
   }
 }
 

@@ -1,19 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
 const http = require('node:http');
 const WebSocket = require('ws');
+const { freshBoot, closeAll } = require('./helpers/boot');
 
 // Сквозная проверка сервиса целиком: поднимается настоящий сервер, дальше всё
 // делается ровно так, как это делает приложение — по HTTP и WebSocket. Ни один
 // сервис не вызывается напрямую, поэтому здесь видно то, чего не видят
-// остальные тесты: маршрутизацию, авторизацию, порядок обработчиков и обмен
-// событиями между двумя одновременно подключёнными людьми.
-const DB_PATH = path.resolve(__dirname, '../data/mychat.db');
-for (const suffix of ['', '-wal', '-shm']) {
-  try { fs.rmSync(DB_PATH + suffix, { force: true }); } catch {}
-}
+// остальные тесты: маршрутизацию, авторизацию, порядок обработчиков, обмен
+// событиями между двумя одновременно подключёнными людьми — и то, что
+// переписка и учётные записи, лежащие теперь в разных базах, сходятся вместе.
 
 process.env.INITIAL_ADMIN_PASSWORD = 'начальныйпароль';
 process.env.INITIAL_ADMIN_NAME = 'Администратор Тестов';
@@ -26,6 +22,7 @@ let server;
 const state = {};
 
 test.before(async () => {
+  await freshBoot();
   const app = require('../src/app');
   const wsServer = require('../src/ws/server');
   server = http.createServer(app);
@@ -36,11 +33,12 @@ test.before(async () => {
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
 
-test.after(() => {
+test.after(async () => {
   for (const sock of Object.values(state.sockets || {})) {
     try { sock.close(); } catch {}
   }
   server?.close();
+  await closeAll();
 });
 
 async function api(method, urlPath, { body, token } = {}) {

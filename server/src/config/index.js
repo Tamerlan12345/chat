@@ -5,9 +5,58 @@ const crypto = require('node:crypto');
 const ROOT_DIR = path.resolve(__dirname, '../../');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const DB_PATH = path.join(DATA_DIR, 'mychat.db');
+// Учётные записи живут отдельно от переписки. Когда задан DATABASE_URL —
+// в PostgreSQL; без него (локальная разработка и тесты) — в отдельном файле
+// SQLite, но через тот же асинхронный интерфейс, что и PostgreSQL, чтобы
+// проверяемый код и рабочий код были одним и тем же кодом.
+const IDENTITY_DB_PATH = path.join(DATA_DIR, 'identity.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const JWT_SECRET_PATH = path.join(DATA_DIR, '.jwt_secret');
+
+const DATABASE_URL = (process.env.DATABASE_URL || process.env.POSTGRES_URL || '').trim();
+
+// Режим TLS до PostgreSQL. По умолчанию — проверяемый TLS для внешних узлов и
+// отсутствие TLS для локальной и внутренней сети (внутри Railway трафик между
+// контейнерами не выходит за пределы частной сети, а сертификата у внутреннего
+// имени нет вовсе). Ослабить проверку можно только явно: DATABASE_SSL=no-verify.
+function resolvePgSsl(url) {
+  const explicit = (process.env.DATABASE_SSL || '').trim().toLowerCase();
+  if (explicit === 'disable' || explicit === 'off' || explicit === 'false') return false;
+  if (explicit === 'no-verify' || explicit === 'allow') {
+    return { rejectUnauthorized: false, __insecure: true };
+  }
+
+  let host = '';
+  let sslmode = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname || '';
+    sslmode = (parsed.searchParams.get('sslmode') || '').toLowerCase();
+  } catch {
+    /* строка подключения нестандартного вида — решаем по умолчанию ниже */
+  }
+
+  if (sslmode === 'disable') return false;
+  if (sslmode === 'require' || sslmode === 'no-verify') {
+    return { rejectUnauthorized: false, __insecure: true };
+  }
+
+  const isPrivate =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host.endsWith('.railway.internal') ||
+    host.endsWith('.internal') ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+
+  if (isPrivate) return false;
+
+  const ca = process.env.DATABASE_CA_CERT;
+  return ca ? { rejectUnauthorized: true, ca } : { rejectUnauthorized: true };
+}
 
 // JWT_SECRET: use an operator-supplied env var if set, otherwise generate a
 // random per-install secret once and persist it locally. Never fall back to a
@@ -39,6 +88,30 @@ module.exports = {
   DB_PATH,
   UPLOADS_DIR,
   BACKUPS_DIR,
+
+  // ── Хранилище учётных записей ──────────────────────────────────────────
+  // Переписка остаётся в SQLite (DB_PATH). Здесь — только люди, роли,
+  // подразделения, привязки устройств и журнал действий.
+  DATABASE_URL,
+  IDENTITY_DRIVER: DATABASE_URL ? 'postgres' : 'sqlite',
+  IDENTITY_DB_PATH,
+  PG_SSL: DATABASE_URL ? resolvePgSsl(DATABASE_URL) : false,
+  PG_POOL_MAX: process.env.PG_POOL_MAX ? parseInt(process.env.PG_POOL_MAX, 10) : 10,
+  // Запрос, зависший в базе, не должен держать соединение бесконечно: пул
+  // конечен, и несколько таких запросов останавливают весь сервер.
+  PG_STATEMENT_TIMEOUT_MS: process.env.PG_STATEMENT_TIMEOUT_MS
+    ? parseInt(process.env.PG_STATEMENT_TIMEOUT_MS, 10)
+    : 15000,
+
+  // Блокировка учётной записи после серии неудачных входов. В отличие от
+  // ограничителя по IP, живущего в памяти процесса, счётчик хранится в базе:
+  // перезапуск сервера и смена адреса подбор не возобновляют.
+  LOGIN_MAX_FAILED_ATTEMPTS: process.env.LOGIN_MAX_FAILED_ATTEMPTS
+    ? parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10)
+    : 10,
+  LOGIN_LOCKOUT_MINUTES: process.env.LOGIN_LOCKOUT_MINUTES
+    ? parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10)
+    : 15,
   // Automatic scheduled backups (in addition to the manual "Backup now"
   // button in the admin DB studio) — mychat.db is the only copy of the
   // company's data, so this is not optional in production.

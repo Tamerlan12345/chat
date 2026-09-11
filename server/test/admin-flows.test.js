@@ -1,36 +1,33 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+const { freshBoot } = require('./helpers/boot');
 
 // Сквозная проверка того, чем администратор пользуется каждый день:
 // заведение сотрудника, правка его данных, пароли, отделы и перемещение
 // между ними. Проверяется не «маршрут отвечает 200», а что данные реально
-// оказались в базе.
-const DB_PATH = path.resolve(__dirname, '../data/mychat.db');
-
-let db;
-function database() {
-  if (!db) {
-    for (const suffix of ['', '-wal', '-shm']) {
-      try { fs.rmSync(DB_PATH + suffix, { force: true }); } catch {}
-    }
-    db = require('../src/db').getDatabase();
-  }
-  return db;
-}
+// оказались в базе — теперь в той, где им и место: учётные записи хранятся
+// отдельно от переписки.
 
 const UserService = require('../src/services/user.service');
 const OrgService = require('../src/services/org.service');
 const AuthService = require('../src/services/auth.service');
-const { verifyPassword } = require('../src/db');
+const { verifyPassword } = require('../src/db/identity/password');
 
-const roleId = (name) => database().prepare('SELECT id FROM roles WHERE name = ?').get(name)?.id;
-const raw = (id) => database().prepare('SELECT * FROM users WHERE id = ?').get(id);
+let identity;
 
-test('отделы: создание, переименование и удаление', () => {
-  const d = database();
-  const created = OrgService.createDepartment({
+test.before(async () => {
+  ({ identity } = await freshBoot());
+});
+
+const roleId = async (name) =>
+  (await identity.get('SELECT id FROM roles WHERE name = $1', [name]))?.id;
+const raw = (id) => identity.get('SELECT * FROM users WHERE id = $1', [Number(id)]);
+const byLogin = (login) => identity.get('SELECT * FROM users WHERE username = $1', [login]);
+const passwordMatches = async (password, row) =>
+  (await verifyPassword(password, row.password_hash, row.salt)).ok;
+
+test('отделы: создание, переименование и удаление', async () => {
+  const created = await OrgService.createDepartment({
     parent_id: null,
     name: 'Отдел тестирования',
     description: 'создан проверкой',
@@ -39,37 +36,43 @@ test('отделы: создание, переименование и удале
   });
   assert.ok(created?.id, 'создание должно возвращать отдел');
 
-  OrgService.updateDepartment(created.id, { name: 'Отдел испытаний' });
-  assert.strictEqual(
-    d.prepare('SELECT name FROM departments WHERE id = ?').get(created.id).name,
-    'Отдел испытаний'
-  );
+  await OrgService.updateDepartment(created.id, { name: 'Отдел испытаний' });
+  const renamed = await identity.get('SELECT name FROM departments WHERE id = $1', [created.id]);
+  assert.strictEqual(renamed.name, 'Отдел испытаний');
 
-  OrgService.deleteDepartment(created.id);
-  assert.strictEqual(
-    d.prepare('SELECT COUNT(*) AS n FROM departments WHERE id = ?').get(created.id).n,
-    0
+  await OrgService.deleteDepartment(created.id);
+  const gone = await identity.get('SELECT COUNT(*) AS n FROM departments WHERE id = $1', [created.id]);
+  assert.strictEqual(Number(gone.n), 0);
+});
+
+test('отдел нельзя вложить в собственное подразделение', async () => {
+  // Иначе дерево превращается в кольцо, а обход по нему — в бесконечный цикл.
+  const parent = await OrgService.createDepartment({ name: 'Управление А' });
+  const child = await OrgService.createDepartment({ name: 'Отдел А-1', parent_id: parent.id });
+
+  await assert.rejects(
+    () => OrgService.updateDepartment(parent.id, { parent_id: child.id }),
+    /внутрь его собственного/
   );
 });
 
-test('создание сотрудника: все поля формы доходят до базы', () => {
-  const d = database();
-  const dept = OrgService.createDepartment({ name: 'Бухгалтерия', dept_type: 'department' });
+test('создание сотрудника: все поля формы доходят до базы', async () => {
+  const dept = await OrgService.createDepartment({ name: 'Бухгалтерия', dept_type: 'department' });
 
-  const created = UserService.createUser({
+  const created = await UserService.createUser({
     username: 'sidorov',
     full_name: 'Сидоров Сидор',
     email: 's.sidorov@cic.kz',
     phone: '+7 700 000 00 00',
     job_title: 'Бухгалтер',
     department_id: dept.id,
-    role_id: roleId('Сотрудник'),
+    role_id: await roleId('Сотрудник'),
     extension: '2415',
     uin: 5150,
     password: 'первичныйпароль'
   });
 
-  const row = raw(created.id);
+  const row = await raw(created.id);
   assert.strictEqual(row.full_name, 'Сидоров Сидор');
   assert.strictEqual(row.email, 's.sidorov@cic.kz');
   assert.strictEqual(row.phone, '+7 700 000 00 00', 'телефон не должен теряться');
@@ -79,21 +82,37 @@ test('создание сотрудника: все поля формы дохо
   assert.strictEqual(row.must_change_password, 1, 'первичный пароль обязан меняться при входе');
 });
 
-test('заданный администратором пароль действительно работает', () => {
-  const d = database();
-  const row = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
+test('заданный администратором пароль действительно работает', async () => {
+  const row = await byLogin('sidorov');
   assert.ok(
-    verifyPassword('первичныйпароль', row.password_hash, row.salt),
+    await passwordMatches('первичныйпароль', row),
     'сохранён должен быть именно тот пароль, который ввёл администратор'
   );
 });
 
-test('правка сотрудника сохраняет изменённые поля', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
-  const otherDept = OrgService.createDepartment({ name: 'Казначейство', dept_type: 'department' });
+test('пароль хранится в новом формате, без отдельной колонки соли', async () => {
+  const row = await byLogin('sidorov');
+  assert.match(row.password_hash, /^scrypt\$N=\d+,r=\d+,p=\d+\$/);
+  assert.strictEqual(row.salt, null, 'соль теперь внутри самой записи');
+});
 
-  UserService.adminUpdateUser(user.id, {
+test('без заданного пароля выдаётся случайный, а не общеизвестный', async () => {
+  // Прежде все новые учётные записи получали «123456»: между заведением и
+  // первым входом сотрудника это открытая дверь в его учётную запись.
+  const created = await UserService.createUser({ username: 'random_pass', full_name: 'Случайный Пароль' });
+  assert.ok(created.initial_password, 'временный пароль должен возвращаться администратору');
+  assert.ok(created.initial_password.length >= 12);
+  assert.notStrictEqual(created.initial_password, '123456');
+
+  const row = await raw(created.id);
+  assert.ok(await passwordMatches(created.initial_password, row));
+});
+
+test('правка сотрудника сохраняет изменённые поля', async () => {
+  const user = await byLogin('sidorov');
+  const otherDept = await OrgService.createDepartment({ name: 'Казначейство', dept_type: 'department' });
+
+  await UserService.adminUpdateUser(user.id, {
     full_name: 'Сидоров Сидор Сидорович',
     job_title: 'Главный бухгалтер',
     department_id: otherDept.id,
@@ -102,7 +121,7 @@ test('правка сотрудника сохраняет изменённые 
     phone: '+7 701 111 11 11'
   });
 
-  const after = raw(user.id);
+  const after = await raw(user.id);
   assert.strictEqual(after.full_name, 'Сидоров Сидор Сидорович');
   assert.strictEqual(after.job_title, 'Главный бухгалтер');
   assert.strictEqual(after.department_id, otherDept.id);
@@ -111,72 +130,124 @@ test('правка сотрудника сохраняет изменённые 
   assert.strictEqual(after.phone, '+7 701 111 11 11');
 });
 
-test('перемещение сотрудника между отделами', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
-  const target = OrgService.createDepartment({ name: 'Отдел кадров', dept_type: 'department' });
+test('перемещение сотрудника между отделами', async () => {
+  const user = await byLogin('sidorov');
+  const target = await OrgService.createDepartment({ name: 'Отдел кадров', dept_type: 'department' });
 
-  OrgService.moveUser(user.id, target.id);
-  assert.strictEqual(raw(user.id).department_id, target.id);
+  await OrgService.moveUser(user.id, target.id);
+  assert.strictEqual((await raw(user.id)).department_id, target.id);
 });
 
-test('сброс пароля администратором ставит новый пароль и требует смены', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
+test('сброс пароля администратором ставит новый пароль и требует смены', async () => {
+  const user = await byLogin('sidorov');
 
-  UserService.adminResetPassword(user.id, 'выданныйпароль');
-  const after = raw(user.id);
+  await UserService.adminResetPassword(user.id, 'выданныйпароль');
+  const after = await raw(user.id);
 
-  assert.ok(verifyPassword('выданныйпароль', after.password_hash, after.salt));
-  assert.ok(!verifyPassword('первичныйпароль', after.password_hash, after.salt), 'старый должен перестать работать');
+  assert.ok(await passwordMatches('выданныйпароль', after));
+  assert.ok(!(await passwordMatches('первичныйпароль', after)), 'старый должен перестать работать');
   assert.strictEqual(after.must_change_password, 1);
 });
 
-test('сотрудник меняет пароль сам: старый проверяется, флаг снимается', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
+test('сброс без пароля генерирует временный и возвращает его один раз', async () => {
+  const user = await byLogin('random_pass');
+  const { password, generated } = await UserService.adminResetPassword(user.id);
 
-  assert.throws(
+  assert.strictEqual(generated, true);
+  assert.ok(password.length >= 12);
+  assert.ok(await passwordMatches(password, await raw(user.id)));
+});
+
+test('сотрудник меняет пароль сам: старый проверяется, флаг снимается', async () => {
+  const user = await byLogin('sidorov');
+
+  await assert.rejects(
     () => UserService.changePassword(user.id, 'неверный старый', 'какойтоновый'),
     /Старый пароль неверен/
   );
 
-  UserService.changePassword(user.id, 'выданныйпароль', 'мойличныйпароль');
-  const after = raw(user.id);
-  assert.ok(verifyPassword('мойличныйпароль', after.password_hash, after.salt));
+  await UserService.changePassword(user.id, 'выданныйпароль', 'мойличныйпароль');
+  const after = await raw(user.id);
+  assert.ok(await passwordMatches('мойличныйпароль', after));
   assert.strictEqual(after.must_change_password, 0, 'после самостоятельной смены требование снимается');
 });
 
-test('изменённый пароль переживает вход', () => {
-  const result = AuthService.login('sidorov', 'мойличныйпароль');
+test('смена пароля обрывает ранее выданные токены', async () => {
+  // Иначе смена пароля защищает только на словах: чужая сессия доживает
+  // свои семь дней как ни в чём не бывало.
+  const before = await AuthService.login('sidorov', 'мойличныйпароль');
+  assert.ok(await AuthService.resolveSession(before.token), 'свежий токен должен работать');
+
+  await UserService.changePassword(before.user.id, 'мойличныйпароль', 'ещёодинпароль');
+  assert.strictEqual(
+    await AuthService.resolveSession(before.token),
+    null,
+    'старый токен обязан перестать действовать сразу'
+  );
+});
+
+test('слишком простой пароль сотрудник поставить себе не может', async () => {
+  const user = await byLogin('sidorov');
+  await assert.rejects(() => UserService.changePassword(user.id, 'ещёодинпароль', 'корот'), /не короче/);
+  await assert.rejects(() => UserService.changePassword(user.id, 'ещёодинпароль', 'qwerty123'), /слишком простой/);
+  await assert.rejects(
+    () => UserService.changePassword(user.id, 'ещёодинпароль', 'ещёодинпароль'),
+    /должен отличаться/
+  );
+});
+
+test('изменённый пароль переживает вход', async () => {
+  const result = await AuthService.login('sidorov', 'ещёодинпароль');
   assert.ok(result.token);
   assert.strictEqual(result.user.username, 'sidorov');
 });
 
-test('назначение администратора подразделения сохраняется', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
-  const dept = d.prepare("SELECT id FROM departments WHERE name = 'Отдел кадров'").get();
+test('назначение администратора подразделения сохраняется', async () => {
+  const user = await byLogin('sidorov');
+  const dept = await identity.get(`SELECT id FROM departments WHERE name = 'Отдел кадров'`);
 
-  UserService.adminUpdateUser(user.id, {
-    role_id: roleId('Контурный администратор'),
+  await UserService.adminUpdateUser(user.id, {
+    role_id: await roleId('Контурный администратор'),
     admin_scope_dept_id: dept.id
   });
 
-  const after = raw(user.id);
-  assert.strictEqual(after.role_id, roleId('Контурный администратор'));
+  const after = await raw(user.id);
+  assert.strictEqual(after.role_id, await roleId('Контурный администратор'));
   assert.strictEqual(after.admin_scope_dept_id, dept.id, 'без этого поля контурный админ ничем не управляет');
 });
 
-test('отключение и включение сотрудника', () => {
-  const d = database();
-  const user = d.prepare("SELECT * FROM users WHERE username = 'sidorov'").get();
+test('отключение и включение сотрудника', async () => {
+  const user = await byLogin('sidorov');
 
-  UserService.toggleUserActive(user.id, false);
-  assert.strictEqual(raw(user.id).is_active, 0);
-  assert.throws(() => AuthService.login('sidorov', 'мойличныйпароль'), /не найден или деактивирован/);
+  await UserService.toggleUserActive(user.id, false);
+  assert.strictEqual((await raw(user.id)).is_active, 0);
+  await assert.rejects(() => AuthService.login('sidorov', 'ещёодинпароль'), /не найден или деактивирован/);
 
-  UserService.toggleUserActive(user.id, true);
-  assert.strictEqual(raw(user.id).is_active, 1);
-  assert.ok(AuthService.login('sidorov', 'мойличныйпароль').token);
+  await UserService.toggleUserActive(user.id, true);
+  assert.strictEqual((await raw(user.id)).is_active, 1);
+  assert.ok((await AuthService.login('sidorov', 'ещёодинпароль')).token);
+});
+
+test('серия неудачных входов временно запирает учётную запись', async () => {
+  // Ограничитель по IP живёт в памяти процесса: перезапуск сервера или смена
+  // адреса возобновляют подбор с нуля. Счётчик в базе — нет.
+  const config = require('../src/config');
+  const created = await UserService.createUser({
+    username: 'lockme',
+    full_name: 'Заблокируй Меня',
+    password: 'нормальныйпароль'
+  });
+
+  for (let i = 0; i < config.LOGIN_MAX_FAILED_ATTEMPTS; i++) {
+    await assert.rejects(() => AuthService.login('lockme', 'неверный пароль'));
+  }
+
+  await assert.rejects(
+    () => AuthService.login('lockme', 'нормальныйпароль'),
+    /заблокирована/,
+    'после порога не пускает даже с верным паролем'
+  );
+
+  const row = await raw(created.id);
+  assert.ok(row.locked_until, 'срок блокировки должен быть записан');
 });

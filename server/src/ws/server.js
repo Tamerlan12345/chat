@@ -6,7 +6,6 @@ const RemoteDesktopService = require('../services/remote-desktop.service');
 const AuditService = require('../services/audit.service');
 const { checkRateLimit } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed } = require('../services/ip-access.service');
-const { getDatabase } = require('../db');
 
 class WsServer {
   constructor() {
@@ -52,16 +51,30 @@ class WsServer {
           this.relayAudioFrame(ws, raw);
           return;
         }
+        let data;
         try {
-          const data = JSON.parse(raw.toString('utf8'));
-          this.handleMessage(ws, data);
+          data = JSON.parse(raw.toString('utf8'));
         } catch (err) {
           console.error('[WS Error] Bad JSON:', err.message);
+          return;
         }
+        // Обработчик обращается к двум базам и потому асинхронен. Отказ
+        // обещания без перехвата завершает процесс Node — одно кривое
+        // сообщение роняло бы сервер для всех.
+        Promise.resolve(this.handleMessage(ws, data)).catch((err) => {
+          console.error('[WS Error] Обработка сообщения не удалась:', err.message);
+          try {
+            ws.send(JSON.stringify({ type: 'error', message: 'Ошибка обработки запроса' }));
+          } catch {
+            /* сокет уже закрыт */
+          }
+        });
       });
 
       ws.on('close', () => {
-        this.handleDisconnect(ws);
+        Promise.resolve(this.handleDisconnect(ws)).catch((err) =>
+          console.error('[WS Error] Разрыв соединения обработан с ошибкой:', err.message)
+        );
       });
 
       ws.on('error', (err) => {
@@ -117,7 +130,7 @@ class WsServer {
     if (b !== undefined) this.activeCalls.delete(b);
   }
 
-  handleMessage(ws, msg) {
+  async handleMessage(ws, msg) {
     const { type } = msg;
 
     // 1. Authentication
@@ -125,14 +138,12 @@ class WsServer {
       if (!checkRateLimit(`ws_auth:${ws.remoteIp || '127.0.0.1'}`, { maxAttempts: 10, windowMs: 60000 })) {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Слишком много попыток. Повторите через минуту.' }));
       }
-      const payload = AuthService.verifyToken(msg.token);
-      if (!payload) {
-        return ws.send(JSON.stringify({ type: 'auth_error', message: 'Недействительный токен авторизации' }));
-      }
 
-      const user = UserService.getUserById(payload.userId);
-      if (!user || !user.is_active) {
-        return ws.send(JSON.stringify({ type: 'auth_error', message: 'Пользователь не найден или заблокирован' }));
+      // resolveSession проверяет и подпись, и то, что учётная запись всё ещё
+      // действует, и поколение токена: выданный до смены пароля сюда не пройдёт.
+      const user = await AuthService.resolveSession(msg.token);
+      if (!user) {
+        return ws.send(JSON.stringify({ type: 'auth_error', message: 'Недействительный токен авторизации' }));
       }
       if (user.must_change_password) {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Требуется смена пароля перед продолжением работы', code: 'MUST_CHANGE_PASSWORD' }));
@@ -146,7 +157,7 @@ class WsServer {
       this.userSockets.get(user.id).add(ws);
 
       // Update status to online
-      UserService.updateStatus(user.id, 'online');
+      await UserService.updateStatus(user.id, 'online');
 
       ws.send(JSON.stringify({ type: 'auth_success', user }));
 
@@ -182,7 +193,7 @@ class WsServer {
 
       let savedMsg;
       try {
-        savedMsg = MessageService.sendMessage({
+        savedMsg = await MessageService.sendMessage({
           conversationType,
           targetId: Number(targetId),
           senderId: currentUser.id,
@@ -197,48 +208,19 @@ class WsServer {
       }
 
       if (conversationType === 'channel') {
-        // Broadcast to all channel members
-        const db = getDatabase();
-        const members = db.prepare('SELECT user_id FROM channel_members WHERE channel_id = ?').all(targetId);
-        for (const m of members) {
-          this.sendToUser(m.user_id, {
-            type: 'channel_message',
-            message: savedMsg
-          });
-          this.sendToUser(m.user_id, {
-            type: 'new_message',
-            message: savedMsg
-          });
+        for (const memberId of MessageService.getChannelMemberIds(targetId)) {
+          this.sendToUser(memberId, { type: 'channel_message', message: savedMsg });
+          this.sendToUser(memberId, { type: 'new_message', message: savedMsg });
         }
       } else {
-        // Direct message
-        // Send to recipient
-        this.sendToUser(targetId, {
-          type: 'direct_message',
-          message: savedMsg
-        });
-        this.sendToUser(targetId, {
-          type: 'new_message',
-          message: savedMsg
-        });
+        for (const userId of [targetId, currentUser.id]) {
+          this.sendToUser(userId, { type: 'direct_message', message: savedMsg });
+          this.sendToUser(userId, { type: 'new_message', message: savedMsg });
+        }
 
-        // Send confirmation back to sender's all devices
-        this.sendToUser(currentUser.id, {
-          type: 'direct_message',
-          message: savedMsg
-        });
-        this.sendToUser(currentUser.id, {
-          type: 'new_message',
-          message: savedMsg
-        });
-
-        // If recipient is online, immediately emit delivered status
+        // Получатель на связи — отметка о доставке ставится сразу.
         if (this.isUserOnline(targetId)) {
-          const now = new Date().toISOString();
-          const db = getDatabase();
-          db.prepare("INSERT OR REPLACE INTO message_statuses (message_id, user_id, status, timestamp) VALUES (?, ?, 'delivered', ?)")
-            .run(savedMsg.id, targetId, now);
-
+          const now = MessageService.markDelivered(savedMsg.id, targetId);
           this.sendToUser(currentUser.id, {
             type: 'message_status_updated',
             messageId: savedMsg.id,
@@ -290,7 +272,7 @@ class WsServer {
     // 5. Presence Status Change (Online / Away / DND)
     if (type === 'set_status' || type === 'status_update') {
       const { status, customStatus } = msg;
-      UserService.updateStatus(currentUser.id, status, customStatus);
+      await UserService.updateStatus(currentUser.id, status, customStatus);
       currentUser.status = status;
       currentUser.custom_status = customStatus;
 
@@ -466,7 +448,7 @@ class WsServer {
     }
   }
 
-  handleDisconnect(ws) {
+  async handleDisconnect(ws) {
     const user = this.socketUser.get(ws);
     // Оборвалась связь — разговор окончен; иначе пара осталась бы
     // зарегистрированной и принимала бы звук после ухода собеседника.
@@ -480,7 +462,9 @@ class WsServer {
       if (sockets.size === 0) {
         this.userSockets.delete(user.id);
         // Mark user as offline
-        UserService.updateStatus(user.id, 'offline');
+        await UserService.updateStatus(user.id, 'offline').catch((err) =>
+          console.warn('[WS] не удалось отметить уход:', err.message)
+        );
         this.broadcast({
           type: 'user_status_changed',
           userId: user.id,

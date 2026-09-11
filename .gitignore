@@ -7,6 +7,13 @@ server/data/
 # Server-generated local secrets
 server/data/.jwt_secret
 
+# Настройки развёртывания: пароль к базе учётных записей, секрет подписи
+# токенов, начальный пароль администратора. В репозитории им не место —
+# образец лежит в .env.example.
+.env
+.env.*
+!.env.example
+
 # Build output
 desktop/dist/
 desktop/release/

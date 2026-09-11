@@ -1,21 +1,21 @@
-const { getDatabase } = require('../db');
+const { identity } = require('../db/identity');
 
 class OrgService {
   /**
-   * Helper: Get all department IDs in a subtree (including root)
+   * Все подразделения поддерева, включая корень. Используется везде, где
+   * действует «контур» администратора подразделения.
    */
-  static getSubtreeDepartmentIds(rootDeptId) {
+  static async getSubtreeDepartmentIds(rootDeptId) {
     if (!rootDeptId) return null;
-    const db = getDatabase();
-    const allDepts = db.prepare('SELECT id, parent_id FROM departments').all();
-    
+    const all = await identity().all('SELECT id, parent_id FROM departments');
+
     const result = new Set([Number(rootDeptId)]);
     let added = true;
     while (added) {
       added = false;
-      for (const d of allDepts) {
-        if (d.parent_id && result.has(d.parent_id) && !result.has(d.id)) {
-          result.add(d.id);
+      for (const dept of all) {
+        if (dept.parent_id && result.has(Number(dept.parent_id)) && !result.has(Number(dept.id))) {
+          result.add(Number(dept.id));
           added = true;
         }
       }
@@ -23,34 +23,29 @@ class OrgService {
     return Array.from(result);
   }
 
-  /**
-   * Get dynamic multi-level organization tree with recursive employee counts
-   */
-  static getOrganizationTree(adminScopeDeptId = null) {
-    const db = getDatabase();
+  static async getOrganizationTree(adminScopeDeptId = null) {
+    const db = identity();
 
-    const departments = db.prepare(`
+    const departments = await db.all(`
       SELECT id, parent_id, name, description, dept_type, sort_order, created_at
       FROM departments
       ORDER BY sort_order ASC, name ASC
-    `).all();
+    `);
 
-    const users = db.prepare(`
-      SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title, u.department_id, 
-             u.role_id, u.avatar_url, u.status, u.custom_status, u.last_seen,
-             u.extension, u.bound_ip,
-             r.name as role_name
+    const users = await db.all(`
+      SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title, u.department_id,
+             u.role_id, u.avatar_url, u.status, u.custom_status, u.last_seen, u.extension,
+             r.name AS role_name
       FROM users u
-      LEFT JOIN roles r ON u.role_id = r.id
-      WHERE u.is_active = 1
+      LEFT JOIN roles r ON r.id = u.role_id
+      WHERE u.is_active = 1 AND u.approval_status = 'approved'
       ORDER BY u.full_name ASC
-    `).all();
+    `);
 
-    // Map users to departments
     const deptMap = {};
-    for (const d of departments) {
-      deptMap[d.id] = {
-        ...d,
+    for (const dept of departments) {
+      deptMap[dept.id] = {
+        ...dept,
         subDepartments: [],
         employees: [],
         totalStaffCount: 0,
@@ -59,46 +54,38 @@ class OrgService {
     }
 
     const unassignedEmployees = [];
-
-    for (const u of users) {
-      if (u.department_id && deptMap[u.department_id]) {
-        deptMap[u.department_id].employees.push(u);
+    for (const user of users) {
+      if (user.department_id && deptMap[user.department_id]) {
+        deptMap[user.department_id].employees.push(user);
       } else {
-        unassignedEmployees.push(u);
+        unassignedEmployees.push(user);
       }
     }
 
-    // Build hierarchy tree
     const rootDepartments = [];
-    for (const d of departments) {
-      if (d.parent_id && deptMap[d.parent_id]) {
-        deptMap[d.parent_id].subDepartments.push(deptMap[d.id]);
+    for (const dept of departments) {
+      if (dept.parent_id && deptMap[dept.parent_id]) {
+        deptMap[dept.parent_id].subDepartments.push(deptMap[dept.id]);
       } else {
-        rootDepartments.push(deptMap[d.id]);
+        rootDepartments.push(deptMap[dept.id]);
       }
     }
 
-    // Recursive helper to aggregate totalStaffCount and onlineStaffCount
     function calculateCounts(node) {
       let total = node.employees.length;
-      let online = node.employees.filter(e => e.status === 'online' || e.status === 'away').length;
-
+      let online = node.employees.filter((e) => e.status === 'online' || e.status === 'away').length;
       for (const sub of node.subDepartments) {
-        const subCounts = calculateCounts(sub);
-        total += subCounts.total;
-        online += subCounts.online;
+        const counts = calculateCounts(sub);
+        total += counts.total;
+        online += counts.online;
       }
-
       node.totalStaffCount = total;
       node.onlineStaffCount = online;
       return { total, online };
     }
 
-    for (const root of rootDepartments) {
-      calculateCounts(root);
-    }
+    for (const root of rootDepartments) calculateCounts(root);
 
-    // If scoped admin, return only that subtree
     let filteredTree = rootDepartments;
     if (adminScopeDeptId && deptMap[adminScopeDeptId]) {
       filteredTree = [deptMap[adminScopeDeptId]];
@@ -108,52 +95,96 @@ class OrgService {
       tree: filteredTree,
       unassigned: unassignedEmployees,
       totalUsers: users.length,
-      onlineUsers: users.filter(u => u.status === 'online' || u.status === 'away').length
+      onlineUsers: users.filter((u) => u.status === 'online' || u.status === 'away').length
     };
   }
 
-  static createDepartment({ parent_id, name, description, dept_type, sort_order }) {
-    const db = getDatabase();
-    const now = new Date().toISOString();
-    const result = db.prepare(`
-      INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(parent_id || null, name, description || '', dept_type || 'department', sort_order || 0, now);
-    return { id: Number(result.lastInsertRowid), parent_id, name, description, dept_type: dept_type || 'department', sort_order };
+  static async createDepartment({ parent_id, name, description, dept_type, sort_order } = {}) {
+    if (!name || !String(name).trim()) throw new Error('Укажите название подразделения');
+
+    const created = await identity().run(
+      `INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [
+        parent_id ? Number(parent_id) : null,
+        String(name).trim(),
+        description || '',
+        dept_type || 'department',
+        Number(sort_order) || 0,
+        new Date().toISOString()
+      ]
+    );
+
+    return this.getDepartment(created.rows[0].id);
   }
 
-  static updateDepartment(id, { name, description, dept_type, sort_order, parent_id } = {}) {
-    const db = getDatabase();
-    // COALESCE рассчитан на NULL, а не на undefined: node:sqlite отказывается
-    // связывать undefined с параметром и бросает ошибку. Поэтому правка одного
-    // поля — например переименование отдела — падала целиком, ведь остальные
+  static async getDepartment(id) {
+    return identity().get('SELECT * FROM departments WHERE id = $1', [Number(id)]);
+  }
+
+  static async updateDepartment(id, { name, description, dept_type, sort_order, parent_id } = {}) {
+    // COALESCE рассчитан на NULL, а не на undefined: правка одного поля —
+    // например переименование отдела — иначе падала целиком, ведь остальные
     // поля приходили пустыми.
     const orNull = (v) => (v === undefined ? null : v);
-    db.prepare(`
-      UPDATE departments
-      SET name = COALESCE(?, name),
-          description = COALESCE(?, description),
-          dept_type = COALESCE(?, dept_type),
-          sort_order = COALESCE(?, sort_order),
-          parent_id = COALESCE(?, parent_id)
-      WHERE id = ?
-    `).run(orNull(name), orNull(description), orNull(dept_type), orNull(sort_order), orNull(parent_id), id);
-    return db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
+
+    if (parent_id !== undefined && parent_id !== null) {
+      await this.assertNoCycle(Number(id), Number(parent_id));
+    }
+
+    await identity().run(
+      `UPDATE departments
+       SET name = COALESCE($1, name),
+           description = COALESCE($2, description),
+           dept_type = COALESCE($3, dept_type),
+           sort_order = COALESCE($4, sort_order),
+           parent_id = COALESCE($5, parent_id)
+       WHERE id = $6`,
+      [
+        orNull(name && String(name).trim()),
+        orNull(description),
+        orNull(dept_type),
+        orNull(sort_order),
+        orNull(parent_id),
+        Number(id)
+      ]
+    );
+
+    return this.getDepartment(id);
   }
 
-  static deleteDepartment(id) {
-    const db = getDatabase();
-    const dept = db.prepare('SELECT parent_id FROM departments WHERE id = ?').get(id);
+  /**
+   * Подразделение нельзя вложить в собственное поддерево: дерево превратится в
+   * кольцо, а обход по нему — в бесконечный цикл, который увидит не тот, кто
+   * это сделал, а все остальные.
+   */
+  static async assertNoCycle(id, newParentId) {
+    if (id === newParentId) {
+      throw new Error('Подразделение не может быть вложено само в себя');
+    }
+    const subtree = await this.getSubtreeDepartmentIds(id);
+    if (subtree && subtree.includes(newParentId)) {
+      throw new Error('Нельзя переместить подразделение внутрь его собственного подразделения');
+    }
+  }
+
+  static async deleteDepartment(id) {
+    const db = identity();
+    const dept = await db.get('SELECT parent_id FROM departments WHERE id = $1', [Number(id)]);
     const parentId = dept ? dept.parent_id : null;
-    db.prepare('UPDATE departments SET parent_id = ? WHERE parent_id = ?').run(parentId, id);
-    db.prepare('UPDATE users SET department_id = NULL WHERE department_id = ?').run(id);
-    db.prepare('DELETE FROM departments WHERE id = ?').run(id);
+
+    await db.run('UPDATE departments SET parent_id = $1 WHERE parent_id = $2', [parentId, Number(id)]);
+    await db.run('UPDATE users SET department_id = NULL WHERE department_id = $1', [Number(id)]);
+    await db.run('UPDATE users SET admin_scope_dept_id = NULL WHERE admin_scope_dept_id = $1', [Number(id)]);
+    await db.run('DELETE FROM departments WHERE id = $1', [Number(id)]);
     return true;
   }
 
-  static moveUser(userId, departmentId) {
-    const db = getDatabase();
-    db.prepare('UPDATE users SET department_id = ? WHERE id = ?').run(departmentId || null, userId);
+  static async moveUser(userId, departmentId) {
+    await identity().run('UPDATE users SET department_id = $1 WHERE id = $2', [
+      departmentId ? Number(departmentId) : null,
+      Number(userId)
+    ]);
     return true;
   }
 }

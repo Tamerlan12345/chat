@@ -1,90 +1,142 @@
 const { getDatabase } = require('../db');
+const { identity } = require('../db/identity');
+const UserService = require('./user.service');
 
+// Объявления лежат в базе переписки, автор — в хранилище учётных записей.
+// Автор подставляется отдельным запросом, а не соединением таблиц.
 class AnnouncementService {
-  static createAnnouncement({ author_id, title, content, target_type = 'all', target_ids = [], priority = 'normal', expires_at = null }) {
-    const db = getDatabase();
-    const now = new Date().toISOString();
+  static async createAnnouncement({
+    author_id, title, content, target_type = 'all', target_ids = [], priority = 'normal', expires_at = null
+  }) {
+    if (!title || !String(title).trim()) throw new Error('Укажите заголовок оповещения');
+    if (!content || !String(content).trim()) throw new Error('Укажите текст оповещения');
 
-    const result = db.prepare(`
-      INSERT INTO announcements (author_id, title, content, target_type, target_ids_json, priority, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(author_id, title, content, target_type, JSON.stringify(target_ids), priority, expires_at, now);
+    const result = getDatabase()
+      .prepare(`
+        INSERT INTO announcements (author_id, title, content, target_type, target_ids_json, priority, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        Number(author_id),
+        String(title).trim(),
+        String(content).trim(),
+        ['all', 'departments', 'users'].includes(target_type) ? target_type : 'all',
+        JSON.stringify(Array.isArray(target_ids) ? target_ids.map(Number) : []),
+        ['normal', 'urgent', 'critical'].includes(priority) ? priority : 'normal',
+        expires_at || null,
+        new Date().toISOString()
+      );
 
-    return this.getAnnouncementById(result.lastInsertRowid);
+    return this.getAnnouncementById(Number(result.lastInsertRowid));
   }
 
-  static getAnnouncementById(id) {
-    const db = getDatabase();
-    const ann = db.prepare(`
-      SELECT a.*, u.full_name as author_name, u.job_title as author_job_title
-      FROM announcements a
-      JOIN users u ON a.author_id = u.id
-      WHERE a.id = ?
-    `).get(id);
-    return ann;
+  static async getAnnouncementById(id) {
+    const row = getDatabase().prepare('SELECT * FROM announcements WHERE id = ?').get(Number(id));
+    if (!row) return null;
+    const [withAuthor] = await this.attachAuthors([row]);
+    return withAuthor;
   }
 
-  static getAnnouncementsForUser(userId) {
-    const db = getDatabase();
-    const user = db.prepare('SELECT department_id FROM users WHERE id = ?').get(userId);
-    const deptId = user ? user.department_id : null;
-
-    const announcements = db.prepare(`
-      SELECT a.*, u.full_name as author_name, u.job_title as author_job_title,
-             ar.read_at, ar.confirmed_at,
-             CASE WHEN ar.confirmed_at IS NOT NULL THEN 1 ELSE 0 END as is_confirmed
-      FROM announcements a
-      JOIN users u ON a.author_id = u.id
-      LEFT JOIN announcement_receipts ar ON a.id = ar.announcement_id AND ar.user_id = ?
-      WHERE (a.expires_at IS NULL OR a.expires_at > datetime('now'))
-      ORDER BY a.created_at DESC
-    `).all(userId);
-
-    // Filter by target
-    return announcements.filter(a => {
-      if (a.target_type === 'all') return true;
-      const targets = JSON.parse(a.target_ids_json || '[]');
-      if (a.target_type === 'users') return targets.includes(userId);
-      if (a.target_type === 'departments') return deptId && targets.includes(deptId);
-      return true;
+  static async attachAuthors(rows) {
+    if (!rows.length) return rows;
+    const directory = await UserService.getDirectory(rows.map((r) => r.author_id));
+    return rows.map((row) => {
+      const author = directory.get(Number(row.author_id));
+      return {
+        ...row,
+        author_name: author?.full_name || 'Удалённый сотрудник',
+        author_job_title: author?.job_title || null
+      };
     });
   }
 
-  static acknowledgeAnnouncement(announcementId, userId, ipAddress = '127.0.0.1') {
-    const db = getDatabase();
-    const now = new Date().toISOString();
+  static async getAnnouncementsForUser(userId) {
+    const me = Number(userId);
+    const user = await identity().get('SELECT department_id FROM users WHERE id = $1', [me]);
+    const deptId = user ? user.department_id : null;
 
-    db.prepare(`
-      INSERT INTO announcement_receipts (announcement_id, user_id, read_at, confirmed_at, ip_address)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(announcement_id, user_id) DO UPDATE SET confirmed_at = ?, ip_address = ?
-    `).run(announcementId, userId, now, now, ipAddress, now, ipAddress);
+    const rows = getDatabase()
+      .prepare(`
+        SELECT a.*, ar.read_at, ar.confirmed_at,
+               CASE WHEN ar.confirmed_at IS NOT NULL THEN 1 ELSE 0 END AS is_confirmed
+        FROM announcements a
+        LEFT JOIN announcement_receipts ar ON a.id = ar.announcement_id AND ar.user_id = ?
+        WHERE (a.expires_at IS NULL OR a.expires_at > datetime('now'))
+        ORDER BY a.created_at DESC
+      `)
+      .all(me);
 
-    return { success: true, announcementId, confirmed_at: now };
+    const visible = rows.filter((a) => {
+      if (a.target_type === 'all') return true;
+      let targets = [];
+      try {
+        targets = JSON.parse(a.target_ids_json || '[]');
+      } catch {
+        targets = [];
+      }
+      if (a.target_type === 'users') return targets.map(Number).includes(me);
+      if (a.target_type === 'departments') return deptId !== null && targets.map(Number).includes(Number(deptId));
+      return true;
+    });
+
+    return this.attachAuthors(visible);
   }
 
-  static getAnnouncementAudit(announcementId) {
-    const db = getDatabase();
-    const announcement = this.getAnnouncementById(announcementId);
+  static acknowledgeAnnouncement(announcementId, userId, ipAddress = '127.0.0.1') {
+    const now = new Date().toISOString();
+    getDatabase()
+      .prepare(`
+        INSERT INTO announcement_receipts (announcement_id, user_id, read_at, confirmed_at, ip_address)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(announcement_id, user_id) DO UPDATE SET confirmed_at = ?, ip_address = ?
+      `)
+      .run(Number(announcementId), Number(userId), now, now, ipAddress, now, ipAddress);
+
+    return { success: true, announcementId: Number(announcementId), confirmed_at: now };
+  }
+
+  /**
+   * Кто прочитал и подтвердил оповещение. Список получателей берётся из
+   * хранилища учётных записей, отметки — из базы переписки, сводятся в коде.
+   */
+  static async getAnnouncementAudit(announcementId) {
+    const announcement = await this.getAnnouncementById(announcementId);
     if (!announcement) throw new Error('Оповещение не найдено');
 
-    const users = db.prepare(`
-      SELECT u.id, u.username, u.full_name, u.job_title, d.name as department_name,
-             ar.read_at, ar.confirmed_at, ar.ip_address,
-             CASE WHEN ar.confirmed_at IS NOT NULL THEN 1 ELSE 0 END as is_confirmed
+    const employees = await identity().all(`
+      SELECT u.id, u.username, u.full_name, u.job_title, d.name AS department_name
       FROM users u
-      LEFT JOIN departments d ON u.department_id = d.id
-      LEFT JOIN announcement_receipts ar ON ar.announcement_id = ? AND ar.user_id = u.id
-      WHERE u.is_active = 1
-      ORDER BY is_confirmed DESC, u.full_name ASC
-    `).all(announcementId);
+      LEFT JOIN departments d ON d.id = u.department_id
+      WHERE u.is_active = 1 AND u.approval_status = 'approved'
+      ORDER BY u.full_name ASC
+    `);
 
-    const total = users.length;
-    const confirmedCount = users.filter(u => u.is_confirmed === 1).length;
+    const receipts = new Map(
+      getDatabase()
+        .prepare('SELECT user_id, read_at, confirmed_at, ip_address FROM announcement_receipts WHERE announcement_id = ?')
+        .all(Number(announcementId))
+        .map((r) => [Number(r.user_id), r])
+    );
+
+    const recipients = employees
+      .map((employee) => {
+        const receipt = receipts.get(Number(employee.id));
+        return {
+          ...employee,
+          read_at: receipt?.read_at || null,
+          confirmed_at: receipt?.confirmed_at || null,
+          ip_address: receipt?.ip_address || null,
+          is_confirmed: receipt?.confirmed_at ? 1 : 0
+        };
+      })
+      .sort((a, b) => b.is_confirmed - a.is_confirmed || String(a.full_name).localeCompare(String(b.full_name)));
+
+    const total = recipients.length;
+    const confirmedCount = recipients.filter((r) => r.is_confirmed === 1).length;
 
     return {
       announcement,
-      recipients: users,
+      recipients,
       stats: {
         total,
         confirmedCount,

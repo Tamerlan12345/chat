@@ -1,4 +1,6 @@
-const { getDatabase, hashPassword } = require('../db');
+const { getDatabase } = require('../db');
+const { identity } = require('../db/identity');
+const { hashPassword } = require('../db/identity/password');
 const OrgService = require('./org.service');
 const wsServer = require('../ws/server');
 
@@ -285,15 +287,15 @@ class OrgParserService {
   /**
    * Apply parsed hierarchy and users into database
    */
-  static applyImport({ parsedData, defaultPassword = '123456', adminScopeDeptId = null }) {
-    const db = getDatabase();
+  static async applyImport({ parsedData, defaultPassword = '123456', adminScopeDeptId = null }) {
+    const db = identity();
     const now = new Date().toISOString();
     const { departments, employees } = parsedData;
 
     const pathIdMap = {}; // full_path -> department_id
 
     // Pre-load existing departments
-    const existingDepts = db.prepare('SELECT id, parent_id, name, dept_type FROM departments').all();
+    const existingDepts = await db.all('SELECT id, parent_id, name, dept_type FROM departments');
 
     // Helper to find existing
     const findExisting = (name, parentId) => {
@@ -304,17 +306,14 @@ class OrgParserService {
     // employees inside their own department subtree — otherwise batch import
     // is a way to reach outside the scope this role is supposed to enforce.
     // See docs/designs/auth-access-control-remediation.md item 14.
-    const inScopeIds = adminScopeDeptId ? new Set(OrgService.getSubtreeDepartmentIds(adminScopeDeptId)) : null;
+    const inScopeIds = adminScopeDeptId
+      ? new Set(await OrgService.getSubtreeDepartmentIds(adminScopeDeptId))
+      : null;
 
     let createdDepts = 0;
     let createdUsers = 0;
     let updatedUsers = 0;
     let skippedOutOfScope = 0;
-
-    const insertDept = db.prepare(`
-      INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
-      VALUES (?, ?, ?, ?, 0, ?)
-    `);
 
     // 1. Process Departments (deptPaths are pre-sorted parents-before-children)
     for (const d of departments) {
@@ -339,8 +338,12 @@ class OrgParserService {
         pathIdMap[d.full_path] = existing.id;
         if (inScopeIds) inScopeIds.add(existing.id);
       } else {
-        const res = insertDept.run(parentId, d.name, `Импортировано: ${d.name}`, d.dept_type, now);
-        const newId = Number(res.lastInsertRowid);
+        const res = await db.run(
+          `INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+           VALUES ($1, $2, $3, $4, 0, $5) RETURNING id`,
+          [parentId, d.name, `Импортировано: ${d.name}`, d.dept_type, now]
+        );
+        const newId = Number(res.rows[0].id);
         pathIdMap[d.full_path] = newId;
         existingDepts.push({ id: newId, parent_id: parentId, name: d.name, dept_type: d.dept_type });
         if (inScopeIds) inScopeIds.add(newId);
@@ -349,31 +352,18 @@ class OrgParserService {
     }
 
     // 2. Process Employees
-    const pass = hashPassword(defaultPassword);
-    const companyRow = db.prepare("SELECT value FROM server_settings WHERE key = 'company_name'").get();
+    // Один общий начальный пароль на весь импорт: он же и единственная
+    // причина, по которой must_change_password ниже равен 1 — до первой смены
+    // такая учётная запись защищена только тем, что пароль ещё не разошёлся.
+    const encodedDefault = await hashPassword(defaultPassword);
+    const companyRow = await db.get("SELECT value FROM server_settings WHERE key = 'company_name'");
     const companyName = companyRow ? companyRow.value : 'АО СК Сентрас Иншуранс';
 
     // "Сотрудник" is not reliably role id 2 — see the same fix in
     // user.service.js createUser for why a fixed numeric id can't be
     // assumed here either.
-    const defaultRole = db.prepare("SELECT id FROM roles WHERE name = 'Сотрудник'").get();
+    const defaultRole = await db.get("SELECT id FROM roles WHERE name = 'Сотрудник'");
     const defaultRoleId = defaultRole ? defaultRole.id : null;
-
-    const insertUser = db.prepare(`
-      INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title, department_id, role_id, bound_ip, extension, company, created_at, is_active, must_change_password)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
-    `);
-
-    const updateUser = db.prepare(`
-      UPDATE users
-      SET full_name = COALESCE(?, full_name),
-          department_id = COALESCE(?, department_id),
-          bound_ip = COALESCE(?, bound_ip),
-          extension = COALESCE(?, extension),
-          job_title = COALESCE(?, job_title),
-          email = COALESCE(?, email)
-      WHERE id = ?
-    `);
 
     for (const emp of employees) {
       const deptId = emp.department_path ? pathIdMap[emp.department_path] : null;
@@ -383,33 +373,60 @@ class OrgParserService {
         continue;
       }
 
-      const existingUser = db.prepare('SELECT id, department_id FROM users WHERE username = ? OR (full_name = ? AND is_active = 1)').get(emp.username, emp.full_name);
+      const existingUser = await db.get(
+        'SELECT id, department_id FROM users WHERE username = $1 OR (full_name = $2 AND is_active = 1)',
+        [emp.username, emp.full_name]
+      );
 
       if (existingUser) {
-        if (inScopeIds && (!existingUser.department_id || !inScopeIds.has(existingUser.department_id))) {
+        if (inScopeIds && (!existingUser.department_id || !inScopeIds.has(Number(existingUser.department_id)))) {
           // Existing employee currently sits outside this admin's scope —
           // don't let a batch import move them under a different manager's control.
           skippedOutOfScope++;
           continue;
         }
-        updateUser.run(emp.full_name, deptId, emp.bound_ip, emp.extension, emp.job_title, emp.email, existingUser.id);
+        await db.run(
+          `UPDATE users
+           SET full_name = COALESCE($1, full_name),
+               department_id = COALESCE($2, department_id),
+               bound_ip = COALESCE($3, bound_ip),
+               extension = COALESCE($4, extension),
+               job_title = COALESCE($5, job_title),
+               email = COALESCE($6, email)
+           WHERE id = $7`,
+          [
+            emp.full_name || null, deptId ?? null, emp.bound_ip || null,
+            emp.extension || null, emp.job_title || null, emp.email || null,
+            existingUser.id
+          ]
+        );
         updatedUsers++;
       } else {
-        const res = insertUser.run(
-          emp.username, pass.hash, pass.salt, emp.full_name,
-          emp.email || null, null, emp.job_title || 'Сотрудник',
-          deptId, defaultRoleId, emp.bound_ip || null, emp.extension || null,
-          companyName, now
+        const res = await db.run(
+          `INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title,
+                              department_id, role_id, bound_ip, extension, company, created_at,
+                              is_active, must_change_password, approval_status, password_changed_at)
+           VALUES ($1, $2, NULL, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, 1, 1, 'approved', $11)
+           RETURNING id`,
+          [
+            emp.username, encodedDefault, emp.full_name, emp.email || null,
+            emp.job_title || 'Сотрудник', deptId ?? null, defaultRoleId,
+            emp.bound_ip || null, emp.extension || null, companyName, now
+          ]
         );
-        const newUid = Number(res.lastInsertRowid);
+        const newUid = Number(res.rows[0].id);
 
-        // Add to system channels
+        // Системные каналы — в базе переписки.
         try {
-          const sysChans = db.prepare("SELECT id FROM channels WHERE type = 'system'").all();
-          for (const ch of sysChans) {
-            db.prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)').run(ch.id, newUid, 'member', now);
-          }
-        } catch {}
+          const chat = getDatabase();
+          const sysChans = chat.prepare("SELECT id FROM channels WHERE type = 'system'").all();
+          const addMember = chat.prepare(
+            'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
+          );
+          for (const ch of sysChans) addMember.run(ch.id, newUid, 'member', now);
+        } catch (err) {
+          console.warn('[Import] не удалось добавить в системные каналы:', err.message);
+        }
 
         createdUsers++;
       }
@@ -423,13 +440,15 @@ class OrgParserService {
       });
     } catch {}
 
+    const total = await db.get('SELECT COUNT(*) AS c FROM users WHERE is_active = 1');
+
     return {
       success: true,
       createdDepts,
       createdUsers,
       updatedUsers,
       skippedOutOfScope,
-      totalEmployeesInDb: db.prepare('SELECT count(*) as c FROM users WHERE is_active = 1').get().c
+      totalEmployeesInDb: Number(total?.c || 0)
     };
   }
 }

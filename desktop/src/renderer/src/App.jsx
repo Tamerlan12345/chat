@@ -442,11 +442,25 @@ export default function App() {
   const [pwError, setPwError] = useState('');
   const [pwSubmitting, setPwSubmitting] = useState(false);
 
+  // Смена пароля обрывает все ранее выданные токены, поэтому сервер сразу
+  // возвращает новый. Его нужно принять и сохранить, иначе следующий запрос
+  // получит 401 и выбросит человека на экран входа — сразу после того, как он
+  // успешно сменил пароль.
+  const handleTokenRenewed = (nextToken) => {
+    if (!nextToken) return;
+    setToken(nextToken);
+    localStorage.setItem('mychat_token', nextToken);
+    initWebSocket(nextToken);
+  };
+
   const handleForcedPasswordChange = async (e) => {
     e.preventDefault();
     setPwError('');
-    if (pwNew.length < 6) {
-      setPwError('Новый пароль должен быть не короче 6 символов');
+    // Требование сервера — не короче восьми символов. Проверка здесь нужна
+    // только чтобы не гонять заведомо негодный пароль по сети; отказ сервера
+    // всё равно показывается ниже.
+    if (pwNew.length < 8) {
+      setPwError('Новый пароль должен быть не короче 8 символов');
       return;
     }
     if (pwNew !== pwConfirm) {
@@ -465,8 +479,18 @@ export default function App() {
 
       setPwOld(''); setPwNew(''); setPwConfirm('');
       setCurrentUser((prev) => (prev ? { ...prev, must_change_password: 0 } : prev));
-      initWebSocket(token);
-      loadBaseData(token);
+
+      // Смена пароля обрывает все ранее выданные токены — включая тот, которым
+      // мы только что пользовались. Сервер возвращает новый; без него
+      // следующий же запрос получил бы 401 и выбросил человека на вход прямо
+      // после успешной смены пароля.
+      const nextToken = data.token || token;
+      if (data.token) {
+        setToken(data.token);
+        localStorage.setItem('mychat_token', data.token);
+      }
+      initWebSocket(nextToken);
+      loadBaseData(nextToken);
     } catch (err) {
       setPwError(err.message || 'Не удалось сменить пароль');
     } finally {
@@ -1895,6 +1919,7 @@ export default function App() {
           onUpdateProfile={handleUpdateProfile}
           token={token}
           serverUrl={serverUrl}
+          onTokenRenewed={handleTokenRenewed}
         />
       )}
 

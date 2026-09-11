@@ -1,13 +1,10 @@
-const http = require('node:http');
 const express = require('express');
 const cors = require('cors');
 const path = require('node:path');
 const fs = require('node:fs');
 const config = require('./config');
-const { getDatabase } = require('./db');
 const apiRouter = require('./api');
-const wsServer = require('./ws/server');
-const backupScheduler = require('./services/backup-scheduler.service');
+const { isReady } = require('./bootstrap');
 const { getClientIp, isIpAllowed } = require('./services/ip-access.service');
 
 const app = express();
@@ -89,6 +86,14 @@ app.use((req, res, next) => {
 // is intentionally NOT enabled: auth is Bearer-token-in-header only, no
 // cookies are ever set, so reflected-origin + allow-credentials (the actually
 // dangerous combination) doesn't apply here.
+// Хранилище учётных записей поднимается асинхронно. Пока оно не готово, любой
+// запрос упёрся бы в невнятную ошибку внутри сервиса — честнее ответить, что
+// сервер ещё запускается.
+app.use((req, res, next) => {
+  if (isReady() || req.path === '/health') return next();
+  res.status(503).json({ error: 'Сервер запускается, повторите через несколько секунд' });
+});
+
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -121,9 +126,11 @@ app.use('/api', apiRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  const ready = isReady();
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'starting',
     version: config.SERVER_VERSION,
+    identityStore: config.IDENTITY_DRIVER === 'postgres' ? 'postgres' : 'sqlite',
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString()
   });
@@ -168,5 +175,14 @@ if (fs.existsSync(staticDir)) {
     res.sendFile(path.join(staticDir, 'index.html'));
   });
 }
+
+// Последний рубеж: обработчики оборачиваются так, что отказ обещания попадает
+// сюда. Наружу уходит только то, что вызывающей стороне положено знать, —
+// подробности остаются в журнале сервера.
+app.use((err, req, res, next) => {
+  console.error(`[HTTP Error] ${req.method} ${req.path}:`, err?.message || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+});
 
 module.exports = app;

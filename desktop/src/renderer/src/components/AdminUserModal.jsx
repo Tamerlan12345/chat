@@ -61,7 +61,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     uin: '',
     email: '',
     phone: '',
-    password: '123456',
+    password: '',
     bound_ip: '',
     admin_scope_dept_id: ''
   });
@@ -214,7 +214,10 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       const res = await fetch(serverUrl + '/api/admin/org/batch-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ text: parserText, format: parserFormat, defaultPassword: '123456' })
+        // Пароль не передаётся: сервер сам выдаст случайный на весь импорт.
+        // Общий пароль вида «123456» на сотне заведённых разом учётных
+        // записей — это сотня открытых дверей до первого входа каждого.
+        body: JSON.stringify({ text: parserText, format: parserFormat })
       });
       if (res.ok) {
         const d = await res.json();
@@ -412,7 +415,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       uin: Math.floor(1000 + Math.random() * 8999),
       email: '',
       phone: '',
-      password: '123456'
+      password: ''
     });
     setEditingUser(null);
     setFormMode('create');
@@ -455,7 +458,15 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           const errData = await res.json();
           throw new Error(errData.error || 'Ошибка при создании');
         }
-        showToast(`Сотрудник ${formData.full_name} успешно добавлен (UIN ${formData.uin})`);
+        const created = await res.json().catch(() => ({}));
+        // Если пароль сгенерировал сервер, показать его надо сразу: второго
+        // раза не будет, а передать сотруднику что-то нужно.
+        showToast(
+          created.initial_password
+            ? `Сотрудник ${formData.full_name} добавлен (UIN ${formData.uin}). ` +
+              `Первый пароль: ${created.initial_password}`
+            : `Сотрудник ${formData.full_name} успешно добавлен (UIN ${formData.uin})`
+        );
       } else if (formMode === 'edit') {
         const res = await fetch(`${serverUrl}/api/admin/users/${editingUser.id}`, {
           method: 'PUT',
@@ -621,8 +632,15 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   };
 
   const handleResetPassword = async (user) => {
-    const newPass = prompt(`Введите новый пароль для сотрудника ${user.full_name} (логин: ${user.username}):`, '123456');
-    if (!newPass) return;
+    // Пустой ответ — не отмена, а просьба сгенерировать пароль: отмену
+    // prompt возвращает как null. Раньше здесь подставлялось «123456», и
+    // сброшенный пароль был известен любому, кто видел эту подсказку хоть раз.
+    const newPass = prompt(
+      `Новый пароль для сотрудника ${user.full_name} (логин: ${user.username}).\n` +
+        'Оставьте поле пустым, чтобы сервер выдал случайный — так надёжнее.',
+      ''
+    );
+    if (newPass === null) return;
     try {
       const res = await fetch(`${serverUrl}/api/admin/users/${user.id}/reset-password`, {
         method: 'POST',
@@ -630,7 +648,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ password: newPass })
+        body: JSON.stringify(newPass ? { password: newPass } : {})
       });
       // Отказ проглатывался целиком: администратор нажимал кнопку, ничего не
       // происходило, и он не знал, сменился пароль или нет.
@@ -639,7 +657,13 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         showToast(data.error || 'Не удалось сбросить пароль');
         return;
       }
-      showToast(`Пароль для ${user.full_name} установлен: ${newPass}. Сотрудник сменит его при входе.`);
+      const data = await res.json().catch(() => ({}));
+      // Сгенерированный пароль сервер возвращает ровно один раз — показать его
+      // администратору больше будет неоткуда.
+      showToast(
+        `Пароль для ${user.full_name}: ${data.password || newPass}. ` +
+          'Передайте сотруднику — при первом входе он его сменит.'
+      );
     } catch (err) {
       showToast('Нет связи с сервером: ' + err.message);
     }
@@ -1767,14 +1791,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                         {formMode === 'create' && (
                           <div className="form-group" style={{ marginBottom: '14px' }}>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Пароль при создании</label>
+                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Первый пароль</label>
                             <input
-                              type="password"
+                              type="text"
                               className="form-control"
                               style={{ width: '100%', padding: '6px' }}
+                              placeholder="Оставьте пустым — сервер сгенерирует"
                               value={formData.password}
                               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             />
+                            <div style={{ fontSize: '10.5px', color: '#64748b', marginTop: '4px', lineHeight: 1.5 }}>
+                              Сотрудник обязан сменить его при первом входе. Пустое поле надёжнее
+                              общего пароля: между заведением учётной записи и первым входом
+                              известный всем пароль — открытая дверь.
+                            </div>
                           </div>
                         )}
 

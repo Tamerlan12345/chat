@@ -1,4 +1,35 @@
 services:
+  # ── Учётные записи ────────────────────────────────────────────────────────
+  # Люди, роли, подразделения, привязки устройств и журнал действий живут
+  # здесь. Переписка — отдельно, в SQLite внутри тома mychat-data.
+  #
+  # Разделение сделано намеренно: в админ-панели есть студия базы данных с
+  # выполнением произвольного SQL и скачиванием резервных копий. Пока учётные
+  # записи лежали в том же файле, это означало, что хэши паролей достижимы
+  # одним запросом из веб-интерфейса.
+  mychat-db:
+    image: postgres:16-alpine
+    container_name: openmychat-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mychat
+      POSTGRES_USER: mychat
+      # ОБЯЗАТЕЛЬНО задать до первого запуска: значения по умолчанию здесь нет
+      # намеренно — контейнер просто не поднимется, и это лучше, чем поднявшийся
+      # с общеизвестным паролем.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    volumes:
+      - mychat-db-data:/var/lib/postgresql/data
+    # Порт наружу не публикуется: до базы достаточно дотянуться серверу по
+    # внутренней сети Docker.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mychat -d mychat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
   mychat-server:
     build:
       context: .
@@ -6,11 +37,24 @@ services:
     image: openmychat-server:latest
     container_name: openmychat-server
     restart: unless-stopped
+    depends_on:
+      mychat-db:
+        condition: service_healthy
     ports:
       - "2004:2004"
     environment:
       PORT: "2004"
       HOST: "0.0.0.0"
+
+      # Хранилище учётных записей. Без этой переменной сервер поднимется на
+      # запасном хранилище SQLite — это рассчитано на разработку, а не на
+      # рабочую установку.
+      #
+      # Трафик не выходит за пределы внутренней сети Docker, поэтому TLS здесь
+      # выключен. При вынесении базы на отдельный узел уберите DATABASE_SSL —
+      # тогда включится TLS с проверкой сертификата.
+      DATABASE_URL: "postgresql://mychat:${POSTGRES_PASSWORD}@mychat-db:5432/mychat"
+      DATABASE_SSL: "disable"
       # Optional: pin a JWT secret across container recreations instead of
       # relying on the auto-generated file in the data volume. Either works
       # as long as ./data below is a real persistent volume — set this only
@@ -24,11 +68,10 @@ services:
       # (creates the admin account) — has no effect on an already-seeded
       # database. Set it here once, then you can remove it again.
       INITIAL_ADMIN_NAME: "Тамерлан"
-      # 12345 is 5 characters and only meant as a bootstrap credential —
-      # must_change_password forces a real (6+ char) password on first login
-      # regardless, so this is intentionally short-lived. Change it here
-      # before first boot if you'd rather start with a stronger one.
-      INITIAL_ADMIN_PASSWORD: "12345"
+      # Пароль первого входа. Служит ровно один раз: must_change_password
+      # заставит сменить его сразу, и новый уже обязан быть не короче восьми
+      # символов. Задаётся в .env рядом с паролем базы.
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?задайте INITIAL_ADMIN_PASSWORD в .env}
       #
       # Comma-separated IPv4 addresses/CIDR ranges allowed to reach the
       # server AT ALL — everything else gets a flat 403 before hitting any
@@ -64,4 +107,8 @@ services:
       - no-new-privileges:true
 
 volumes:
+  # Переписка, вложения, резервные копии и локальный секрет подписи токенов.
   mychat-data:
+  # Учётные записи. Отдельный том — отдельная судьба: восстановление переписки
+  # из резервной копии не должно откатывать список сотрудников и их пароли.
+  mychat-db-data:

@@ -1,4 +1,4 @@
-const { getDatabase } = require('../db');
+const { identity } = require('../db/identity');
 const AuthService = require('./auth.service');
 const UserService = require('./user.service');
 const OrgService = require('./org.service');
@@ -6,64 +6,68 @@ const wsServer = require('../ws/server');
 
 class DeviceService {
   /**
-   * Client calls knock on launch (Zero-Touch Provisioning)
+   * Клиент «стучится» при запуске. Если его устройство уже связано с
+   * сотрудником — получает токен, иначе встаёт в очередь на связывание.
    */
-  static knock({ device_id, device_name, ip_address, platform, client_version }) {
+  static async knock({ device_id, device_name, ip_address, platform, client_version }) {
     if (!device_id) {
       throw new Error('device_id обязателен для регистрации узла');
     }
 
-    const db = getDatabase();
+    const db = identity();
     const now = new Date().toISOString();
-    const cleanIp = (ip_address || '127.0.0.1').replace(/^.*:/, '');
+    const cleanIp = String(ip_address || '127.0.0.1').replace(/^.*:/, '');
 
-    // 1. Check if device is already paired
-    const existingPairing = db.prepare(`
-      SELECT p.*, u.id as u_id, u.is_active
-      FROM device_pairings p
-      JOIN users u ON p.user_id = u.id
-      WHERE p.device_id = ? AND p.is_active = 1
-    `).get(device_id);
+    const pairing = await db.get(
+      `SELECT p.device_id, p.user_id, u.is_active
+       FROM device_pairings p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.device_id = $1 AND p.is_active = 1`,
+      [String(device_id)]
+    );
 
-    if (existingPairing && existingPairing.is_active) {
-      // Update last seen ip and time
-      db.prepare(`
-        UPDATE pending_devices 
-        SET last_knock_at = ?, ip_address = ?, status = 'paired'
-        WHERE device_id = ?
-      `).run(now, cleanIp, device_id);
+    if (pairing && pairing.is_active) {
+      await db.run(
+        `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired'
+         WHERE device_id = $3`,
+        [now, cleanIp, String(device_id)]
+      );
 
-      const user = UserService.getUserById(existingPairing.user_id);
-      const token = AuthService.generateToken(user);
+      const user = await UserService.getUserById(pairing.user_id);
       return {
         status: 'paired',
         auto_matched: false,
         user,
-        token
+        token: AuthService.generateToken(user)
       };
     }
 
-    // Note: this used to auto-issue a live token to whoever's IP matched a
-    // user's bound_ip, with no prior admin action at all — risky on a WAN box
-    // behind shared corporate NAT. That branch is removed; IP-based matching
-    // now only happens through the admin-triggered POST /admin/devices/auto-match
-    // (autoMatchByIp below), which requires requireAdminOrScopedAdmin. See
-    // docs/designs/auth-access-control-remediation.md item 3.
+    // Раньше здесь же выдавался живой токен тому, чей адрес совпал с bound_ip
+    // сотрудника, без единого действия администратора. За корпоративным NAT
+    // это означало «кто угодно из офиса — это Иванов». Сопоставление по адресу
+    // осталось только как отдельное действие администратора (autoMatchByIp).
 
-    // 2. Register or update in pending_devices queue
-    db.prepare(`
-      INSERT INTO pending_devices (device_id, device_name, ip_address, platform, client_version, status, first_knock_at, last_knock_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
-      ON CONFLICT(device_id) DO UPDATE SET
-        ip_address = excluded.ip_address,
-        device_name = COALESCE(excluded.device_name, pending_devices.device_name),
-        platform = COALESCE(excluded.platform, pending_devices.platform),
-        client_version = COALESCE(excluded.client_version, pending_devices.client_version),
-        last_knock_at = excluded.last_knock_at,
-        status = CASE WHEN pending_devices.status = 'paired' THEN 'paired' ELSE 'pending' END
-    `).run(device_id, device_name || 'ПК сотрудника', cleanIp, platform || 'Windows', client_version || '1.0.0', now, now);
+    await db.run(
+      `INSERT INTO pending_devices (device_id, device_name, ip_address, platform, client_version,
+                                    status, first_knock_at, last_knock_at)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6)
+       ON CONFLICT (device_id) DO UPDATE SET
+         ip_address = EXCLUDED.ip_address,
+         device_name = COALESCE(EXCLUDED.device_name, pending_devices.device_name),
+         platform = COALESCE(EXCLUDED.platform, pending_devices.platform),
+         client_version = COALESCE(EXCLUDED.client_version, pending_devices.client_version),
+         last_knock_at = EXCLUDED.last_knock_at,
+         status = CASE WHEN pending_devices.status = 'paired' THEN 'paired' ELSE 'pending' END`,
+      [
+        String(device_id),
+        device_name || 'ПК сотрудника',
+        cleanIp,
+        platform || 'Windows',
+        client_version || '1.0.0',
+        now
+      ]
+    );
 
-    // Notify admins via WebSocket
     try {
       wsServer.broadcast({
         type: 'device_knock_received',
@@ -75,7 +79,9 @@ class DeviceService {
           last_knock_at: now
         }
       });
-    } catch {}
+    } catch {
+      /* некому слушать — не повод отказывать устройству */
+    }
 
     return {
       status: 'pending',
@@ -87,177 +93,167 @@ class DeviceService {
   }
 
   /**
-   * Get list of knocking / pending devices for Admin UI. A scoped ("Контурный")
-   * admin only sees devices already paired to, or suggestible for, an employee
-   * inside their own department subtree — otherwise the "scoped" boundary is
-   * decorative. See docs/designs/auth-access-control-remediation.md item 14.
+   * Очередь устройств для админ-панели. Администратор подразделения видит
+   * только те, что относятся к его сотрудникам, — иначе «контур» ничего не
+   * ограничивает.
    */
-  static getPendingDevices(adminUser) {
-    const db = getDatabase();
-    const scopeDeptIds = adminUser && adminUser.admin_scope_dept_id
-      ? OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id)
-      : null;
+  static async getPendingDevices(adminUser) {
+    const db = identity();
+    const scopeDeptIds =
+      adminUser && adminUser.admin_scope_dept_id
+        ? await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id)
+        : null;
 
-    const devices = db.prepare(`
-      SELECT pd.*, dp.user_id as paired_user_id, u.full_name as paired_user_name, u.username as paired_username,
-        u.department_id as paired_user_dept_id
+    const devices = await db.all(`
+      SELECT pd.id, pd.device_id, pd.device_name, pd.ip_address, pd.platform,
+             pd.client_version, pd.status, pd.first_knock_at, pd.last_knock_at,
+             dp.user_id AS paired_user_id, u.full_name AS paired_user_name,
+             u.username AS paired_username, u.department_id AS paired_user_dept_id
       FROM pending_devices pd
-      LEFT JOIN device_pairings dp ON pd.device_id = dp.device_id AND dp.is_active = 1
-      LEFT JOIN users u ON dp.user_id = u.id
+      LEFT JOIN device_pairings dp ON dp.device_id = pd.device_id AND dp.is_active = 1
+      LEFT JOIN users u ON u.id = dp.user_id
       ORDER BY pd.last_knock_at DESC
-    `).all();
+    `);
 
-    // Fetch candidate users with bound_ip for suggestion
-    const allUsers = db.prepare(`
-      SELECT u.id, u.username, u.full_name, u.department_id, u.bound_ip, u.extension, d.name as department_name
+    const candidates = await db.all(`
+      SELECT u.id, u.username, u.full_name, u.department_id, u.bound_ip, u.extension,
+             d.name AS department_name
       FROM users u
-      LEFT JOIN departments d ON u.department_id = d.id
-      WHERE u.is_active = 1
-    `).all();
+      LEFT JOIN departments d ON d.id = u.department_id
+      WHERE u.is_active = 1 AND u.bound_ip IS NOT NULL
+    `);
 
-    const withSuggestions = devices.map(d => {
-      const candidate = allUsers.find(u => u.bound_ip && u.bound_ip === d.ip_address);
-      return {
-        ...d,
-        suggested_user: candidate || null
-      };
-    });
+    const withSuggestions = devices.map((device) => ({
+      ...device,
+      suggested_user: candidates.find((u) => u.bound_ip === device.ip_address) || null
+    }));
 
     if (!scopeDeptIds) return withSuggestions;
 
-    return withSuggestions.filter(d => {
-      const pairedInScope = d.paired_user_dept_id && scopeDeptIds.includes(d.paired_user_dept_id);
-      const suggestedInScope = d.suggested_user && d.suggested_user.department_id && scopeDeptIds.includes(d.suggested_user.department_id);
+    return withSuggestions.filter((device) => {
+      const pairedInScope =
+        device.paired_user_dept_id && scopeDeptIds.includes(Number(device.paired_user_dept_id));
+      const suggestedInScope =
+        device.suggested_user?.department_id &&
+        scopeDeptIds.includes(Number(device.suggested_user.department_id));
       return pairedInScope || suggestedInScope;
     });
   }
 
-  /**
-   * Bind an incoming device to an employee
-   */
-  static bindDevice({ device_id, user_id, ip_address, device_name, adminUser }) {
-    const db = getDatabase();
+  static async bindDevice({ device_id, user_id, ip_address, device_name, adminUser }) {
+    const db = identity();
     const now = new Date().toISOString();
 
-    const user = UserService.getUserById(user_id);
-    if (!user) {
-      throw new Error('Сотрудник не найден');
-    }
+    const user = await UserService.getUserById(user_id);
+    if (!user) throw new Error('Сотрудник не найден');
 
     if (adminUser && adminUser.admin_scope_dept_id) {
-      const scopeDeptIds = OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
-      if (!user.department_id || !scopeDeptIds.includes(user.department_id)) {
+      const scopeDeptIds = await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
+      if (!user.department_id || !scopeDeptIds.includes(Number(user.department_id))) {
         throw new Error('Сотрудник вне вашего контура управления');
       }
     }
 
     let finalDeviceName = device_name;
     if (!finalDeviceName) {
-      const pending = db.prepare('SELECT device_name FROM pending_devices WHERE device_id = ?').get(device_id);
-      if (pending && pending.device_name) finalDeviceName = pending.device_name;
+      const pending = await db.get('SELECT device_name FROM pending_devices WHERE device_id = $1', [
+        String(device_id)
+      ]);
+      finalDeviceName = pending?.device_name || null;
     }
 
-    // Upsert pairing
-    db.prepare(`
-      INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
-      VALUES (?, ?, ?, ?, ?, 1)
-      ON CONFLICT(device_id) DO UPDATE SET
-        user_id = excluded.user_id,
-        ip_address = COALESCE(excluded.ip_address, device_pairings.ip_address),
-        device_name = COALESCE(excluded.device_name, device_pairings.device_name),
-        paired_at = excluded.paired_at,
-        is_active = 1
-    `).run(device_id, user_id, ip_address || null, finalDeviceName || 'ПК сотрудника', now);
+    await db.run(
+      `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
+       VALUES ($1, $2, $3, $4, $5, 1)
+       ON CONFLICT (device_id) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         ip_address = COALESCE(EXCLUDED.ip_address, device_pairings.ip_address),
+         device_name = COALESCE(EXCLUDED.device_name, device_pairings.device_name),
+         paired_at = EXCLUDED.paired_at,
+         is_active = 1`,
+      [String(device_id), Number(user_id), ip_address || null, finalDeviceName || 'ПК сотрудника', now]
+    );
 
-    // Optionally update user's bound_ip if provided
     if (ip_address) {
-      db.prepare('UPDATE users SET bound_ip = ? WHERE id = ?').run(ip_address, user_id);
+      await db.run('UPDATE users SET bound_ip = $1 WHERE id = $2', [ip_address, Number(user_id)]);
     }
 
-    // Update pending_devices status
-    db.prepare(`
-      UPDATE pending_devices 
-      SET status = 'paired', last_knock_at = ?
-      WHERE device_id = ?
-    `).run(now, device_id);
+    await db.run(
+      `UPDATE pending_devices SET status = 'paired', last_knock_at = $1 WHERE device_id = $2`,
+      [now, String(device_id)]
+    );
 
-    const token = AuthService.generateToken(user);
-
-    // Announce the pairing WITHOUT the token or the user record. broadcast()
-    // reaches every open socket, including ones that never authenticated, so
-    // anything sent here is public — a token here handed any listener a valid
-    // 7-day session for the paired account. The waiting device collects its
-    // own token from POST /auth/knock instead.
+    // Объявляется только сам факт связывания: broadcast доходит до всех
+    // открытых сокетов, включая не прошедшие авторизацию, поэтому токен здесь
+    // означал бы выдачу рабочей недельной сессии любому слушателю. Устройство
+    // забирает свой токен само, следующим «стуком».
     try {
-      wsServer.broadcast({
-        type: 'device_paired',
-        deviceId: device_id
-      });
-    } catch {}
+      wsServer.broadcast({ type: 'device_paired', deviceId: device_id });
+    } catch {
+      /* нет слушателей */
+    }
 
-    return {
-      success: true,
-      device_id,
-      user,
-      token
-    };
+    return { success: true, device_id, user, token: AuthService.generateToken(user) };
   }
 
-  /**
-   * Automatically match all pending devices whose IP matches an employee's bound_ip
-   */
-  static autoMatchByIp(adminUser) {
-    const db = getDatabase();
+  static async autoMatchByIp(adminUser) {
+    const db = identity();
     const now = new Date().toISOString();
 
-    const matches = db.prepare(`
-      SELECT pd.device_id, pd.ip_address, pd.device_name, u.id as user_id, u.full_name
+    const scopeDeptIds =
+      adminUser && adminUser.admin_scope_dept_id
+        ? await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id)
+        : null;
+
+    const matches = await db.all(`
+      SELECT pd.device_id, pd.ip_address, pd.device_name,
+             u.id AS user_id, u.full_name, u.department_id
       FROM pending_devices pd
       JOIN users u ON pd.ip_address = u.bound_ip
       WHERE pd.status = 'pending' AND u.is_active = 1
-    `).all();
+    `);
 
     let count = 0;
-    for (const m of matches) {
-      db.prepare(`
-        INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
-        VALUES (?, ?, ?, ?, ?, 1)
-        ON CONFLICT(device_id) DO UPDATE SET
-          user_id = excluded.user_id,
-          paired_at = excluded.paired_at,
-          is_active = 1
-      `).run(m.device_id, m.user_id, m.ip_address, m.device_name, now);
+    for (const match of matches) {
+      if (scopeDeptIds && !scopeDeptIds.includes(Number(match.department_id))) continue;
 
-      db.prepare(`UPDATE pending_devices SET status = 'paired' WHERE device_id = ?`).run(m.device_id);
+      await db.run(
+        `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
+         VALUES ($1, $2, $3, $4, $5, 1)
+         ON CONFLICT (device_id) DO UPDATE SET
+           user_id = EXCLUDED.user_id,
+           paired_at = EXCLUDED.paired_at,
+           is_active = 1`,
+        [match.device_id, match.user_id, match.ip_address, match.device_name, now]
+      );
 
-      // No token or user record here either — see bindDevice above.
+      await db.run(`UPDATE pending_devices SET status = 'paired' WHERE device_id = $1`, [
+        match.device_id
+      ]);
+
       try {
-        wsServer.broadcast({
-          type: 'device_paired',
-          deviceId: m.device_id
-        });
-      } catch {}
-
+        wsServer.broadcast({ type: 'device_paired', deviceId: match.device_id });
+      } catch {
+        /* нет слушателей */
+      }
       count++;
     }
 
     return { matched_count: count };
   }
 
-  /**
-   * Unbind a device
-   */
-  static unbindDevice(device_id) {
-    const db = getDatabase();
-    db.prepare('DELETE FROM device_pairings WHERE device_id = ?').run(device_id);
-    db.prepare("UPDATE pending_devices SET status = 'pending' WHERE device_id = ?").run(device_id);
+  static async unbindDevice(device_id) {
+    const db = identity();
+    await db.run('DELETE FROM device_pairings WHERE device_id = $1', [String(device_id)]);
+    await db.run(`UPDATE pending_devices SET status = 'pending' WHERE device_id = $1`, [
+      String(device_id)
+    ]);
 
     try {
-      wsServer.broadcast({
-        type: 'device_unpaired',
-        deviceId: device_id
-      });
-    } catch {}
+      wsServer.broadcast({ type: 'device_unpaired', deviceId: device_id });
+    } catch {
+      /* нет слушателей */
+    }
 
     return { success: true };
   }

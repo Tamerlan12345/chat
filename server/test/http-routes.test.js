@@ -1,17 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
 const http = require('node:http');
+const { freshBoot, closeAll } = require('./helpers/boot');
 
 // Поднимает настоящий сервер и ходит по нему по HTTP. Остальные тесты
 // проверяют сервисы напрямую и не заметят, если сломается маршрутизация,
 // разбор тела запроса или порядок промежуточных обработчиков — а именно это
 // ломается при смене версии Express.
-const DB_PATH = path.resolve(__dirname, '../data/mychat.db');
-for (const suffix of ['', '-wal', '-shm']) {
-  try { fs.rmSync(DB_PATH + suffix, { force: true }); } catch {}
-}
 
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
 process.env.PORT = '0'; // свободный порт выбирает система
@@ -20,14 +15,16 @@ let baseUrl;
 let server;
 
 test.before(async () => {
+  await freshBoot();
   const app = require('../src/app');
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
-test.after(() => {
+test.after(async () => {
   server?.close();
+  await closeAll();
 });
 
 const request = async (method, urlPath, { body, token, headers = {} } = {}) => {
@@ -95,12 +92,17 @@ test('до смены пароля остальные маршруты закр�
   assert.strictEqual(res.json.code, 'MUST_CHANGE_PASSWORD');
 });
 
-test('смена пароля снимает ограничение', async () => {
+test('смена пароля снимает ограничение и выдаёт новый токен', async () => {
   const res = await request('POST', '/api/users/password', {
     token: globalThis.__token,
     body: { oldPassword: 'парольдлятеста', newPassword: 'новыйпарольтеста' }
   });
   assert.strictEqual(res.status, 200, res.text);
+  assert.ok(res.json.token, 'прежний токен только что отозван — без нового работать нечем');
+
+  // Прежний токен обязан перестать действовать сразу, а не через неделю.
+  const stale = await request('GET', '/api/auth/me', { token: globalThis.__token });
+  assert.strictEqual(stale.status, 401);
 
   const relogin = await request('POST', '/api/auth/login', {
     body: { username: 'admin', password: 'новыйпарольтеста' }
@@ -133,4 +135,43 @@ test('заголовки безопасности выставлены', async (
   const res = await fetch(baseUrl + '/health');
   assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
   assert.ok(!res.headers.get('x-powered-by'), 'версия сервера не должна раскрываться');
+});
+
+test('справочник сотрудников не раскрывает адреса рабочих мест', async () => {
+  // bound_ip — служебное сведение для привязки устройств, а не часть карточки
+  // коллеги. В общем справочнике его быть не должно.
+  const res = await request('GET', '/api/users', { token: globalThis.__token });
+  assert.strictEqual(res.status, 200);
+  for (const user of res.json) {
+    assert.ok(!('bound_ip' in user), 'адрес рабочего места не для всех');
+    assert.ok(!('password_hash' in user), 'пароль не покидает хранилище ни при каких условиях');
+  }
+});
+
+test('студия базы данных не видит учётных записей', async () => {
+  // Ради этого учётные записи и переехали: произвольный SQL — самое сильное
+  // право в панели, и хэши паролей не должны быть в его досягаемости.
+  const tables = await request('GET', '/api/admin/db/tables', { token: globalThis.__token });
+  assert.strictEqual(tables.status, 200);
+  const names = tables.json.map((t) => t.name);
+  assert.ok(!names.includes('users'), 'таблицы users в базе переписки быть не должно');
+  assert.ok(names.includes('messages'), 'а переписка — на месте');
+
+  const query = await request('POST', '/api/admin/db/query', {
+    token: globalThis.__token,
+    body: { sql: 'SELECT * FROM users' }
+  });
+  assert.strictEqual(query.status, 400, 'такой таблицы здесь нет');
+
+  const attach = await request('POST', '/api/admin/db/query', {
+    token: globalThis.__token,
+    body: { sql: "ATTACH DATABASE 'data/identity.db' AS ident" }
+  });
+  assert.strictEqual(attach.status, 400);
+  assert.match(attach.json.error, /ATTACH/);
+});
+
+test('/health сообщает, где хранятся учётные записи', async () => {
+  const res = await request('GET', '/health');
+  assert.ok(['postgres', 'sqlite'].includes(res.json.identityStore));
 });

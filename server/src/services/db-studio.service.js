@@ -1,7 +1,19 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { getDatabase } = require('../db');
+const { identity } = require('../db/identity');
 const config = require('../config');
+
+// Студия базы данных работает ТОЛЬКО с базой переписки. Учётные записи
+// вынесены в отдельное хранилище и сюда не попадают намеренно: возможность
+// выполнить произвольный SQL — самое сильное право в админ-панели, и хэши
+// паролей не должны находиться в его досягаемости. По учётным записям здесь
+// доступны только счётчики строк (getIdentityStats).
+
+// ATTACH подключил бы к сессии посторонний файл базы — в том числе
+// identity.db, когда PostgreSQL не настроен. Это ровно тот обход, ради
+// закрытия которого учётные записи и разъезжались по разным базам.
+const FORBIDDEN_STATEMENTS = /^\s*(ATTACH|DETACH)\b/i;
 
 class DbStudioService {
   static getDatabaseStats() {
@@ -28,6 +40,7 @@ class DbStudioService {
     }
 
     return {
+      scope: 'Переписка (SQLite). Учётные записи — в отдельном хранилище.',
       dbPath: config.DB_PATH,
       dbSizeBytes: dbSize,
       dbSizeFormatted: (dbSize / (1024 * 1024)).toFixed(2) + ' MB',
@@ -112,8 +125,11 @@ class DbStudioService {
 
   static executeCustomSql(sql) {
     const db = getDatabase();
-    const trimmed = sql.trim();
+    const trimmed = String(sql || '').trim();
     if (!trimmed) throw new Error('Запрос пуст');
+    if (FORBIDDEN_STATEMENTS.test(trimmed)) {
+      throw new Error('ATTACH и DETACH запрещены: студия работает только с базой переписки');
+    }
 
     const start = process.hrtime.bigint();
 
@@ -187,6 +203,35 @@ class DbStudioService {
         };
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  /**
+   * Сводка по хранилищу учётных записей: только счётчики. Ни одной колонки с
+   * паролями здесь нет и быть не должно — это витрина состояния, а не доступ
+   * к данным.
+   */
+  static async getIdentityStats() {
+    const db = identity();
+    const counts = {};
+    for (const table of ['users', 'roles', 'departments', 'device_pairings', 'pending_devices', 'audit_logs']) {
+      const row = await db.get(`SELECT COUNT(*) AS n FROM ${table}`);
+      counts[table] = Number(row?.n || 0);
+    }
+
+    const active = await db.get('SELECT COUNT(*) AS n FROM users WHERE is_active = 1');
+    const pending = await db.get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`);
+    const locked = await db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until IS NOT NULL AND locked_until > $1', [
+      new Date().toISOString()
+    ]);
+
+    return {
+      engine: config.IDENTITY_DRIVER === 'postgres' ? 'PostgreSQL' : 'SQLite (PostgreSQL не настроен)',
+      managed: config.IDENTITY_DRIVER === 'postgres',
+      counts,
+      activeUsers: Number(active?.n || 0),
+      pendingRegistrations: Number(pending?.n || 0),
+      lockedAccounts: Number(locked?.n || 0)
+    };
   }
 
   static optimizeDatabase() {

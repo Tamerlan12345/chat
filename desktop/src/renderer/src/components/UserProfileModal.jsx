@@ -1,6 +1,6 @@
 ﻿import React, { useState } from 'react';
 
-export default function UserProfileModal({ currentUser, serverInfo, onClose, onUpdateProfile, token, serverUrl }) {
+export default function UserProfileModal({ currentUser, serverInfo, onClose, onUpdateProfile, token, serverUrl, onTokenRenewed }) {
   const [activeTab, setActiveTab] = useState('main'); // 'main' | 'home' | 'work' | 'personal' | 'interests' | 'past' | 'extra'
 
   // Every field starts from the real account. It previously fell back to one
@@ -72,8 +72,8 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
     e.preventDefault();
     setPwError('');
     setPwSuccess('');
-    if (pwNew.length < 6) {
-      setPwError('Новый пароль должен быть не короче 6 символов');
+    if (pwNew.length < 8) {
+      setPwError('Новый пароль должен быть не короче 8 символов');
       return;
     }
     if (pwNew !== pwConfirm) {
@@ -92,6 +92,9 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
         setPwError(data.error || 'Не удалось сменить пароль');
         return;
       }
+      // Прежний токен только что отозван вместе со старым паролем — сервер
+      // вернул новый, и без него ближайший запрос получил бы отказ.
+      if (data.token && onTokenRenewed) onTokenRenewed(data.token);
       setPwSuccess('Пароль изменен');
       setPwOld('');
       setPwNew('');
@@ -247,11 +250,11 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                       </div>
                       <div className="form-group">
                         <label className="form-label">Новый пароль</label>
-                        <input type="password" className="form-input" value={pwNew} onChange={(e) => setPwNew(e.target.value)} disabled={pwSubmitting} required minLength={6} />
+                        <input type="password" className="form-input" value={pwNew} onChange={(e) => setPwNew(e.target.value)} disabled={pwSubmitting} required minLength={8} />
                       </div>
                       <div className="form-group">
                         <label className="form-label">Повторите новый пароль</label>
-                        <input type="password" className="form-input" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} disabled={pwSubmitting} required minLength={6} />
+                        <input type="password" className="form-input" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} disabled={pwSubmitting} required minLength={8} />
                       </div>
                       <button type="submit" className="btn btn-primary btn-block" disabled={pwSubmitting}>
                         {pwSubmitting ? 'Сохранение...' : 'Сохранить новый пароль'}
