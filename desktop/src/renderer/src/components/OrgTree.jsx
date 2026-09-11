@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
 
+// «1 сотрудник», «3 сотрудника», «5 сотрудников».
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+const UNASSIGNED_ID = 'unassigned';
+
 export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMap = {}, error = null, onRetry = null }) {
   const [expandedNodes, setExpandedNodes] = useState({
     root: true,
@@ -8,7 +19,8 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
     'АО СК Сентрас Иншуранс': true,
     'Головной Офис': true,
     'HR-Департамент': true,
-    'Департамент Web-разработок': true
+    'Департамент Web-разработок': true,
+    [UNASSIGNED_ID]: true
   });
   const [search, setSearch] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState(null);
@@ -23,8 +35,29 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
   };
 
   const departments = treeData?.tree || [];
+  // Сотрудники без подразделения приходили с сервера отдельным списком, но не
+  // показывались нигде: счётчик говорил «3 сотрудника», а в дереве был один, и
+  // написать остальным через «Контакты» было нельзя.
+  const unassigned = treeData?.unassigned || [];
   const totalUsers = treeData?.totalUsers || 0;
   const onlineUsers = treeData?.onlineUsers || 0;
+
+  const query = search.trim().toLowerCase();
+
+  const employeeMatches = (e) =>
+    (e.full_name || e.username || '').toLowerCase().includes(query) ||
+    (e.job_title || '').toLowerCase().includes(query) ||
+    String(e.extension || '').includes(query);
+
+  // Поиск обещал искать и по отделу — и находить сотрудников внутри свёрнутых
+  // веток. Отдел подходит, если совпало его название, кто-то из его людей или
+  // что-то в дочерних отделах.
+  const deptNameMatches = (dept) => String(dept.name || '').toLowerCase().includes(query);
+  const deptMatches = (dept) =>
+    !query ||
+    deptNameMatches(dept) ||
+    (dept.employees || []).some(employeeMatches) ||
+    (dept.subDepartments || []).some(deptMatches);
 
   // Toggle expand all or collapse all
   const handleToggleExpandAll = () => {
@@ -34,7 +67,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
     });
 
     if (areSomeCollapsed) {
-      const newExpanded = { root: true };
+      const newExpanded = { root: true, [UNASSIGNED_ID]: true };
       const collectKeys = (depts) => {
         depts.forEach((d) => {
           newExpanded[d.id || d.name] = true;
@@ -53,20 +86,15 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
   };
 
   // Helper to render employees under a department
-  const renderEmployees = (employees = [], depth = 0) => {
-    const q = search.trim().toLowerCase();
+  const renderEmployees = (employees = [], depth = 0, showAll = false) => {
     let filtered = employees;
 
     if (onlyOnline) {
       filtered = filtered.filter((e) => e.status === 'online' || e.status === 'away');
     }
 
-    if (q) {
-      filtered = filtered.filter((e) =>
-        (e.full_name || e.username || '').toLowerCase().includes(q) ||
-        (e.job_title || '').toLowerCase().includes(q) ||
-        String(e.extension || '').includes(q)
-      );
+    if (query && !showAll) {
+      filtered = filtered.filter(employeeMatches);
     }
 
     // Flat calculated indentation (NO cumulative parent padding!)
@@ -113,9 +141,16 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
   };
 
   // Helper to render department node recursively
-  const renderDepartment = (dept, depth = 0) => {
+  const renderDepartment = (dept, depth = 0, parentNameMatched = false) => {
+    const nameMatched = parentNameMatched || (query && deptNameMatches(dept));
+    if (query && !nameMatched && !deptMatches(dept)) return null;
+
     const nodeKey = dept.id || dept.name;
-    const isExpanded = expandedNodes[nodeKey] !== undefined ? expandedNodes[nodeKey] : (depth <= 1);
+    // Во время поиска найденное раскрыто всегда — иначе совпадение пряталось
+    // в свёрнутой ветке.
+    const isExpanded = query
+      ? true
+      : expandedNodes[nodeKey] !== undefined ? expandedNodes[nodeKey] : (depth <= 1);
     const hasChildren = (dept.subDepartments && dept.subDepartments.length > 0) || (dept.employees && dept.employees.length > 0);
 
     const totalDeptUsers = dept.totalStaffCount !== undefined
@@ -131,9 +166,10 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
       return null;
     }
 
+    const isUnassigned = dept.id === UNASSIGNED_ID;
     const isSelected = selectedDeptId === dept.id;
-    const isCompany = dept.dept_type === 'company' || depth === 0;
-    const icon = isCompany ? '🏢' : dept.dept_type === 'branch' ? '🏛️' : '👥';
+    const isCompany = !isUnassigned && (dept.dept_type === 'company' || depth === 0);
+    const icon = isUnassigned ? '🗂️' : isCompany ? '🏢' : dept.dept_type === 'branch' ? '🏛️' : '👥';
 
     // Flat calculated indentation
     const indentPx = depth * (isCompact ? 10 : 14) + 6;
@@ -147,7 +183,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             setSelectedDeptId(dept.id);
             toggleNode(nodeKey);
           }}
-          title={`${dept.name} (${dept.dept_type || 'подразделение'})\nВ сети: ${activeDeptUsers} из ${totalDeptUsers}`}
+          title={`${dept.name}${isUnassigned ? '' : ` (${dept.dept_type || 'подразделение'})`}\nВ сети: ${activeDeptUsers} из ${totalDeptUsers}`}
         >
           <span className="tree-toggle-icon">
             {hasChildren ? (
@@ -173,12 +209,12 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
         {isExpanded && (
           <div className="tree-dept-children">
             {/* Child Departments / Directorates / Divisions */}
-            {dept.subDepartments?.map((sub) => renderDepartment(sub, depth + 1))}
+            {dept.subDepartments?.map((sub) => renderDepartment(sub, depth + 1, nameMatched))}
 
             {/* Employees in this department */}
             {dept.employees && dept.employees.length > 0 && (
               <div className="tree-dept-employees">
-                {renderEmployees(dept.employees, depth)}
+                {renderEmployees(dept.employees, depth, nameMatched)}
               </div>
             )}
           </div>
@@ -186,6 +222,16 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
       </div>
     );
   };
+
+  const unassignedNode = unassigned.length
+    ? { id: UNASSIGNED_ID, name: 'Без подразделения', employees: unassigned, subDepartments: [] }
+    : null;
+
+  const hasTree = departments.length > 0 || Boolean(unassignedNode);
+  const hasMatches =
+    !query ||
+    departments.some(deptMatches) ||
+    unassigned.some(employeeMatches);
 
   return (
     <div className={`org-tree-panel ${isCompact ? 'is-compact-mode' : ''}`}>
@@ -198,6 +244,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
 
         <div className="tree-quick-actions">
           <button
+            type="button"
             className={`tree-action-btn ${onlyOnline ? 'active' : ''}`}
             onClick={() => setOnlyOnline(!onlyOnline)}
             title={onlyOnline ? 'Показать всех сотрудников' : 'Показать только сотрудников в сети'}
@@ -205,6 +252,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             🟢 {onlyOnline ? 'Все' : 'Онлайн'}
           </button>
           <button
+            type="button"
             className="tree-action-btn"
             onClick={handleToggleExpandAll}
             title="Развернуть или свернуть все подразделения"
@@ -212,6 +260,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             ↕️
           </button>
           <button
+            type="button"
             className={`tree-action-btn ${isCompact ? 'active' : ''}`}
             onClick={() => setIsCompact(!isCompact)}
             title={isCompact ? 'Обычный режим' : 'Компактный режим (максимум информации)'}
@@ -230,6 +279,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             placeholder="Поиск по ФИО, должности или отделу..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape' && search) { e.stopPropagation(); setSearch(''); } }}
           />
           {search ? (
             <span className="search-clear-btn" onClick={() => setSearch('')} title="Очистить поиск">✕</span>
@@ -238,7 +288,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
           )}
         </div>
         <div className="tree-meta-stats">
-          <span>{totalUsers} сотрудников</span>
+          <span>{totalUsers} {plural(totalUsers, 'сотрудник', 'сотрудника', 'сотрудников')}</span>
           <span className="meta-sep">•</span>
           <span style={{ color: '#16a34a', fontWeight: 600 }}>{onlineUsers} в сети</span>
           {onlyOnline && <span className="meta-filter-active">(фильтр)</span>}
@@ -247,8 +297,20 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
 
       {/* Hierarchical Tree Body with X and Y scroll */}
       <div className="org-tree-scrollable">
-        {departments.length > 0 ? (
-          departments.map((dept) => renderDepartment(dept, 0))
+        {hasTree ? (
+          hasMatches ? (
+            <>
+              {departments.map((dept) => renderDepartment(dept, 0))}
+              {unassignedNode && renderDepartment(unassignedNode, 0)}
+            </>
+          ) : (
+            <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+              По запросу «{search.trim()}» никого не найдено.{' '}
+              <button type="button" className="conf-link-btn" onClick={() => setSearch('')}>
+                Очистить поиск
+              </button>
+            </div>
+          )
         ) : error ? (
           // Раньше здесь в любом случае висела «Загрузка…»: при отказе сервера
           // она не сменялась никогда, и понять, что произошло, было нельзя.
@@ -264,6 +326,10 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
                 Повторить попытку
               </button>
             )}
+          </div>
+        ) : treeData ? (
+          <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+            В компании пока нет ни подразделений, ни сотрудников.
           </div>
         ) : (
           <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>

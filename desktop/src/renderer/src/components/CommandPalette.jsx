@@ -10,22 +10,26 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
+  const searchSeqRef = useRef(0);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
+  // Себя в «Людях» быть не должно: открыть диалог с самим собой нельзя.
+  const others = useMemo(() => (users || []).filter((u) => u.id !== currentUserId), [users, currentUserId]);
+
   const matchedUsers = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return (users || []).slice(0, 6);
-    return (users || [])
+    if (!q) return others.slice(0, 6);
+    return others
       .filter((u) =>
         u.full_name?.toLowerCase().includes(q) ||
         u.username?.toLowerCase().includes(q) ||
         u.job_title?.toLowerCase().includes(q)
       )
       .slice(0, 6);
-  }, [users, query]);
+  }, [others, query]);
 
   const matchedChannels = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -43,19 +47,22 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
       return;
     }
     setSearchingMessages(true);
+    // Ответ на «ива» может прийти позже ответа на «иванов» и затереть его —
+    // учитывается только последний отправленный запрос.
+    const seq = ++searchSeqRef.current;
     debounceRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`${serverUrl}/api/messages/search?q=${encodeURIComponent(q)}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (res.ok) {
+        if (res.ok && seq === searchSeqRef.current) {
           const data = await res.json();
-          setMessageResults(data.slice(0, 8));
+          if (seq === searchSeqRef.current) setMessageResults(Array.isArray(data) ? data.slice(0, 8) : []);
         }
       } catch (err) {
         // Silent: quick-switcher degrades to name-only search on network hiccup.
       } finally {
-        setSearchingMessages(false);
+        if (seq === searchSeqRef.current) setSearchingMessages(false);
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
@@ -72,6 +79,12 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
   useEffect(() => {
     setSelectedIndex(0);
   }, [query]);
+
+  // Результаты сократились (пришёл ответ поиска) — выделение не должно
+  // указывать за конец списка, иначе Enter ничего не открывает.
+  useEffect(() => {
+    setSelectedIndex((i) => Math.min(i, Math.max(0, flatResults.length - 1)));
+  }, [flatResults.length]);
 
   const activate = (item) => {
     if (!item) return;
@@ -169,7 +182,7 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
                     onClick={() => activate({ kind: 'channel', data: c })}
                   >
                     <span className="cp-item-icon">#</span>
-                    <span className="cp-item-title">{c.name}</span>
+                    <span className="cp-item-title">{String(c.name || '').replace(/^#+/, '')}</span>
                     <span className="cp-item-sub">{c.topic || ''}</span>
                   </div>
                 );

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 // Crystal-clear corporate notification chime using Web Audio API synthesis
 export function playNotificationSound(isUrgent = false) {
@@ -49,6 +49,9 @@ export function playNotificationSound(isUrgent = false) {
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.5);
     }
+    // Каждый звук создавал AudioContext и не закрывал его. Браузер держит их
+    // ограниченное число, и после нескольких десятков сообщений звук пропадал.
+    setTimeout(() => ctx.close().catch(() => {}), 800);
   } catch (err) {
     // Audio context may be restricted before user gesture
   }
@@ -75,19 +78,40 @@ export default function ToastNotificationStack({ toasts, onDismiss, onAction }) 
 }
 
 function ToastItem({ toast, onDismiss, onAction }) {
+  // Функция закрытия приходит новой при каждой перерисовке. Когда она стояла в
+  // зависимостях таймера, любое событие — «печатает», смена статуса — заново
+  // запускало отсчёт, и уведомления в оживлённое время не исчезали вовсе.
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  const timerRef = useRef(null);
+  // Предупреждения об ошибках держатся дольше: их нужно успеть прочитать.
+  const lifetimeMs = toast.type === 'system' || toast.isUrgent ? 9000 : 6000;
+
+  const startTimer = () => {
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => dismissRef.current(), lifetimeMs);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onDismiss();
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [toast.id, onDismiss]);
+    startTimer();
+    return () => clearTimeout(timerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast.id]);
 
   const isUrgent = toast.isUrgent || toast.type === 'rd';
   const isAnnouncement = toast.type === 'announcement';
   const kind = isUrgent ? 'urgent' : isAnnouncement ? 'announcement' : 'chat';
+  // «Нажмите, чтобы открыть» — только когда открывать есть что.
+  const hasTarget = Boolean(toast.data?.user || toast.data?.channel || isAnnouncement);
 
   return (
-    <div className={`toast-card ${kind}`} onClick={onAction}>
+    <div
+      className={`toast-card ${kind}`}
+      onClick={hasTarget ? onAction : onDismiss}
+      // Пока человек читает — не убирать из-под курсора.
+      onMouseEnter={() => clearTimeout(timerRef.current)}
+      onMouseLeave={startTimer}
+    >
       <span className="toast-accent" />
 
       <span className="toast-avatar">
@@ -102,9 +126,11 @@ function ToastItem({ toast, onDismiss, onAction }) {
           </span>
         </div>
         <p className="toast-text">{toast.body || ''}</p>
-        <div className="toast-foot">
-          <span className="toast-action">Нажмите, чтобы открыть →</span>
-        </div>
+        {hasTarget && (
+          <div className="toast-foot">
+            <span className="toast-action">Нажмите, чтобы открыть →</span>
+          </div>
+        )}
       </div>
 
       <button

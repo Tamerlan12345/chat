@@ -1,26 +1,52 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { pointToFrame, MoveThrottle } from '../lib/remote-pointer.mjs';
+import { keyEventToInput } from '../lib/remote-keyboard.mjs';
+import { getRdIceServers, RD_CONNECT_TIMEOUT_MS } from '../lib/rd-config.mjs';
+import { normalizeAccessLevel, createEndGuard, ClipboardWatcher } from '../lib/rd-session.mjs';
 
-export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, onEndSession }) {
+const CONNECT_TIMEOUT_TEXT =
+  `Не удалось установить соединение за ${Math.round(RD_CONNECT_TIMEOUT_MS / 1000)} секунд. ` +
+  'Скорее всего, прямое соединение между компьютерами блокирует сеть или VPN: попробуйте отключить VPN ' +
+  'у себя или у сотрудника либо подключиться из одной сети. Если не помогает — обратитесь к администратору.';
+const CONNECTION_FAILED_TEXT =
+  'Соединение с компьютером сотрудника потеряно. Проверьте сеть или VPN и запросите доступ заново.';
+const SERVER_LOST_TEXT =
+  'Связь с сервером прервалась, и сеанс завершён. Запросите доступ заново.';
+
+// accessLevel — уровень доступа, который выбрал сотрудник (App передаёт
+// event.accessLevel из rd_response). Пока он не известен, окно работает как
+// «только просмотр»: показывать управление, которого нет, хуже, чем на
+// секунду его не показать. Сотрудник дополнительно сообщает уровень вместе со
+// списком мониторов (rd_screens).
+export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, pendingCandidates, onEndSession, accessLevel: accessLevelProp }) {
   const [scaleMode, setScaleMode] = useState('fit');
   const [remoteStream, setRemoteStream] = useState(null);
   const [statusText, setStatusText] = useState('Устанавливаем соединение с экраном сотрудника…');
-  const [accessLevel, setAccessLevel] = useState('full');
+  const [accessLevel, setAccessLevel] = useState(normalizeAccessLevel(accessLevelProp));
   const [isRejected, setIsRejected] = useState(false);
+  const [failure, setFailure] = useState(null);
 
   const [keyboardCaptured, setKeyboardCaptured] = useState(false);
   const [transferState, setTransferState] = useState(null);
   const [screens, setScreens] = useState([]);
   const [activeScreenId, setActiveScreenId] = useState(null);
-  const [clipboardSync, setClipboardSync] = useState(false);
+  const [clipboardState, setClipboardState] = useState('off'); // off | pending | on
   const [linkStats, setLinkStats] = useState(null);
-  const clipboardSyncRef = useRef(false);
-  const lastClipboardRef = useRef('');
 
   const videoRef = useRef(null);
   const stageRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const moveThrottleRef = useRef(new MoveThrottle({ intervalMs: 33 }));
+  const wsRef = useRef(wsClient);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const targetUserRef = useRef(targetUser);
+  targetUserRef.current = targetUser;
+  const handlersRef = useRef(null);
+  const connectedRef = useRef(false);
+  const clipboardStateRef = useRef('off');
+  const watcherRef = useRef(null);
+  const liveTokenRef = useRef(null);
 
   // Обработчик завершения приходит из App новой функцией на каждую его
   // перерисовку — а перерисовывается App на каждое входящее сообщение. Держать
@@ -28,6 +54,61 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   // RTCPeerConnection по десять раз в минуту: картинка не успевала появиться.
   const onEndSessionRef = useRef(onEndSession);
   useEffect(() => { onEndSessionRef.current = onEndSession; }, [onEndSession]);
+
+  useEffect(() => {
+    if (accessLevelProp !== undefined) setAccessLevel(normalizeAccessLevel(accessLevelProp));
+  }, [accessLevelProp]);
+
+  useEffect(() => { clipboardStateRef.current = clipboardState; }, [clipboardState]);
+
+  const sendWs = (payload) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ ...payload, targetUserId: targetUserRef.current?.id }));
+      return true;
+    }
+    return false;
+  };
+
+  // rd_end уходит ровно один раз на сеанс — с кнопки, при закрытии окна или
+  // при сбое соединения. Раньше оператор закрывал окно молча: сотрудник
+  // продолжал транслировать экран и оставался под управлением.
+  const endGuardRef = useRef(null);
+  if (!endGuardRef.current) {
+    endGuardRef.current = createEndGuard((sid) => sendWs({ type: 'rd_end', sessionId: sid }));
+  }
+
+  const endSession = () => {
+    endGuardRef.current.end(sessionIdRef.current);
+    onEndSessionRef.current?.();
+  };
+
+  // Сеанс не состоялся или оборвался: причина остаётся на экране, пока
+  // оператор её не прочитает и не закроет окно сам.
+  const failSession = (message, { notify = true } = {}) => {
+    if (notify) endGuardRef.current.end(sessionIdRef.current);
+    else endGuardRef.current.mark(sessionIdRef.current);
+    watcherRef.current = null;
+    setClipboardState('off');
+    setRemoteStream(null);
+    setFailure((prev) => prev || message);
+  };
+
+  // Закрытие окна (размонтирование) завершает сеанс. Проверка — на следующем
+  // витке: StrictMode в разработке снимает и тут же заново подключает эффект,
+  // и завершать сеанс от этого нельзя.
+  useEffect(() => {
+    const token = { sessionId, disposed: false };
+    liveTokenRef.current = token;
+    return () => {
+      token.disposed = true;
+      setTimeout(() => {
+        const current = liveTokenRef.current;
+        if (current && current !== token && current.sessionId === token.sessionId && !current.disposed) return;
+        endGuardRef.current.end(token.sessionId);
+      }, 0);
+    };
+  }, [sessionId]);
 
   // Как только картинка пошла — сразу забираем фокус, чтобы не заставлять
   // оператора догадываться, что по экрану нужно сначала кликнуть.
@@ -46,10 +127,13 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     }
   }, [remoteStream]);
 
+  // Соединение живёт столько же, сколько сеанс, — и НЕ пересоздаётся при
+  // смене сокета. Раньше переподключение к серверу строило соединение заново
+  // и отвечало на давно устаревшее предложение, сохранённое в App.
   useEffect(() => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+    connectedRef.current = false;
+    setFailure(null);
+    const pc = new RTCPeerConnection({ iceServers: getRdIceServers() });
     peerConnectionRef.current = pc;
 
     // Кандидаты нередко приходят раньше описания соединения. Добавить их в
@@ -58,6 +142,13 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     // выглядит это как «висит на подключении».
     let remoteDescriptionSet = false;
     const pendingCandidates = [];
+    let lastOfferSdp = null;
+    // Предложение и кандидаты обрабатываются строго по очереди.
+    let queue = Promise.resolve();
+    const enqueue = (task) => {
+      queue = queue.then(task).catch((err) => console.warn('RD:', err?.message || err));
+    };
+
     const addCandidate = async (candidate) => {
       if (!remoteDescriptionSet) {
         pendingCandidates.push(candidate);
@@ -78,31 +169,29 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') {
-        setStatusText('Соединение не установилось. Закройте окно и попробуйте снова.');
-      } else if (pc.connectionState === 'disconnected') {
+      const state = pc.connectionState;
+      if (state === 'connected') {
+        connectedRef.current = true;
+        setStatusText('Подключено');
+      } else if (state === 'disconnected') {
         setStatusText('Связь прервалась, восстанавливаем…');
+      } else if (state === 'failed') {
+        failSession(CONNECTION_FAILED_TEXT);
       }
     };
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && wsClient && wsClient.readyState === WebSocket.OPEN) {
-        wsClient.send(JSON.stringify({
-          type: 'rd_ice_candidate',
-          sessionId,
-          targetUserId: targetUser.id,
-          candidate: event.candidate
-        }));
+      if (event.candidate) {
+        sendWs({ type: 'rd_ice_candidate', sessionId, candidate: event.candidate });
       }
     };
 
-    // Answers an offer exactly once — the same offer can arrive both buffered
-    // from App (sent before this component existed) and through the live
-    // listener below, and answering twice throws on the peer connection.
-    let offerAnswered = false;
+    // Одно и то же предложение приходит дважды: сохранённым в App (пришло до
+    // появления окна) и через живой обработчик. Отвечать дважды на одно
+    // предложение нельзя — повтор узнаётся по самому описанию.
     const answerOffer = async (sdp) => {
-      if (offerAnswered) return;
-      offerAnswered = true;
+      if (!sdp || typeof sdp.sdp !== 'string' || sdp.sdp === lastOfferSdp) return;
+      lastOfferSdp = sdp.sdp;
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       remoteDescriptionSet = true;
 
@@ -114,93 +203,162 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-        wsClient.send(JSON.stringify({
-          type: 'rd_webrtc_answer',
-          sessionId,
-          targetUserId: targetUser.id,
-          sdp: answer
-        }));
-      }
+      sendWs({ type: 'rd_webrtc_answer', sessionId, sdp: answer });
     };
 
-    if (pendingOffer && pendingOffer.sessionId === sessionId) {
-      answerOffer(pendingOffer.sdp).catch((err) => console.error('RD offer error:', err));
+    handlersRef.current = {
+      offer: (sdp) => enqueue(() => answerOffer(sdp)),
+      candidate: (candidate) => enqueue(() => addCandidate(candidate))
+    };
+
+    // Картинки нет слишком долго — оператору говорят причину, а не крутят
+    // заставку бесконечно.
+    const timer = setTimeout(() => {
+      if (!connectedRef.current && pc.connectionState !== 'connected') failSession(CONNECT_TIMEOUT_TEXT);
+    }, RD_CONNECT_TIMEOUT_MS);
+
+    return () => {
+      clearTimeout(timer);
+      handlersRef.current = null;
+      pc.ontrack = null;
+      pc.onicecandidate = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+      if (peerConnectionRef.current === pc) peerConnectionRef.current = null;
+    };
+    // targetUser.id, а не сам объект: объект приходит новым на каждой
+    // перерисовке App и пересоздавал бы соединение вместе с картинкой.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, targetUser.id]);
+
+  // Предложение, сохранённое в App до появления окна.
+  useEffect(() => {
+    if (pendingOffer && pendingOffer.sessionId === sessionId) handlersRef.current?.offer(pendingOffer.sdp);
+  }, [pendingOffer, sessionId]);
+
+  // Кандидаты, пришедшие до появления окна (их придержал App). Каждый
+  // передаётся один раз; до описания соединения они встают в ту же очередь.
+  const deliveredCandidatesRef = useRef(0);
+  useEffect(() => {
+    if (!pendingCandidates || pendingCandidates.sessionId !== sessionId) return;
+    const list = pendingCandidates.list || [];
+    for (let i = deliveredCandidatesRef.current; i < list.length; i += 1) {
+      handlersRef.current?.candidate(list[i]);
     }
+    deliveredCandidatesRef.current = list.length;
+  }, [pendingCandidates, sessionId]);
 
-    const handleWsMessage = async (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.sessionId !== sessionId) return;
+  const handleWsMessage = (msg) => {
+    if (msg.sessionId !== sessionIdRef.current) return;
 
-        if (msg.type === 'rd_response') {
-          if (!msg.accepted) {
-            setIsRejected(true);
-            setStatusText('Сотрудник отклонил запрос на удаленный доступ.');
-          } else {
-            setStatusText('Сотрудник разрешил доступ. Запуск видеопотока 60 FPS...');
-            if (msg.accessLevel) setAccessLevel(msg.accessLevel);
-          }
-        } else if (msg.type === 'rd_webrtc_offer') {
-          await answerOffer(msg.sdp);
-        } else if (msg.type === 'rd_screens') {
-          setScreens(msg.screens || []);
-          setActiveScreenId((prev) => prev || msg.screens?.[0]?.id || null);
-        } else if (msg.type === 'rd_clipboard') {
-          // Сотрудник скопировал текст у себя — кладём его в буфер оператора.
-          if (clipboardSyncRef.current && typeof msg.text === 'string') {
-            lastClipboardRef.current = msg.text;
-            window.electronAPI?.rdClipboardWrite?.(msg.text);
-          }
-        } else if (msg.type === 'rd_ice_candidate' && msg.candidate) {
-          await addCandidate(msg.candidate);
-        } else if (msg.type === 'rd_end') {
-          // alert() останавливает всё окно: пока его не закроют, не идут ни
-          // сообщения, ни звонки. Для сообщения о завершении сеанса это
-          // чрезмерно — показываем его в самом окне сеанса.
-          setStatusText('Сеанс завершён сотрудником.');
-          setRemoteStream(null);
-          setTimeout(() => onEndSessionRef.current?.(), 1500);
+    switch (msg.type) {
+      case 'rd_response':
+        if (!msg.accepted) {
+          setIsRejected(true);
+          setStatusText('Сотрудник отклонил запрос на удаленный доступ.');
+        } else {
+          setStatusText('Сотрудник разрешил доступ. Запускаем трансляцию экрана…');
+          if (msg.accessLevel) setAccessLevel(normalizeAccessLevel(msg.accessLevel));
         }
+        return;
+
+      case 'rd_webrtc_offer':
+        handlersRef.current?.offer(msg.sdp);
+        return;
+
+      case 'rd_ice_candidate':
+        if (msg.candidate) handlersRef.current?.candidate(msg.candidate);
+        return;
+
+      case 'rd_screens': {
+        const list = Array.isArray(msg.screens) ? msg.screens : [];
+        setScreens(list);
+        setActiveScreenId((prev) => prev || list[0]?.id || null);
+        if (msg.accessLevel) setAccessLevel(normalizeAccessLevel(msg.accessLevel));
+        return;
+      }
+
+      case 'rd_clipboard':
+        // Сотрудник скопировал текст у себя — кладём его в буфер оператора.
+        if (clipboardStateRef.current === 'on' && typeof msg.text === 'string') {
+          watcherRef.current?.remember(msg.text);
+          window.electronAPI?.rdClipboardWrite?.(msg.text);
+        }
+        return;
+
+      case 'rd_clipboard_mode':
+        // Решение об общем буфере принимает сотрудник.
+        if (msg.enabled) {
+          setClipboardState('on');
+        } else {
+          watcherRef.current = null;
+          setClipboardState('off');
+          if (msg.declined) setTransferState({ kind: 'error', text: 'Сотрудник не разрешил общий буфер обмена' });
+        }
+        return;
+
+      case 'rd_end': {
+        // alert() останавливает всё окно: пока его не закроют, не идут ни
+        // сообщения, ни звонки. Для сообщения о завершении сеанса это
+        // чрезмерно — показываем его в самом окне сеанса.
+        endGuardRef.current.mark(msg.sessionId);
+        const reason = typeof msg.reason === 'string' && /[а-яё]/i.test(msg.reason) ? msg.reason : null;
+        setStatusText(reason || (msg.fromUserId ? 'Сеанс завершён сотрудником.' : 'Сеанс завершён.'));
+        setRemoteStream(null);
+        watcherRef.current = null;
+        setClipboardState('off');
+        setTimeout(() => onEndSessionRef.current?.(), 1500);
+        return;
+      }
+
+      default:
+        return;
+    }
+  };
+
+  // Слушатель сокета отдельно от соединения: при переподключении он
+  // переезжает на новый сокет, а соединение с картинкой остаётся.
+  useEffect(() => {
+    if (!wsClient) return;
+    const previous = wsRef.current;
+    wsRef.current = wsClient;
+
+    // Сервер завершает сеанс, когда у участника обрывается связь, — новый
+    // сокет его уже не вернёт.
+    const onConnectionLost = () => {
+      if (endGuardRef.current.isEnded(sessionIdRef.current)) return;
+      failSession(SERVER_LOST_TEXT, { notify: false });
+    };
+    if (previous && previous !== wsClient) onConnectionLost();
+
+    const onMessage = (e) => {
+      if (typeof e.data !== 'string') return;
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (!msg || typeof msg !== 'object') return;
+      try {
+        handleWsMessage(msg);
       } catch (err) {
         console.error('RD message error:', err);
       }
     };
 
-    if (wsClient) {
-      wsClient.addEventListener('message', handleWsMessage);
-    }
-
-    // Latency and FPS used to be invented here with Math.random() on a timer
-    // and displayed as measurements — they read as a healthy 8-16 ms / 60 fps
-    // even when no stream existed at all. Real figures have to come from the
-    // WebRTC connection (RTCPeerConnection.getStats), so until the stream is
-    // wired up nothing is claimed.
-
+    wsClient.addEventListener('message', onMessage);
+    wsClient.addEventListener('close', onConnectionLost);
     return () => {
-      if (wsClient) {
-        wsClient.removeEventListener('message', handleWsMessage);
-      }
-      pc.close();
+      wsClient.removeEventListener('message', onMessage);
+      wsClient.removeEventListener('close', onConnectionLost);
     };
-    // targetUser.id, а не сам объект: объект приходит новым на каждой
-    // перерисовке App и пересоздавал бы соединение вместе с картинкой.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, targetUser.id, wsClient]);
+  }, [wsClient]);
+
+  const canControl = accessLevel === 'full' && !failure;
 
   const sendInputEvent = useCallback((inputEvent) => {
-    if (accessLevel !== 'full') return;
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({
-        type: 'rd_input_event',
-        sessionId,
-        targetUserId: targetUser.id,
-        event: inputEvent
-      }));
-    }
-  }, [accessLevel, wsClient, sessionId, targetUser.id]);
-
-  const canControl = accessLevel === 'full';
+    if (!canControl) return;
+    sendWs({ type: 'rd_input_event', sessionId, event: inputEvent });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canControl, sessionId]);
 
   // Передача файла на машину сотрудника. Идёт по тому же каналу сеанса, что и
   // сигнализация: сервер уже проверяет, что оба участника подтвердили сеанс,
@@ -209,46 +367,46 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   // сообщение не забило канал: сеанс идёт по нему же.
   const MAX_TRANSFER_BYTES = 10 * 1024 * 1024;
 
-  useEffect(() => { clipboardSyncRef.current = clipboardSync; }, [clipboardSync]);
-
+  // Общий буфер включается только с согласия сотрудника: оператор просит,
+  // сотрудник разрешает у себя в панели сеанса.
   const toggleClipboardSync = () => {
-    const next = !clipboardSync;
-    setClipboardSync(next);
-    // Сотрудник обязан видеть, что буфер стал общим — у него в панели сеанса
-    // появляется отметка. Молча читать чужой буфер недопустимо.
-    if (wsClient?.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({
-        type: 'rd_clipboard_mode',
-        sessionId,
-        targetUserId: targetUser.id,
-        enabled: next
-      }));
+    if (!canControl) return;
+    if (clipboardState === 'off') {
+      if (sendWs({ type: 'rd_clipboard_mode', sessionId, enabled: true })) {
+        setClipboardState('pending');
+        setTransferState({ kind: 'progress', text: 'Ждём, пока сотрудник разрешит общий буфер обмена…' });
+      }
+    } else {
+      watcherRef.current = null;
+      setClipboardState('off');
+      sendWs({ type: 'rd_clipboard_mode', sessionId, enabled: false });
     }
   };
 
-  // Свой буфер опрашивается: событий об изменении Windows не присылает.
+  // Свой буфер опрашивается: событий об изменении Windows не присылает. Как и
+  // у сотрудника, уходит только скопированное после включения.
   useEffect(() => {
-    if (!clipboardSync || !window.electronAPI?.rdClipboardRead) return;
-    const id = setInterval(async () => {
-      try {
-        const text = await window.electronAPI.rdClipboardRead();
-        if (typeof text === 'string' && text && text !== lastClipboardRef.current) {
-          lastClipboardRef.current = text;
-          if (wsClient?.readyState === WebSocket.OPEN) {
-            wsClient.send(JSON.stringify({ type: 'rd_clipboard', sessionId, targetUserId: targetUser.id, text }));
-          }
-        }
-      } catch {}
+    if (clipboardState !== 'on' || !window.electronAPI?.rdClipboardRead) return;
+    setTransferState(null);
+    const watcher = new ClipboardWatcher({
+      read: () => window.electronAPI.rdClipboardRead(),
+      send: (text) => sendWs({ type: 'rd_clipboard', sessionId, text })
+    });
+    watcherRef.current = watcher;
+    watcher.prime();
+    const id = setInterval(() => {
+      if (watcherRef.current === watcher) watcher.tick();
     }, 1200);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      if (watcherRef.current === watcher) watcherRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipboardSync, sessionId]);
+  }, [clipboardState, sessionId]);
 
   const switchScreen = (screenId) => {
     setActiveScreenId(screenId);
-    if (wsClient?.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({ type: 'rd_select_screen', sessionId, targetUserId: targetUser.id, screenId }));
-    }
+    sendWs({ type: 'rd_select_screen', sessionId, screenId });
   };
 
   // Настоящие показатели связи вместо удалённых выдуманных: берутся из самого
@@ -279,6 +437,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   }, [remoteStream]);
 
   const handleSendFile = () => {
+    if (!canControl) return;
     const input = document.createElement('input');
     input.type = 'file';
     input.onchange = async () => {
@@ -296,19 +455,16 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         for (let i = 0; i < bytes.length; i += 0x8000) {
           binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
         }
-        if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-          wsClient.send(JSON.stringify({
-            type: 'rd_file',
-            sessionId,
-            targetUserId: targetUser.id,
-            fileName: file.name,
-            size: file.size,
-            data: btoa(binary)
-          }));
-          setTransferState({ kind: 'done', text: `«${file.name}» отправлен в папку «Загрузки» сотрудника` });
-        } else {
-          setTransferState({ kind: 'error', text: 'Нет связи с сервером' });
-        }
+        const sent = sendWs({
+          type: 'rd_file',
+          sessionId,
+          fileName: file.name,
+          size: file.size,
+          data: btoa(binary)
+        });
+        setTransferState(sent
+          ? { kind: 'done', text: `«${file.name}» отправлен в папку «Загрузки» сотрудника` }
+          : { kind: 'error', text: 'Нет связи с сервером' });
       } catch (err) {
         setTransferState({ kind: 'error', text: 'Не удалось прочитать файл: ' + err.message });
       }
@@ -377,16 +533,13 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     if (canControl) e.preventDefault();
   };
 
+  // Печатный символ уходит текстом, сочетания — физической клавишей
+  // (см. lib/remote-keyboard.mjs): Ctrl+C работает при любой раскладке.
   const handleKeyDown = (e) => {
     if (!canControl) return;
     e.preventDefault();
-    sendInputEvent({
-      type: 'key',
-      key: e.key,
-      ctrl: e.ctrlKey,
-      alt: e.altKey,
-      shift: e.shiftKey
-    });
+    const input = keyEventToInput(e);
+    if (input) sendInputEvent(input);
   };
 
   return (
@@ -421,35 +574,40 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
               value={activeScreenId || ''}
               onChange={(e) => switchScreen(e.target.value)}
               title="Какой монитор сотрудника показывать"
+              disabled={Boolean(failure)}
             >
               {screens.map((s, i) => (
                 <option key={s.id} value={s.id}>{s.name || `Экран ${i + 1}`}</option>
               ))}
             </select>
           )}
-          <button
-            className={`rd-btn${clipboardSync ? ' active' : ''}`}
-            title="Общий буфер обмена: скопированный текст переносится между компьютерами"
-            disabled={!canControl || !remoteStream}
-            onClick={toggleClipboardSync}
-          >
-            {clipboardSync ? '📋 Буфер: общий' : '📋 Буфер'}
-          </button>
-          <button
-            className="rd-btn"
-            title="Передать файл в папку «Загрузки» сотрудника"
-            disabled={!canControl || !remoteStream}
-            onClick={handleSendFile}
-          >
-            Передать файл
-          </button>
+          {canControl && (
+            <>
+              <button
+                className={`rd-btn${clipboardState === 'on' ? ' active' : ''}`}
+                title="Общий буфер обмена: скопированный после включения текст переносится между компьютерами. Включается с согласия сотрудника."
+                disabled={!remoteStream}
+                onClick={toggleClipboardSync}
+              >
+                {clipboardState === 'on' ? '📋 Буфер: общий' : clipboardState === 'pending' ? '📋 Буфер: ждём согласия' : '📋 Буфер'}
+              </button>
+              <button
+                className="rd-btn"
+                title="Передать файл в папку «Загрузки» сотрудника"
+                disabled={!remoteStream}
+                onClick={handleSendFile}
+              >
+                Передать файл
+              </button>
+            </>
+          )}
           <button
             className="rd-btn"
             onClick={() => setScaleMode(scaleMode === 'fit' ? 'original' : 'fit')}
           >
             {scaleMode === 'fit' ? 'Масштаб 1:1' : 'По размеру'}
           </button>
-          <button className="rd-btn-danger" onClick={onEndSession}>
+          <button className="rd-btn-danger" onClick={endSession}>
             ✕ Завершить сеанс
           </button>
         </div>
@@ -458,7 +616,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       <div
         ref={stageRef}
         className={`rd-video-area${canControl ? ' controllable' : ''}${keyboardCaptured ? ' focused' : ''}`}
-        tabIndex={0}
+        tabIndex={canControl ? 0 : -1}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -471,7 +629,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         {canControl && !keyboardCaptured && remoteStream && (
           <div className="rd-focus-hint">Нажмите на экран, чтобы управлять клавиатурой</div>
         )}
-        {remoteStream ? (
+        {remoteStream && !failure ? (
           <video
             ref={videoRef}
             autoPlay
@@ -480,14 +638,25 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
           />
         ) : (
           <div className="rd-connecting-overlay">
-            {isRejected ? (
+            {failure ? (
+              <div className="rd-rejected-box">
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>⚠️</div>
+                <h3 style={{ color: '#f59e0b', marginBottom: '8px' }}>Сеанс не удался</h3>
+                <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', maxWidth: '520px' }}>
+                  {failure}
+                </p>
+                <button className="btn btn-secondary" onClick={endSession}>
+                  Закрыть окно
+                </button>
+              </div>
+            ) : isRejected ? (
               <div className="rd-rejected-box">
                 <div style={{ fontSize: '48px', marginBottom: '12px' }}>⛔</div>
                 <h3 style={{ color: '#ef4444', marginBottom: '8px' }}>Запрос отклонен</h3>
                 <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px' }}>
                   Сотрудник {targetUser.full_name} отклонил запрос на удаленный рабочий стол.
                 </p>
-                <button className="btn btn-secondary" onClick={onEndSession}>
+                <button className="btn btn-secondary" onClick={endSession}>
                   Закрыть окно
                 </button>
               </div>

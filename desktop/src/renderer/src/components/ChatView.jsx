@@ -16,7 +16,8 @@ export default function ChatView({
   onMarkRead,
   onTyping,
   token,
-  serverUrl
+  serverUrl,
+  onNotice
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -119,6 +120,9 @@ export default function ChatView({
   };
 
   const handleKeyDown = (e) => {
+    // Enter, которым подтверждают выбор в раскладке с набором (китайский,
+    // японский, корейский ввод), не должен отправлять недописанное сообщение.
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -200,8 +204,10 @@ export default function ChatView({
       const res = await fetch(`${serverUrl}/api/files/download/${fileId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      // Сообщение в углу вместо alert(): модальное окно останавливало всё
+      // приложение, включая приём сообщений, пока его не закроют.
       if (!res.ok) {
-        alert(res.status === 403 ? 'Нет доступа к этому файлу' : 'Не удалось скачать файл');
+        onNotice?.(res.status === 403 ? 'Нет доступа к этому файлу' : 'Не удалось скачать файл', suggestedName);
         return;
       }
       const blob = await res.blob();
@@ -214,11 +220,14 @@ export default function ChatView({
       link.remove();
       URL.revokeObjectURL(objectUrl);
     } catch {
-      alert('Не удалось скачать файл: нет связи с сервером');
+      onNotice?.('Не удалось скачать файл', 'Нет связи с сервером');
     }
   };
 
   const isDirect = activeChat.type === 'direct';
+  // Сервер пускает к чужому экрану только с правом can_remote_control —
+  // кнопка без него лишь выдавала отказ.
+  const canRemoteControl = Boolean(currentUser?.permissions?.can_remote_control);
   const chatTitle = activeChat.name || (isDirect ? activeChat.user?.full_name : `#${activeChat.channel?.name}`);
   const isOnline = isDirect ? (activeChat.user?.status === 'online') : true;
 
@@ -277,8 +286,11 @@ export default function ChatView({
         );
       }
 
-      // Draw unread line before unread messages from other peer
-      if (!isMine && m.delivery_status !== 'read' && !hasDrawnUnreadSeparator) {
+      // Draw unread line before unread messages from other peer.
+      // Только в личной переписке и только для истории: у сообщений каналов и
+      // у пришедших только что статуса нет вовсе, и черта «непрочитанные»
+      // появлялась над каждым из них.
+      if (isDirect && !isMine && m.delivery_status !== undefined && m.delivery_status !== 'read' && !hasDrawnUnreadSeparator) {
         elements.push(
           <div key={`unread_sep_${idx}`} className="chat-unread-separator">
             <span>непрочитанные сообщения</span>
@@ -429,6 +441,9 @@ export default function ChatView({
               </svg>
             </button>
           )}
+          {/* В канале у кнопок «экран», «профиль», «ещё» нет адресата — они
+              молча ничего не делали. */}
+          {isDirect && canRemoteControl && (
           <button
             className="classic-action-icon-btn"
             title="Удаленный рабочий стол сотрудника"
@@ -440,6 +455,8 @@ export default function ChatView({
               <line x1="12" y1="17" x2="12" y2="21"/>
             </svg>
           </button>
+          )}
+          {isDirect && (
           <button
             className={`classic-action-icon-btn ${isPersonPanelOpen ? 'active' : ''}`}
             title="Информация о человеке (Свойства)"
@@ -450,6 +467,8 @@ export default function ChatView({
               <line x1="15" y1="3" x2="15" y2="21"/>
             </svg>
           </button>
+          )}
+          {isDirect && (
           <div style={{ position: 'relative' }}>
             <button
               className={`classic-action-icon-btn ${showMoreMenu ? 'active' : ''}`}
@@ -473,21 +492,30 @@ export default function ChatView({
                 >
                   <span>👤 Профиль сотрудника</span>
                 </div>
+                {canRemoteControl && (
+                  <div
+                    className="classic-popup-menu-item"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      onRequestRemoteDesktop && onRequestRemoteDesktop(activeChat.user);
+                    }}
+                  >
+                    <span>🖥️ Подключиться к экрану</span>
+                  </div>
+                )}
                 <div
                   className="classic-popup-menu-item"
-                  onClick={() => {
+                  onClick={async () => {
                     setShowMoreMenu(false);
-                    onRequestRemoteDesktop && onRequestRemoteDesktop(activeChat.user);
-                  }}
-                >
-                  <span>🖥️ Подключиться к экрану</span>
-                </div>
-                <div
-                  className="classic-popup-menu-item"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    navigator.clipboard.writeText(`${chatTitle} (${activeChat.user?.email || ''})`);
-                    alert('Контактные данные скопированы в буфер');
+                    const contact = [chatTitle, activeChat.user?.job_title, activeChat.user?.email, activeChat.user?.extension && `вн. ${activeChat.user.extension}`]
+                      .filter(Boolean)
+                      .join(', ');
+                    try {
+                      await navigator.clipboard.writeText(contact);
+                      onNotice?.('Контакты скопированы', contact);
+                    } catch {
+                      onNotice?.('Не удалось скопировать контакты', 'Буфер обмена недоступен');
+                    }
                   }}
                 >
                   <span>📋 Копировать контакты</span>
@@ -495,6 +523,7 @@ export default function ChatView({
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -510,7 +539,9 @@ export default function ChatView({
             <div className="chat-empty-icon">💬</div>
             <div className="chat-empty-title">Начало переписки</div>
             <div className="chat-empty-desc">
-              Отправьте личное сообщение коллеге {chatTitle}.
+              {isDirect
+                ? `Отправьте личное сообщение коллеге ${chatTitle}.`
+                : `Напишите первое сообщение в ${chatTitle}.`}
             </div>
           </div>
         ) : (
@@ -682,7 +713,7 @@ export default function ChatView({
             ref={textareaRef}
             rows={2}
             className="classic-chat-textarea"
-            placeholder={`Написать личное сообщение для ${chatTitle}...`}
+            placeholder={isDirect ? `Написать личное сообщение для ${chatTitle}...` : `Сообщение в ${chatTitle}...`}
             value={inputText}
             onChange={handleTextareaInput}
             onKeyDown={handleKeyDown}

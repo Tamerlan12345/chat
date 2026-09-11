@@ -1,4 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useConfirm } from './ConfirmDialog';
+import { useInlineToast } from './InlineToast';
+import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
+import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
 
 // Права, которыми управляет администратор. defaultOn — как трактуется
 // отсутствующее значение: три права считаются разрешёнными, пока их явно не
@@ -21,12 +25,29 @@ const PERMISSION_FIELDS = [
 ];
 
 export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onClose, onRefreshData, focusUserId = null }) {
+  // Консоль открывают и суперадминистратор, и администратор подразделения.
+  // Второму сервер отдаёт только сотрудников, заявки, узлы и импорт — остальные
+  // разделы отвечали ему отказом на каждое нажатие. Флаги те же, что на сервере.
+  const superAdmin = isSuperAdmin(currentUser);
+  const scopedAdmin = !superAdmin && isScopedAdmin(currentUser);
+
   // Official MyChat Control Panel Sections
-  const [activeTab, setActiveTab] = useState('server'); 
+  const [activeTab, setActiveTab] = useState(superAdmin ? 'server' : 'users');
   // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'licenses'
 
   const [loading, setLoading] = useState(false);
-  const [statusMsg, setStatusMsg] = useState(null);
+  const [showToast, toastElement] = useInlineToast();
+  const [confirm, confirmDialog] = useConfirm();
+
+  // Сброс пароля и выданный одноразовый пароль — в своих окнах: prompt() в
+  // Electron не работает, а уведомление гасло раньше, чем пароль успевали
+  // переписать.
+  const [resetTarget, setResetTarget] = useState(null);
+  const [oneTimePassword, setOneTimePassword] = useState(null);
+  const [savingUser, setSavingUser] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [annSubmitting, setAnnSubmitting] = useState(false);
+  const focusHandledRef = useRef(null);
 
   // Tab 1: Server Overview & Online
   const [serverOverview, setServerOverview] = useState(null);
@@ -138,22 +159,26 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     }
   };
 
+  // Отказ сервера здесь проглатывался: `if (res.ok)` без ветки «иначе» —
+  // администратор нажимал, ничего не происходило, и причину он не узнавал.
   const handleBindDevice = async (deviceId, userId, ip) => {
-    if (!userId) return showToast('Выберите сотрудника для привязки');
+    if (!userId) return showToast('Выберите сотрудника для привязки', 'error');
     try {
       const res = await fetch(serverUrl + '/api/admin/devices/bind', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ device_id: deviceId, user_id: Number(userId), ip_address: ip })
       });
-      if (res.ok) {
-        showToast('Узел успешно привязан к сотруднику!');
-        setSelectedDeviceForPair(null);
-        loadPendingDevices();
-        loadUsers();
+      if (!res.ok) {
+        showToast(await readError(res, 'Не удалось привязать узел'), 'error');
+        return;
       }
+      showToast('Узел успешно привязан к сотруднику!');
+      setSelectedDeviceForPair(null);
+      loadPendingDevices();
+      loadUsers();
     } catch (e) {
-      showToast('Ошибка привязки: ' + e.message);
+      showToast('Ошибка привязки: ' + e.message, 'error');
     }
   };
 
@@ -163,14 +188,16 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token }
       });
-      if (res.ok) {
-        const d = await res.json();
-        showToast('Автоматически сопоставлено узлов по IP: ' + d.matched_count);
-        loadPendingDevices();
-        loadUsers();
+      if (!res.ok) {
+        showToast(await readError(res, 'Автосопоставление не выполнено'), 'error');
+        return;
       }
+      const d = await res.json();
+      showToast('Автоматически сопоставлено узлов по IP: ' + d.matched_count);
+      loadPendingDevices();
+      loadUsers();
     } catch (e) {
-      showToast('Ошибка автосопоставления: ' + e.message);
+      showToast('Ошибка автосопоставления: ' + e.message, 'error');
     }
   };
 
@@ -181,17 +208,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ device_id: deviceId })
       });
-      if (res.ok) {
-        showToast('Узел отвязан');
-        loadPendingDevices();
+      if (!res.ok) {
+        showToast(await readError(res, 'Не удалось отвязать узел'), 'error');
+        return;
       }
+      showToast('Узел отвязан');
+      loadPendingDevices();
+      loadUsers();
     } catch (e) {
-      showToast('Ошибка: ' + e.message);
+      showToast('Ошибка: ' + e.message, 'error');
     }
   };
 
   const handlePreviewParser = async () => {
-    if (!parserText.trim()) return showToast('Вставьте текст со структурой');
+    if (!parserText.trim()) return showToast('Вставьте текст со структурой', 'error');
     setParserLoading(true);
     try {
       const res = await fetch(serverUrl + '/api/admin/org/preview-import', {
@@ -199,20 +229,22 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ text: parserText, format: parserFormat })
       });
-      if (res.ok) {
-        const d = await res.json();
-        setParserPreview(d.preview);
-        showToast('Предпросмотр: ' + (d.preview && d.preview.stats ? d.preview.stats.departmentsCount : 0) + ' подразделений, ' + (d.preview && d.preview.stats ? d.preview.stats.employeesCount : 0) + ' сотрудников');
+      if (!res.ok) {
+        showToast(await readError(res, 'Не удалось разобрать структуру'), 'error');
+        return;
       }
+      const d = await res.json();
+      setParserPreview(d.preview);
+      showToast('Предпросмотр: ' + (d.preview && d.preview.stats ? d.preview.stats.departmentsCount : 0) + ' подразделений, ' + (d.preview && d.preview.stats ? d.preview.stats.employeesCount : 0) + ' сотрудников');
     } catch (e) {
-      showToast('Ошибка предпросмотра: ' + e.message);
+      showToast('Ошибка предпросмотра: ' + e.message, 'error');
     } finally {
       setParserLoading(false);
     }
   };
 
   const handleApplyParser = async () => {
-    if (!parserText.trim()) return showToast('Вставьте текст со структурой');
+    if (!parserText.trim()) return showToast('Вставьте текст со структурой', 'error');
     setParserLoading(true);
     try {
       const res = await fetch(serverUrl + '/api/admin/org/batch-import', {
@@ -223,40 +255,40 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         // записей — это сотня открытых дверей до первого входа каждого.
         body: JSON.stringify({ text: parserText, format: parserFormat })
       });
-      if (res.ok) {
-        const d = await res.json();
-        showToast('Импорт успешно применен! Создано отделов: ' + d.createdDepts + ', сотрудников: ' + d.createdUsers + ', обновлено: ' + d.updatedUsers);
-        setParserPreview(null);
-        setParserText('');
-        loadUsers();
-        loadOrgTree();
-        if (onRefreshData) onRefreshData();
+      if (!res.ok) {
+        showToast(await readError(res, 'Импорт не применён'), 'error');
+        return;
       }
+      const d = await res.json();
+      showToast('Импорт успешно применен! Создано отделов: ' + d.createdDepts + ', сотрудников: ' + d.createdUsers + ', обновлено: ' + d.updatedUsers);
+      setParserPreview(null);
+      setParserText('');
+      loadUsers();
+      loadOrgTree();
+      if (onRefreshData) onRefreshData();
     } catch (e) {
-      showToast('Ошибка применения импорта: ' + e.message);
+      showToast('Ошибка применения импорта: ' + e.message, 'error');
     } finally {
       setParserLoading(false);
     }
   };
 
-
-  // Notification helper
-  const showToast = (text) => {
-    setStatusMsg(text);
-    setTimeout(() => setStatusMsg(null), 4000);
-  };
-
   // Initial load
   useEffect(() => {
-    loadServerOverview();
     loadUsers();
     loadRegistrations();
     loadOrgTree();
-    loadChannels();
-    loadRoles();
-    loadFilters();
-    loadSettings();
-    loadLicenses();
+    // Остальные разделы сервер отдаёт только суперадминистратору: администратор
+    // подразделения получал бы отказ на каждый из этих запросов.
+    if (superAdmin) {
+      loadServerOverview();
+      loadChannels();
+      loadRoles();
+      loadFilters();
+      loadSettings();
+      loadLicenses();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Заявки на регистрацию ──────────────────────────────────────────────
@@ -275,10 +307,14 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   };
 
   const decideRegistration = async (user, approve) => {
-    if (!approve && !window.confirm(
-      `Отклонить заявку «${user.full_name}» (логин ${user.username})?\n` +
-      'Войти этот человек не сможет. Решение отменяется только заведением учётной записи заново.'
-    )) return;
+    if (!approve && !(await confirm({
+      title: 'Отклонить заявку',
+      message:
+        `Отклонить заявку «${user.full_name}» (логин ${user.username})?\n` +
+        'Войти этот человек не сможет. Решение отменяется только заведением учётной записи заново.',
+      confirmText: 'Отклонить',
+      danger: true
+    }))) return;
 
     setRegistrationBusy(user.id);
     try {
@@ -287,8 +323,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось обработать заявку');
+        showToast(await readError(res, 'Не удалось обработать заявку'), 'error');
         return;
       }
       showToast(approve
@@ -298,7 +333,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       await loadUsers();
       onRefreshData && onRefreshData();
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     } finally {
       setRegistrationBusy(null);
     }
@@ -428,7 +463,12 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // Disconnect active connection
   const handleDisconnectUser = async (userId, userName) => {
-    if (!confirm(`Сбросить активную сессию сотрудника ${userName}?`)) return;
+    if (!(await confirm({
+      title: 'Сброс сессии',
+      message: `Сбросить активную сессию сотрудника ${userName}?`,
+      confirmText: 'Сбросить',
+      danger: true
+    }))) return;
     try {
       const res = await fetch(`${serverUrl}/api/admin/server/disconnect-user`, {
         method: 'POST',
@@ -438,12 +478,14 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         },
         body: JSON.stringify({ userId })
       });
-      if (res.ok) {
-        showToast(`Сессия ${userName} сброшена`);
-        loadServerOverview();
+      if (!res.ok) {
+        showToast(await readError(res, 'Не удалось сбросить сессию'), 'error');
+        return;
       }
+      showToast(`Сессия ${userName} сброшена`);
+      loadServerOverview();
     } catch (err) {
-      alert('Ошибка: ' + err.message);
+      showToast('Ошибка: ' + err.message, 'error');
     }
   };
 
@@ -459,15 +501,22 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       username: '',
       full_name: '',
       job_title: 'Сотрудник',
-      department_id: departments[0]?.id || '',
+      // Администратор подразделения может заводить людей только в своём
+      // контуре — предлагать ему первое подразделение компании бессмысленно.
+      department_id: scopedAdmin && currentUser?.admin_scope_dept_id
+        ? Number(currentUser.admin_scope_dept_id)
+        : (departments[0]?.id ?? null),
       role_id: defaultRoleId,
       extension: '',
       uin: Math.floor(1000 + Math.random() * 8999),
       email: '',
       phone: '',
-      password: ''
+      password: '',
+      bound_ip: '',
+      admin_scope_dept_id: ''
     });
     setEditingUser(null);
+    setFormError('');
     setFormMode('create');
   };
 
@@ -476,7 +525,9 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       username: user.username,
       full_name: user.full_name || '',
       job_title: user.job_title || '',
-      department_id: user.department_id || (departments[0]?.id || ''),
+      // Сотрудник без подразделения раньше получал в форме первое попавшееся,
+      // и простое «Сохранить» молча переводил его туда.
+      department_id: user.department_id ?? null,
       role_id: user.role_id || defaultRoleId,
       extension: user.extension || '',
       uin: user.uin || '',
@@ -489,16 +540,21 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       admin_scope_dept_id: user.admin_scope_dept_id || ''
     });
     setEditingUser(user);
+    setFormError('');
     setFormMode('edit');
   };
 
   // Консоль открыли из карточки конкретного сотрудника — значит и показать
   // надо его, а не начальную вкладку. Ждём загрузки списка: до неё открывать
-  // нечего.
+  // нечего. Открываем один раз на каждого сотрудника: список перезагружается
+  // после любого сохранения, блокировки или подтверждения заявки, и форма
+  // всплывала снова поверх того, что администратор делал.
   useEffect(() => {
     if (!focusUserId || !users.length) return;
+    if (focusHandledRef.current === focusUserId) return;
     const target = users.find((u) => Number(u.id) === Number(focusUserId));
     if (!target) return;
+    focusHandledRef.current = focusUserId;
     setActiveTab('users');
     setUserSubTab('list');
     openEditForm(target);
@@ -507,6 +563,11 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   const handleSaveUser = async (e) => {
     e.preventDefault();
+    // Двойное нажатие заводило двух одинаковых сотрудников (или падало на
+    // занятом логине со вторым запросом).
+    if (savingUser) return;
+    setSavingUser(true);
+    setFormError('');
     try {
       if (formMode === 'create') {
         const res = await fetch(`${serverUrl}/api/admin/users`, {
@@ -522,14 +583,18 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           throw new Error(errData.error || 'Ошибка при создании');
         }
         const created = await res.json().catch(() => ({}));
+        showToast(`Сотрудник ${formData.full_name} успешно добавлен (UIN ${created.uin || formData.uin})`);
         // Если пароль сгенерировал сервер, показать его надо сразу: второго
-        // раза не будет, а передать сотруднику что-то нужно.
-        showToast(
-          created.initial_password
-            ? `Сотрудник ${formData.full_name} добавлен (UIN ${formData.uin}). ` +
-              `Первый пароль: ${created.initial_password}`
-            : `Сотрудник ${formData.full_name} успешно добавлен (UIN ${formData.uin})`
-        );
+        // раза не будет, а передать сотруднику что-то нужно. Окно висит, пока
+        // администратор сам его не закроет.
+        if (created.initial_password) {
+          setOneTimePassword({
+            title: 'Сотрудник добавлен',
+            fullName: formData.full_name,
+            username: formData.username,
+            password: created.initial_password
+          });
+        }
       } else if (formMode === 'edit') {
         const res = await fetch(`${serverUrl}/api/admin/users/${editingUser.id}`, {
           method: 'PUT',
@@ -549,26 +614,52 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       loadUsers();
       if (onRefreshData) onRefreshData();
     } catch (err) {
-      alert(err.message);
+      // Ошибку показываем в самой форме: уведомление консоли она закрывает,
+      // а исправить введённое администратор может только здесь.
+      setFormError(err.message === 'Failed to fetch' ? 'Нет связи с сервером' : err.message);
+    } finally {
+      setSavingUser(false);
     }
   };
 
   // Toggle user active
   const handleToggleActive = async (user) => {
-    const actionName = user.is_active ? 'заблокировать' : 'разблокировать';
-    if (!confirm(`Вы действительно хотите ${actionName} учетную запись ${user.full_name}?`)) return;
+    const deactivating = Boolean(user.is_active);
+    // Переключатель блокировки сервер оставляет суперадминистратору.
+    // Администратор подразделения может только отключить сотрудника — включить
+    // обратно его может лишь суперадминистратор.
+    if (!superAdmin && !deactivating) {
+      showToast('Разблокировать учётную запись может только суперадминистратор', 'error');
+      return;
+    }
+    const actionName = deactivating ? 'заблокировать' : 'разблокировать';
+    if (!(await confirm({
+      title: deactivating ? 'Блокировка учётной записи' : 'Разблокировка учётной записи',
+      message:
+        `Вы действительно хотите ${actionName} учетную запись ${user.full_name}?` +
+        (deactivating ? '\nАктивные сессии сотрудника будут закрыты.' : ''),
+      confirmText: deactivating ? 'Заблокировать' : 'Разблокировать',
+      danger: deactivating
+    }))) return;
     try {
-      const res = await fetch(`${serverUrl}/api/admin/users/${user.id}/toggle-active`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        showToast(`Статус учетной записи ${user.full_name} изменен`);
-        loadUsers();
-        if (onRefreshData) onRefreshData();
+      const res = superAdmin
+        ? await fetch(`${serverUrl}/api/admin/users/${user.id}/toggle-active`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        : await fetch(`${serverUrl}/api/admin/users/${user.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      if (!res.ok) {
+        showToast(await readError(res, 'Не удалось изменить статус учётной записи'), 'error');
+        return;
       }
+      showToast(`Статус учетной записи ${user.full_name} изменен`);
+      loadUsers();
+      if (onRefreshData) onRefreshData();
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
@@ -594,9 +685,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         body: JSON.stringify({ permissions })
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         // Сюда попадает и отказ сервера снять последнего администратора.
-        showToast(data.error || 'Не удалось сохранить права');
+        showToast(await readError(res, 'Не удалось сохранить права'), 'error');
         return;
       }
       showToast(`Права роли «${role.name}» сохранены`);
@@ -607,7 +697,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       });
       await loadRoles();
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     } finally {
       setSavingRoleId(null);
     }
@@ -631,8 +721,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         })
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось создать подразделение');
+        showToast(await readError(res, 'Не удалось создать подразделение'), 'error');
         return;
       }
       setNewDeptName('');
@@ -641,7 +730,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       await loadOrgTree();
       onRefreshData && onRefreshData();
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
@@ -655,8 +744,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         body: JSON.stringify({ name })
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось переименовать подразделение');
+        showToast(await readError(res, 'Не удалось переименовать подразделение'), 'error');
         return;
       }
       setRenamingDeptId(null);
@@ -664,7 +752,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       await loadOrgTree();
       onRefreshData && onRefreshData();
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
@@ -674,7 +762,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
     const warning = headcount > 0
       ? `В подразделении «${dept.name}» числится ${headcount} чел. После удаления они останутся без подразделения. Продолжить?`
       : `Удалить подразделение «${dept.name}»?`;
-    if (!window.confirm(warning)) return;
+    if (!(await confirm({ title: 'Удаление подразделения', message: warning, confirmText: 'Удалить', danger: true }))) return;
 
     try {
       const res = await fetch(`${serverUrl}/api/org/departments/${dept.id}`, {
@@ -682,28 +770,26 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось удалить подразделение');
+        showToast(await readError(res, 'Не удалось удалить подразделение'), 'error');
         return;
       }
       showToast(`Подразделение «${dept.name}» удалено`);
       await loadOrgTree();
       onRefreshData && onRefreshData();
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
-  const handleResetPassword = async (user) => {
-    // Пустой ответ — не отмена, а просьба сгенерировать пароль: отмену
-    // prompt возвращает как null. Раньше здесь подставлялось «123456», и
-    // сброшенный пароль был известен любому, кто видел эту подсказку хоть раз.
-    const newPass = prompt(
-      `Новый пароль для сотрудника ${user.full_name} (логин: ${user.username}).\n` +
-        'Оставьте поле пустым, чтобы сервер выдал случайный — так надёжнее.',
-      ''
-    );
-    if (newPass === null) return;
+  // Раньше здесь был window.prompt(), а его в Electron нет: кнопка ничего не
+  // делала. Теперь спрашиваем своим окном; пустое поле — просьба к серверу
+  // выдать случайный пароль (прежде подставлялось «123456»).
+  const handleResetPassword = (user) => setResetTarget(user);
+
+  // Возвращает текст ошибки — его покажет само окно сброса, не закрываясь.
+  const submitResetPassword = async (password) => {
+    const user = resetTarget;
+    if (!user) return null;
     try {
       const res = await fetch(`${serverUrl}/api/admin/users/${user.id}/reset-password`, {
         method: 'POST',
@@ -711,24 +797,27 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(newPass ? { password: newPass } : {})
+        body: JSON.stringify(password ? { password } : {})
       });
-      // Отказ проглатывался целиком: администратор нажимал кнопку, ничего не
-      // происходило, и он не знал, сменился пароль или нет.
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось сбросить пароль');
-        return;
-      }
+      if (!res.ok) return await readError(res, 'Не удалось сбросить пароль');
       const data = await res.json().catch(() => ({}));
+      setResetTarget(null);
       // Сгенерированный пароль сервер возвращает ровно один раз — показать его
-      // администратору больше будет неоткуда.
-      showToast(
-        `Пароль для ${user.full_name}: ${data.password || newPass}. ` +
-          'Передайте сотруднику — при первом входе он его сменит.'
-      );
+      // администратору больше будет неоткуда. Заданный вручную не возвращается:
+      // его администратор и так знает.
+      if (data.password) {
+        setOneTimePassword({
+          title: 'Пароль сброшен',
+          fullName: user.full_name,
+          username: user.username,
+          password: data.password
+        });
+      } else {
+        showToast(`${user.full_name}: ${data.message || 'пароль изменён'}`);
+      }
+      return null;
     } catch (err) {
-      showToast('Нет связи с сервером: ' + err.message);
+      return 'Нет связи с сервером: ' + err.message;
     }
   };
 
@@ -749,8 +838,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         })
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Ошибка создания конференции');
+        showToast(await readError(res, 'Ошибка создания конференции'), 'error');
+        return;
       }
       showToast(`Конференция ${newChannelName} успешно создана`);
       setNewChannelName('');
@@ -758,43 +847,51 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
       loadChannels();
       if (onRefreshData) onRefreshData();
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
   // Channel Deletion
   const handleDeleteChannel = async (channel) => {
-    if (!confirm(`Удалить конференцию "${channel.name}" и всю историю сообщений в ней?`)) return;
+    if (!(await confirm({
+      title: 'Удаление конференции',
+      message: `Удалить конференцию "${channel.name}" и всю историю сообщений в ней?`,
+      confirmText: 'Удалить',
+      danger: true
+    }))) return;
     try {
       const res = await fetch(`${serverUrl}/api/admin/channels/${channel.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Ошибка удаления');
+        showToast(await readError(res, 'Ошибка удаления'), 'error');
+        return;
       }
       showToast(`Конференция ${channel.name} удалена`);
       loadChannels();
       if (onRefreshData) onRefreshData();
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
   // Audit Search
   const handleSearchAudit = async () => {
+    if (loading) return;
     try {
       setLoading(true);
       const res = await fetch(`${serverUrl}/api/admin/audit/messages?q=${encodeURIComponent(auditQuery)}&limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAuditResults(data);
+      if (!res.ok) {
+        showToast(await readError(res, 'Поиск по протоколам не выполнен'), 'error');
+        return;
       }
+      const data = await res.json();
+      setAuditResults(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error(err);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -802,17 +899,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // Port Test
   const handleRunPortTest = async () => {
+    if (loading) return;
     try {
       setLoading(true);
       const res = await fetch(`${serverUrl}/api/admin/tools/port-test`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPortTestResult(data);
+      if (!res.ok) {
+        showToast(await readError(res, 'Тест портов не выполнен'), 'error');
+        return;
       }
+      const data = await res.json();
+      setPortTestResult(data);
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -820,21 +920,28 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // DB Vacuum
   const handleRunVacuum = async () => {
-    if (!confirm('Выполнить оптимизацию, очистку WAL и переиндексацию базы данных SQLite?')) return;
+    if (loading) return;
+    if (!(await confirm({
+      title: 'Оптимизация базы данных',
+      message: 'Выполнить оптимизацию, очистку WAL и переиндексацию базы данных SQLite?',
+      confirmText: 'Выполнить'
+    }))) return;
     try {
       setLoading(true);
       const res = await fetch(`${serverUrl}/api/admin/tools/vacuum`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setVacuumResult(data.stats);
-        showToast('База данных успешно оптимизирована!');
-        loadServerOverview();
+      if (!res.ok) {
+        showToast(await readError(res, 'Оптимизация не выполнена'), 'error');
+        return;
       }
+      const data = await res.json();
+      setVacuumResult(data.stats);
+      showToast('База данных успешно оптимизирована!');
+      loadServerOverview();
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -843,7 +950,9 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
   // Create Announcement
   const handleCreateAnnouncement = async (e) => {
     e.preventDefault();
-    if (!newAnnTitle.trim() || !newAnnText.trim()) return;
+    // Повторное нажатие до ответа публиковало оповещение дважды.
+    if (!newAnnTitle.trim() || !newAnnText.trim() || annSubmitting) return;
+    setAnnSubmitting(true);
     try {
       const res = await fetch(`${serverUrl}/api/announcements`, {
         method: 'POST',
@@ -861,18 +970,17 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         })
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Не удалось опубликовать оповещение');
+        showToast(await readError(res, 'Не удалось опубликовать оповещение'), 'error');
         return;
       }
-      if (res.ok) {
-        showToast('Оповещение успешно отправлено на экраны всех сотрудников!');
-        setNewAnnTitle('');
-        setNewAnnText('');
-        setNewAnnUrgent(false);
-      }
+      showToast('Оповещение успешно отправлено на экраны всех сотрудников!');
+      setNewAnnTitle('');
+      setNewAnnText('');
+      setNewAnnUrgent(false);
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
+    } finally {
+      setAnnSubmitting(false);
     }
   };
 
@@ -888,11 +996,13 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         },
         body: JSON.stringify(filterSettings)
       });
-      if (res.ok) {
-        showToast('Настройки фильтров и антифлуда сохранены');
+      if (!res.ok) {
+        showToast(await readError(res, 'Настройки фильтров не сохранены'), 'error');
+        return;
       }
+      showToast('Настройки фильтров и антифлуда сохранены');
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
@@ -908,18 +1018,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         },
         body: JSON.stringify(sysSettings)
       });
-      if (res.ok) {
-        showToast('Параметры сервера MyChat успешно сохранены');
-        loadServerOverview();
+      if (!res.ok) {
+        showToast(await readError(res, 'Параметры сервера не сохранены'), 'error');
+        return;
       }
+      showToast('Параметры сервера MyChat успешно сохранены');
+      loadServerOverview();
     } catch (err) {
-      alert(err.message);
+      showToast('Нет связи с сервером: ' + err.message, 'error');
     }
   };
 
   const handleTestTelegram = async () => {
     if (!sysSettings.telegram_bot_token.trim()) {
-      alert('Укажите токен бота перед проверкой связи.');
+      showToast('Укажите токен бота перед проверкой связи.', 'error');
       return;
     }
     setTelegramTesting(true);
@@ -974,22 +1086,23 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
         </div>
 
         {/* Global Toast Notification */}
-        {statusMsg && (
-          <div style={{ background: '#dcfce7', color: '#15803d', padding: '8px 16px', fontSize: '12px', fontWeight: 600, borderBottom: '1px solid #86efac' }}>
-            ✓ {statusMsg}
-          </div>
-        )}
+        {toastElement}
 
         <div className="admin-console-body">
           {/* Sidebar Nav: Official 8 Categories */}
           <div className="admin-sidebar">
             <div className="admin-sidebar-nav">
-              <button
-                className={`admin-nav-item ${activeTab === 'server' ? 'active' : ''}`}
-                onClick={() => setActiveTab('server')}
-              >
-                <span>🖥️</span> <span>MyChat Server</span>
-              </button>
+              {/* Разделы, которые сервер отдаёт только суперадминистратору,
+                  администратору подразделения не показываются: каждый из них
+                  отвечал бы ему отказом. */}
+              {superAdmin && (
+                <button
+                  className={`admin-nav-item ${activeTab === 'server' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('server')}
+                >
+                  <span>🖥️</span> <span>MyChat Server</span>
+                </button>
+              )}
 
               <button
                 className={`admin-nav-item ${activeTab === 'users' ? 'active' : ''}`}
@@ -1008,47 +1121,51 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                 )}
               </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'conferences' ? 'active' : ''}`}
-                onClick={() => setActiveTab('conferences')}
-              >
-                <span>💬</span> <span>Конференции</span>
-              </button>
+              {superAdmin && (
+                <>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'conferences' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('conferences')}
+                  >
+                    <span>💬</span> <span>Конференции</span>
+                  </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'rights' ? 'active' : ''}`}
-                onClick={() => setActiveTab('rights')}
-              >
-                <span>🛡️</span> <span>Управление правами</span>
-              </button>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'rights' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('rights')}
+                  >
+                    <span>🛡️</span> <span>Управление правами</span>
+                  </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'tools' ? 'active' : ''}`}
-                onClick={() => setActiveTab('tools')}
-              >
-                <span>🛠️</span> <span>Инструменты</span>
-              </button>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'tools' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('tools')}
+                  >
+                    <span>🛠️</span> <span>Инструменты</span>
+                  </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'filters' ? 'active' : ''}`}
-                onClick={() => setActiveTab('filters')}
-              >
-                <span>🛑</span> <span>Фильтры</span>
-              </button>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'filters' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('filters')}
+                  >
+                    <span>🛑</span> <span>Фильтры</span>
+                  </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-                onClick={() => setActiveTab('settings')}
-              >
-                <span>⚙️</span> <span>Настройки</span>
-              </button>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('settings')}
+                  >
+                    <span>⚙️</span> <span>Настройки</span>
+                  </button>
 
-              <button
-                className={`admin-nav-item ${activeTab === 'licenses' ? 'active' : ''}`}
-                onClick={() => setActiveTab('licenses')}
-              >
-                <span>📜</span> <span>Лицензии</span>
-              </button>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'licenses' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('licenses')}
+                  >
+                    <span>📜</span> <span>Лицензии</span>
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="admin-sidebar-footer">
@@ -1060,10 +1177,16 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
           {/* Main Content Workspace */}
           <div className="admin-content-area">
-            {currentUser && currentUser.role_id === 3 && (
+            {/* Номер роли не устойчив — миграции сдвигают нумерацию; баннер
+                показывался не тем или не показывался вовсе. */}
+            {scopedAdmin && (
               <div className="scoped-admin-banner">
                 <span>🛡️</span>
-                <span>Вы авторизованы как <strong>Контурный администратор</strong>. Вам доступно управление сотрудниками только вашего подразделения.</span>
+                <span>
+                  Вы авторизованы как <strong>Контурный администратор</strong>
+                  {currentUser?.admin_scope_dept_name ? <> («{currentUser.admin_scope_dept_name}»)</> : null}.
+                  Вам доступно управление сотрудниками только вашего подразделения.
+                </span>
               </div>
             )}
 
@@ -1138,7 +1261,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                               <td>{conn.department_name}</td>
                               <td><code>{conn.ip}</code></td>
                               <td>{conn.clientType}</td>
-                              <td><span style={{ color: '#16a34a' }}>{conn.pingMs} мс</span></td>
+                              <td><span style={{ color: '#16a34a' }}>{formatPing(conn.pingMs)}</span></td>
                               <td>
                                 <button
                                   className="admin-btn-action"
@@ -1508,33 +1631,41 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                   <div>
                     <h4 style={{ marginBottom: '10px' }}>Штатная структура подразделений</h4>
 
-                    <div className="dept-create-row">
-                      <input
-                        className="admin-input"
-                        placeholder="Название нового подразделения"
-                        value={newDeptName}
-                        onChange={(e) => setNewDeptName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDepartment(); }}
-                      />
-                      <select
-                        className="admin-input"
-                        value={newDeptParent}
-                        onChange={(e) => setNewDeptParent(e.target.value)}
-                        title="Вышестоящее подразделение"
-                      >
-                        <option value="">Верхний уровень</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>Внутри: {d.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="btn btn-primary"
-                        disabled={!newDeptName.trim()}
-                        onClick={handleCreateDepartment}
-                      >
-                        + Создать подразделение
-                      </button>
-                    </div>
+                    {/* Создание, переименование и удаление подразделений сервер
+                        оставляет суперадминистратору. */}
+                    {superAdmin ? (
+                      <div className="dept-create-row">
+                        <input
+                          className="admin-input"
+                          placeholder="Название нового подразделения"
+                          value={newDeptName}
+                          onChange={(e) => setNewDeptName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDepartment(); }}
+                        />
+                        <select
+                          className="admin-input"
+                          value={newDeptParent}
+                          onChange={(e) => setNewDeptParent(e.target.value)}
+                          title="Вышестоящее подразделение"
+                        >
+                          <option value="">Верхний уровень</option>
+                          {departments.map((d) => (
+                            <option key={d.id} value={d.id}>Внутри: {d.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="btn btn-primary"
+                          disabled={!newDeptName.trim()}
+                          onClick={handleCreateDepartment}
+                        >
+                          + Создать подразделение
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="dept-hint">
+                        Создавать, переименовывать и удалять подразделения может только суперадминистратор.
+                      </div>
+                    )}
 
                     <div className="dept-hint">
                       Чтобы перевести сотрудника в другое подразделение, откройте его карточку
@@ -1574,7 +1705,9 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                                 </td>
                                 <td>{headcount} чел.</td>
                                 <td style={{ whiteSpace: 'nowrap' }}>
-                                  {renamingDeptId === d.id ? (
+                                  {!superAdmin ? (
+                                    <span style={{ color: '#94a3b8' }}>—</span>
+                                  ) : renamingDeptId === d.id ? (
                                     <>
                                       <button className="btn-mini" onClick={() => handleRenameDepartment(d.id)}>Сохранить</button>
                                       <button className="btn-mini" onClick={() => setRenamingDeptId(null)}>Отмена</button>
@@ -1712,13 +1845,17 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                                 >
                                   ✏️
                                 </button>
-                                <button
-                                  className="admin-btn-action"
-                                  onClick={() => handleToggleActive(u)}
-                                  title={u.is_active ? 'Заблокировать' : 'Разблокировать'}
-                                >
-                                  {u.is_active ? '⛔' : '✅'}
-                                </button>
+                                {/* Разблокировать может только суперадминистратор;
+                                    администратор подразделения — только отключить. */}
+                                {(superAdmin || u.is_active) ? (
+                                  <button
+                                    className="admin-btn-action"
+                                    onClick={() => handleToggleActive(u)}
+                                    title={u.is_active ? 'Заблокировать' : 'Разблокировать'}
+                                  >
+                                    {u.is_active ? '⛔' : '✅'}
+                                  </button>
+                                ) : null}
                                 <button
                                   className="admin-btn-action"
                                   onClick={() => handleResetPassword(u)}
@@ -1737,13 +1874,18 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                 {/* Form Modal (Create / Edit User) */}
                 {formMode && (
-                  <div className="modal-backdrop" onClick={() => setFormMode(null)}>
+                  <div className="modal-backdrop" onClick={() => { if (!savingUser) setFormMode(null); }}>
                     <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
                       <div className="modal-header">
                         <h4>{formMode === 'create' ? 'Добавить нового сотрудника' : 'Редактирование профиля'}</h4>
-                        <button className="btn-close-modal" onClick={() => setFormMode(null)}>✕</button>
+                        <button className="btn-close-modal" onClick={() => setFormMode(null)} disabled={savingUser}>✕</button>
                       </div>
                       <form onSubmit={handleSaveUser} style={{ padding: '16px' }}>
+                        {formError && (
+                          <div className="app-dialog-error" role="alert" style={{ marginBottom: '12px' }}>
+                            {formError}
+                          </div>
+                        )}
                         <div className="form-group" style={{ marginBottom: '12px' }}>
                           <label style={{ fontSize: '11px', fontWeight: 600 }}>ФИО сотрудника *</label>
                           <input
@@ -1818,20 +1960,24 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                               onChange={(e) => setFormData({ ...formData, bound_ip: e.target.value })}
                             />
                           </div>
-                          <div style={{ flex: 1 }}>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Контур управления (для контурных админов)</label>
-                            <select
-                              className="form-control"
-                              style={{ width: '100%', padding: '6px' }}
-                              value={formData.admin_scope_dept_id || ''}
-                              onChange={(e) => setFormData({ ...formData, admin_scope_dept_id: e.target.value })}
-                            >
-                              <option value="">Не назначен (Глобальный)</option>
-                              {departments.map((d) => (
-                                <option key={d.id} value={d.id}>{d.name}</option>
-                              ))}
-                            </select>
-                          </div>
+                          {/* Назначать администраторов подразделений сервер
+                              позволяет только суперадминистратору. */}
+                          {superAdmin && (
+                            <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '11px', fontWeight: 600 }}>Контур управления (для контурных админов)</label>
+                              <select
+                                className="form-control"
+                                style={{ width: '100%', padding: '6px' }}
+                                value={formData.admin_scope_dept_id || ''}
+                                onChange={(e) => setFormData({ ...formData, admin_scope_dept_id: e.target.value })}
+                              >
+                                <option value="">Не назначен (Глобальный)</option>
+                                {departments.map((d) => (
+                                  <option key={d.id} value={d.id}>{d.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </div>
 <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
                           <div style={{ flex: 1 }}>
@@ -1839,9 +1985,17 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                             <select
                               className="form-control"
                               style={{ width: '100%', padding: '6px' }}
-                              value={formData.department_id}
-                              onChange={(e) => setFormData({ ...formData, department_id: Number(e.target.value) })}
+                              value={formData.department_id ?? ''}
+                              onChange={(e) => setFormData({ ...formData, department_id: toDepartmentId(e.target.value) })}
                             >
+                              {/* Без этого пункта у сотрудника без подразделения
+                                  форма показывала первое попавшееся, и сохранение
+                                  молча переводило его туда. Администратору
+                                  подразделения вывести сотрудника из контура
+                                  нельзя — ему пункт виден, только пока значение пустое. */}
+                              {(superAdmin || formData.department_id == null) && (
+                                <option value="">Без подразделения</option>
+                              )}
                               {departments.map((d) => (
                                 <option key={d.id} value={d.id}>{d.name}</option>
                               ))}
@@ -1849,16 +2003,32 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                           </div>
                           <div style={{ flex: 1 }}>
                             <label style={{ fontSize: '11px', fontWeight: 600 }}>Группа прав (Роль)</label>
-                            <select
-                              className="form-control"
-                              style={{ width: '100%', padding: '6px' }}
-                              value={formData.role_id}
-                              onChange={(e) => setFormData({ ...formData, role_id: Number(e.target.value) })}
-                            >
-                              {roles.map((r) => (
-                                <option key={r.id} value={r.id}>{r.name}</option>
-                              ))}
-                            </select>
+                            {superAdmin ? (
+                              <select
+                                className="form-control"
+                                style={{ width: '100%', padding: '6px' }}
+                                value={formData.role_id}
+                                onChange={(e) => setFormData({ ...formData, role_id: Number(e.target.value) })}
+                              >
+                                {roles.map((r) => (
+                                  <option key={r.id} value={r.id}>{r.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              // Список ролей сервер отдаёт только суперадминистратору;
+                              // новому сотруднику роль по умолчанию назначит сервер.
+                              <select
+                                className="form-control"
+                                style={{ width: '100%', padding: '6px' }}
+                                disabled
+                                value=""
+                                title="Назначать роли может только суперадминистратор"
+                              >
+                                <option value="">
+                                  {formMode === 'edit' ? (editingUser?.role_name || 'Текущая роль') : 'Сотрудник (по умолчанию)'}
+                                </option>
+                              </select>
+                            )}
                           </div>
                         </div>
 
@@ -1882,11 +2052,13 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         )}
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
-                          <button type="button" className="btn btn-secondary" onClick={() => setFormMode(null)}>
+                          <button type="button" className="btn btn-secondary" onClick={() => setFormMode(null)} disabled={savingUser}>
                             Отмена
                           </button>
-                          <button type="submit" className="btn btn-primary">
-                            {formMode === 'create' ? 'Создать пользователя' : 'Сохранить изменения'}
+                          <button type="submit" className="btn btn-primary" disabled={savingUser}>
+                            {savingUser
+                              ? 'Сохранение…'
+                              : formMode === 'create' ? 'Создать пользователя' : 'Сохранить изменения'}
                           </button>
                         </div>
                       </form>
@@ -1904,7 +2076,9 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                   Сотрудник заполняет форму сам, но войти сможет только после вашего
                   подтверждения. Пока заявка ждёт решения, учётной записи фактически нет:
                   ни в справочнике, ни в общих каналах человек не появляется.
-                  {sysSettings.allow_registration !== 'true' && (
+                  {/* Настройки сервера доступны только суперадминистратору: у
+                      остальных здесь стояло бы значение по умолчанию, а не настоящее. */}
+                  {superAdmin && sysSettings.allow_registration !== 'true' && (
                     <>
                       <br />
                       <strong style={{ color: '#b45309' }}>
@@ -2169,8 +2343,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         onChange={(e) => setAuditQuery(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSearchAudit()}
                       />
-                      <button className="btn btn-primary" onClick={handleSearchAudit}>
-                        Найти в протоколах
+                      <button className="btn btn-primary" onClick={handleSearchAudit} disabled={loading}>
+                        {loading ? 'Поиск…' : 'Найти в протоколах'}
                       </button>
                     </div>
 
@@ -2215,7 +2389,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px' }}>
                       Проверка готовности сокетов к подключению клиентов LAN/WAN.
                     </p>
-                    <button className="btn btn-primary" onClick={handleRunPortTest} style={{ marginBottom: '14px' }}>
+                    <button className="btn btn-primary" onClick={handleRunPortTest} disabled={loading} style={{ marginBottom: '14px' }}>
                       ▶ Запустить тестирование портов
                     </button>
 
@@ -2241,7 +2415,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px' }}>
                       Выполняет SQL-команду VACUUM, удаляет временные фрагменты журнала WAL и обновляет индексы.
                     </p>
-                    <button className="btn btn-primary" onClick={handleRunVacuum} style={{ marginBottom: '14px' }}>
+                    <button className="btn btn-primary" onClick={handleRunVacuum} disabled={loading} style={{ marginBottom: '14px' }}>
                       🧹 Запустить оптимизацию (VACUUM & ANALYZE)
                     </button>
 
@@ -2293,8 +2467,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         />
                         <span>Срочное оповещение (со звуковым сигналом и обязательным подтверждением прочтения)</span>
                       </label>
-                      <button type="submit" className="btn btn-primary">
-                        📢 Опубликовать на всех рабочих местах
+                      <button type="submit" className="btn btn-primary" disabled={annSubmitting}>
+                        {annSubmitting ? 'Публикуем…' : '📢 Опубликовать на всех рабочих местах'}
                       </button>
                     </form>
                   </div>
@@ -2579,6 +2753,26 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
           </div>
         </div>
+
+        {/* Диалоги рендерятся порталом поверх всего, но остаются внутри окна
+            консоли по дереву React: щелчок по ним не должен закрывать консоль. */}
+        {resetTarget && (
+          <ResetPasswordDialog
+            user={resetTarget}
+            onCancel={() => setResetTarget(null)}
+            onSubmit={submitResetPassword}
+          />
+        )}
+        {oneTimePassword && (
+          <OneTimePasswordDialog
+            title={oneTimePassword.title}
+            fullName={oneTimePassword.fullName}
+            username={oneTimePassword.username}
+            password={oneTimePassword.password}
+            onClose={() => setOneTimePassword(null)}
+          />
+        )}
+        {confirmDialog}
       </div>
     </div>
   );

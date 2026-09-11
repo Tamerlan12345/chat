@@ -408,6 +408,16 @@ test('уход участника завершает сеанс у второг�
   await connect('ivanov');
 });
 
+test('оператор узнаёт причину отказа, а не просто «отказал»', async () => {
+  send('admin', { type: 'rd_request', targetUserId: people.ivanov.id });
+  const requested = await waitFor(sockets.admin, (m) => m.type === 'rd_requested' && m.sessionId !== people.rdSession);
+  sockets.admin.inbox.length = 0;
+  send('ivanov', { type: 'rd_response', sessionId: requested.sessionId, accepted: false, reason: 'busy' });
+  const response = await waitFor(sockets.admin, (m) => m.type === 'rd_response');
+  assert.strictEqual(response.accepted, false);
+  assert.strictEqual(response.reason, 'busy');
+});
+
 // ── Поля и размеры ──────────────────────────────────────────────────────────
 
 test('неизвестный статус и сверхдлинная подпись не принимаются', async () => {

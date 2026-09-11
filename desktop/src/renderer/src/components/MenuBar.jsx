@@ -38,14 +38,10 @@ export default function MenuBar({
     setOpenMenu(openMenu === name ? null : name);
   };
 
-  const isAdmin = currentUser && (
-    currentUser.role_id === 1 ||
-    currentUser.role_name === 'Суперадминистратор' ||
-    currentUser.role_name === 'Администратор' ||
-    currentUser.role_name === 'Admin' ||
-    currentUser.username === 'admin' ||
-    currentUser.permissions?.is_admin
-  );
+  // Права — из роли. Номер роли и имя «admin» ничего не гарантируют, а
+  // администратору подразделения студия базы данных недоступна вовсе.
+  const isAdmin = Boolean(permissions.is_admin);
+  const isSuperAdmin = isAdmin && !permissions.is_scoped_admin;
 
   return (
     <div className="native-menu-bar" ref={menuBarRef}>
@@ -223,16 +219,18 @@ export default function MenuBar({
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                   <span>Консоль управления сервером MyChat</span>
                 </div>
-                <div
-                  className="menu-drop-item"
-                  onClick={() => {
-                    onOpenDbStudio && onOpenDbStudio();
-                    setOpenMenu(null);
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-                  <span>База данных и аудит (DB Studio)</span>
-                </div>
+                {isSuperAdmin && (
+                  <div
+                    className="menu-drop-item"
+                    onClick={() => {
+                      onOpenDbStudio && onOpenDbStudio();
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                    <span>База данных и аудит (DB Studio)</span>
+                  </div>
+                )}
                 <div className="menu-drop-divider" />
               </>
             )}

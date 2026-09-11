@@ -24,6 +24,8 @@ const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
 // оператора сам их не отправит, нельзя.
 const OPERATOR_CONTROL_TYPES = new Set(['rd_input_event', 'rd_file', 'rd_clipboard', 'rd_clipboard_mode']);
 
+const RD_DECLINE_REASONS = new Set(['busy', 'superseded', 'capture_failed']);
+
 const RD_RELAY_TYPES = new Set([
   'rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file',
   'rd_screens', 'rd_select_screen', 'rd_clipboard', 'rd_clipboard_mode', 'rd_end'
@@ -511,10 +513,15 @@ class WsServer {
         }
       });
       // Notify operator of the decision
+      // Причина отказа — короткий код из известного списка: «сотрудник уже в
+      // сеансе» и «не запустилась трансляция» оператору важно отличать от
+      // обычного «нет».
+      const reason = !accepted && RD_DECLINE_REASONS.has(msg.reason) ? msg.reason : undefined;
       this.sendToUser(session.operatorId, {
         type: 'rd_response',
         sessionId,
         accepted: Boolean(accepted),
+        ...(reason ? { reason } : {}),
         accessLevel,
         targetUserId: currentUser.id,
         targetName: currentUser.full_name

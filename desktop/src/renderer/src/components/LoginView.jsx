@@ -1,9 +1,32 @@
 import React, { useState, useEffect } from 'react';
 
+const APP_ORIGIN = window.location.origin.startsWith('http') ? window.location.origin : '';
+const MIN_PASSWORD_LENGTH = 8;
+
+// Ответ сервера бывает не JSON: страница «Not found» при закрытом браузерном
+// доступе, ошибка прокси во время выкладки. Раньше человек видел
+// «Unexpected token < in JSON» вместо понятной причины.
+async function readJson(res) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+function describeFailure(res, data, fallback) {
+  if (data && typeof data.error === 'string' && data.error) return data.error;
+  if (res.status === 403) return 'Доступ с этого адреса запрещён — обратитесь к администратору';
+  if (res.status === 404) return 'По этому адресу сервер MyChat не отвечает';
+  if (res.status === 429) return 'Слишком много попыток — повторите через минуту';
+  if (res.status >= 500) return 'Сервер временно недоступен — повторите через минуту';
+  return fallback;
+}
+
 export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [isRegister, setIsRegister] = useState(false);
   const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('mychat_server_url') || initialServerUrl || (window.location.origin.startsWith('http') ? window.location.origin : 'https://chat-production-0456.up.railway.app')
+    localStorage.getItem('mychat_server_url') || initialServerUrl || APP_ORIGIN || 'https://chat-production-0456.up.railway.app'
   );
   const [serverInfo, setServerInfo] = useState(null);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -12,6 +35,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [username, setUsername] = useState(localStorage.getItem('mychat_saved_username') || '');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
+  const [capsLock, setCapsLock] = useState(false);
 
   // Register form
   const [regFullName, setRegFullName] = useState('');
@@ -25,6 +49,17 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pendingMessage, setPendingMessage] = useState('');
+  // Почему человек снова на экране входа: сеанс отозван, пароль сброшен
+  // администратором. Без объяснения выброс на вход выглядел как сбой.
+  const [notice] = useState(() => {
+    try {
+      const reason = sessionStorage.getItem('mychat_logout_reason');
+      if (reason) sessionStorage.removeItem('mychat_logout_reason');
+      return reason || '';
+    } catch {
+      return '';
+    }
+  });
 
   // Probe server info
   useEffect(() => {
@@ -40,6 +75,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
       if (res.ok) {
         const data = await res.json();
         setServerInfo(data);
+        setServerUrl(cleanUrl);
         localStorage.setItem('mychat_server_url', cleanUrl);
 
         // /api/org/tree needs a token nobody has yet on this screen, and it
@@ -48,8 +84,8 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         try {
           const deptRes = await fetch(`${cleanUrl}/api/settings/departments`);
           if (deptRes.ok) {
-            const data = await deptRes.json();
-            setDepartments(data.departments || []);
+            const deptData = await deptRes.json();
+            setDepartments(deptData.departments || []);
           }
         } catch {}
       } else {
@@ -62,12 +98,25 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
   };
 
-  const handleServerUrlBlur = () => {
-    checkServer(serverUrl);
+  // Адрес, выбранный когда-то в «Сетевой сервер…», хранится отдельно от
+  // адреса, с которого загружено само приложение. Если он недоступен, раньше
+  // выбраться было нельзя: на экране входа поля адреса нет, а меню появляется
+  // только после входа.
+  const canUseAppOrigin = Boolean(APP_ORIGIN) && APP_ORIGIN !== serverUrl.replace(/\/+$/, '');
+
+  const handleUseAppOrigin = () => {
+    localStorage.setItem('mychat_server_url', APP_ORIGIN);
+    setServerUrl(APP_ORIGIN);
+    checkServer(APP_ORIGIN);
+  };
+
+  const trackCapsLock = (e) => {
+    if (typeof e.getModifierState === 'function') setCapsLock(e.getModifierState('CapsLock'));
   };
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     if (!username.trim() || !password) {
       setError('Пожалуйста, введите логин и пароль');
       return;
@@ -88,10 +137,10 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         })
       });
 
-      const data = await res.json();
+      const data = await readJson(res);
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Ошибка авторизации');
+      if (!res.ok || !data.token) {
+        throw new Error(describeFailure(res, data, 'Не удалось войти'));
       }
 
       if (rememberMe) {
@@ -105,7 +154,11 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
       onLoginSuccess(data.user, data.token, cleanUrl);
     } catch (err) {
-      setError(err.message || 'Не удалось подключиться к серверу');
+      setError(
+        err instanceof TypeError
+          ? 'Нет связи с сервером — проверьте сеть и повторите'
+          : err.message || 'Не удалось подключиться к серверу'
+      );
     } finally {
       setLoading(false);
     }
@@ -113,8 +166,15 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     if (!username.trim() || !password || !regFullName.trim()) {
       setError('Заполните обязательные поля (Логин, Пароль, ФИО)');
+      return;
+    }
+    // Требование сервера. Проверка здесь — чтобы не заполнять форму заново
+    // после отказа.
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`);
       return;
     }
 
@@ -138,10 +198,10 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         })
       });
 
-      const data = await res.json();
+      const data = await readJson(res);
 
       if (!res.ok) {
-        throw new Error(data.error || 'Ошибка регистрации');
+        throw new Error(describeFailure(res, data, 'Ошибка регистрации'));
       }
 
       // Регистрация больше не пускает внутрь сразу: заявку должен
@@ -152,7 +212,11 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
       setIsRegister(false);
       setPassword('');
     } catch (err) {
-      setError(err.message || 'Ошибка регистрации пользователя');
+      setError(
+        err instanceof TypeError
+          ? 'Нет связи с сервером — проверьте сеть и повторите'
+          : err.message || 'Ошибка регистрации пользователя'
+      );
     } finally {
       setLoading(false);
     }
@@ -184,6 +248,18 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
           <span className="server-status-text">
             {checkingServer ? 'Подключаемся…' : serverInfo ? 'Связь установлена' : 'Нет связи с сервером'}
           </span>
+          {!checkingServer && !serverInfo && (
+            <>
+              <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={() => checkServer(serverUrl)}>
+                Повторить
+              </button>
+              {canUseAppOrigin && (
+                <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={handleUseAppOrigin}>
+                  Подключиться к серверу приложения
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         {/* Mode Tabs */}
@@ -199,21 +275,40 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
             <button
               type="button"
               className={`login-tab-btn ${isRegister ? 'active' : ''}`}
-              onClick={() => { setIsRegister(true); setError(''); }}
+              onClick={() => { setIsRegister(true); setError(''); setPendingMessage(''); }}
             >
               Регистрация сотрудника
             </button>
           )}
         </div>
 
+        {notice && !error && !pendingMessage && (
+          // Это объяснение, а не ошибка: красная рамка пугала сотрудника так,
+          // будто он сам что-то сломал.
+          <div
+            role="status"
+            style={{
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              color: '#1e3a8a',
+              borderRadius: '8px',
+              padding: '10px 14px',
+              fontSize: '13px',
+              marginBottom: '14px'
+            }}
+          >
+            ℹ️ {notice}
+          </div>
+        )}
+
         {error && (
-          <div className="login-error-box">
+          <div className="login-error-box" role="alert">
             ⚠️ {error}
           </div>
         )}
 
         {pendingMessage && (
-          <div className="login-pending-box">
+          <div className="login-pending-box" role="status">
             ✓ {pendingMessage}
           </div>
         )}
@@ -226,13 +321,14 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 подряд незачем. Сменить его при необходимости можно через
                 «Сетевой сервер…» в меню. */}
             <div className="form-group">
-              <label className="form-label">Логин или UIN:</label>
+              <label className="form-label">Логин:</label>
               <input
                 type="text"
                 className="form-input"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="Введите ваш логин"
+                autoComplete="username"
                 disabled={loading}
                 autoFocus
                 required
@@ -246,10 +342,18 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 className="form-input"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
+                onKeyUp={trackCapsLock}
+                onKeyDown={trackCapsLock}
                 placeholder="Введите ваш пароль"
+                autoComplete="current-password"
                 disabled={loading}
                 required
               />
+              {capsLock && (
+                <div style={{ color: '#b45309', fontSize: '12px', marginTop: '4px' }}>
+                  Включён Caps Lock — пароль вводится заглавными буквами
+                </div>
+              )}
             </div>
 
             <div className="form-checkbox-row">
@@ -297,6 +401,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                   placeholder="ivanov"
+                  autoComplete="username"
                   disabled={loading}
                   required
                 />
@@ -309,7 +414,9 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                   className="form-input"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Пароль"
+                  placeholder={`Не короче ${MIN_PASSWORD_LENGTH} символов`}
+                  autoComplete="new-password"
+                  minLength={MIN_PASSWORD_LENGTH}
                   disabled={loading}
                   required
                 />
@@ -371,12 +478,14 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
               </div>
             )}
 
+            {/* Кнопка обещала «и войти», хотя после регистрации вход закрыт до
+                одобрения администратором. */}
             <button
               type="submit"
               className="btn btn-primary btn-block login-submit-btn"
               disabled={loading}
             >
-              {loading ? 'Создание учетной записи...' : 'Зарегистрироваться и войти'}
+              {loading ? 'Отправляем заявку...' : 'Отправить заявку на регистрацию'}
             </button>
           </form>
         )}

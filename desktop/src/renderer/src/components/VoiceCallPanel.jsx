@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AudioRelay } from '../lib/audioRelay';
+import { callSignalAction, ringTimeoutAction, RING_TIMEOUT_MS } from '../lib/call-signal.mjs';
 
 // Голосовой звонок между двумя сотрудниками.
 //
@@ -8,107 +9,179 @@ import { AudioRelay } from '../lib/audioRelay';
 // исходящий UDP закрыт, NAT симметричный. Лечится это TURN-сервером — то есть
 // отдельной службой, портами и расходами. Здесь достаточно того, что уже
 // работает: если открыт чат, открыт и звонок.
-const RING_TIMEOUT_MS = 45000;
+//
+// Фазы: calling — мы звоним; ringing — звонят нам; connecting — трубку взяли,
+// включается микрофон; active — разговор; failed — показана причина.
+
+const MIC_FAILED_REASON = 'У собеседника не включился микрофон';
+const CONNECTION_LOST = 'Связь с сервером прервалась — звонок завершён';
 
 export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
   // call: { peer: {id, full_name}, direction: 'outgoing' | 'incoming', offer? }
-  const [phase, setPhase] = useState(call.direction === 'incoming' ? 'ringing' : 'calling');
+  const [phase, setPhaseState] = useState(call.direction === 'incoming' ? 'ringing' : 'calling');
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
+  // Обработчики сокета и таймеры живут дольше одной перерисовки, поэтому всё,
+  // что они читают, лежит в ссылках, а не в замыкании.
+  const phaseRef = useRef(phase);
+  const mutedRef = useRef(false);
   const relayRef = useRef(null);
+  const wsRef = useRef(wsClient);
+  const aliveRef = useRef(true);
+  const endedRef = useRef(false);   // звонок завершён с нашей стороны или ею учтён
+  const offerSentRef = useRef(false);
+  const onEndRef = useRef(onEnd);
+  useEffect(() => { onEndRef.current = onEnd; }, [onEnd]);
+
+  const setPhase = (next) => {
+    phaseRef.current = next;
+    setPhaseState(next);
+  };
 
   const send = (payload) => {
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({ ...payload, targetUserId: call.peer.id }));
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ ...payload, targetUserId: call.peer.id }));
+      return true;
     }
+    return false;
   };
 
-  const cleanup = () => {
-    relayRef.current?.stop();
+  // Микрофон и звуковой контекст освобождаются на КАЖДОМ пути выхода: отказ,
+  // ошибка, завершение, закрытие панели. stop() безопасен и посреди запуска.
+  const releaseAudio = () => {
+    const relay = relayRef.current;
     relayRef.current = null;
+    relay?.stop();
   };
 
-  const hangUp = (notifyPeer = true) => {
-    if (notifyPeer) send({ type: 'call_end' });
-    cleanup();
-    onEnd();
+  const close = () => {
+    endedRef.current = true;
+    releaseAudio();
+    if (aliveRef.current) onEndRef.current?.();
+  };
+
+  const fail = (message) => {
+    endedRef.current = true;
+    releaseAudio();
+    if (!aliveRef.current) return;
+    setError(message);
+    setPhase('failed');
+  };
+
+  const hangUp = () => {
+    send({ type: 'call_end' });
+    close();
   };
 
   // Микрофон открывается только когда разговор реально начался — не в момент
   // набора и не при входящем звонке, на который ещё не ответили.
   const startAudio = async () => {
+    releaseAudio();
+    const relay = new AudioRelay({ ws: wsRef.current, peerId: call.peer.id });
+    relayRef.current = relay;
+    setPhase('connecting');
+
     try {
-      const relay = new AudioRelay({ ws: wsClient, peerId: call.peer.id });
       await relay.start();
-      relayRef.current = relay;
-      relay.setMuted(muted);
-      setPhase('active');
-      return true;
     } catch (err) {
-      setError(
+      relay.stop();
+      if (relayRef.current === relay) relayRef.current = null;
+      // Звонок закрыли, пока включался микрофон, — сообщать не о чем.
+      if (err?.name === 'AbortError' || !aliveRef.current || phaseRef.current !== 'connecting') return false;
+      // Собеседник уже ждёт разговора — без этого он слушал бы тишину.
+      send({ type: 'call_end', reason: MIC_FAILED_REASON });
+      fail(
         err.name === 'NotAllowedError' || err.name === 'NotFoundError'
           ? 'Нет доступа к микрофону. Проверьте: Параметры → Конфиденциальность → Микрофон.'
           : 'Не удалось включить микрофон: ' + err.message
       );
-      setPhase('failed');
       return false;
     }
-  };
 
-  const startOutgoing = () => {
-    // Описание соединения не передаётся: звук идёт через сервер, договариваться
-    // о прямом канале не о чем. Сообщение служит только вызовом.
-    send({ type: 'call_offer' });
+    // Пока Windows спрашивала разрешение, панель могли закрыть или звонок
+    // оборвался: микрофон не должен остаться включённым, а ответ — уйти.
+    if (!aliveRef.current || relayRef.current !== relay || phaseRef.current !== 'connecting') {
+      relay.stop();
+      return false;
+    }
+    relay.setMuted(mutedRef.current);
+    setPhase('active');
+    return true;
   };
 
   const acceptIncoming = async () => {
+    if (phaseRef.current !== 'ringing') return;
     if (await startAudio()) send({ type: 'call_answer' });
   };
 
   const rejectIncoming = () => {
     send({ type: 'call_rejected' });
-    cleanup();
-    onEnd();
+    close();
+  };
+
+  // Связь с сервером оборвалась — сервер сам завершает звонок и сообщает
+  // собеседнику. Звук через новое соединение уже не пойдёт, поэтому звонок
+  // закрывается честно, с объяснением, а не висит в тишине.
+  const onConnectionLost = () => {
+    if (phaseRef.current === 'failed' || endedRef.current) return;
+    fail(CONNECTION_LOST);
   };
 
   useEffect(() => {
-    if (call.direction === 'outgoing') startOutgoing();
-    return cleanup;
+    aliveRef.current = true;
+    // StrictMode в разработке подключает эффект дважды — вызов уходит один раз.
+    if (call.direction === 'outgoing' && !offerSentRef.current) {
+      offerSentRef.current = true;
+      // Описание соединения не передаётся: звук идёт через сервер, договариваться
+      // о прямом канале не о чем. Сообщение служит только вызовом.
+      send({ type: 'call_offer' });
+    }
+    return () => {
+      aliveRef.current = false;
+      releaseAudio();
+      // Панель убрали, не завершив звонок (например, выход из учётной записи):
+      // собеседник должен об этом узнать. Проверка на следующем витке — чтобы
+      // повторное подключение эффекта в StrictMode не завершало звонок.
+      setTimeout(() => {
+        if (aliveRef.current || endedRef.current) return;
+        if (['calling', 'connecting', 'active'].includes(phaseRef.current)) send({ type: 'call_end' });
+        endedRef.current = true;
+      }, 0);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Сигнализация от собеседника.
   useEffect(() => {
     if (!wsClient) return;
+    const previous = wsRef.current;
+    wsRef.current = wsClient;
+    if (previous && previous !== wsClient) onConnectionLost();
 
-    const onMessage = async (e) => {
+    const onMessage = (e) => {
       // Двоичные кадры — это сам звук, его разбирает AudioRelay.
       if (typeof e.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
-      if (msg.senderId && msg.senderId !== call.peer.id) return;
 
-      if (msg.type === 'call_answer') {
-        // Собеседник взял трубку — теперь можно включать микрофон.
-        await startAudio();
-      } else if (msg.type === 'call_rejected') {
-        setError('Сотрудник отклонил звонок');
-        setPhase('failed');
-      } else if (msg.type === 'call_end') {
-        hangUp(false);
-      } else if (msg.type === 'call_unavailable') {
-        setError(msg.reason || 'Сотрудник недоступен');
-        setPhase('failed');
-      } else if (msg.type === 'call_denied') {
-        setError(msg.reason || 'Звонки недоступны для вашей роли');
-        setPhase('failed');
-      }
+      const result = callSignalAction(
+        { phase: phaseRef.current, direction: call.direction, peerId: call.peer.id },
+        msg
+      );
+      if (result.action === 'start-audio') startAudio();
+      else if (result.action === 'dismiss' || result.action === 'close') close();
+      else if (result.action === 'fail') fail(result.error);
     };
 
     wsClient.addEventListener('message', onMessage);
-    return () => wsClient.removeEventListener('message', onMessage);
+    wsClient.addEventListener('close', onConnectionLost);
+    return () => {
+      wsClient.removeEventListener('message', onMessage);
+      wsClient.removeEventListener('close', onConnectionLost);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsClient, call.peer.id]);
 
@@ -119,13 +192,16 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
     return () => clearInterval(id);
   }, [phase]);
 
-  // Никто не берёт трубку — не звоним бесконечно.
+  // Никто не берёт трубку — не звоним бесконечно. Входящий звонок, о котором
+  // звонящий сдался, но отмена до нас не дошла, тоже не висит вечно.
   useEffect(() => {
-    if (phase !== 'calling') return;
+    if (phase !== 'calling' && phase !== 'ringing') return;
     const id = setTimeout(() => {
-      setError('Сотрудник не ответил');
-      setPhase('failed');
-      send({ type: 'call_end' });
+      if (phaseRef.current !== phase) return;
+      const result = ringTimeoutAction(call.direction);
+      if (result.notify) send({ type: result.notify });
+      if (result.action === 'fail') fail(result.error);
+      else close();
     }, RING_TIMEOUT_MS);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,6 +209,7 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
 
   const toggleMute = () => {
     const next = !muted;
+    mutedRef.current = next;
     setMuted(next);
     relayRef.current?.setMuted(next);
   };
@@ -143,6 +220,7 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
   const statusLine = {
     calling: 'Вызываем…',
     ringing: 'Входящий звонок',
+    connecting: 'Включаем микрофон…',
     active: duration,
     failed: error
   }[phase];
@@ -168,21 +246,21 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
           </>
         )}
 
-        {(phase === 'active' || phase === 'calling') && (
+        {(phase === 'active' || phase === 'calling' || phase === 'connecting') && (
           <>
             {phase === 'active' && (
               <button className={`call-btn mute ${muted ? 'on' : ''}`} onClick={toggleMute}>
                 {muted ? '🔇 Микрофон выкл.' : '🎤 Микрофон'}
               </button>
             )}
-            <button className="call-btn decline" onClick={() => hangUp(true)}>
+            <button className="call-btn decline" onClick={hangUp}>
               Завершить
             </button>
           </>
         )}
 
         {phase === 'failed' && (
-          <button className="call-btn decline" onClick={() => hangUp(false)}>
+          <button className="call-btn decline" onClick={close}>
             Закрыть
           </button>
         )}

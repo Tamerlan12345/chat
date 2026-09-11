@@ -16,6 +16,7 @@ import ServerConnectModal from './components/ServerConnectModal';
 import CommandPalette from './components/CommandPalette';
 import ToastNotificationStack, { playNotificationSound } from './components/ToastNotificationStack';
 import VoiceCallPanel from './components/VoiceCallPanel';
+import { useConfirm } from './components/ConfirmDialog';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -58,6 +59,19 @@ export default function App() {
     localStorage.getItem('mychat_server_url') || (window.location.origin.startsWith('http') ? window.location.origin : 'https://chat-production-0456.up.railway.app')
   );
   const [wsConnected, setWsConnected] = useState(false);
+
+  // Обработчики WebSocket, таймеры и подписки создаются один раз и видят
+  // значения на момент создания. Токен же меняется — после входа по паролю,
+  // после смены пароля, — и старые обработчики продолжали ходить на сервер с
+  // прежним: список диалогов молча получал 401 и переставал обновляться.
+  const tokenRef = useRef(token);
+  const serverUrlRef = useRef(serverUrl);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+  useEffect(() => { serverUrlRef.current = serverUrl; }, [serverUrl]);
+  const loggingOutRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const hadSocketSessionRef = useRef(false);
+  const typingTimersRef = useRef({});
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'channels' | 'contacts' | 'important' | 'db'
   
   // Base Data
@@ -75,6 +89,9 @@ export default function App() {
   const [typingMap, setTypingMap] = useState({});
   const [unreadAnnCount, setUnreadAnnCount] = useState(0);
   const [unreadMap, setUnreadMap] = useState({});
+  // Непрочитанное в каналах — отдельно: номер канала и номер сотрудника
+  // совпадают, и общий словарь путал счётчик канала №5 с диалогом сотрудника №5.
+  const [channelUnread, setChannelUnread] = useState({});
   const [windowFocused, setWindowFocused] = useState(true);
   const windowFocusedRef = useRef(true);
   const activeChatRef = useRef(activeChat);
@@ -143,6 +160,9 @@ export default function App() {
   const [baseDataError, setBaseDataError] = useState(null);
   const [showServerConnectModal, setShowServerConnectModal] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // Системный confirm() останавливает всё окно: пока он открыт, не приходят ни
+  // сообщения, ни звонки. Вопросы задаются окном приложения.
+  const [confirm, confirmDialog] = useConfirm();
 
   // Floating Corner Toasts & Remote Desktop
   const [toasts, setToasts] = useState([]);
@@ -151,9 +171,19 @@ export default function App() {
   const [rdPendingTarget, setRdPendingTarget] = useState(null);
   const [rdSessionId, setRdSessionId] = useState(null);
   const [rdPendingOffer, setRdPendingOffer] = useState(null);
+  // Кандидаты соединения, пришедшие до появления окна просмотра. Сотрудник
+  // начинает их слать сразу после согласия; потерянные кандидаты — это сеанс,
+  // который «висит на подключении» до таймаута.
+  const [rdPendingCandidates, setRdPendingCandidates] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
   const activeCallRef = useRef(null);
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
+  const inlineRdViewerRef = useRef(null);
+  const rdSessionIdRef = useRef(null);
+  const rdPromptRef = useRef(null);
+  useEffect(() => { inlineRdViewerRef.current = inlineRdViewer; }, [inlineRdViewer]);
+  useEffect(() => { rdSessionIdRef.current = rdSessionId; }, [rdSessionId]);
+  useEffect(() => { rdPromptRef.current = rdPrompt; }, [rdPrompt]);
 
   // Escape closes whichever modal/dropdown is open, so the user never has
   // to hunt for a tiny ✕ button.
@@ -280,6 +310,7 @@ export default function App() {
     if (!res.ok) return 'offline';
 
     const data = await res.json();
+    tokenRef.current = authToken;
     setToken(authToken);
     setCurrentUser(data.user);
     setAuthState('authenticated');
@@ -316,6 +347,7 @@ export default function App() {
       if (knockRes.ok) {
         const knockData = await knockRes.json();
         if (knockData.status === 'paired' && knockData.token) {
+          tokenRef.current = knockData.token;
           setToken(knockData.token);
           localStorage.setItem('mychat_token', knockData.token);
           setCurrentUser(knockData.user);
@@ -362,6 +394,7 @@ export default function App() {
       localStorage.setItem('mychat_server_url', cleanServerUrl);
     }
     localStorage.removeItem('mychat_logged_out');
+    tokenRef.current = authToken;
     setToken(authToken);
     setCurrentUser(user);
     setAuthState('authenticated');
@@ -388,7 +421,11 @@ export default function App() {
       conversationType: chat.type,
       targetId: chat.id
     }));
-    setUnreadMap((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
+    if (chat.type === 'channel') {
+      setChannelUnread((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
+    } else {
+      setUnreadMap((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
+    }
   };
 
   // ChatView вызывает markConversationRead сам при переключении диалога и
@@ -423,21 +460,55 @@ export default function App() {
     wsRef.current.send(JSON.stringify({ type: 'rd_request', targetUserId: target.id }));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     // Кнопка выхода стоит рядом с именем в строке состояния и выглядит как
     // переход в профиль. Выйти по неосторожности — значит заново вводить
     // пароль, поэтому спрашиваем.
-    if (!window.confirm('Выйти из учётной записи? Для продолжения работы потребуется снова ввести пароль.')) {
+    const confirmed = await confirm({
+      title: 'Выход из учётной записи',
+      message: 'Выйти из учётной записи? Для продолжения работы потребуется снова ввести пароль.',
+      confirmText: 'Выйти',
+      cancelText: 'Остаться'
+    });
+    if (!confirmed) {
       return;
     }
-    localStorage.removeItem('mychat_token');
     localStorage.setItem('mychat_logged_out', '1');
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch {}
+    // Раньше очищались только токен и пользователь: открытый чат, сообщения,
+    // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
+    // кто входил следующим за этим компьютером, видел чужую переписку.
+    forceLogout(null);
+  };
+
+  // Сервер больше не принимает этот сеанс: пароль сброшен, права роли
+  // изменены, учётная запись отключена. Интерфейс при этом оставался на месте
+  // со старыми данными и молча получал отказы. Перезагрузка окна — надёжный
+  // способ сбросить всё состояние прежнего сеанса разом: чат, счётчики,
+  // звонок, открытые окна.
+  const forceLogout = (reason) => {
+    if (loggingOutRef.current) return;
+    loggingOutRef.current = true;
+    const ws = wsRef.current;
+    if (ws) {
+      ws.noReconnect = true;
+      try { ws.close(); } catch {}
     }
-    setToken('');
-    setCurrentUser(null);
-    setAuthState('unauthenticated');
+    localStorage.removeItem('mychat_token');
+    if (reason) {
+      try { sessionStorage.setItem('mychat_logout_reason', reason); } catch {}
+    }
+    window.location.reload();
+  };
+
+  // Запрос от имени текущего сеанса. Отказ 401 означает, что сеанс отозван, —
+  // продолжать показывать данные, которые больше не обновятся, нельзя.
+  const authFetch = async (url, options = {}) => {
+    const res = await fetch(url, {
+      ...options,
+      headers: { ...(options.headers || {}), Authorization: `Bearer ${tokenRef.current}` }
+    });
+    if (res.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
+    return res;
   };
 
   // Forced password change gate (currentUser.must_change_password) — see
@@ -454,6 +525,7 @@ export default function App() {
   // успешно сменил пароль.
   const handleTokenRenewed = (nextToken) => {
     if (!nextToken) return;
+    tokenRef.current = nextToken;
     setToken(nextToken);
     localStorage.setItem('mychat_token', nextToken);
     initWebSocket(nextToken);
@@ -492,6 +564,7 @@ export default function App() {
       // после успешной смены пароля.
       const nextToken = data.token || token;
       if (data.token) {
+        tokenRef.current = data.token;
         setToken(data.token);
         localStorage.setItem('mychat_token', data.token);
       }
@@ -592,44 +665,86 @@ export default function App() {
   // loadBaseData, то есть на КАЖДОЕ сообщение заново тянулись оргструктура,
   // весь список сотрудников, каналы и объявления — пять запросов вместо
   // одного, и в оживлённой переписке это заметно и на сервере, и на связи.
-  const refreshConversations = async (authToken = token) => {
+  // Счётчики непрочитанного берутся с сервера: живые события лишь добавляют к
+  // ним новое. Раньше первое же пришедшее сообщение превращало «5» в «1».
+  const syncUnreadFromConvos = (convos) => {
+    setUnreadMap((prev) => {
+      const active = activeChatRef.current;
+      const next = { ...prev };
+      for (const c of convos || []) {
+        const isOpen =
+          active?.type === 'direct' && active.id === c.user_id &&
+          isChatVisibleRef.current && windowFocusedRef.current;
+        next[c.user_id] = isOpen ? 0 : Number(c.unread_count || 0);
+      }
+      return next;
+    });
+  };
+
+  const syncChannelUnread = (list) => {
+    setChannelUnread(() => {
+      const active = activeChatRef.current;
+      const next = {};
+      for (const ch of list || []) {
+        const isOpen = active?.type === 'channel' && active.id === ch.id && isChatVisibleRef.current;
+        next[ch.id] = isOpen ? 0 : Number(ch.unread_count || 0);
+      }
+      return next;
+    });
+  };
+
+  const refreshConversations = async () => {
     try {
-      const res = await fetch(`${serverUrl}/api/conversations/direct`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      if (res.ok) setDirectConvos(await res.json());
+      const res = await authFetch(`${serverUrlRef.current}/api/conversations/direct`);
+      if (res.ok) {
+        const convos = await res.json();
+        setDirectConvos(convos);
+        syncUnreadFromConvos(convos);
+      }
     } catch {}
   };
 
-  const refreshAnnouncementCount = async (authToken = token) => {
+  const refreshAnnouncementCount = async () => {
     try {
-      const res = await fetch(`${serverUrl}/api/announcements`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
+      const res = await authFetch(`${serverUrlRef.current}/api/announcements`);
       if (!res.ok) return;
       const list = await res.json();
       setUnreadAnnCount(list.filter((a) => a.is_confirmed !== 1).length);
     } catch {}
   };
 
-  const loadBaseData = async (authToken = token) => {
+  const loadBaseData = async (authToken = tokenRef.current) => {
     try {
       const headers = { Authorization: `Bearer ${authToken}` };
+      const base = serverUrlRef.current;
       const [treeRes, usersRes, channelsRes, convosRes, annRes] = await Promise.all([
-        fetch(`${serverUrl}/api/org/tree`, { headers }),
-        fetch(`${serverUrl}/api/users`, { headers }),
-        fetch(`${serverUrl}/api/channels`, { headers }),
-        fetch(`${serverUrl}/api/conversations/direct`, { headers }),
-        fetch(`${serverUrl}/api/announcements`, { headers })
+        fetch(`${base}/api/org/tree`, { headers }),
+        fetch(`${base}/api/users`, { headers }),
+        fetch(`${base}/api/channels`, { headers }),
+        fetch(`${base}/api/conversations/direct`, { headers }),
+        fetch(`${base}/api/announcements`, { headers })
       ]);
+
+      if ([treeRes, usersRes, channelsRes, convosRes, annRes].some((r) => r.status === 401)) {
+        forceLogout('Сеанс истёк или был отозван — войдите заново');
+        return;
+      }
 
       if (treeRes.ok) setTreeData(await treeRes.json());
       if (usersRes.ok) {
         const uList = await usersRes.json();
         setUsers(uList);
       }
-      if (channelsRes.ok) setChannels(await channelsRes.json());
-      if (convosRes.ok) setDirectConvos(await convosRes.json());
+      if (channelsRes.ok) {
+        const list = await channelsRes.json();
+        setChannels(list);
+        syncChannelUnread(list);
+      }
+      if (convosRes.ok) {
+        const convos = await convosRes.json();
+        setDirectConvos(convos);
+        syncUnreadFromConvos(convos);
+      }
 
       if (annRes.ok) {
         const anns = await annRes.json();
@@ -662,8 +777,9 @@ export default function App() {
       previous.close();
     }
 
-    const cleanHost = serverUrl.replace(/^https?:\/\//, '');
-    const protocol = serverUrl.startsWith('https') ? 'wss:' : 'ws:';
+    const base = serverUrlRef.current;
+    const cleanHost = base.replace(/^https?:\/\//, '');
+    const protocol = base.startsWith('https') ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${cleanHost}/ws`;
 
     const ws = new WebSocket(wsUrl);
@@ -673,8 +789,10 @@ export default function App() {
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
+    // «Подключено» — только после того, как сервер принял токен (auth_success).
+    // Раньше зелёная точка загоралась на открытии сокета, и отвергнутый сеанс
+    // выглядел рабочим, а отправленные сообщения пропадали.
     ws.onopen = () => {
-      setWsConnected(true);
       ws.send(JSON.stringify({ type: 'auth', token: authToken }));
     };
 
@@ -683,9 +801,14 @@ export default function App() {
       // must stay dead.
       if (wsRef.current !== ws) return;
       setWsConnected(false);
+      if (ws.noReconnect) return;
+      // Пауза растёт — 2, 4, 8… до 30 секунд — со случайной добавкой: после
+      // перезапуска сервера весь офис не должен ломиться в одну и ту же секунду.
+      const attempt = reconnectAttemptRef.current++;
+      const delay = Math.min(30000, 2000 * 2 ** attempt) + Math.floor(Math.random() * 1000);
       setTimeout(() => {
-        if (localStorage.getItem('mychat_token') && wsRef.current === ws) initWebSocket(authToken);
-      }, 3000);
+        if (wsRef.current === ws && tokenRef.current) initWebSocket(tokenRef.current);
+      }, delay);
     };
 
     ws.onmessage = (e) => {
@@ -709,6 +832,66 @@ export default function App() {
       case 'new_message':
         break;
 
+      // ── Состояние сеанса ────────────────────────────────────────────────
+      case 'auth_success':
+        setWsConnected(true);
+        reconnectAttemptRef.current = 0;
+        // Пока связи не было, могли прийти сообщения и смениться статусы —
+        // без досинхронизации они не появлялись до перезапуска приложения.
+        if (hadSocketSessionRef.current) {
+          loadBaseData(tokenRef.current);
+          reloadActiveChatHistory();
+        }
+        hadSocketSessionRef.current = true;
+        break;
+
+      case 'auth_error':
+        if (event.code === 'MUST_CHANGE_PASSWORD') {
+          if (wsRef.current) wsRef.current.noReconnect = true;
+          try { wsRef.current?.close(); } catch {}
+          setCurrentUser((prev) => (prev ? { ...prev, must_change_password: 1 } : prev));
+        } else if (event.code === 'RATE_LIMITED') {
+          // Сокет закрывается, переподключение пойдёт с нарастающей паузой.
+          try { wsRef.current?.close(); } catch {}
+        } else {
+          forceLogout('Сеанс завершён: пароль или права доступа изменились — войдите заново');
+        }
+        break;
+
+      case 'server_disconnect':
+        forceLogout(event.reason || 'Сеанс завершён администратором');
+        break;
+
+      case 'error':
+        if (event.context === 'send_message') {
+          addToast({
+            title: 'Сообщение не отправлено',
+            body: `${event.message}${event.text ? ` — «${String(event.text).slice(0, 80)}»` : ''}`,
+            type: 'system',
+            isUrgent: true
+          });
+        }
+        break;
+
+      case 'rd_end': {
+        // Сеанс закончила другая сторона или она потеряла связь.
+        if (inlineRdViewerRef.current?.sessionId === event.sessionId) {
+          setInlineRdViewer(null);
+          setRdPendingOffer(null);
+          setRdSessionId(null);
+          addToast({ title: 'Сеанс удалённого доступа завершён', body: event.reason || 'Сотрудник завершил сеанс', type: 'system' });
+        }
+        if (rdSessionIdRef.current === event.sessionId) {
+          setRdPendingTarget(null);
+          setRdSessionId(null);
+          setRdPendingCandidates(null);
+        }
+        if (rdPromptRef.current?.sessionId === event.sessionId) {
+          setRdPrompt(null);
+        }
+        break;
+      }
+
       // ── Удалённый рабочий стол ──────────────────────────────────────────
       case 'rd_prompt':
         // Прилетает сотруднику, у которого просят доступ к экрану.
@@ -730,34 +913,65 @@ export default function App() {
         // В личной переписке сервер шлёт targetId получателя — то есть мой
         // собственный. Диалог же в интерфейсе привязан к собеседнику, поэтому
         // ключом служит тот, кто печатает. В канале targetId — это сам канал.
-        const key = event.conversationType === 'channel' ? event.targetId : event.userId;
-        setTypingMap((prev) => {
-          const without = (prev[key] || []).filter((name) => name !== event.userName);
-          return { ...prev, [key]: event.isTyping ? [...without, event.userName] : without };
-        });
+        // Ключ включает тип переписки: канал №5 и сотрудник №5 иначе делили
+        // одну надпись «печатает…».
+        const key = event.conversationType === 'channel' ? `channel:${event.targetId}` : `direct:${event.userId}`;
+        const timerKey = `${key}|${event.userId}`;
+        const removeTyping = () =>
+          setTypingMap((prev) => ({
+            ...prev,
+            [key]: (prev[key] || []).filter((name) => name !== event.userName)
+          }));
+        clearTimeout(typingTimersRef.current[timerKey]);
+        if (event.isTyping) {
+          setTypingMap((prev) => {
+            const without = (prev[key] || []).filter((name) => name !== event.userName);
+            return { ...prev, [key]: [...without, event.userName] };
+          });
+          // «Перестал печатать» может потеряться вместе со связью — надпись не
+          // должна висеть вечно.
+          typingTimersRef.current[timerKey] = setTimeout(removeTyping, 6000);
+        } else {
+          removeTyping();
+        }
         break;
       }
 
       // ── Статусы доставки и прочтения ────────────────────────────────────
       case 'messages_read': {
         // Собеседник открыл диалог — наши сообщения у него прочитаны.
+        // Новый массив — только если что-то действительно изменилось. Иначе
+        // каждый повтор события перерисовывал переписку, а ChatView на каждую
+        // перерисовку отправлял отметку о прочтении: два открытых диалога
+        // обменивались ими тысячи раз в секунду.
         const ids = new Set(event.messageIds || []);
-        setMessages((prev) =>
-          prev.map((m) => (ids.has(m.id) ? { ...m, delivery_status: 'read' } : m))
-        );
+        if (!ids.size) break;
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((m) => {
+            if (!ids.has(m.id) || m.delivery_status === 'read') return m;
+            changed = true;
+            return { ...m, delivery_status: 'read' };
+          });
+          return changed ? next : prev;
+        });
         break;
       }
 
       case 'message_status_updated':
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === event.messageId
-              // 'delivered' не должен затирать уже проставленное 'read':
-              // события могут прийти не в том порядке, в каком случились.
-              ? { ...m, delivery_status: m.delivery_status === 'read' ? 'read' : event.status }
-              : m
-          )
-        );
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((m) => {
+            if (m.id !== event.messageId) return m;
+            // 'delivered' не должен затирать уже проставленное 'read':
+            // события могут прийти не в том порядке, в каком случились.
+            const status = m.delivery_status === 'read' ? 'read' : event.status;
+            if (status === m.delivery_status) return m;
+            changed = true;
+            return { ...m, delivery_status: status };
+          });
+          return changed ? next : prev;
+        });
         break;
 
       // ── Голосовые звонки ────────────────────────────────────────────────
@@ -784,6 +998,22 @@ export default function App() {
         }
         break;
 
+      case 'rd_ice_candidate':
+        // Только для своего запроса и только пока окно просмотра не открыто:
+        // открытое окно принимает кандидатов само.
+        if (
+          event.candidate &&
+          rdSessionIdRef.current === event.sessionId &&
+          inlineRdViewerRef.current?.sessionId !== event.sessionId
+        ) {
+          setRdPendingCandidates((prev) =>
+            prev && prev.sessionId === event.sessionId
+              ? { sessionId: event.sessionId, list: [...prev.list, event.candidate].slice(-50) }
+              : { sessionId: event.sessionId, list: [event.candidate] }
+          );
+        }
+        break;
+
       case 'rd_webrtc_offer':
         // The host starts offering the moment it accepts, which is before the
         // viewer component has mounted and attached its own listener. Keep the
@@ -795,11 +1025,18 @@ export default function App() {
       case 'rd_response': {
         setRdPendingTarget(null);
         if (!event.accepted) {
-          addToast({
-            title: 'Запрос отклонён',
-            body: `${event.targetName || 'Сотрудник'} отказал в доступе к рабочему столу`,
-            type: 'system'
-          });
+          const who = event.targetName || 'Сотрудник';
+          const body =
+            event.reason === 'busy'
+              ? `${who} уже в другом сеансе удалённого доступа — повторите позже`
+              : event.reason === 'capture_failed'
+              ? `У сотрудника ${who} не запустилась трансляция экрана`
+              : event.reason === 'superseded'
+              ? 'Запрос заменён более новым'
+              : `${who} отказал в доступе к рабочему столу`;
+          addToast({ title: 'Запрос отклонён', body, type: 'system' });
+          setRdSessionId(null);
+          setRdPendingCandidates(null);
           break;
         }
         setInlineRdViewer({
@@ -875,6 +1112,7 @@ export default function App() {
             activeChatRef.current.id === msg.target_id &&
             windowFocusedRef.current;
           if (!isCurrentActive) {
+            setChannelUnread((prev) => ({ ...prev, [msg.target_id]: (prev[msg.target_id] || 0) + 1 }));
             const ch = channelsRef.current.find((c) => c.id === msg.target_id);
             addToast({
               title: ch ? `#${ch.name}` : 'Канал',
@@ -963,71 +1201,96 @@ export default function App() {
     // момент читал объявления или базу, экран не менялся вовсе, и клик
     // выглядел потерянным.
     setActiveTab('chats');
-    setActiveChat({
+    await openChat({
       type: 'direct',
       id: user.id,
       name: user.full_name || user.username,
       user
     });
+  };
+
+  // Open Channel Chat
+  const openChannelChat = async (channel) => {
+    setActiveTab('channels');
+    setChannelUnread((prev) => (prev[channel.id] ? { ...prev, [channel.id]: 0 } : prev));
+    await openChat({
+      type: 'channel',
+      id: channel.id,
+      name: channelLabel(channel.name),
+      channel
+    });
+  };
+
+  const isSameChat = (a, b) => Boolean(a && b && a.type === b.type && a.id === b.id);
+
+  const loadHistory = async (chat) => {
+    const path = chat.type === 'channel' ? `channels/${chat.id}` : `direct/${chat.id}`;
+    const res = await authFetch(`${serverUrlRef.current}/api/messages/${path}`);
+    if (!res.ok) throw new Error(String(res.status));
+    return res.json();
+  };
+
+  // История с сервера плюс то, что успело прийти живьём, пока она грузилась.
+  const mergeHistory = (history, live) => {
+    const byId = new Map();
+    for (const m of history) byId.set(m.id, m);
+    for (const m of live) if (m.id && !byId.has(m.id)) byId.set(m.id, m);
+    return [...byId.values()].sort((a, b) => a.id - b.id);
+  };
+
+  const openChat = async (chat) => {
+    // Ссылка обновляется сразу, а не после отрисовки: ответ на запрос истории
+    // должен узнать, что чат уже сменился.
+    activeChatRef.current = chat;
+    setActiveChat(chat);
     // Clear first: otherwise the previous person's thread stays on screen
     // under the new name until the fetch resolves — and forever if it fails.
     setMessages([]);
     setMessagesLoading(true);
 
     try {
-      const res = await fetch(`${serverUrl}/api/messages/direct/${user.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const history = await res.json();
-        setMessages(history);
-      }
+      const history = await loadHistory(chat);
+      // Быстрый переход A → B: ответ для A, пришедший позже, раньше
+      // показывался под именем B.
+      if (!isSameChat(activeChatRef.current, chat)) return;
+      setMessages((prev) => mergeHistory(history, prev));
     } catch (err) {
-      console.error('Failed to load direct messages:', err);
+      if (!isSameChat(activeChatRef.current, chat)) return;
+      console.error('Failed to load messages:', err);
+      addToast({ title: 'Переписка не загрузилась', body: 'Нет связи с сервером — откройте чат ещё раз', type: 'system' });
     } finally {
-      setMessagesLoading(false);
+      if (isSameChat(activeChatRef.current, chat)) setMessagesLoading(false);
     }
   };
 
-  // Open Channel Chat
-  const openChannelChat = async (channel) => {
-    setActiveTab('channels');
-    setActiveChat({
-      type: 'channel',
-      id: channel.id,
-      name: channel.name,
-      channel
-    });
-    setMessages([]);
-    setMessagesLoading(true);
-
+  const reloadActiveChatHistory = async () => {
+    const chat = activeChatRef.current;
+    if (!chat) return;
     try {
-      const res = await fetch(`${serverUrl}/api/messages/channels/${channel.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const history = await res.json();
-        setMessages(history);
-      }
-    } catch (err) {
-      console.error('Failed to load channel messages:', err);
-    } finally {
-      setMessagesLoading(false);
-    }
+      const history = await loadHistory(chat);
+      if (isSameChat(activeChatRef.current, chat)) setMessages((prev) => mergeHistory(history, prev));
+    } catch {}
   };
 
-  // Handle action when user clicks floating corner toast or native notification
+  // Handle action when user clicks floating corner toast or native notification.
+  // Подписка одна на всё время работы окна: раньше на каждую смену токена
+  // добавлялась ещё одна, и после смены учётной записи клик по уведомлению
+  // отрабатывал и за прежнего сотрудника.
+  const openDirectChatRef = useRef(openDirectChat);
+  const openChannelChatRef = useRef(openChannelChat);
+  openDirectChatRef.current = openDirectChat;
+  openChannelChatRef.current = openChannelChat;
   useEffect(() => {
-    if (window.electronAPI && window.electronAPI.onToastAction) {
-      window.electronAPI.onToastAction((toastData) => {
-        if (toastData?.data?.user) {
-          openDirectChat(toastData.data.user);
-        } else if (toastData?.data?.channel) {
-          openChannelChat(toastData.data.channel);
-        }
-      });
-    }
-  }, [token]);
+    if (!window.electronAPI?.onToastAction) return undefined;
+    const off = window.electronAPI.onToastAction((toastData) => {
+      if (toastData?.data?.user) {
+        openDirectChatRef.current(toastData.data.user);
+      } else if (toastData?.data?.channel) {
+        openChannelChatRef.current(toastData.data.channel);
+      }
+    });
+    return () => { if (typeof off === 'function') off(); };
+  }, []);
 
   // Test corner pop-up notification
   const handleTestNotification = () => {
@@ -1072,15 +1335,21 @@ export default function App() {
       // Поле ввода очищается сразу при отправке, поэтому молча потерянное
       // сообщение человек уже не восстановит: он уверен, что написал.
       try {
-        const res = await fetch(endpoint, {
+        const res = await authFetch(endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({ text, type: msgType, reply_to_id: replyToId })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, type: msgType, reply_to_id: replyToId, metadata })
         });
-        if (!res.ok) throw new Error(String(res.status));
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          addToast({
+            title: 'Сообщение не отправлено',
+            body: `${data.error || 'Сервер отклонил сообщение'} — «${text.slice(0, 80)}»`,
+            type: 'system',
+            isUrgent: true
+          });
+          return;
+        }
         refreshConversations();
       } catch {
         addToast({
@@ -1098,12 +1367,24 @@ export default function App() {
     const formData = new FormData();
     formData.append('file', file);
 
+    // Отказ сервера раньше не показывался вовсе: нет права на загрузку, файл
+    // слишком большой — человек нажимал «Вставить файл», и ничего не происходило.
     try {
-      const upRes = await fetch(`${serverUrl}/api/files/upload`, {
+      const upRes = await authFetch(`${serverUrlRef.current}/api/files/upload`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: formData
       });
+
+      if (!upRes.ok) {
+        const data = await upRes.json().catch(() => ({}));
+        addToast({
+          title: 'Файл не отправлен',
+          body: `«${file.name}»: ${data.error || (upRes.status === 413 ? 'файл слишком большой' : 'сервер отклонил файл')}`,
+          type: 'system',
+          isUrgent: true
+        });
+        return;
+      }
 
       if (upRes.ok) {
         const fData = await upRes.json();
@@ -1127,18 +1408,16 @@ export default function App() {
       }
     } catch (err) {
       console.error('Upload error:', err);
+      addToast({ title: 'Файл не отправлен', body: `«${file.name}»: нет связи с сервером`, type: 'system', isUrgent: true });
     }
   };
 
   // Profile Update
   const handleUpdateProfile = async (updatedFields) => {
     try {
-      const res = await fetch(`${serverUrl}/api/users/profile`, {
+      const res = await authFetch(`${serverUrlRef.current}/api/users/profile`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedFields)
       });
       // Ошибка здесь проглатывалась: сохранение профиля падало на сервере, а
@@ -1150,13 +1429,15 @@ export default function App() {
           body: data.error || 'Сервер отклонил изменения',
           type: 'system'
         });
-        return;
+        return false;
       }
       const updated = await res.json();
       setCurrentUser(updated);
       loadBaseData();
+      return true;
     } catch {
       addToast({ title: 'Профиль не сохранён', body: 'Нет связи с сервером', type: 'system' });
+      return false;
     }
   };
 
@@ -1203,21 +1484,20 @@ export default function App() {
   // ── Automated Presence Triggers (Electron OS + Web Engine) ──
   useEffect(() => {
     // 1. Electron Native OS Hooks (powerMonitor)
-    if (window.electronAPI?.onPowerMonitorEvent) {
-      window.electronAPI.onPowerMonitorEvent(({ state, status, idleSeconds }) => {
-        console.log(`[Presence Trigger] OS Power Event: ${state} (status: ${status}, idle: ${idleSeconds}s)`);
-        if (status) {
-          updateMyPresence(status);
-        }
-      });
-    }
-
-    if (window.electronAPI?.onTrayStatusChange) {
-      window.electronAPI.onTrayStatusChange((status) => {
-        console.log(`[Presence Trigger] Tray Status Selected: ${status}`);
+    // Подписки создаются один раз: раньше эффект перезапускался при каждой
+    // смене токена и добавлял ещё по обработчику — статус уходил на сервер
+    // по нескольку раз.
+    const offPower = window.electronAPI?.onPowerMonitorEvent?.(({ state, status, idleSeconds }) => {
+      console.log(`[Presence Trigger] OS Power Event: ${state} (status: ${status}, idle: ${idleSeconds}s)`);
+      if (status) {
         updateMyPresence(status);
-      });
-    }
+      }
+    });
+
+    const offTray = window.electronAPI?.onTrayStatusChange?.((status) => {
+      console.log(`[Presence Trigger] Tray Status Selected: ${status}`);
+      updateMyPresence(status);
+    });
 
     // 2. Web Inactivity / Idle Trigger Engine (Fallback and Browser clients)
     let idleTimer = null;
@@ -1272,8 +1552,12 @@ export default function App() {
     // 4. Network Connectivity Triggers (Online / Offline)
     const handleOnline = () => {
       console.log('[Presence Trigger] Network connection restored -> "online"');
+      // Сеть вернулась — подключаемся сразу, не дожидаясь очередной паузы.
+      if (tokenRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
+        reconnectAttemptRef.current = 0;
+        initWebSocket(tokenRef.current);
+      }
       updateMyPresence('online');
-      if (token) initWebSocket(token);
     };
 
     const handleOffline = () => {
@@ -1291,8 +1575,11 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (typeof offPower === 'function') offPower();
+      if (typeof offTray === 'function') offTray();
     };
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Create Channel
   const handleCreateChannel = async (e) => {
@@ -1300,26 +1587,63 @@ export default function App() {
     if (!newChannelName.trim()) return;
 
     try {
-      const res = await fetch(`${serverUrl}/api/channels`, {
+      const res = await authFetch(`${serverUrlRef.current}/api/channels`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newChannelName.trim(), topic: newChannelTopic.trim() })
       });
 
       if (res.ok) {
         const created = await res.json();
-        setChannels((prev) => [...prev, created]);
+        setChannels((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
         setShowCreateChannelModal(false);
         setNewChannelName('');
         setNewChannelTopic('');
         openChannelChat(created);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        addToast({ title: 'Конференция не создана', body: data.error || 'Сервер отклонил запрос', type: 'system' });
       }
     } catch (err) {
       console.error('Create channel error:', err);
+      addToast({ title: 'Конференция не создана', body: 'Нет связи с сервером', type: 'system' });
     }
+  };
+
+  // Название канала хранится то с «#», то без — в списке выходило «##Общий».
+  const channelLabel = (name) => `#${String(name || '').replace(/^#+/, '')}`;
+
+  // Оператор ждал ответа на запрос удалённого доступа вечно, если сотрудник
+  // отошёл от компьютера: окно ожидания не закрывалось ничем, кроме кнопки.
+  useEffect(() => {
+    if (!rdPendingTarget) return undefined;
+    const timer = setTimeout(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN && rdSessionIdRef.current) {
+        wsRef.current.send(JSON.stringify({ type: 'rd_end', sessionId: rdSessionIdRef.current, targetUserId: rdPendingTarget.id }));
+      }
+      setRdPendingTarget(null);
+      setRdSessionId(null);
+      addToast({
+        title: 'Сотрудник не ответил',
+        body: 'Запрос на удалённый доступ отменён после минуты ожидания',
+        type: 'system'
+      });
+    }, 60000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rdPendingTarget]);
+
+  // Закрытие окна просмотра обязано завершать сеанс и у сотрудника: иначе у
+  // него продолжалась трансляция экрана и оставался включённым ввод.
+  const endRdViewerSession = () => {
+    const viewer = inlineRdViewerRef.current;
+    if (viewer && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'rd_end', sessionId: viewer.sessionId, targetUserId: viewer.targetUser?.id }));
+    }
+    setInlineRdViewer(null);
+    setRdPendingOffer(null);
+    setRdPendingCandidates(null);
+    setRdSessionId(null);
   };
 
   const RECENT_DIALOG_LIMIT = 10;
@@ -1380,16 +1704,12 @@ export default function App() {
       .slice(0, RECENT_DIALOG_LIMIT);
   })();
 
-  const isAdmin = Boolean(
-    currentUser && (
-      currentUser.role_id === 1 ||
-      currentUser.role_name === 'Суперадминистратор' ||
-      currentUser.role_name === 'Admin' ||
-      currentUser.role_name === 'Администратор' ||
-      currentUser.username === 'admin' ||
-      currentUser.permissions?.is_admin
-    )
-  );
+  // Права — из роли, а не из номера роли или имени учётной записи: номера не
+  // устойчивы, а «admin» может оказаться кем угодно.
+  const isAdmin = Boolean(currentUser?.permissions?.is_admin);
+  // Студия базы данных — только суперадминистратору: у администратора
+  // подразделения все её запросы отвечают 403.
+  const isSuperAdmin = isAdmin && !currentUser?.permissions?.is_scoped_admin;
 
   if (authState === 'checking') {
     return (
@@ -1434,6 +1754,7 @@ export default function App() {
             </button>
           </form>
           <button className="conf-link-btn" style={{ marginTop: '12px' }} onClick={handleLogout}>Выйти</button>
+          {confirmDialog}
         </div>
       </div>
     );
@@ -1448,7 +1769,7 @@ export default function App() {
         onStatusChange={handleStatusChange}
         onSelectTab={setActiveTab}
         onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
-        onOpenDbStudio={() => isAdmin && setActiveTab('db')}
+        onOpenDbStudio={() => isSuperAdmin && setActiveTab('db')}
         onOpenAdminConsole={() => isAdmin && setShowAdminModal(true)}
         onOpenWhatIsNew={() => setShowAboutModal(true)}
         onOpenServerConnect={() => setShowServerConnectModal(true)}
@@ -1692,10 +2013,13 @@ export default function App() {
                     </div>
                     <div className="dialog-info-column">
                       <div className="dialog-row-top">
-                        <span className="dialog-peer-name">#{ch.name}</span>
+                        <span className="dialog-peer-name">{channelLabel(ch.name)}</span>
                       </div>
                       <div className="dialog-row-bottom">
                         <span className="dialog-snippet">{ch.topic || 'Корпоративный канал'}</span>
+                        {channelUnread[ch.id] > 0 && (
+                          <span className="dialog-unread-badge">{channelUnread[ch.id]}</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1773,7 +2097,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'db' && isAdmin && (
+        {activeTab === 'db' && isSuperAdmin && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <DatabaseStudioView token={token} serverUrl={serverUrl} />
           </div>
@@ -1792,7 +2116,7 @@ export default function App() {
                 messages={messages}
                 messagesLoading={messagesLoading}
                 currentUser={currentUser}
-                typingUsers={typingMap[activeChat.id] || []}
+                typingUsers={typingMap[`${activeChat.type}:${activeChat.id}`] || []}
                 isPersonPanelOpen={isPersonPanelOpen}
                 onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
                 onSendMessage={handleSendMessage}
@@ -1809,6 +2133,7 @@ export default function App() {
                 }}
                 token={token}
                 serverUrl={serverUrl}
+                onNotice={(title, body) => addToast({ title, body: body || '', type: 'system' })}
               />
             ) : (
               <GreetingView
@@ -1948,6 +2273,8 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {confirmDialog}
 
       <ToastNotificationStack
         toasts={toasts}
@@ -2104,19 +2431,17 @@ export default function App() {
           <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '8px 16px', background: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff' }}>
               <span>Удаленный рабочий стол: {inlineRdViewer.targetUser?.full_name}</span>
-              <button className="btn btn-sm btn-secondary" onClick={() => setInlineRdViewer(null)}>Закрыть</button>
+              <button className="btn btn-sm btn-secondary" onClick={endRdViewerSession}>Закрыть</button>
             </div>
             <div style={{ flex: 1 }}>
               <RemoteDesktopViewer
                 sessionId={inlineRdViewer.sessionId}
                 targetUser={inlineRdViewer.targetUser}
+                accessLevel={inlineRdViewer.accessLevel}
                 wsClient={wsRef.current}
                 pendingOffer={rdPendingOffer}
-                onEndSession={() => {
-                  setInlineRdViewer(null);
-                  setRdPendingOffer(null);
-                  setRdSessionId(null);
-                }}
+                pendingCandidates={rdPendingCandidates}
+                onEndSession={endRdViewerSession}
               />
             </div>
           </div>

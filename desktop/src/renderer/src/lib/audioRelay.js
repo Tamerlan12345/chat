@@ -62,11 +62,19 @@ export class AudioRelay {
     this.onLevel = onLevel;
     this.onStats = onStats;
     this.muted = false;
+    this.stopped = false;
     this.scheduler = new JitterScheduler();
     this.stats = { sent: 0, received: 0, skippedSilent: 0 };
   }
 
+  // stop() может прийти в любой момент запуска: звонок закрыли, пока Windows
+  // спрашивала разрешение на микрофон. Раньше поток и звуковой контекст
+  // создавались уже после закрытия и жили до перезапуска приложения —
+  // индикатор микрофона так и горел. Поэтому после каждого ожидания запуск
+  // проверяет, не остановили ли его, и при любой ошибке сам всё освобождает.
   async start() {
+    if (this.stopped) throw abortError();
+
     // Отдельная проверка с внятным объяснением: без неё сотрудник видит
     // «Cannot read properties of undefined» и не может ничего с этим сделать.
     // mediaDevices нет, когда страница открыта по незащищённому протоколу —
@@ -81,34 +89,47 @@ export class AudioRelay {
       );
     }
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      if (this.stopped) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw abortError();
       }
-    });
+      this.stream = stream;
 
-    // Один контекст на приём и передачу: два независимых контекста мешали
-    // подавлению эха — браузер отменяет только тот звук, который сам же и
-    // вывел, и о чужом контексте он ничего не знает.
-    this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
-    this.scheduler.reset();
+      // Один контекст на приём и передачу: два независимых контекста мешали
+      // подавлению эха — браузер отменяет только тот звук, который сам же и
+      // вывел, и о чужом контексте он ничего не знает.
+      this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
+      this.scheduler.reset();
 
-    await this.startCapture();
-    this.attachReceiver();
+      await this.startCapture();
+      if (this.stopped) throw abortError();
+      this.attachReceiver();
+    } catch (err) {
+      this.release();
+      throw err;
+    }
   }
 
   async startCapture() {
-    const source = this.ctx.createMediaStreamSource(this.stream);
+    const ctx = this.ctx;
+    const source = ctx.createMediaStreamSource(this.stream);
 
     try {
       const blob = new Blob([WORKLET_SOURCE], { type: 'application/javascript' });
       this.workletUrl = URL.createObjectURL(blob);
-      await this.ctx.audioWorklet.addModule(this.workletUrl);
+      await ctx.audioWorklet.addModule(this.workletUrl);
+      if (this.stopped) throw abortError();
 
-      this.capture = new AudioWorkletNode(this.ctx, 'capture-processor', {
+      this.capture = new AudioWorkletNode(ctx, 'capture-processor', {
         numberOfInputs: 1,
         numberOfOutputs: 0,
         processorOptions: { frameSize: FRAME_SAMPLES }
@@ -117,18 +138,20 @@ export class AudioRelay {
       source.connect(this.capture);
       this.captureKind = 'worklet';
     } catch (err) {
+      // Остановленный звонок запасной путь не ищет: контекст уже закрыт.
+      if (this.stopped) throw abortError();
       // Запасной путь на случай, если Worklet недоступен. Хуже по качеству, но
       // разговор состоится — а это важнее.
       console.warn('[Звонок] AudioWorklet недоступен, перехожу на ScriptProcessor:', err?.message);
-      this.capture = this.ctx.createScriptProcessor(1024, 1, 1);
+      this.capture = ctx.createScriptProcessor(1024, 1, 1);
       this.capture.onaudioprocess = (event) => this.sendSamples(event.inputBuffer.getChannelData(0));
       source.connect(this.capture);
       // Без подключения к выходу обработчик в Chromium не вызывается; громкость
       // в ноль, иначе человек слышит сам себя.
-      const silence = this.ctx.createGain();
+      const silence = ctx.createGain();
       silence.gain.value = 0;
       this.capture.connect(silence);
-      silence.connect(this.ctx.destination);
+      silence.connect(ctx.destination);
       this.captureKind = 'script-processor';
     }
   }
@@ -191,8 +214,15 @@ export class AudioRelay {
     this.stream?.getAudioTracks()?.forEach((track) => { track.enabled = !value; });
   }
 
+  // Можно звать сколько угодно раз и в любой момент, в том числе посреди start().
   stop() {
+    this.stopped = true;
+    this.release();
+  }
+
+  release() {
     if (this.onMessage) this.ws?.removeEventListener('message', this.onMessage);
+    this.onMessage = null;
     if (this.capture) {
       try { this.capture.port ? (this.capture.port.onmessage = null) : (this.capture.onaudioprocess = null); } catch {}
       try { this.capture.disconnect(); } catch {}
@@ -206,4 +236,14 @@ export class AudioRelay {
     this.ctx = null;
     this.workletUrl = null;
   }
+}
+
+// Отмена запуска отличается от сбоя: панели звонка не нужно показывать
+// «не удалось включить микрофон», если звонок просто закрыли.
+function abortError() {
+  const message = 'Звонок завершён до включения микрофона';
+  if (typeof DOMException === 'function') return new DOMException(message, 'AbortError');
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }

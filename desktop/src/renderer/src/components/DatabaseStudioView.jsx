@@ -1,4 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { readError, limitRows, resultColumns, createRequestSequence } from '../lib/admin-access.mjs';
+import { useInlineToast } from './InlineToast';
+
+// Выполнить можно что угодно, в том числе SELECT на сотни тысяч строк. Такая
+// таблица отрисовывается минутами и вешает всё окно — показываем начало, а
+// общее число строк называем.
+const MAX_RENDERED_ROWS = 500;
 
 export default function DatabaseStudioView({ token, serverUrl = '' }) {
   const [stats, setStats] = useState(null);
@@ -6,16 +13,31 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
   const [selectedTable, setSelectedTable] = useState(null);
   const [tableData, setTableData] = useState(null);
   const [tableSchema, setTableSchema] = useState(null);
+  const [tableError, setTableError] = useState('');
   // Пример ссылался на таблицу users, которой в базе переписки больше нет:
   // учётные записи вынесены в отдельное хранилище и отсюда недостижимы.
   const [sqlQuery, setSqlQuery] = useState(
     'SELECT id, conversation_type, target_id, sender_id, substr(text, 1, 60) AS text, created_at FROM messages ORDER BY id DESC LIMIT 20;'
   );
   const [queryResult, setQueryResult] = useState(null);
+  const [sqlRunning, setSqlRunning] = useState(false);
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
   const [downloading, setDownloading] = useState(null);
   const [activeTab, setActiveTab] = useState('browser'); // 'browser' | 'sql' | 'backups'
+  // Отказ сервера раньше сохранялся вместо данных, и первый же .map или
+  // .toUpperCase() ронял всё окно приложения. Теперь он показывается текстом.
+  const [loadErrors, setLoadErrors] = useState({ stats: '', tables: '', backups: '' });
+  const [showToast, toastElement] = useInlineToast();
+  const tableRequests = useRef(createRequestSequence());
+
+  const authFetch = (path, options = {}) =>
+    fetch(serverUrl + path, {
+      ...options,
+      headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` }
+    });
+
+  const setLoadError = (key, message) => setLoadErrors((prev) => ({ ...prev, [key]: message }));
 
   // Резервная копия отдаётся только с токеном в заголовке, а обычная ссылка
   // заголовков не шлёт — кнопка «Скачать» молча отвечала отказом. Забираем
@@ -23,11 +45,9 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
   const downloadBackup = async (fileName) => {
     setDownloading(fileName);
     try {
-      const res = await fetch(`${serverUrl}/api/admin/db/backups/${encodeURIComponent(fileName)}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch(`/api/admin/db/backups/${encodeURIComponent(fileName)}`);
       if (!res.ok) {
-        alert(res.status === 401 ? 'Сессия истекла — войдите заново' : 'Не удалось скачать копию');
+        showToast(await readError(res, 'Не удалось скачать копию'), 'error');
         return;
       }
       const blob = await res.blob();
@@ -42,7 +62,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
       // окна до его закрытия.
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (err) {
-      alert('Не удалось скачать копию: ' + err.message);
+      showToast('Не удалось скачать копию: ' + err.message, 'error');
     } finally {
       setDownloading(null);
     }
@@ -50,101 +70,149 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
 
   const loadStats = async () => {
     try {
-      const res = await fetch(serverUrl + '/api/admin/db/stats', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/admin/db/stats');
+      if (!res.ok) {
+        setLoadError('stats', await readError(res, 'Не удалось получить сведения о базе'));
+        return;
+      }
       const data = await res.json();
-      setStats(data);
+      setStats(data && typeof data === 'object' ? data : null);
+      setLoadError('stats', '');
     } catch (err) {
-      console.error('Stats error:', err);
+      setLoadError('stats', 'Нет связи с сервером: ' + err.message);
     }
   };
 
   const loadTables = async () => {
     try {
-      const res = await fetch(serverUrl + '/api/admin/db/tables', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/admin/db/tables');
+      if (!res.ok) {
+        setLoadError('tables', await readError(res, 'Не удалось получить список таблиц'));
+        return;
+      }
       const data = await res.json();
-      setTables(data);
-      if (data.length > 0 && !selectedTable) {
-        selectTable(data[0].name);
+      const list = Array.isArray(data) ? data : [];
+      setTables(list);
+      setLoadError('tables', '');
+      if (list.length > 0 && !selectedTable) {
+        selectTable(list[0].name);
       }
     } catch (err) {
-      console.error('Tables error:', err);
+      setLoadError('tables', 'Нет связи с сервером: ' + err.message);
     }
   };
 
   const loadBackups = async () => {
     try {
-      const res = await fetch(serverUrl + '/api/admin/db/backups', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/admin/db/backups');
+      if (!res.ok) {
+        setLoadError('backups', await readError(res, 'Не удалось получить список резервных копий'));
+        return;
+      }
       const data = await res.json();
-      setBackups(data);
+      setBackups(Array.isArray(data) ? data : []);
+      setLoadError('backups', '');
     } catch (err) {
-      console.error('Backups error:', err);
+      setLoadError('backups', 'Нет связи с сервером: ' + err.message);
     }
   };
 
+  const reloadAll = () => {
+    loadStats();
+    loadTables();
+    loadBackups();
+  };
+
   const selectTable = async (tableName) => {
+    // При быстрых щелчках по таблицам схема одной приходила вместе с данными
+    // другой. Учитываем только ответ на последний щелчок.
+    const requestId = tableRequests.current.next();
+    const isCurrent = () => tableRequests.current.isCurrent(requestId);
     setSelectedTable(tableName);
+    setTableSchema(null);
+    setTableData(null);
+    setTableError('');
     try {
+      const name = encodeURIComponent(tableName);
       const [schemaRes, dataRes] = await Promise.all([
-        fetch(`${serverUrl}/api/admin/db/tables/${tableName}/schema`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${serverUrl}/api/admin/db/tables/${tableName}/data?limit=50`, { headers: { Authorization: `Bearer ${token}` } })
+        authFetch(`/api/admin/db/tables/${name}/schema`),
+        authFetch(`/api/admin/db/tables/${name}/data?limit=50`)
       ]);
-      setTableSchema(await schemaRes.json());
-      setTableData(await dataRes.json());
+      if (!schemaRes.ok || !dataRes.ok) {
+        const message = await readError(schemaRes.ok ? dataRes : schemaRes, 'Не удалось открыть таблицу');
+        if (isCurrent()) setTableError(message);
+        return;
+      }
+      const [schema, data] = await Promise.all([schemaRes.json(), dataRes.json()]);
+      if (!isCurrent()) return;
+      setTableSchema(schema);
+      setTableData(data);
     } catch (err) {
-      console.error('Table fetch error:', err);
+      if (isCurrent()) setTableError('Нет связи с сервером: ' + err.message);
     }
   };
 
   useEffect(() => {
-    loadStats();
-    loadTables();
-    loadBackups();
+    reloadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const handleExecuteSql = async (e) => {
     e?.preventDefault();
-    if (!sqlQuery.trim()) return;
+    if (!sqlQuery.trim() || sqlRunning) return;
 
+    setSqlRunning(true);
     try {
-      const res = await fetch(serverUrl + '/api/admin/db/query', {
+      const res = await authFetch('/api/admin/db/query', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: sqlQuery })
       });
+      if (!res.ok) {
+        setQueryResult({ error: await readError(res, 'Запрос не выполнен') });
+        return;
+      }
       const data = await res.json();
-      setQueryResult(data);
+      setQueryResult(data && typeof data === 'object' ? data : { error: 'Сервер вернул непонятный ответ' });
       loadStats();
       loadTables();
     } catch (err) {
-      setQueryResult({ error: err.message });
+      setQueryResult({ error: 'Нет связи с сервером: ' + err.message });
+    } finally {
+      setSqlRunning(false);
     }
   };
 
   const handleCreateBackup = async () => {
+    if (backupLoading) return;
     setBackupLoading(true);
     try {
-      const res = await fetch(serverUrl + '/api/admin/db/backup', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      alert(`Резервная копия базы успешно создана:\n${data.fileName} (${data.sizeFormatted})`);
+      const res = await authFetch('/api/admin/db/backup', { method: 'POST' });
+      // Отказ раньше читался как успех: «успешно создана: undefined».
+      if (!res.ok) {
+        showToast('Резервная копия не создана: ' + (await readError(res, 'сервер отказал')), 'error');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      showToast(
+        data.fileName
+          ? `Резервная копия базы создана: ${data.fileName}${data.sizeFormatted ? ` (${data.sizeFormatted})` : ''}`
+          : 'Резервная копия базы создана'
+      );
       loadBackups();
     } catch (err) {
-      alert(`Ошибка создания бэкапа: ${err.message}`);
+      showToast('Ошибка создания бэкапа: ' + err.message, 'error');
     } finally {
       setBackupLoading(false);
     }
   };
+
+  const loadErrorText = [...new Set(Object.values(loadErrors).filter(Boolean))].join(' · ');
+  const schemaColumns = Array.isArray(tableSchema?.columns) ? tableSchema.columns : [];
+  const tableRows = Array.isArray(tableData?.rows) ? tableData.rows : [];
+  const queryOk = queryResult && !queryResult.error;
+  const shownQuery = queryOk ? limitRows(queryResult.rows, MAX_RENDERED_ROWS) : null;
+  const queryColumns = queryOk ? resultColumns(queryResult) : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -194,6 +262,17 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
         </div>
       </div>
 
+      {toastElement}
+
+      {loadErrorText && (
+        <div className="db-studio-error" role="alert">
+          <span>⚠ {loadErrorText}</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={reloadAll}>
+            Повторить
+          </button>
+        </div>
+      )}
+
       {/* Database Quick Health Badges */}
       {stats && (
         <div style={{
@@ -205,12 +284,12 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           fontSize: '12px',
           color: 'var(--text-muted)'
         }}>
-          <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath}</strong></div>
-          <div>Размер: <strong style={{ color: '#10b981' }}>{stats.dbSizeFormatted}</strong></div>
-          <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted}</strong></div>
-          <div>Режим: <strong style={{ color: '#ffffff' }}>{stats.journalMode.toUpperCase()}</strong></div>
-          <div>Целостность: <strong style={{ color: '#10b981' }}>{stats.integrity}</strong></div>
-          <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows}</strong></div>
+          <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath ?? '—'}</strong></div>
+          <div>Размер: <strong style={{ color: '#10b981' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
+          <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
+          <div>Режим: <strong style={{ color: '#ffffff' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
+          <div>Целостность: <strong style={{ color: '#10b981' }}>{stats.integrity ?? '—'}</strong></div>
+          <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows ?? '—'}</strong></div>
         </div>
       )}
 
@@ -252,10 +331,19 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                   <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Всего строк: {tableData?.total || 0}</span>
                 </div>
 
+                {tableError && (
+                  <div className="db-studio-error inline" role="alert">
+                    <span>⚠ {tableError}</span>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => selectTable(selectedTable)}>
+                      Повторить
+                    </button>
+                  </div>
+                )}
+
                 {/* Columns Schema */}
-                {tableSchema && (
+                {schemaColumns.length > 0 && (
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '8px', backgroundColor: 'var(--bg-sidebar)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                    {tableSchema.columns.map(c => (
+                    {schemaColumns.map(c => (
                       <span key={c.name} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-card)', color: c.pk ? '#f59e0b' : 'var(--text-muted)' }}>
                         {c.pk ? '🔑 ' : ''}<strong>{c.name}</strong>: {c.type}
                       </span>
@@ -268,15 +356,15 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
                     <thead>
                       <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-dim)' }}>
-                        {(tableSchema?.columns || []).map(c => (
+                        {schemaColumns.map(c => (
                           <th key={c.name} style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>{c.name}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {(tableData?.rows || []).map((row, rIdx) => (
+                      {tableRows.map((row, rIdx) => (
                         <tr key={rIdx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          {(tableSchema?.columns || []).map(c => (
+                          {schemaColumns.map(c => (
                             <td key={c.name} style={{ padding: '8px 12px', whiteSpace: 'nowrap', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {row[c.name] === null ? <span style={{ color: 'var(--text-dim)' }}>NULL</span> : String(row[c.name])}
                             </td>
@@ -298,8 +386,8 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           <form onSubmit={handleExecuteSql} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label style={{ fontSize: '13px', fontWeight: 600 }}>SQL Запрос:</label>
-              <button type="submit" className="btn btn-primary btn-sm">
-                ▶ Выполнить SQL
+              <button type="submit" className="btn btn-primary btn-sm" disabled={sqlRunning}>
+                {sqlRunning ? 'Выполняется…' : '▶ Выполнить SQL'}
               </button>
             </div>
             <textarea
@@ -321,23 +409,30 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
               ) : (
                 <>
                   <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                    Время выполнения: <strong>{queryResult.executionTimeMs} мс</strong> | Строк: <strong>{queryResult.rowCount ?? queryResult.changes}</strong>
+                    Время выполнения: <strong>{queryResult.executionTimeMs ?? '—'} мс</strong> | Строк: <strong>{queryResult.rowCount ?? queryResult.changes ?? shownQuery.total}</strong>
                   </div>
 
-                  {queryResult.rows && queryResult.rows.length > 0 && (
+                  {shownQuery.truncated && (
+                    <div className="db-studio-note">
+                      Показаны первые {MAX_RENDERED_ROWS} из {shownQuery.total} строк. Чтобы увидеть
+                      остальные, сузьте запрос условием WHERE или используйте LIMIT/OFFSET.
+                    </div>
+                  )}
+
+                  {shownQuery.rows.length > 0 && (
                     <div style={{ overflowX: 'auto', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                         <thead>
                           <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderBottom: '1px solid var(--border-color)' }}>
-                            {queryResult.columns.map(col => (
+                            {queryColumns.map(col => (
                               <th key={col} style={{ padding: '8px 12px', textAlign: 'left' }}>{col}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {queryResult.rows.map((r, idx) => (
+                          {shownQuery.rows.map((r, idx) => (
                             <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                              {queryResult.columns.map(col => (
+                              {queryColumns.map(col => (
                                 <td key={col} style={{ padding: '6px 12px', whiteSpace: 'nowrap' }}>
                                   {r[col] === null ? 'NULL' : String(r[col])}
                                 </td>
@@ -362,6 +457,9 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             💾 Резервные копии базы данных
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {backups.length === 0 && !loadErrors.backups && (
+              <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>Резервных копий пока нет.</div>
+            )}
             {backups.map(b => (
               <div
                 key={b.fileName}
@@ -378,7 +476,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '14px', color: '#ffffff' }}>{b.fileName}</div>
                   <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
-                    Создан: {new Date(b.createdAt).toLocaleString()} · Размер: {b.sizeFormatted}
+                    Создан: {b.createdAt ? new Date(b.createdAt).toLocaleString() : '—'} · Размер: {b.sizeFormatted ?? '—'}
                   </div>
                 </div>
 

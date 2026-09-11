@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { canBroadcast, createRequestSequence } from '../lib/admin-access.mjs';
 
 export default function AnnouncementsView({
   token,
@@ -14,18 +15,19 @@ export default function AnnouncementsView({
   const [newContent, setNewContent] = useState('');
   const [newPriority, setNewPriority] = useState('urgent');
   const [actionError, setActionError] = useState('');
+  const [createError, setCreateError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ackBusyId, setAckBusyId] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const selectedIdRef = useRef(null);
+  const auditRequests = useRef(createRequestSequence());
 
-  const isAdmin = Boolean(
-    currentUser && (
-      currentUser.role_id === 1 ||
-      currentUser.role_name === 'Суперадминистратор' ||
-      currentUser.role_name === 'Admin' ||
-      currentUser.role_name === 'Администратор' ||
-      currentUser.username === 'admin' ||
-      currentUser.permissions?.is_admin
-    )
-  );
+  // Права — из флагов роли, как на сервере, а не из номера роли и логина.
+  const isAdmin = Boolean(currentUser?.permissions?.is_admin);
+  // Публиковать сервер разрешает и сотруднику с правом can_broadcast — кнопка
+  // «Создать» у него должна быть.
+  const canCreate = canBroadcast(currentUser);
+  const canSeeAudit = (ann) => Boolean(ann) && (isAdmin || ann.author_id === currentUser?.id);
 
   const loadAnnouncements = async () => {
     setLoading(true);
@@ -55,21 +57,30 @@ export default function AnnouncementsView({
   };
 
   const selectAnnouncement = async (ann) => {
+    // Реестр прежнего объявления оставался на экране, пока не придёт новый, —
+    // а при отказе сервера не уходил вовсе: под одним приказом показывались
+    // отметки о другом. Ответы, пришедшие не по порядку, отбрасываются.
+    if (selectedIdRef.current !== ann.id) setAuditData(null);
+    selectedIdRef.current = ann.id;
     setSelectedAnn(ann);
-    if (isAdmin || ann.author_id === currentUser?.id) {
-      try {
-        const res = await fetch(`${serverUrl}/api/announcements/${ann.id}/audit`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const audit = await res.json();
-          setAuditData(audit);
-        }
-      } catch (err) {
-        console.error('Audit fetch error:', err);
-      }
-    } else {
+    const requestId = auditRequests.current.next();
+    if (!canSeeAudit(ann)) {
       setAuditData(null);
+      return;
+    }
+    try {
+      const res = await fetch(`${serverUrl}/api/announcements/${ann.id}/audit`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!auditRequests.current.isCurrent(requestId)) return;
+      if (!res.ok) {
+        setAuditData(null);
+        return;
+      }
+      const audit = await res.json();
+      if (auditRequests.current.isCurrent(requestId)) setAuditData(audit);
+    } catch (err) {
+      console.error('Audit fetch error:', err);
     }
   };
 
@@ -80,7 +91,9 @@ export default function AnnouncementsView({
   // Acknowledgement is a compliance record: the employee must never be left
   // believing they confirmed something the server rejected.
   const handleAcknowledge = async (annId) => {
+    if (ackBusyId) return;
     setActionError('');
+    setAckBusyId(annId);
     try {
       const res = await fetch(`${serverUrl}/api/announcements/${annId}/acknowledge`, {
         method: 'POST',
@@ -96,13 +109,19 @@ export default function AnnouncementsView({
       onAcknowledged?.();
     } catch {
       setActionError('Нет связи с сервером — ознакомление не зафиксировано.');
+    } finally {
+      setAckBusyId(null);
     }
   };
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newContent.trim()) return;
+    // Двойной щелчок публиковал одно распоряжение дважды — и каждому
+    // сотруднику приходилось подтверждать оба.
+    if (!newTitle.trim() || !newContent.trim() || creating) return;
 
+    setCreating(true);
+    setCreateError('');
     try {
       const res = await fetch(`${serverUrl}/api/announcements`, {
         method: 'POST',
@@ -119,7 +138,8 @@ export default function AnnouncementsView({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setActionError(data.error || 'Не удалось опубликовать объявление');
+        // Ошибку показываем в самом окне: баннер страницы оно закрывает.
+        setCreateError(data.error || 'Не удалось опубликовать объявление');
         return;
       }
       setShowCreateModal(false);
@@ -127,8 +147,16 @@ export default function AnnouncementsView({
       setNewContent('');
       await loadAnnouncements();
     } catch {
-      setActionError('Нет связи с сервером — объявление не опубликовано.');
+      setCreateError('Нет связи с сервером — объявление не опубликовано.');
+    } finally {
+      setCreating(false);
     }
+  };
+
+  const closeCreateModal = () => {
+    if (creating) return;
+    setShowCreateModal(false);
+    setCreateError('');
   };
 
   return (
@@ -152,7 +180,7 @@ export default function AnnouncementsView({
             <span className="count-badge">{announcements.length}</span>
           </div>
 
-          {isAdmin && (
+          {canCreate && (
             <button
               className="btn btn-primary"
               style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
@@ -268,14 +296,15 @@ export default function AnnouncementsView({
                   className="btn btn-primary"
                   style={{ padding: '8px 18px', fontSize: '13px', whiteSpace: 'nowrap', fontWeight: 600 }}
                   onClick={() => handleAcknowledge(selectedAnn.id)}
+                  disabled={Boolean(ackBusyId)}
                 >
-                  ✓ Я ознакомлен(а)
+                  {ackBusyId === selectedAnn.id ? 'Фиксируем…' : '✓ Я ознакомлен(а)'}
                 </button>
               )}
             </div>
 
             {/* Audit statistics table (for Administrator only) */}
-            {isAdmin && auditData && (
+            {canSeeAudit(selectedAnn) && auditData?.stats && (
               <div style={{
                 backgroundColor: '#f8fafc',
                 border: '1px solid #cbd5e1',
@@ -303,7 +332,7 @@ export default function AnnouncementsView({
                       </tr>
                     </thead>
                     <tbody>
-                      {auditData.recipients.map((r) => (
+                      {(Array.isArray(auditData.recipients) ? auditData.recipients : []).map((r) => (
                         <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                           <td style={{ padding: '7px 12px', fontWeight: 600, color: '#1e293b' }}>{r.full_name}</td>
                           <td style={{ padding: '7px 12px', color: '#64748b' }}>{r.department_name || '—'}</td>
@@ -341,14 +370,19 @@ export default function AnnouncementsView({
       </div>
 
       {/* Create Announcement Modal (Admin Only) */}
-      {showCreateModal && isAdmin && (
-        <div className="modal-backdrop" onClick={() => setShowCreateModal(false)}>
+      {showCreateModal && canCreate && (
+        <div className="modal-backdrop" onClick={closeCreateModal}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
             <div className="modal-header">
               <span style={{ fontWeight: 700, fontSize: '15px' }}>Создать служебное оповещение</span>
-              <button className="btn-close-modal" onClick={() => setShowCreateModal(false)}>✕</button>
+              <button className="btn-close-modal" onClick={closeCreateModal} disabled={creating}>✕</button>
             </div>
             <form onSubmit={handleCreate} style={{ padding: '20px' }}>
+              {createError && (
+                <div className="app-dialog-error" role="alert" style={{ marginBottom: '14px' }}>
+                  {createError}
+                </div>
+              )}
               <div className="form-group" style={{ marginBottom: '14px' }}>
                 <label className="form-label">Тема / Название приказа *:</label>
                 <input
@@ -387,11 +421,11 @@ export default function AnnouncementsView({
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowCreateModal(false)}>
+                <button type="button" className="btn btn-secondary" onClick={closeCreateModal} disabled={creating}>
                   Отмена
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={!newTitle.trim() || !newContent.trim()}>
-                  Опубликовать
+                <button type="submit" className="btn btn-primary" disabled={creating || !newTitle.trim() || !newContent.trim()}>
+                  {creating ? 'Публикуем…' : 'Опубликовать'}
                 </button>
               </div>
             </form>

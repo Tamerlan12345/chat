@@ -1,4 +1,5 @@
 ﻿import React from 'react';
+import { parseFullName } from '../lib/person-name.mjs';
 
 export default function GreetingView({
   currentUser,
@@ -9,7 +10,12 @@ export default function GreetingView({
 }) {
   // No invented fallbacks: these used to name a specific employee, so a user
   // whose profile was incomplete was greeted as somebody else.
-  const firstName = currentUser?.full_name?.split(' ')?.[0] || '';
+  //
+  // ФИО хранится как «Фамилия Имя Отчество»: первое слово — фамилия, и
+  // сотрудника приветствовали «Добрый день, Иванов!». Запись из одного слова
+  // (например, «Администратор») остаётся как есть.
+  const parsedName = parseFullName(currentUser?.full_name);
+  const firstName = parsedName.firstName || parsedName.lastName || '';
   const username = currentUser?.username || '';
   const uin = currentUser?.uin || '';
 

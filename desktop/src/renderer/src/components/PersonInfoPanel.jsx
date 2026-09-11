@@ -1,4 +1,5 @@
 import React from 'react';
+import { canOpenAdminConsole } from '../lib/admin-access.mjs';
 
 export default function PersonInfoPanel({
   user,
@@ -10,17 +11,14 @@ export default function PersonInfoPanel({
   if (!user) return null;
 
   const isSelf = currentUser && (user.id === currentUser.id || user.user_id === currentUser.id);
-  const isAdmin = currentUser && (
-    currentUser.role_id === 1 ||
-    currentUser.role_name === 'Суперадминистратор' ||
-    currentUser.role_name === 'Admin' ||
-    currentUser.role_name === 'Администратор' ||
-    currentUser.permissions?.is_admin ||
-    currentUser.username === 'admin'
-  );
+  // Консоль открывается по флагам роли — так же решает сервер. Номер роли и
+  // логин «admin» ничего не гарантируют.
+  const isAdmin = canOpenAdminConsole(currentUser);
 
   const displayName = user.full_name || user.name || user.username;
-  const email = user.email || `${user.username || 'user'}@cic.kz`;
+  // Адрес раньше досочинялся из логина: по нему писали, и письмо уходило
+  // в никуда или постороннему. Нет адреса — нет строки.
+  const email = user.email || '';
   const department = user.department_name || user.department || 'Подразделение не указано';
 
   return (
@@ -81,14 +79,16 @@ export default function PersonInfoPanel({
           </div>
 
           {/* Email */}
-          <div className="person-info-item">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round">
-              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
-            </svg>
-            <a href={`mailto:${email}`} className="person-info-email-link">
-              {email}
-            </a>
-          </div>
+          {email && (
+            <div className="person-info-item">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <a href={`mailto:${email}`} className="person-info-email-link">
+                {email}
+              </a>
+            </div>
+          )}
 
           {/* Extension / Phone if available */}
           {user.extension && (
@@ -116,21 +116,27 @@ export default function PersonInfoPanel({
             </span>
           </div>
 
-          {/* Role Badge */}
-          <div className="person-info-item" style={{ marginTop: '4px' }}>
-            <span style={{
-              fontSize: '11px',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              background: user.role_name === 'Суперадминистратор' || user.role_id === 1 ? '#eff6ff' : '#f1f5f9',
-              color: user.role_name === 'Суперадминистратор' || user.role_id === 1 ? '#1d4ed8' : '#475569',
-              fontWeight: 600,
-              border: '1px solid',
-              borderColor: user.role_name === 'Суперадминистратор' || user.role_id === 1 ? '#bfdbfe' : '#e2e8f0'
-            }}>
-              Роль: {user.role_name || (user.role_id === 1 ? 'Администратор' : 'Сотрудник')}
-            </span>
-          </div>
+          {/* Role Badge — по номеру роли её не угадать: нумерация сдвигается
+              миграциями. Нет названия роли — не показываем ничего. */}
+          {user.role_name && (() => {
+            const adminRole = Boolean(user.permissions?.is_admin) || user.role_name === 'Суперадминистратор';
+            return (
+              <div className="person-info-item" style={{ marginTop: '4px' }}>
+                <span style={{
+                  fontSize: '11px',
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  background: adminRole ? '#eff6ff' : '#f1f5f9',
+                  color: adminRole ? '#1d4ed8' : '#475569',
+                  fontWeight: 600,
+                  border: '1px solid',
+                  borderColor: adminRole ? '#bfdbfe' : '#e2e8f0'
+                }}>
+                  Роль: {user.role_name}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Role-Aware Self Contour vs Admin Controls (No duplicate Call/Video/Screen buttons) */}

@@ -21,6 +21,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
   const [phone, setPhone] = useState(currentUser?.phone || '');
   const [jobTitle, setJobTitle] = useState(currentUser?.job_title || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatar_url || '');
+  const [photoError, setPhotoError] = useState('');
 
   const [showPwForm, setShowPwForm] = useState(false);
   const [pwOld, setPwOld] = useState('');
@@ -38,19 +39,37 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
     { id: 'work', icon: '💼', label: 'Место работы' }
   ];
 
-  const handleSave = () => {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (saving) return;
     // Отчество собиралось в одну строку с именем и фамилией — точнее, не
     // собиралось вовсе: поле было, его заполняли, и при сохранении оно
     // пропадало.
     const updatedFullName = formatFullName({ lastName, firstName, patronymic });
-    if (onUpdateProfile) {
-      onUpdateProfile({
+    if (!onUpdateProfile) {
+      onClose();
+      return;
+    }
+    // Окно закрывалось до ответа сервера: при отказе введённое пропадало вместе
+    // с окном. Ждём результат; явный false означает отказ (сообщение о нём
+    // показывает вызывающая сторона) — окно остаётся открытым.
+    setSaving(true);
+    let result;
+    try {
+      result = await onUpdateProfile({
         full_name: updatedFullName,
         email,
         phone,
         job_title: jobTitle,
         avatar_url: avatarUrl
       });
+    } catch {
+      result = false;
+    }
+    if (result === false) {
+      setSaving(false);
+      return;
     }
     onClose();
   };
@@ -59,15 +78,33 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
+    // Снимок с телефона весит мегабайты, а фотография уходит каждому
+    // сотруднику в каждом ответе справочника. Уменьшаем до размера аватара
+    // здесь: сервер больше крупные изображения не принимает.
     input.onchange = (e) => {
       const file = e.target.files?.[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-          setAvatarUrl(evt.target.result);
-        };
-        reader.readAsDataURL(file);
-      }
+      if (!file) return;
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const MAX_SIDE = 256;
+        const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(objectUrl);
+        setPhotoError('');
+        setAvatarUrl(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        setPhotoError('Файл не удалось открыть как изображение — выберите JPEG, PNG или WebP');
+      };
+      img.src = objectUrl;
     };
     input.click();
   };
@@ -228,9 +265,14 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                     <button type="button" className="profile-link-btn" onClick={handleUploadPhoto}>
                       Загрузить фото
                     </button>
-                    <button type="button" className="profile-link-btn" onClick={() => setAvatarUrl('')}>
+                    <button type="button" className="profile-link-btn" onClick={() => { setAvatarUrl(''); setPhotoError(''); }}>
                       Очистить фото
                     </button>
+                    {photoError && (
+                      <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', lineHeight: 1.4 }}>
+                        {photoError}
+                      </div>
+                    )}
                     <button type="button" className="profile-link-btn" onClick={() => { setShowPwForm((v) => !v); setPwError(''); setPwSuccess(''); }}>
                       Изменить пароль
                     </button>
@@ -305,8 +347,8 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
 
         {/* Modal Footer */}
         <div className="profile-modal-footer">
-          <button className="profile-ok-btn" onClick={handleSave}>
-            <span style={{ marginRight: '6px' }}>✔</span> Ок
+          <button className="profile-ok-btn" onClick={handleSave} disabled={saving}>
+            <span style={{ marginRight: '6px' }}>✔</span> {saving ? 'Сохранение…' : 'Ок'}
           </button>
         </div>
       </div>
