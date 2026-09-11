@@ -1,4 +1,7 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
 const config = require('../../config');
 const PgDriver = require('./driver-pg');
 const SqliteDriver = require('./driver-sqlite');
@@ -42,10 +45,29 @@ async function initIdentity(legacyDb = null) {
   const existing = await driver.get('SELECT COUNT(*) AS n FROM users');
   const isEmpty = Number(existing?.n || 0) === 0;
 
-  if (isEmpty && legacyDb && legacyHasUsers(legacyDb)) {
-    await importFromLegacy(driver, legacyDb);
-  } else if (isEmpty) {
-    await seedFreshInstall(driver);
+  if (isEmpty) {
+    const source = findImportSource({ dialect: driver.dialect, legacyDb });
+    if (source) {
+      try {
+        await importFromLegacy(driver, source.db, source.label);
+      } finally {
+        source.close();
+      }
+    } else if (chatHasHistory(legacyDb) && process.env.IDENTITY_ALLOW_EMPTY_BOOTSTRAP !== 'true') {
+      // Хранилище пустое, а переписка уже есть — значит учётные записи где-то
+      // потерялись по дороге (неверный DATABASE_URL, пропавший файл). Создать
+      // здесь «чистую установку» значило бы молча лишить компанию всех
+      // сотрудников и завести администратора с общеизвестным паролем поверх
+      // рабочих данных. Лучше не подняться и объяснить почему.
+      throw new Error(
+        'Хранилище учётных записей пустое, а переписка в базе уже есть — это не новая установка. ' +
+          'Сервер не будет создавать администратора с паролем по умолчанию поверх рабочих данных. ' +
+          'Проверьте DATABASE_URL: он должен указывать на базу с сотрудниками. ' +
+          'Если учётные записи действительно нужно завести заново, задайте IDENTITY_ALLOW_EMPTY_BOOTSTRAP=true.'
+      );
+    } else {
+      await seedFreshInstall(driver);
+    }
   }
 
   // Строго до ensureBaselineRows. Перенос вставляет строки с готовыми
@@ -80,6 +102,71 @@ function legacyHasUsers(legacyDb) {
   }
 }
 
+/**
+ * Откуда брать учётные записи, если хранилище пустое.
+ *
+ * Порядок не случаен. Сервер мог уже поработать без DATABASE_URL: тогда
+ * сотрудники перенесены в запасной data/identity.db, а из базы переписки
+ * удалены. Если потом задать DATABASE_URL и искать их только в базе
+ * переписки, их там не окажется — и PostgreSQL получил бы чистую установку
+ * вместо живых данных. Поэтому для PostgreSQL первым проверяется identity.db,
+ * затем прежняя общая база, последним — снимок, сделанный перед разделением.
+ *
+ * @returns {{ db: object, label: string, close: () => void } | null}
+ */
+function findImportSource({ dialect, legacyDb = null }) {
+  const candidates = [];
+  if (dialect === 'postgres') {
+    candidates.push({ label: 'запасное хранилище data/identity.db', path: config.IDENTITY_DB_PATH });
+  }
+  if (legacyDb) {
+    candidates.push({ label: 'прежняя общая база data/mychat.db', db: legacyDb });
+  }
+  candidates.push({
+    label: 'снимок data/pre-identity-split.db',
+    path: path.join(config.DATA_DIR, 'pre-identity-split.db')
+  });
+
+  for (const candidate of candidates) {
+    let db = candidate.db || null;
+    let opened = false;
+    if (!db) {
+      if (!fs.existsSync(candidate.path)) continue;
+      try {
+        db = new DatabaseSync(candidate.path);
+        opened = true;
+      } catch {
+        continue;
+      }
+    }
+
+    const close = () => {
+      if (!opened) return;
+      try {
+        db.close();
+      } catch {
+        /* уже закрыта */
+      }
+    };
+
+    if (legacyHasUsers(db)) return { db, label: candidate.label, close };
+    close();
+  }
+  return null;
+}
+
+// Есть ли в базе переписки хоть одно сообщение — признак того, что установка
+// не новая.
+function chatHasHistory(chatDb) {
+  if (!chatDb) return false;
+  try {
+    const row = chatDb.prepare('SELECT COUNT(*) AS n FROM messages').get();
+    return Number(row?.n || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ── Перенос из прежней общей базы ──────────────────────────────────────────
 // Выполняется один раз, при первом запуске с настроенным PostgreSQL. Порядок
 // таблиц важен: подразделения ссылаются сами на себя, пользователи — на роли и
@@ -92,7 +179,11 @@ const LEGACY_COLUMNS = {
     'id', 'username', 'password_hash', 'salt', 'full_name', 'email', 'phone', 'job_title',
     'department_id', 'role_id', 'admin_scope_dept_id', 'avatar_url', 'status', 'custom_status',
     'uin', 'extension', 'company', 'bound_ip', 'last_seen', 'is_active', 'must_change_password',
-    'approval_status', 'registered_at', 'created_at'
+    'approval_status', 'registered_at', 'created_at',
+    // Колонки защиты есть только в identity.db. В прежней общей базе их нет —
+    // legacyHasColumn их отсеет, и сработают значения по умолчанию.
+    'token_version', 'password_changed_at', 'failed_login_count', 'locked_until',
+    'last_login_at', 'last_login_ip'
   ],
   pending_devices: [
     'id', 'device_id', 'device_name', 'ip_address', 'platform', 'client_version', 'status',
@@ -113,8 +204,8 @@ const IMPORT_ORDER = [
   'server_settings'
 ];
 
-async function importFromLegacy(target, legacyDb) {
-  console.log('[Identity] Найдены учётные записи в прежней базе — переношу в новое хранилище…');
+async function importFromLegacy(target, legacyDb, label = 'прежняя база') {
+  console.log(`[Identity] Найдены учётные записи (${label}) — переношу в новое хранилище…`);
   const counts = {};
 
   await target.tx(async (tx) => {
@@ -444,6 +535,7 @@ async function applyEmergencyAdminReset(target) {
 module.exports = {
   identity,
   isIdentityReady,
+  findImportSource,
   initIdentity,
   closeIdentity,
   ROLE_SUPERADMIN,
