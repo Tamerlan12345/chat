@@ -11,7 +11,7 @@
     "dist": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-builder --win portable",
     "dist:nsis": "npm run build && electron-builder --win nsis",
-    "test": "node --test --test-concurrency=1 test/remote-input.test.js test/rd-file-name.test.js"
+    "test": "node --test --test-concurrency=1 test/remote-input.test.js test/rd-file-name.test.js test/audio-relay.test.mjs test/remote-pointer.test.mjs"
   },
   "keywords": [
     "mychat",

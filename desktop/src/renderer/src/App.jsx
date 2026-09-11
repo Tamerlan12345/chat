@@ -655,6 +655,10 @@ export default function App() {
     const wsUrl = `${protocol}//${cleanHost}/ws`;
 
     const ws = new WebSocket(wsUrl);
+    // По умолчанию двоичные сообщения приходят объектами Blob, а прочитать Blob
+    // можно только асинхронно. Для звука это означало, что кадры разбирались
+    // вперемешку — с задержкой и не по порядку. ArrayBuffer разбирается сразу.
+    ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
     ws.onopen = () => {

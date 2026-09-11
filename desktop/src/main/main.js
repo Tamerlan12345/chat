@@ -84,6 +84,26 @@ function createMainWindow() {
     { useSystemPicker: false }
   );
 
+  // Разрешения запрашивает страница, а решает главный процесс. Без явного
+  // обработчика поведение зависит от версии Electron, и звонок мог падать с
+  // невнятным отказом ещё до того, как система вообще спросит про микрофон.
+  //
+  // Список закрытый: разрешается ровно то, чем пользуется приложение. Всё
+  // остальное — местоположение, уведомления браузера, датчики, midi — молча
+  // отклоняется. Интерфейс приходит с сервера, то есть это удалённый код, и
+  // раздавать ему разрешения «на всякий случай» нельзя.
+  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-read', 'clipboard-sanitized-write']);
+
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ALLOWED_PERMISSIONS.has(permission);
+    if (!allowed) log(`permission denied: ${permission}`);
+    callback(allowed);
+  });
+
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) =>
+    ALLOWED_PERMISSIONS.has(permission)
+  );
+
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     log(`did-fail-load: code ${errorCode}, desc: ${errorDescription}, url: ${validatedURL}`);
   });

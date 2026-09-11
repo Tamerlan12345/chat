@@ -112,3 +112,49 @@ test('неизвестный тип события ничего не отпра�
   ri.handle('строка');
   assert.strictEqual(lines.length, 0);
 });
+
+// ── Перевод строки внутри команды ───────────────────────────────────────────
+// Команда уходит в PowerShell строкой в stdin, и каждая строка — отдельная
+// команда. Перевод строки в тексте разрывает её на части: строка остаётся
+// открытой до следующей кавычки, и разбор идёт совсем не так, как задумано.
+// Проверяется, что ни один управляющий символ до командной строки не доходит.
+
+test('перевод строки не разрывает команду на две', () => {
+  const { ri, lines } = capture();
+  ri.handle({ type: 'text', text: 'привет\nStart-Process calc\n#' });
+
+  assert.strictEqual(lines.length, 1, 'должна уйти ровно одна команда');
+  assert.ok(!lines[0].includes('\n'), 'перевода строки в команде быть не должно');
+  assert.ok(!lines[0].includes('\r'));
+});
+
+test('управляющие символы вычищаются из текста', () => {
+  const { ri, lines } = capture();
+  ri.handle({ type: 'text', text: 'а\u0000б\u0007в\u001bг' });
+
+  assert.ok(!/[\u0000-\u001f]/.test(lines[0]), 'ни одного управляющего символа');
+  assert.ok(lines[0].includes('абвг'), 'печатные символы сохраняются');
+});
+
+test('текст из одних управляющих символов не отправляется вовсе', () => {
+  const { ri, lines } = capture();
+  ri.handle({ type: 'text', text: '\n\r\t\u0000' });
+  assert.strictEqual(lines.length, 0);
+});
+
+test('перевод строки как отдельная клавиша не проходит', () => {
+  // event.key длиной в один символ — это может быть и \n.
+  const { ri, lines } = capture();
+  ri.handle({ type: 'key', key: '\n' });
+  ri.handle({ type: 'key', key: '\r' });
+  assert.strictEqual(lines.length, 0, 'для перевода строки есть Enter из белого списка');
+});
+
+test('кавычка остаётся экранированной после вычистки управляющих символов', () => {
+  const { ri, lines } = capture();
+  ri.handle({ type: 'text', text: "a'\nb" });
+  // Две кавычки подряд — это экранированная кавычка внутри строки PowerShell.
+  assert.ok(lines[0].includes("a''b"), lines[0]);
+  const quotes = (lines[0].match(/'/g) || []).length;
+  assert.strictEqual(quotes % 2, 0, 'количество кавычек обязано быть чётным');
+});

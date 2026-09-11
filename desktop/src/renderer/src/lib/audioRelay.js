@@ -1,3 +1,12 @@
+import {
+  packFrame,
+  unpackFrame,
+  isSilent,
+  JitterScheduler,
+  SAMPLE_RATE,
+  FRAME_SAMPLES
+} from './audio-frames.mjs';
+
 // Передача голоса через сервер по уже открытому WebSocket.
 //
 // Почему не WebRTC напрямую: в корпоративных сетях прямое соединение между
@@ -7,44 +16,71 @@
 // соединению, что и переписка, через 443 порт: если работает чат — работает и
 // звонок, настраивать в сети нечего.
 //
-// Плата: трафик проходит через сервер. При 16 кГц моно это около 256 кбит/с в
-// каждую сторону — для десятка одновременных разговоров несущественно.
+// Захват вынесен в AudioWorklet. Прежний ScriptProcessorNode работает на том же
+// потоке, что и интерфейс: каждая перерисовка React — а она случается на каждое
+// входящее сообщение — крала у него время, и звук рвался. Worklet живёт на
+// отдельном звуковом потоке и на перерисовки не смотрит.
+//
+// Паузы не передаются вовсе (см. isSilent): разговор примерно наполовину
+// состоит из молчания, и это самое дешёвое сжатие — без кодека и без потери
+// качества.
 
-const SAMPLE_RATE = 16000; // достаточно для речи; 8 кГц звучит телефонно
-const FRAME_SAMPLES = 1024;
-
-// Кадр: 4 байта — идентификатор собеседника, дальше 16-битные отсчёты.
-function packFrame(peerId, samples) {
-  const buffer = new ArrayBuffer(4 + samples.length * 2);
-  const view = new DataView(buffer);
-  view.setUint32(0, peerId, false);
-  for (let i = 0; i < samples.length; i++) {
-    view.setInt16(4 + i * 2, samples[i], false);
+// Код обработчика отдаётся через Blob, а не отдельным файлом: интерфейс
+// приходит с сервера собранным, и лишний путь пришлось бы отдельно раздавать и
+// отдельно чинить при смене адреса.
+const WORKLET_SOURCE = `
+class CaptureProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.frameSize = options.processorOptions.frameSize;
+    this.buffer = new Float32Array(this.frameSize);
+    this.filled = 0;
   }
-  return buffer;
-}
 
-function unpackFrame(buffer) {
-  const view = new DataView(buffer);
-  const senderId = view.getUint32(0, false);
-  const count = (buffer.byteLength - 4) / 2;
-  const samples = new Float32Array(count);
-  for (let i = 0; i < count; i++) {
-    samples[i] = view.getInt16(4 + i * 2, false) / 32768;
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel) return true;
+
+    for (let i = 0; i < channel.length; i++) {
+      this.buffer[this.filled++] = channel[i];
+      if (this.filled === this.frameSize) {
+        // Копия обязательна: буфер тут же начнёт заполняться заново.
+        this.port.postMessage(this.buffer.slice(0));
+        this.filled = 0;
+      }
+    }
+    return true;
   }
-  return { senderId, samples };
 }
+registerProcessor('capture-processor', CaptureProcessor);
+`;
 
 export class AudioRelay {
-  constructor({ ws, peerId, onLevel }) {
+  constructor({ ws, peerId, onLevel, onStats }) {
     this.ws = ws;
     this.peerId = peerId;
     this.onLevel = onLevel;
+    this.onStats = onStats;
     this.muted = false;
-    this.playAt = 0;
+    this.scheduler = new JitterScheduler();
+    this.stats = { sent: 0, received: 0, skippedSilent: 0 };
   }
 
   async start() {
+    // Отдельная проверка с внятным объяснением: без неё сотрудник видит
+    // «Cannot read properties of undefined» и не может ничего с этим сделать.
+    // mediaDevices нет, когда страница открыта по незащищённому протоколу —
+    // Chromium прячет её на любом origin, кроме localhost.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const secure = window.isSecureContext;
+      throw new Error(
+        secure
+          ? 'Микрофон недоступен в этом окне'
+          : 'Звонки работают только по защищённому соединению (https). ' +
+            'Сейчас приложение подключено по http — обратитесь к администратору.'
+      );
+    }
+
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -54,56 +90,92 @@ export class AudioRelay {
       }
     });
 
-    this.captureCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    this.playbackCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    this.playAt = this.playbackCtx.currentTime;
+    // Один контекст на приём и передачу: два независимых контекста мешали
+    // подавлению эха — браузер отменяет только тот звук, который сам же и
+    // вывел, и о чужом контексте он ничего не знает.
+    this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
+    this.scheduler.reset();
 
-    const source = this.captureCtx.createMediaStreamSource(this.stream);
-    // ScriptProcessor объявлен устаревшим, но в Electron работает везде и не
-    // требует отдельного файла обработчика, который пришлось бы отдавать с
-    // сервера. Для голоса нагрузки он не создаёт.
-    this.processor = this.captureCtx.createScriptProcessor(FRAME_SAMPLES, 1, 1);
+    await this.startCapture();
+    this.attachReceiver();
+  }
 
-    this.processor.onaudioprocess = (e) => {
-      if (this.muted || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      const input = e.inputBuffer.getChannelData(0);
+  async startCapture() {
+    const source = this.ctx.createMediaStreamSource(this.stream);
 
-      const samples = new Int16Array(input.length);
-      let peak = 0;
-      for (let i = 0; i < input.length; i++) {
-        const clamped = Math.max(-1, Math.min(1, input[i]));
-        samples[i] = clamped * 32767;
-        const abs = Math.abs(clamped);
-        if (abs > peak) peak = abs;
-      }
-      this.onLevel?.(peak);
-      this.ws.send(packFrame(this.peerId, samples));
-    };
+    try {
+      const blob = new Blob([WORKLET_SOURCE], { type: 'application/javascript' });
+      this.workletUrl = URL.createObjectURL(blob);
+      await this.ctx.audioWorklet.addModule(this.workletUrl);
 
-    source.connect(this.processor);
-    // Без подключения к выходу обработчик в Chromium не вызывается; громкость
-    // выкручена в ноль, иначе человек слышал бы сам себя.
-    const silence = this.captureCtx.createGain();
-    silence.gain.value = 0;
-    this.processor.connect(silence);
-    silence.connect(this.captureCtx.destination);
+      this.capture = new AudioWorkletNode(this.ctx, 'capture-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        processorOptions: { frameSize: FRAME_SAMPLES }
+      });
+      this.capture.port.onmessage = (event) => this.sendSamples(event.data);
+      source.connect(this.capture);
+      this.captureKind = 'worklet';
+    } catch (err) {
+      // Запасной путь на случай, если Worklet недоступен. Хуже по качеству, но
+      // разговор состоится — а это важнее.
+      console.warn('[Звонок] AudioWorklet недоступен, перехожу на ScriptProcessor:', err?.message);
+      this.capture = this.ctx.createScriptProcessor(1024, 1, 1);
+      this.capture.onaudioprocess = (event) => this.sendSamples(event.inputBuffer.getChannelData(0));
+      source.connect(this.capture);
+      // Без подключения к выходу обработчик в Chromium не вызывается; громкость
+      // в ноль, иначе человек слышит сам себя.
+      const silence = this.ctx.createGain();
+      silence.gain.value = 0;
+      this.capture.connect(silence);
+      silence.connect(this.ctx.destination);
+      this.captureKind = 'script-processor';
+    }
+  }
 
-    this.onMessage = async (event) => {
-      if (!(event.data instanceof Blob) && !(event.data instanceof ArrayBuffer)) return;
-      const buffer = event.data instanceof Blob ? await event.data.arrayBuffer() : event.data;
-      if (buffer.byteLength < 5) return;
-      const { senderId, samples } = unpackFrame(buffer);
-      if (senderId !== this.peerId) return;
-      this.enqueue(samples);
+  sendSamples(input) {
+    if (this.muted || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    if (isSilent(input)) {
+      this.stats.skippedSilent++;
+      this.onLevel?.(0);
+      return;
+    }
+
+    const samples = new Int16Array(input.length);
+    let peak = 0;
+    for (let i = 0; i < input.length; i++) {
+      const clamped = Math.max(-1, Math.min(1, input[i]));
+      samples[i] = clamped * 32767;
+      const abs = Math.abs(clamped);
+      if (abs > peak) peak = abs;
+    }
+
+    this.onLevel?.(peak);
+    this.ws.send(packFrame(this.peerId, samples));
+    this.stats.sent++;
+  }
+
+  attachReceiver() {
+    this.onMessage = (event) => {
+      // Двоичный режим сокета задаётся при его создании (binaryType =
+      // 'arraybuffer'). Blob пришлось бы разбирать асинхронно, а значит кадры
+      // могли бы разойтись местами — речь звучала бы рвано и не по порядку.
+      if (!(event.data instanceof ArrayBuffer)) return;
+
+      const frame = unpackFrame(event.data);
+      if (!frame || frame.senderId !== this.peerId) return;
+
+      this.stats.received++;
+      this.enqueue(frame.samples);
+      this.onStats?.(this.stats);
     };
     this.ws.addEventListener('message', this.onMessage);
   }
 
-  // Кадры ставятся в очередь по времени, а не проигрываются сразу: сеть
-  // доставляет их неравномерно, и без небольшого запаса речь будет щёлкать.
   enqueue(samples) {
-    const ctx = this.playbackCtx;
-    if (!ctx) return;
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'closed') return;
 
     const buffer = ctx.createBuffer(1, samples.length, SAMPLE_RATE);
     buffer.copyToChannel(samples, 0);
@@ -111,27 +183,27 @@ export class AudioRelay {
     const node = ctx.createBufferSource();
     node.buffer = buffer;
     node.connect(ctx.destination);
-
-    const minStart = ctx.currentTime + 0.08;
-    if (this.playAt < minStart) this.playAt = minStart;
-    node.start(this.playAt);
-    this.playAt += buffer.duration;
+    node.start(this.scheduler.schedule(ctx.currentTime, buffer.duration));
   }
 
   setMuted(value) {
     this.muted = value;
-    this.stream?.getAudioTracks()?.forEach((t) => { t.enabled = !value; });
+    this.stream?.getAudioTracks()?.forEach((track) => { track.enabled = !value; });
   }
 
   stop() {
     if (this.onMessage) this.ws?.removeEventListener('message', this.onMessage);
-    this.processor?.disconnect();
-    this.stream?.getTracks()?.forEach((t) => t.stop());
-    this.captureCtx?.close().catch(() => {});
-    this.playbackCtx?.close().catch(() => {});
-    this.processor = null;
+    if (this.capture) {
+      try { this.capture.port ? (this.capture.port.onmessage = null) : (this.capture.onaudioprocess = null); } catch {}
+      try { this.capture.disconnect(); } catch {}
+    }
+    this.stream?.getTracks()?.forEach((track) => track.stop());
+    this.ctx?.close().catch(() => {});
+    if (this.workletUrl) URL.revokeObjectURL(this.workletUrl);
+
+    this.capture = null;
     this.stream = null;
-    this.captureCtx = null;
-    this.playbackCtx = null;
+    this.ctx = null;
+    this.workletUrl = null;
   }
 }

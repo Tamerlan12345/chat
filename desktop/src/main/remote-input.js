@@ -20,6 +20,29 @@
 
 const { spawn } = require('node:child_process');
 
+// Управляющие символы (C0, DEL, C1) и разделители строк Unicode. Ни одному из
+// них нечего делать в команде: PowerShell читает stdin построчно, и всё, что
+// разрывает строку, разрывает и команду.
+//
+// Проверка по коду символа, а не регулярным выражением: набор границ здесь
+// важнее краткости, и числами он читается однозначно.
+function isControlChar(code) {
+  return (
+    code < 0x20 ||                    // C0: перевод строки, табуляция, возврат каретки
+    (code >= 0x7f && code <= 0x9f) || // DEL и C1
+    code === 0x2028 ||                // разделитель строк Unicode
+    code === 0x2029                   // разделитель абзацев Unicode
+  );
+}
+
+function stripControl(value) {
+  let out = '';
+  for (const ch of String(value)) {
+    if (!isControlChar(ch.codePointAt(0))) out += ch;
+  }
+  return out;
+}
+
 // Определения P/Invoke загружаются один раз при старте процесса.
 const BOOTSTRAP = `
 $ErrorActionPreference = 'Stop'
@@ -147,9 +170,14 @@ class RemoteInput {
       }
 
       case 'text': {
-        // SendKeys понимает служебные символы, поэтому они экранируются.
-        const text = String(event.text || '').slice(0, 500);
+        // Управляющие символы вычищаются ПЕРВЫМИ. Команда уходит в PowerShell
+        // строкой в stdin, и каждая строка там — отдельная команда: перевод
+        // строки внутри текста разрывает её надвое, а дальше разбор идёт
+        // совсем не так, как задумано. Для перевода строки есть отдельная
+        // клавиша Enter, так что печатать его текстом незачем.
+        const text = stripControl(String(event.text || '')).slice(0, 500);
         if (!text) return;
+        // SendKeys понимает служебные символы, поэтому они экранируются.
         const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}').replace(/'/g, "''");
         this.send(`[System.Windows.Forms.SendKeys]::SendWait('${escaped}')`);
         return;
@@ -166,8 +194,11 @@ class RemoteInput {
         };
         let token = KEYS[event.key];
         if (!token) {
-          // Обычный символ — только если это ровно один печатный знак.
+          // Обычный символ — только если это ровно один ПЕЧАТНЫЙ знак.
+          // Проверки длины мало: перевод строки и табуляция тоже занимают один
+          // символ, а им место в белом списке выше, а не в командной строке.
           if (typeof event.key !== 'string' || event.key.length !== 1) return;
+          if (stripControl(event.key) !== event.key) return;
           token = event.key.replace(/[+^%~(){}[\]]/g, '{$&}').replace(/'/g, "''");
         }
         let prefix = '';

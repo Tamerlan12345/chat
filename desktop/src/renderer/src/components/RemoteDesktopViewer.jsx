@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { pointToFrame, MoveThrottle } from '../lib/remote-pointer.mjs';
 
 export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, onEndSession }) {
   const [scaleMode, setScaleMode] = useState('fit');
@@ -19,6 +20,14 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   const videoRef = useRef(null);
   const stageRef = useRef(null);
   const peerConnectionRef = useRef(null);
+  const moveThrottleRef = useRef(new MoveThrottle({ intervalMs: 33 }));
+
+  // Обработчик завершения приходит из App новой функцией на каждую его
+  // перерисовку — а перерисовывается App на каждое входящее сообщение. Держать
+  // такую функцию среди зависимостей соединения значило пересоздавать
+  // RTCPeerConnection по десять раз в минуту: картинка не успевала появиться.
+  const onEndSessionRef = useRef(onEndSession);
+  useEffect(() => { onEndSessionRef.current = onEndSession; }, [onEndSession]);
 
   // Как только картинка пошла — сразу забираем фокус, чтобы не заставлять
   // оператора догадываться, что по экрану нужно сначала кликнуть.
@@ -26,19 +35,53 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     if (remoteStream && accessLevel === 'full') stageRef.current?.focus();
   }, [remoteStream, accessLevel]);
 
+  // Поток приходит раньше, чем появляется сам элемент <video>: до этого
+  // момента показывается заставка «устанавливаем соединение». Присваивать
+  // srcObject прямо в обработчике было нечему — ссылка ещё пустая, и экран
+  // оставался чёрным навсегда. Присваиваем после того, как элемент появился.
+  useEffect(() => {
+    if (videoRef.current && remoteStream) {
+      videoRef.current.srcObject = remoteStream;
+      videoRef.current.play?.().catch(() => {});
+    }
+  }, [remoteStream]);
+
   useEffect(() => {
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
     peerConnectionRef.current = pc;
 
+    // Кандидаты нередко приходят раньше описания соединения. Добавить их в
+    // этот момент нельзя — вызов бросает исключение, и кандидат теряется
+    // насовсем. Потерянный кандидат означает несостоявшееся соединение, а
+    // выглядит это как «висит на подключении».
+    let remoteDescriptionSet = false;
+    const pendingCandidates = [];
+    const addCandidate = async (candidate) => {
+      if (!remoteDescriptionSet) {
+        pendingCandidates.push(candidate);
+        return;
+      }
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn('RD: кандидат отклонён', err?.message);
+      }
+    };
+
     pc.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
         setRemoteStream(event.streams[0]);
         setStatusText('Подключено');
-        if (videoRef.current) {
-          videoRef.current.srcObject = event.streams[0];
-        }
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        setStatusText('Соединение не установилось. Закройте окно и попробуйте снова.');
+      } else if (pc.connectionState === 'disconnected') {
+        setStatusText('Связь прервалась, восстанавливаем…');
       }
     };
 
@@ -61,6 +104,14 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       if (offerAnswered) return;
       offerAnswered = true;
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      remoteDescriptionSet = true;
+
+      // Кандидаты, пришедшие до описания, добавляются теперь — иначе они бы
+      // так и остались невостребованными.
+      while (pendingCandidates.length) {
+        await addCandidate(pendingCandidates.shift());
+      }
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -102,10 +153,14 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
             window.electronAPI?.rdClipboardWrite?.(msg.text);
           }
         } else if (msg.type === 'rd_ice_candidate' && msg.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+          await addCandidate(msg.candidate);
         } else if (msg.type === 'rd_end') {
-          alert('Сеанс удаленного рабочего стола завершен пользователем.');
-          onEndSession();
+          // alert() останавливает всё окно: пока его не закроют, не идут ни
+          // сообщения, ни звонки. Для сообщения о завершении сеанса это
+          // чрезмерно — показываем его в самом окне сеанса.
+          setStatusText('Сеанс завершён сотрудником.');
+          setRemoteStream(null);
+          setTimeout(() => onEndSessionRef.current?.(), 1500);
         }
       } catch (err) {
         console.error('RD message error:', err);
@@ -128,9 +183,12 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       }
       pc.close();
     };
-  }, [sessionId, targetUser, wsClient, onEndSession]);
+    // targetUser.id, а не сам объект: объект приходит новым на каждой
+    // перерисовке App и пересоздавал бы соединение вместе с картинкой.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, targetUser.id, wsClient]);
 
-  const sendInputEvent = (inputEvent) => {
+  const sendInputEvent = useCallback((inputEvent) => {
     if (accessLevel !== 'full') return;
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
       wsClient.send(JSON.stringify({
@@ -140,7 +198,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         event: inputEvent
       }));
     }
-  };
+  }, [accessLevel, wsClient, sessionId, targetUser.id]);
 
   const canControl = accessLevel === 'full';
 
@@ -258,37 +316,35 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     input.click();
   };
 
-  // Переводит точку окна в долю кадра (0..1). Видео вписано с сохранением
-  // пропорций, поэтому по краям остаются поля — считать от размеров элемента
-  // напрямую нельзя, курсор уезжал бы тем сильнее, чем сильнее отличаются
-  // пропорции экранов. Точки на полях отбрасываются: там экрана нет.
-  const pointToFrame = (clientX, clientY) => {
+  // Точка окна → доля кадра. Сама арифметика лежит в lib/remote-pointer.js и
+  // проверяется тестами: промах курсора виден только на чужом экране и вдвоём.
+  const framePoint = (clientX, clientY) => {
     const video = videoRef.current;
     if (!video) return null;
-    const rect = video.getBoundingClientRect();
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if (!vw || !vh || !rect.width || !rect.height) return null;
-
-    const scale = Math.min(rect.width / vw, rect.height / vh);
-    const shownW = vw * scale;
-    const shownH = vh * scale;
-    const offsetX = (rect.width - shownW) / 2;
-    const offsetY = (rect.height - shownH) / 2;
-
-    const x = (clientX - rect.left - offsetX) / shownW;
-    const y = (clientY - rect.top - offsetY) / shownH;
-    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
-    return { x, y };
+    return pointToFrame(clientX, clientY, video.getBoundingClientRect(), video.videoWidth, video.videoHeight);
   };
 
   const MOUSE_BUTTONS = { 0: 'left', 1: 'middle', 2: 'right' };
 
+  // Мышь порождает больше сотни событий в секунду, и каждое уходило отдельным
+  // сообщением по тому же соединению, что несёт видео сеанса и звук разговора.
+  // Тридцати в секунду достаточно: быстрее движение всё равно не различить.
   const handleMouseMove = (e) => {
     if (!canControl) return;
-    const point = pointToFrame(e.clientX, e.clientY);
-    if (point) sendInputEvent({ type: 'move', x: point.x, y: point.y });
+    const point = framePoint(e.clientX, e.clientY);
+    if (!point) return;
+    moveThrottleRef.current.push(point, (p) => sendInputEvent({ type: 'move', x: p.x, y: p.y }));
   };
+
+  // Мышь остановилась — придержанную точку надо всё-таки отправить, иначе
+  // курсор замрёт не там, где его отпустили.
+  useEffect(() => {
+    const throttle = moveThrottleRef.current;
+    const id = setInterval(() => {
+      throttle.flush((p) => sendInputEvent({ type: 'move', x: p.x, y: p.y }));
+    }, 60);
+    return () => clearInterval(id);
+  }, [sendInputEvent]);
 
   const handleMouseDown = (e) => {
     if (!canControl) return;
@@ -296,14 +352,17 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
     // preventDefault отменяет и установку фокуса — без этой строки область
     // никогда его не получала, и клавиатура не работала вообще.
     e.currentTarget.focus();
-    const point = pointToFrame(e.clientX, e.clientY);
+    const point = framePoint(e.clientX, e.clientY);
+    // Нажатие обязано попасть точно, поэтому придержанное движение
+    // отправляется немедленно и только потом само нажатие.
+    moveThrottleRef.current.flush((p) => sendInputEvent({ type: 'move', x: p.x, y: p.y }));
     sendInputEvent({ type: 'down', button: MOUSE_BUTTONS[e.button] || 'left', ...(point || {}) });
   };
 
   const handleMouseUp = (e) => {
     if (!canControl) return;
     e.preventDefault();
-    const point = pointToFrame(e.clientX, e.clientY);
+    const point = framePoint(e.clientX, e.clientY);
     sendInputEvent({ type: 'up', button: MOUSE_BUTTONS[e.button] || 'left', ...(point || {}) });
   };
 
