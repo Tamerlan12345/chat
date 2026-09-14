@@ -251,6 +251,30 @@ test('чужие сайты не получают разрешение CORS', as
 
 // ── Файлы ───────────────────────────────────────────────────────────────────
 
+test('файл больше 100 МБ отклоняется по заявленному размеру, не дожидаясь загрузки', async () => {
+  const declared = 150 * 1024 * 1024;
+  const started = Date.now();
+  const status = await new Promise((resolve, reject) => {
+    const req = http.request(baseUrl + '/api/files/upload', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${people.petrova.token}`,
+        'Content-Type': 'multipart/form-data; boundary=x',
+        'Content-Length': declared
+      }
+    }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+      req.destroy();
+    });
+    req.on('error', (err) => (err.code === 'ECONNRESET' ? null : reject(err)));
+    // Тело не отправляется вовсе: ответ должен прийти по одним заголовкам.
+    req.flushHeaders();
+  });
+  assert.strictEqual(status, 413);
+  assert.ok(Date.now() - started < 2000, 'ответ пришёл сразу');
+});
+
 test('ссылка на чужой файл в собственном сообщении не открывает к нему доступ', async () => {
   const form = new FormData();
   form.append('file', new Blob(['квартальный отчёт'], { type: 'text/plain' }), 'otchet.txt');

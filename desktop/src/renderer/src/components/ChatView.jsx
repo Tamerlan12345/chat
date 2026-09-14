@@ -3,6 +3,9 @@ import EmojiPicker from './EmojiPicker';
 import Avatar from './Avatar';
 import Icon from './Icon';
 import WakeControl from './WakeControl';
+import ImageViewer from './ImageViewer';
+import { formatBytes, uploadProblem, imageFrame } from '../lib/attachments.mjs';
+import { loadImage } from '../lib/image-cache';
 
 export default function ChatView({
   activeChat,
@@ -33,6 +36,9 @@ export default function ChatView({
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  // Отправляемые файлы этого окна: { id, chatKey, name, size, progress, error, controller }.
+  const [uploads, setUploads] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(null);
 
   const messagesEndRef = useRef(null);
   const streamRef = useRef(null);
@@ -168,13 +174,40 @@ export default function ChatView({
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   };
 
-  const handleFileUpload = (e) => {
+  const chatKey = `${activeChat.type}:${activeChat.id}`;
+  const patchUpload = (id, patch) => setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+  const dropUpload = (id) => setUploads((list) => list.filter((u) => u.id !== id));
+
+  // Проверка размера — в момент выбора файла. Раньше файл уходил на сервер
+  // целиком, и отказ «больше 100 МБ» приходил через минуты загрузки.
+  const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      onSendFile(file, activeChat.type, activeChat.id);
-      e.target.value = '';
+    e.target.value = '';
+    if (!file) return;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const base = { id, chatKey, name: file.name, size: file.size, progress: 0, error: null, controller: null };
+    const problem = uploadProblem(file);
+    if (problem) {
+      setUploads((list) => [...list, { ...base, error: problem }]);
+      return;
     }
+    const controller = new AbortController();
+    setUploads((list) => [...list, { ...base, controller }]);
+    const result = await onSendFile(file, activeChat.type, activeChat.id, {
+      signal: controller.signal,
+      onProgress: (p) => patchUpload(id, { progress: p })
+    });
+    if (result?.ok || result?.cancelled) dropUpload(id);
+    else patchUpload(id, { error: result?.error || 'Файл не отправлен', controller: null });
   };
+
+  // Ошибка гаснет сама через несколько секунд — её успевают прочитать.
+  useEffect(() => {
+    const failed = uploads.filter((u) => u.error);
+    if (!failed.length) return undefined;
+    const t = setTimeout(() => setUploads((list) => list.filter((u) => !failed.includes(u))), 8000);
+    return () => clearTimeout(t);
+  }, [uploads]);
 
   // Готовые фразы для деловой переписки. «Сегодня че идем?)» отсюда убрана:
   // в корпоративном мессенджере страховой компании ей не место.
@@ -228,6 +261,31 @@ export default function ChatView({
     } catch {
       onNotice?.('Не удалось скачать файл', 'Нет связи с сервером');
     }
+  };
+
+  const parseMeta = (m) => {
+    if (!m.metadata_json) return null;
+    try {
+      return typeof m.metadata_json === 'string' ? JSON.parse(m.metadata_json) : m.metadata_json;
+    } catch {
+      return null;
+    }
+  };
+  const isImageMessage = (m, meta) => m.type === 'image' || Boolean(meta?.mimeType?.startsWith('image/'));
+  // Картинки чата по порядку — чтобы в просмотре листать стрелками.
+  const chatImages = messages
+    .map((m) => ({ m, meta: parseMeta(m) }))
+    .filter(({ m, meta }) => m.type !== 'file' && isImageMessage(m, meta) && meta?.file_id)
+    .map(({ m, meta }) => ({
+      messageId: m.id,
+      fileId: meta.file_id,
+      name: m.text || 'Изображение',
+      sender: m.sender_id === currentUser.id ? 'Вы' : m.sender_name || activeChat.name,
+      time: new Date(m.created_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    }));
+  const openViewer = (messageId) => {
+    const i = chatImages.findIndex((img) => img.messageId === messageId);
+    if (i >= 0) setViewerIndex(i);
   };
 
   const isDirect = activeChat.type === 'direct';
@@ -297,12 +355,7 @@ export default function ChatView({
       const senderDisplayName =
         (isMine ? currentUser.full_name : m.sender_name || activeChat.name) || 'Неизвестный участник';
 
-      let metadata = null;
-      if (m.metadata_json) {
-        try {
-          metadata = typeof m.metadata_json === 'string' ? JSON.parse(m.metadata_json) : m.metadata_json;
-        } catch {}
-      }
+      const metadata = parseMeta(m);
 
       elements.push(
         <div
@@ -365,32 +418,35 @@ export default function ChatView({
             {/* Attachments */}
             {m.type === 'file' ? (
               <div className="chat-file-attachment">
-                <span className="chat-file-icon"><Icon name="file" size={20} /></span>
+                <span className="chat-file-icon" aria-hidden="true">
+                  <Icon name="file" size={20} />
+                  {fileExtension(m.text) && <span className="chat-file-ext">{fileExtension(m.text)}</span>}
+                </span>
                 <div className="chat-file-info">
-                  <div className="chat-file-name">{m.text}</div>
-                  <div className="chat-file-meta">
-                    {metadata?.size ? `${Math.round(metadata.size / 1024)} КБ • ` : ''}
-                    <button
-                      type="button"
-                      className="chat-file-download-link"
-                      disabled={!metadata?.file_id}
-                      onClick={() => downloadAttachment(metadata?.file_id, m.text)}
-                    >
-                      {metadata?.file_id ? 'Скачать файл' : 'Файл недоступен'}
-                    </button>
-                  </div>
+                  <div className="chat-file-name" title={m.text}>{m.text}</div>
+                  <div className="chat-file-meta">{metadata?.size ? formatBytes(metadata.size) : 'Файл'}</div>
                 </div>
+                <button
+                  type="button"
+                  className="chat-file-download"
+                  disabled={!metadata?.file_id}
+                  onClick={() => downloadAttachment(metadata?.file_id, m.text)}
+                  title={metadata?.file_id ? 'Скачать' : 'Файл недоступен'}
+                  aria-label={metadata?.file_id ? `Скачать «${m.text}»` : 'Файл недоступен'}
+                >
+                  <Icon name="download" size={16} />
+                </button>
               </div>
-            ) : m.type === 'image' || (metadata?.mimeType && metadata.mimeType.startsWith('image/')) ? (
-              <div className="chat-image-attachment">
-                <ChatImage
-                  fileId={metadata?.file_id}
-                  alt={m.text || 'Изображение'}
-                  token={token}
-                  serverUrl={serverUrl}
-                  onOpen={() => downloadAttachment(metadata?.file_id, m.text)}
-                />
-              </div>
+            ) : isImageMessage(m, metadata) ? (
+              <ChatImage
+                fileId={metadata?.file_id}
+                width={metadata?.width}
+                height={metadata?.height}
+                alt={m.text || 'Изображение'}
+                token={token}
+                serverUrl={serverUrl}
+                onOpen={() => openViewer(m.id)}
+              />
             ) : (
               <div className="classic-msg-text">{m.text}</div>
             )}
@@ -439,11 +495,10 @@ export default function ChatView({
             <button
               className="classic-action-icon-btn"
               title={`Голосовой звонок: ${chatTitle}`}
+              aria-label="Голосовой звонок"
               onClick={() => onStartCall && onStartCall(activeChat.user)}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-              </svg>
+              <Icon name="phone" />
             </button>
           )}
           {/* В канале у кнопок «экран», «профиль», «ещё» нет адресата — они
@@ -452,25 +507,21 @@ export default function ChatView({
           <button
             className="classic-action-icon-btn"
             title="Удаленный рабочий стол сотрудника"
+            aria-label="Удалённый рабочий стол"
             onClick={() => onRequestRemoteDesktop && onRequestRemoteDesktop(activeChat.user)}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-              <line x1="8" y1="21" x2="16" y2="21"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
+            <Icon name="monitor" />
           </button>
           )}
           {isDirect && (
           <button
             className={`classic-action-icon-btn ${isPersonPanelOpen ? 'active' : ''}`}
             title="Информация о человеке (Свойства)"
+            aria-label="Информация о сотруднике"
+            aria-pressed={Boolean(isPersonPanelOpen)}
             onClick={onTogglePersonPanel}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="15" y1="3" x2="15" y2="21"/>
-            </svg>
+            <Icon name="panelRight" />
           </button>
           )}
           {isDirect && (
@@ -478,13 +529,11 @@ export default function ChatView({
             <button
               className={`classic-action-icon-btn ${showMoreMenu ? 'active' : ''}`}
               title="Дополнительные действия"
+              aria-label="Дополнительные действия"
+              aria-expanded={showMoreMenu}
               onClick={() => setShowMoreMenu((prev) => !prev)}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="5" r="2"/>
-                <circle cx="12" cy="12" r="2"/>
-                <circle cx="12" cy="19" r="2"/>
-              </svg>
+              <Icon name="more" strokeWidth={3} />
             </button>
             {showMoreMenu && (
               <div className="classic-popup-menu" style={{ right: 0, left: 'auto', top: '100%', bottom: 'auto' }}>
@@ -570,7 +619,8 @@ export default function ChatView({
           they're reading scrollback and a new message arrives */}
       {showJumpToLatest && (
         <button className="chat-jump-to-latest" onClick={() => scrollToBottom(true)}>
-          <span>↓ Новые сообщения</span>
+          <Icon name="arrowDown" size={14} />
+          <span>Новые сообщения</span>
           {newMessageCount > 0 && <span className="jump-badge">{newMessageCount}</span>}
         </button>
       )}
@@ -592,6 +642,42 @@ export default function ChatView({
 
       {/* 4. Bottom Input Container Matching Screenshot 2 */}
       <div className="classic-input-container">
+        {uploads.some((u) => u.chatKey === chatKey) && (
+          <div className="upload-tray" aria-live="polite">
+            {uploads.filter((u) => u.chatKey === chatKey).map((u) => (
+              <div key={u.id} className={`upload-item${u.error ? ' is-error' : ''}`} role={u.error ? 'alert' : 'status'}>
+                <span className="upload-item-icon">
+                  <Icon name={u.error ? 'alert' : 'paperclip'} size={15} />
+                </span>
+                <div className="upload-item-body">
+                  <div className="upload-item-line">
+                    <span className="upload-item-name" title={u.name}>{u.name}</span>
+                    <span className="upload-item-size">
+                      {u.error ? formatBytes(u.size) : `${Math.round(u.progress * 100)}% · ${formatBytes(u.size)}`}
+                    </span>
+                  </div>
+                  {u.error ? (
+                    <div className="upload-item-error">{u.error}</div>
+                  ) : (
+                    <div className="upload-item-progress" aria-hidden="true">
+                      <span style={{ transform: `scaleX(${u.progress})` }} />
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="upload-item-close"
+                  onClick={() => (u.controller ? u.controller.abort() : dropUpload(u.id))}
+                  title={u.controller ? 'Отменить отправку' : 'Скрыть'}
+                  aria-label={u.controller ? `Отменить отправку «${u.name}»` : 'Скрыть'}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Hidden Inputs */}
         <input
           type="file"
@@ -614,18 +700,15 @@ export default function ChatView({
             type="button"
             className={`classic-tool-item ${showEmojiPicker ? 'active' : ''}`}
             title="Смайлики и эмодзи"
+            aria-label="Смайлики и эмодзи"
+            aria-expanded={showEmojiPicker}
             onClick={() => {
               setShowEmojiPicker((prev) => !prev);
               setShowAttachMenu(false);
               setShowPhrasesMenu(false);
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-              <line x1="9" y1="9" x2="9.01" y2="9"/>
-              <line x1="15" y1="9" x2="15.01" y2="9"/>
-            </svg>
+            <Icon name="smile" size={16} />
           </button>
 
           {/* Attach Dropdown */}
@@ -639,10 +722,8 @@ export default function ChatView({
                 setShowPhrasesMenu(false);
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-              </svg>
-              <span>Вставить...</span>
+              <Icon name="paperclip" size={14} />
+              <span>Вставить</span>
               <Icon name="chevronDown" size={12} className="arrow-down" />
             </button>
 
@@ -655,7 +736,7 @@ export default function ChatView({
                     setShowAttachMenu(false);
                   }}
                 >
-                  <Icon name="file" size={14} /><span>Вставить файл…</span>
+                  <Icon name="file" size={14} /><span>Файл…</span><span className="classic-popup-menu-hint">до 100 МБ</span>
                 </div>
                 <div
                   className="classic-popup-menu-item"
@@ -664,7 +745,7 @@ export default function ChatView({
                     setShowAttachMenu(false);
                   }}
                 >
-                  <Icon name="image" size={14} /><span>Вставить изображение…</span>
+                  <Icon name="image" size={14} /><span>Изображение…</span>
                 </div>
               </div>
             )}
@@ -681,9 +762,7 @@ export default function ChatView({
                 setShowAttachMenu(false);
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
+              <Icon name="message" size={14} />
               <span>Фраза</span>
               <Icon name="chevronDown" size={12} className="arrow-down" />
             </button>
@@ -727,56 +806,84 @@ export default function ChatView({
           <button
             className="classic-send-btn"
             title="Отправить (Enter)"
+            aria-label="Отправить"
             disabled={!inputText.trim()}
             onClick={handleSend}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
+            <Icon name="send" size={18} strokeWidth={2} />
           </button>
         </div>
       </div>
+
+      {viewerIndex !== null && chatImages[viewerIndex] && (
+        <ImageViewer
+          images={chatImages}
+          index={viewerIndex}
+          serverUrl={serverUrl}
+          token={token}
+          onIndexChange={setViewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onDownload={(img) => downloadAttachment(img.fileId, img.name)}
+        />
+      )}
     </div>
   );
 }
 
-// Картинка из переписки. Маршрут скачивания требует токен, а тег <img>
-// заголовок авторизации отправить не может — поэтому каждое присланное
-// изображение отображалось как «битая картинка». Загружаем запросом и
-// показываем уже полученные данные.
-function ChatImage({ fileId, alt, token, serverUrl, onOpen }) {
+// «PDF», «XLSX» — на значке файла: тип виден раньше, чем прочитано имя.
+function fileExtension(name) {
+  const match = /\.([a-z0-9]{1,5})$/i.exec(String(name || ''));
+  return match ? match[1].toUpperCase() : '';
+}
+
+// Картинка из переписки — в рамке. Место под неё занято сразу: размеры
+// приходят в сообщении, и лента не прыгает, когда картинка догрузилась.
+// Слишком вытянутые картинки рамка обрезает — целиком их видно в просмотре.
+function ChatImage({ fileId, width, height, alt, token, serverUrl, onOpen }) {
   const [src, setSrc] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [natural, setNatural] = useState(null);
 
   useEffect(() => {
-    if (!fileId) { setFailed(true); return; }
-    let objectUrl = null;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await fetch(`${serverUrl}/api/files/download/${fileId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error(String(res.status));
-        const blob = await res.blob();
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-      } catch {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
+    if (!fileId) { setFailed(true); return undefined; }
+    let alive = true;
+    setFailed(false);
+    loadImage(fileId, { serverUrl, token })
+      .then((url) => alive && setSrc(url))
+      .catch(() => alive && setFailed(true));
+    return () => { alive = false; };
   }, [fileId, token, serverUrl]);
 
-  if (failed) return <div className="chat-image-failed">Изображение недоступно</div>;
-  if (!src) return <div className="chat-image-loading">Загружаю изображение…</div>;
+  const frame = imageFrame(width || natural?.width, height || natural?.height);
+  const style = { width: frame.width, height: frame.height };
 
-  return <img src={src} alt={alt} className="chat-embedded-image" onClick={onOpen} />;
+  if (failed) {
+    return (
+      <div className="chat-image-frame is-failed" style={style} role="img" aria-label={`${alt}: изображение недоступно`}>
+        <Icon name="image" size={20} />
+        <span>Изображение недоступно</span>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={`chat-image-frame${src ? ' is-ready' : ' is-loading'}`}
+      style={style}
+      onClick={onOpen}
+      disabled={!src}
+      title="Открыть"
+      aria-label={`Открыть изображение «${alt}»`}
+    >
+      {src && (
+        <img
+          src={src}
+          alt={alt}
+          draggable={false}
+          onLoad={(e) => !width && setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+        />
+      )}
+    </button>
+  );
 }

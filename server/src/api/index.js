@@ -21,7 +21,7 @@ const wsServer = require('../ws/server');
 const config = require('../config');
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // = UPLOAD_LIMIT_BYTES ниже
 
 // Обработчики работают с двумя базами и почти все асинхронные. Обёртка ловит
 // отказ обещания и превращает его в обычный ответ об ошибке: необработанный
@@ -1028,7 +1028,18 @@ function requireUploadPermission(req, res, next) {
   next();
 }
 
+// Заявленный размер запроса известен до приёма тела. Без этой проверки
+// сервер читал 100 МБ и лишь потом отказывал — человек ждал минуты ради
+// «файл слишком большой». Запас в 1 МБ — на служебные части формы.
+const UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
+const FORM_OVERHEAD_BYTES = 1024 * 1024;
+
 function acceptUpload(req, res, next) {
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > UPLOAD_LIMIT_BYTES + FORM_OVERHEAD_BYTES) {
+    res.set('Connection', 'close');
+    return res.status(413).json({ error: 'Файл больше 100 МБ — такой файл загрузить нельзя' });
+  }
   upload.single('file')(req, res, (err) => {
     if (!err) return next();
     const tooLarge = err.code === 'LIMIT_FILE_SIZE';

@@ -23,6 +23,7 @@ import Icon from './components/Icon';
 import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
+import { uploadProblem } from './lib/attachments.mjs';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -1408,53 +1409,67 @@ export default function App() {
   };
 
   // Send File
-  const handleSendFile = async (file, conversationType, targetId) => {
+  // Загрузка идёт через XMLHttpRequest: у fetch нет прогресса отправки, а на
+  // файле в десятки мегабайт человек должен видеть, что дело движется, и иметь
+  // возможность передумать. Итог возвращается вызывающему — ошибку показывает
+  // полоса загрузок у поля ввода, рядом с тем, что человек только что сделал.
+  const handleSendFile = async (file, conversationType, targetId, { onProgress, signal } = {}) => {
+    const problem = uploadProblem(file);
+    if (problem) return { ok: false, error: problem };
+
+    // Размер картинки нужен ленте заранее: место под неё резервируется до
+    // загрузки, и переписка не прыгает, когда картинка появляется.
+    const isImage = file.type.startsWith('image/');
+    let dimensions = null;
+    if (isImage && typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(file);
+        dimensions = { width: bitmap.width, height: bitmap.height };
+        bitmap.close?.();
+      } catch {}
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
-    // Отказ сервера раньше не показывался вовсе: нет права на загрузку, файл
-    // слишком большой — человек нажимал «Вставить файл», и ничего не происходило.
-    try {
-      const upRes = await authFetch(`${serverUrlRef.current}/api/files/upload`, {
-        method: 'POST',
-        body: formData
-      });
+    const result = await new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${serverUrlRef.current}/api/files/upload`);
+      xhr.setRequestHeader('Authorization', `Bearer ${tokenRef.current}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch {}
+        if (xhr.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
+        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data });
+        else resolve({ ok: false, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
+      };
+      xhr.onerror = () => resolve({ ok: false, error: 'Нет связи с сервером' });
+      xhr.onabort = () => resolve({ ok: false, cancelled: true });
+      signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.send(formData);
+    });
+    if (!result.ok) return result;
 
-      if (!upRes.ok) {
-        const data = await upRes.json().catch(() => ({}));
-        addToast({
-          title: 'Файл не отправлен',
-          body: `«${file.name}»: ${data.error || (upRes.status === 413 ? 'файл слишком большой' : 'сервер отклонил файл')}`,
-          type: 'system',
-          isUrgent: true
-        });
-        return;
+    handleSendMessage({
+      conversationType,
+      targetId,
+      text: file.name,
+      msgType: isImage ? 'image' : 'file',
+      // Сервер отдаёт данные файла верхним уровнем, без обёртки: чтение
+      // fData.file.id давало undefined, ссылка получалась
+      // /api/files/download/undefined, и вложение нельзя было скачать.
+      metadata: {
+        file_id: result.data.id,
+        size: file.size,
+        mimeType: file.type,
+        url: `/api/files/download/${result.data.id}`,
+        ...(dimensions || {})
       }
-
-      if (upRes.ok) {
-        const fData = await upRes.json();
-        const isImage = file.type.startsWith('image/');
-
-        handleSendMessage({
-          conversationType,
-          targetId,
-          text: file.name,
-          msgType: isImage ? 'image' : 'file',
-          // Сервер отдаёт данные файла верхним уровнем, без обёртки: чтение
-          // fData.file.id давало undefined, ссылка получалась
-          // /api/files/download/undefined, и вложение нельзя было скачать.
-          metadata: {
-            file_id: fData.id,
-            size: file.size,
-            mimeType: file.type,
-            url: `/api/files/download/${fData.id}`
-          }
-        });
-      }
-    } catch (err) {
-      console.error('Upload error:', err);
-      addToast({ title: 'Файл не отправлен', body: `«${file.name}»: нет связи с сервером`, type: 'system', isUrgent: true });
-    }
+    });
+    return { ok: true };
   };
 
   // Profile Update
