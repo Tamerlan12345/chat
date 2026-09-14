@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { readError, limitRows, resultColumns, createRequestSequence } from '../lib/admin-access.mjs';
 import { useInlineToast } from './InlineToast';
+import Icon from './Icon';
 
 // Выполнить можно что угодно, в том числе SELECT на сотни тысяч строк. Такая
 // таблица отрисовывается минутами и вешает всё окно — показываем начало, а
@@ -227,25 +228,25 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
         backgroundColor: 'var(--bg-panel)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ fontSize: '18px', fontWeight: 700, color: '#93c5fd' }}>🛠️ Web Database Studio (SQLite)</span>
+          <span style={{ fontSize: '18px', fontWeight: 700, color: '#93c5fd', display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name="wrench" size={18} />Web Database Studio (SQLite)</span>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button
               className={`btn btn-sm ${activeTab === 'browser' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveTab('browser')}
             >
-              📊 Таблицы и данные
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="chart" size={14} />Таблицы и данные</span>
             </button>
             <button
               className={`btn btn-sm ${activeTab === 'sql' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveTab('sql')}
             >
-              ⌨️ SQL Консоль
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="terminal" size={14} />SQL Консоль</span>
             </button>
             <button
               className={`btn btn-sm ${activeTab === 'backups' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setActiveTab('backups')}
             >
-              💾 Бэкапы ({backups.length})
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="save" size={14} />Бэкапы ({backups.length})</span>
             </button>
           </div>
         </div>
@@ -257,7 +258,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             disabled={backupLoading}
             style={{ backgroundColor: '#10b981' }}
           >
-            {backupLoading ? 'Создание...' : '⚡ Создать бэкап сейчас'}
+            {backupLoading ? 'Создание...' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="zap" size={14} />Создать бэкап сейчас</span>}
           </button>
         </div>
       </div>
@@ -266,7 +267,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
 
       {loadErrorText && (
         <div className="db-studio-error" role="alert">
-          <span>⚠ {loadErrorText}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="alert" size={16} />{loadErrorText}</span>
           <button type="button" className="btn btn-secondary btn-sm" onClick={reloadAll}>
             Повторить
           </button>
@@ -285,10 +286,10 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           color: 'var(--text-muted)'
         }}>
           <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath ?? '—'}</strong></div>
-          <div>Размер: <strong style={{ color: '#7cf4cc' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
+          <div>Размер: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
           <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
           <div>Режим: <strong style={{ color: '#ffffff' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
-          <div>Целостность: <strong style={{ color: '#7cf4cc' }}>{stats.integrity ?? '—'}</strong></div>
+          <div>Целостность: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.integrity ?? '—'}</strong></div>
           <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows ?? '—'}</strong></div>
         </div>
       )}
@@ -315,7 +316,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                     color: selectedTable === t.name ? '#ffffff' : 'var(--text-main)'
                   }}
                 >
-                  <span style={{ fontWeight: 500, fontSize: '13px' }}>📁 {t.name}</span>
+                  <span style={{ fontWeight: 500, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="folder" size={14} />{t.name}</span>
                   <span style={{ fontSize: '11px', opacity: 0.8 }}>{t.rowCount}</span>
                 </div>
               ))}
@@ -333,7 +334,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
 
                 {tableError && (
                   <div className="db-studio-error inline" role="alert">
-                    <span>⚠ {tableError}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="alert" size={16} />{tableError}</span>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => selectTable(selectedTable)}>
                       Повторить
                     </button>
@@ -345,7 +346,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '8px', backgroundColor: 'var(--bg-sidebar)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                     {schemaColumns.map(c => (
                       <span key={c.name} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-card)', color: c.pk ? '#f59e0b' : 'var(--text-muted)' }}>
-                        {c.pk ? '🔑 ' : ''}<strong>{c.name}</strong>: {c.type}
+                        {c.pk ? <Icon name="key" size={11} /> : null}{c.pk ? ' ' : ''}<strong>{c.name}</strong>: {c.type}
                       </span>
                     ))}
                   </div>
@@ -363,7 +364,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                     </thead>
                     <tbody>
                       {tableRows.map((row, rIdx) => (
-                        <tr key={rIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
+                        <tr key={rIdx} style={{ borderBottom: '1px solid light-dark(rgba(255,255,255,0.05), rgba(255, 255, 255, 0.07))' }}>
                           {schemaColumns.map(c => (
                             <td key={c.name} style={{ padding: '8px 12px', whiteSpace: 'nowrap', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {row[c.name] === null ? <span style={{ color: 'var(--text-dim)' }}>NULL</span> : String(row[c.name])}
@@ -387,7 +388,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label style={{ fontSize: '13px', fontWeight: 600 }}>SQL Запрос:</label>
               <button type="submit" className="btn btn-primary btn-sm" disabled={sqlRunning}>
-                {sqlRunning ? 'Выполняется…' : '▶ Выполнить SQL'}
+                {sqlRunning ? 'Выполняется…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="play" size={14} />Выполнить SQL</span>}
               </button>
             </div>
             <textarea
@@ -431,7 +432,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                         </thead>
                         <tbody>
                           {shownQuery.rows.map((r, idx) => (
-                            <tr key={idx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
+                            <tr key={idx} style={{ borderBottom: '1px solid light-dark(rgba(255,255,255,0.05), rgba(255, 255, 255, 0.07))' }}>
                               {queryColumns.map(col => (
                                 <td key={col} style={{ padding: '6px 12px', whiteSpace: 'nowrap' }}>
                                   {r[col] === null ? 'NULL' : String(r[col])}
@@ -453,8 +454,9 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
       {/* Tab: Backups Manager */}
       {activeTab === 'backups' && (
         <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-            💾 Резервные копии базы данных
+          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="save" size={18} />
+            Резервные копии базы данных
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {backups.length === 0 && !loadErrors.backups && (
@@ -485,7 +487,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                   disabled={downloading === b.fileName}
                   onClick={() => downloadBackup(b.fileName)}
                 >
-                  {downloading === b.fileName ? 'Скачиваем…' : '⬇️ Скачать .db файл'}
+                  {downloading === b.fileName ? 'Скачиваем…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="download" size={14} />Скачать .db файл</span>}
                 </button>
               </div>
             ))}

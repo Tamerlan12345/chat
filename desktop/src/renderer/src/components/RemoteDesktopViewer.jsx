@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Icon from './Icon';
 import { pointToFrame, MoveThrottle } from '../lib/remote-pointer.mjs';
 import { keyEventToInput } from '../lib/remote-keyboard.mjs';
 import { getRdIceServers, RD_CONNECT_TIMEOUT_MS } from '../lib/rd-config.mjs';
@@ -551,7 +552,10 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
             {targetUser.full_name || targetUser.username}
           </span>
           <span className="rd-badge">
-            {accessLevel === 'full' ? '🎮 Полный доступ' : '👁️ Только просмотр'}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Icon name={accessLevel === 'full' ? 'pointer' : 'eye'} size={14} />
+              {accessLevel === 'full' ? 'Полный доступ' : 'Только просмотр'}
+            </span>
           </span>
         </div>
 
@@ -589,7 +593,10 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
                 disabled={!remoteStream}
                 onClick={toggleClipboardSync}
               >
-                {clipboardState === 'on' ? '📋 Буфер: общий' : clipboardState === 'pending' ? '📋 Буфер: ждём согласия' : '📋 Буфер'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name="clipboard" size={14} />
+                  {clipboardState === 'on' ? 'Буфер: общий' : clipboardState === 'pending' ? 'Буфер: ждём согласия' : 'Буфер'}
+                </span>
               </button>
               <button
                 className="rd-btn"
@@ -608,7 +615,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
             {scaleMode === 'fit' ? 'Масштаб 1:1' : 'По размеру'}
           </button>
           <button className="rd-btn-danger" onClick={endSession}>
-            ✕ Завершить сеанс
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="x" size={14} />Завершить сеанс</span>
           </button>
         </div>
       </div>
@@ -640,8 +647,8 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
           <div className="rd-connecting-overlay">
             {failure ? (
               <div className="rd-rejected-box">
-                <div style={{ fontSize: '48px', marginBottom: '12px' }}>⚠️</div>
-                <h3 style={{ color: '#f4c77b', marginBottom: '8px' }}>Сеанс не удался</h3>
+                <div style={{ marginBottom: '12px', color: 'light-dark(#f59e0b, #f4c77b)' }}><Icon name="alert" size={48} /></div>
+                <h3 style={{ color: 'light-dark(#f59e0b, #f4c77b)', marginBottom: '8px' }}>Сеанс не удался</h3>
                 <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', maxWidth: '520px' }}>
                   {failure}
                 </p>
@@ -651,7 +658,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
               </div>
             ) : isRejected ? (
               <div className="rd-rejected-box">
-                <div style={{ fontSize: '48px', marginBottom: '12px' }}>⛔</div>
+                <div style={{ marginBottom: '12px', color: '#ef4444' }}><Icon name="ban" size={48} /></div>
                 <h3 style={{ color: '#ef4444', marginBottom: '8px' }}>Запрос отклонен</h3>
                 <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px' }}>
                   Сотрудник {targetUser.full_name} отклонил запрос на удаленный рабочий стол.

@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react';
 import { parseFullName, formatFullName } from '../lib/person-name.mjs';
+import Icon from './Icon';
 
 export default function UserProfileModal({ currentUser, serverInfo, onClose, onUpdateProfile, token, serverUrl, onTokenRenewed }) {
   const [activeTab, setActiveTab] = useState('main'); // 'main' | 'home' | 'work' | 'personal' | 'interests' | 'past' | 'extra'
@@ -35,8 +36,8 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
   // «Прошлое», «Дополнительно» — не отрисовывали ничего: сотрудник нажимал и
   // получал пустое окно с заголовком. Оставлены те, за которыми есть поля.
   const tabs = [
-    { id: 'main', icon: '👤', label: 'Основное' },
-    { id: 'work', icon: '💼', label: 'Место работы' }
+    { id: 'main', icon: 'user', label: 'Основное' },
+    { id: 'work', icon: 'briefcase', label: 'Место работы' }
   ];
 
   const [saving, setSaving] = useState(false);
@@ -154,7 +155,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
         {/* Modal Window Header */}
         <div className="profile-modal-header">
           <span className="profile-modal-title">Мой персональный профиль</span>
-          <button className="profile-modal-close-btn" onClick={onClose} title="Закрыть">✕</button>
+          <button className="profile-modal-close-btn" onClick={onClose} title="Закрыть" aria-label="Закрыть"><Icon name="x" size={14} /></button>
         </div>
 
         {/* Modal Content */}
@@ -167,7 +168,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                 className={`profile-tab-item ${activeTab === tab.id ? 'active' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
               >
-                <span className="profile-tab-icon">{tab.icon}</span>
+                <span className="profile-tab-icon"><Icon name={tab.icon} size={16} /></span>
                 <span className="profile-tab-label">{tab.label}</span>
               </div>
             ))}
@@ -269,7 +270,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                       Очистить фото
                     </button>
                     {photoError && (
-                      <div role="alert" style={{ color: '#ec8383', fontSize: '12px', lineHeight: 1.4 }}>
+                      <div role="alert" style={{ color: 'light-dark(#b91c1c, #ec8383)', fontSize: '12px', lineHeight: 1.4 }}>
                         {photoError}
                       </div>
                     )}
@@ -281,7 +282,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                   {showPwForm && (
                     <form className="login-form" style={{ marginTop: '10px', width: '100%' }} onSubmit={handleChangePassword}>
                       {pwError && <div className="login-error-box">{pwError}</div>}
-                      {pwSuccess && <div className="login-error-box" style={{ background: 'rgba(66, 230, 116, 0.16)', borderColor: 'rgba(72, 234, 129, 0.38)', color: '#84ebab' }}>{pwSuccess}</div>}
+                      {pwSuccess && <div className="login-error-box" style={{ background: 'light-dark(#f0fdf4, rgba(66, 230, 116, 0.16))', borderColor: 'light-dark(#bbf7d0, rgba(72, 234, 129, 0.38))', color: 'light-dark(#15803d, #84ebab)' }}>{pwSuccess}</div>}
                       <div className="form-group">
                         <label className="form-label">Текущий пароль</label>
                         <input type="password" className="form-input" value={pwOld} onChange={(e) => setPwOld(e.target.value)} disabled={pwSubmitting} required />
@@ -348,7 +349,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
         {/* Modal Footer */}
         <div className="profile-modal-footer">
           <button className="profile-ok-btn" onClick={handleSave} disabled={saving}>
-            <span style={{ marginRight: '6px' }}>✔</span> {saving ? 'Сохранение…' : 'Ок'}
+            <span style={{ display: 'inline-flex', marginRight: '6px' }}><Icon name="check" size={14} /></span> {saving ? 'Сохранение…' : 'Ок'}
           </button>
         </div>
       </div>

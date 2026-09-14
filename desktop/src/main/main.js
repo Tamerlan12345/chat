@@ -32,6 +32,11 @@ const SERVER_URL = process.env.VITE_DEV_SERVER_URL || process.env.MYCHAT_SERVER_
 const SERVER_ORIGIN = originOf(SERVER_URL);
 
 const OFFLINE_PAGE = path.join(__dirname, 'offline.html');
+
+function isDaytime(date = new Date()) {
+  const h = date.getHours();
+  return h >= 6 && h < 15;
+}
 const INDICATOR_PAGE = path.join(__dirname, 'rd-indicator.html');
 const INDICATOR_PRELOAD = path.join(__dirname, 'rd-indicator-preload.js');
 
@@ -240,7 +245,9 @@ function createMainWindow() {
     show: !launchedAtLogin,
     frame: true, // Native Windows form frame
     title: 'MyChat Enterprise Client',
-    backgroundColor: '#26282c',
+    // Фон до загрузки интерфейса — в цвет темы по часам, чтобы утром окно
+    // не вспыхивало тёмным (см. renderer lib/theme.mjs).
+    backgroundColor: isDaytime() ? '#fbfbfc' : '#26282c',
     // Omit the key entirely (not `icon: null`) when the file can't be found —
     // an explicit null blanks the taskbar icon instead of falling back to the
     // .exe's own embedded icon.

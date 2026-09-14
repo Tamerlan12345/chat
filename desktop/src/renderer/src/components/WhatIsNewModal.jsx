@@ -1,4 +1,5 @@
 import React from 'react';
+import Icon from './Icon';
 
 export default function WhatIsNewModal({ onClose, serverInfo }) {
   return (
@@ -6,22 +7,22 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
       <div className="modal-dialog whatisnew-dialog" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '24px' }}>💬</span>
+            <Icon name="message" size={24} />
             <div>
-              <div style={{ fontWeight: 700, fontSize: '16px', color: '#a0b2cf' }}>
+              <div style={{ fontWeight: 700, fontSize: '16px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
                 OpenMyChat Enterprise Client
               </div>
-              <div style={{ fontSize: '11px', color: '#a9aeb5' }}>
+              <div style={{ fontSize: '11px', color: 'light-dark(#64748b, #a9aeb5)' }}>
                 {serverInfo?.company_name || 'Корпоративная сеть'} • Версия 2026.3.1 (LTS)
               </div>
             </div>
           </div>
-          <button className="btn-close-modal" onClick={onClose}>✕</button>
+          <button className="btn-close-modal" onClick={onClose} aria-label="Закрыть"><Icon name="x" size={16} /></button>
         </div>
 
         <div className="modal-body" style={{ maxHeight: '460px', overflowY: 'auto', padding: '20px' }}>
           <div className="feature-card">
-            <div className="feature-icon">💬</div>
+            <div className="feature-icon"><Icon name="message" size={22} /></div>
             <div>
               <div className="feature-title">Строго корпоративный чат коллег</div>
               <div className="feature-desc">
@@ -31,7 +32,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
 
           <div className="feature-card">
-            <div className="feature-icon">👥</div>
+            <div className="feature-icon"><Icon name="users" size={22} /></div>
             <div>
               <div className="feature-title">Иерархическая оргструктура компании</div>
               <div className="feature-desc">
@@ -41,7 +42,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
 
           <div className="feature-card">
-            <div className="feature-icon">📢</div>
+            <div className="feature-icon"><Icon name="megaphone" size={22} /></div>
             <div>
               <div className="feature-title">Важные оповещения с подтверждением</div>
               <div className="feature-desc">
@@ -51,7 +52,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
 
           <div className="feature-card">
-            <div className="feature-icon">📞</div>
+            <div className="feature-icon"><Icon name="phone" size={22} /></div>
             <div>
               <div className="feature-title">Прямая аудио/видеосвязь (WebRTC P2P)</div>
               <div className="feature-desc">
@@ -61,7 +62,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
 
           <div className="feature-card">
-            <div className="feature-icon">🖥️</div>
+            <div className="feature-icon"><Icon name="monitor" size={22} /></div>
             <div>
               <div className="feature-title">Удаленная помощь и демонстрация экрана</div>
               <div className="feature-desc">
@@ -71,7 +72,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
 
           <div className="feature-card">
-            <div className="feature-icon">🔒</div>
+            <div className="feature-icon"><Icon name="lock" size={22} /></div>
             <div>
               <div className="feature-title">100% Автономность (On-Premise)</div>
               <div className="feature-desc">
@@ -81,7 +82,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
         </div>
 
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid rgba(121, 148, 185, 0.38)' }}>
+        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38))' }}>
           <button className="btn btn-primary" onClick={onClose}>
             Закрыть
           </button>

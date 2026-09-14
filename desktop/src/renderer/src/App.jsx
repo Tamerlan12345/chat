@@ -22,7 +22,7 @@ import Avatar from './components/Avatar';
 import Icon from './components/Icon';
 import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
-import { reduceWake } from './lib/wake.mjs';
+import { initialWake, reduceWake } from './lib/wake.mjs';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -173,7 +173,7 @@ export default function App() {
   // Floating Corner Toasts & Remote Desktop
   const [toasts, setToasts] = useState([]);
   // Побудки, которые поставил я: { [id собеседника]: последнее событие }.
-  const [wakes, setWakes] = useState({});
+  const [wake, setWake] = useState(initialWake);
   // Побудка, которая пришла мне и ещё не отозвана.
   const [incomingWake, setIncomingWake] = useState(null);
   const [rdPrompt, setRdPrompt] = useState(null);
@@ -618,7 +618,7 @@ export default function App() {
           .slice(0, 3)
           .join(', ');
 
-        const title = '🔔 Напоминание о непрочитанных сообщениях';
+        const title = 'Напоминание о непрочитанных сообщениях';
         const body = 'У вас ' + totalUnread + ' непрочитанных сообщений от: ' + (senderNames || 'коллег') + '. Нажмите, чтобы открыть.';
 
         if (currentUserRef.current?.status === 'dnd') return;
@@ -817,6 +817,7 @@ export default function App() {
       // must stay dead.
       if (wsRef.current !== ws) return;
       setWsConnected(false);
+      setWake((prev) => reduceWake(prev, { type: 'wake_disconnected' }));
       if (ws.noReconnect) return;
       // Пауза растёт — 2, 4, 8… до 30 секунд — со случайной добавкой: после
       // перезапуска сервера весь офис не должен ломиться в одну и ту же секунду.
@@ -1214,11 +1215,9 @@ export default function App() {
 
       // ── Побудка ──
       case 'wake_state':
-      case 'wake_scheduled':
-      case 'wake_cancelled':
-      case 'wake_result':
+      case 'wake_sent':
       case 'wake_error':
-        setWakes((prev) => reduceWake(prev, event));
+        setWake((prev) => reduceWake(prev, event));
         break;
 
       case 'wake_ring':
@@ -1344,7 +1343,7 @@ export default function App() {
     const senderName = otherUser ? (otherUser.full_name || otherUser.username) : 'Коллега';
     addToast({
       title: senderName,
-      body: 'Привет! Проверка всплывающего уведомления в правом углу 🚀',
+      body: 'Привет! Проверка всплывающего уведомления в правом углу',
       type: 'chat',
       avatarText: senderName ? senderName.substring(0, 2).toUpperCase() : 'АС',
       data: { user: otherUser }
@@ -1527,20 +1526,10 @@ export default function App() {
 
   const isDnd = currentUser?.status === 'dnd';
 
-  const scheduleWake = (targetUserId, minutes) => {
+  const sendWake = (targetUserId) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-    // Прежняя ошибка не должна висеть над новой попыткой.
-    setWakes((prev) => {
-      if (!prev[targetUserId]?.error) return prev;
-      const { error, errorCode, ...rest } = prev[targetUserId];
-      return { ...prev, [targetUserId]: rest };
-    });
-    wsRef.current.send(JSON.stringify({ type: 'wake_schedule', targetUserId, minutes }));
-  };
-
-  const cancelWake = (targetUserId) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'wake_cancel', targetUserId }));
+    setWake((prev) => reduceWake(prev, { type: 'wake_request', targetUserId }));
+    wsRef.current.send(JSON.stringify({ type: 'wake_send', targetUserId }));
   };
 
   const setDnd = (enabled) => {
@@ -2227,9 +2216,8 @@ export default function App() {
                 serverUrl={serverUrl}
                 onNotice={(title, body) => addToast({ title, body: body || '', type: 'system' })}
                 connected={wsConnected}
-                wakeEntry={activeChat.type === 'direct' ? wakes[activeChat.id] : null}
-                onWakeSchedule={scheduleWake}
-                onWakeCancel={cancelWake}
+                wake={wake}
+                onWake={sendWake}
               />
             ) : (
               <GreetingView
@@ -2375,7 +2363,9 @@ export default function App() {
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
             <div className="modal-header">
               <span style={{ fontWeight: 700, fontSize: '15px' }}>Создать конференцию</span>
-              <button className="btn-close-modal" onClick={() => setShowCreateChannelModal(false)}>✕</button>
+              <button className="btn-close-modal" onClick={() => setShowCreateChannelModal(false)} aria-label="Закрыть">
+                <Icon name="x" size={16} />
+              </button>
             </div>
             <form onSubmit={handleCreateChannel} style={{ padding: '20px' }}>
               <div className="form-group" style={{ marginBottom: '14px' }}>

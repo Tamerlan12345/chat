@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Icon from './Icon';
 import { AudioRelay } from '../lib/audioRelay';
 import { callSignalAction, ringTimeoutAction, RING_TIMEOUT_MS } from '../lib/call-signal.mjs';
 
@@ -250,7 +251,10 @@ export default function VoiceCallPanel({ call, currentUser, wsClient, onEnd }) {
           <>
             {phase === 'active' && (
               <button className={`call-btn mute ${muted ? 'on' : ''}`} onClick={toggleMute}>
-                {muted ? '🔇 Микрофон выкл.' : '🎤 Микрофон'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name={muted ? 'micOff' : 'mic'} size={14} />
+                  {muted ? 'Микрофон выкл.' : 'Микрофон'}
+                </span>
               </button>
             )}
             <button className="call-btn decline" onClick={hangUp}>

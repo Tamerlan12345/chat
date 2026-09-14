@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import Icon from './Icon';
 
 // Уведомление внутри окна. Раньше любое сообщение было зелёным с галочкой —
 // отказ сервера выглядел так же, как успех, и его не замечали. Ошибка висит
@@ -24,9 +25,9 @@ export function useInlineToast() {
   const isError = toast?.kind === 'error';
   const element = toast ? (
     <div className={`admin-toast ${isError ? 'error' : 'success'}`} role={isError ? 'alert' : 'status'}>
-      <span>{isError ? '⚠' : '✓'}</span>
+      <Icon name={isError ? 'alert' : 'check'} size={14} />
       <span className="admin-toast-text">{toast.text}</span>
-      <button type="button" className="admin-toast-close" onClick={hide} title="Скрыть">✕</button>
+      <button type="button" className="admin-toast-close" onClick={hide} title="Скрыть" aria-label="Скрыть"><Icon name="x" size={12} /></button>
     </div>
   ) : null;
 

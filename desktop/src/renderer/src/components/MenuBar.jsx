@@ -84,8 +84,8 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2" strokeLinecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-              <span style={{ fontWeight: 500, color: '#819eee' }}>Сетевой сервер...</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              <span style={{ fontWeight: 500, color: 'light-dark(#1d4ed8, #819eee)' }}>Сетевой сервер...</span>
             </div>
             <div className="menu-drop-divider" />
             {/* Статус выставляет система. Вручную — только «Не беспокоить». */}
@@ -111,7 +111,7 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#eb8484" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#dc2626, #eb8484)" }} strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
               <span>Выход</span>
             </div>
           </div>
@@ -165,7 +165,7 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f4bc7b" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#d97706, #f4bc7b)" }} strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
               <span>Важное (Оповещения)</span>
             </div>
             <div className="menu-drop-divider" />
@@ -197,13 +197,13 @@ export default function MenuBar({
               <>
                 <div
                   className="menu-drop-item"
-                  style={{ fontWeight: 600, color: '#819eee' }}
+                  style={{ fontWeight: 600, color: 'light-dark(#1d4ed8, #819eee)' }}
                   onClick={() => {
                     onOpenAdminConsole && onOpenAdminConsole();
                     setOpenMenu(null);
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#819eee" strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#1d4ed8, #819eee)" }} strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                   <span>Консоль управления сервером MyChat</span>
                 </div>
                 {isSuperAdmin && (
@@ -238,7 +238,7 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2" strokeLinecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
               <span>Тест уведомления (правый угол)</span>
             </div>
             <div
@@ -321,7 +321,7 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
               <span>Что нового в MyChat Enterprise?</span>
             </div>
             <div

@@ -6,29 +6,30 @@
 <title>Нет связи с сервером</title>
 <style>
   :root { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
   html, body { height: 100%; margin: 0; }
   body {
     display: flex; align-items: center; justify-content: center;
-    background: #1d1e21; color: #dcdee2;
+    background: light-dark(#eceef1, #1d1e21); color: light-dark(#2a2d32, #dcdee2);
     font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
   .card {
     width: min(520px, calc(100% - 48px));
-    background: #33363b; border: 1px solid rgba(255, 255, 255, .09); border-radius: 14px;
-    padding: 32px 32px 24px; box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
+    background: light-dark(#ffffff, #33363b); border: 1px solid light-dark(rgba(17, 24, 39, .09), rgba(255, 255, 255, .09)); border-radius: 14px;
+    padding: 32px 32px 24px; box-shadow: 0 18px 44px light-dark(rgba(15, 23, 42, .12), rgba(0, 0, 0, .45));
   }
-  .icon { width: 44px; height: 44px; color: #ff8b8b; margin-bottom: 12px; }
-  h1 { font-size: 20px; margin: 0 0 8px; color: #f2f3f5; font-weight: 600; }
-  .reason { margin: 0 0 12px; color: #b5b9bf; word-break: break-word; }
-  .server { margin: 0 0 20px; color: #969ba3; font-size: 12px; word-break: break-all; }
+  .icon { width: 44px; height: 44px; color: light-dark(#b4232a, #ff8b8b); margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0 0 8px; color: light-dark(#15171a, #f2f3f5); font-weight: 600; }
+  .reason { margin: 0 0 12px; color: light-dark(#484d55, #b5b9bf); word-break: break-word; }
+  .server { margin: 0 0 20px; color: light-dark(#6a7079, #969ba3); font-size: 12px; word-break: break-all; }
   button {
     font: inherit; font-weight: 600; color: #fff; background: #2f6bec;
     border: 1px solid #2f6bec; border-radius: 8px; padding: 8px 20px; cursor: pointer;
   }
-  button:hover { background: #4580f2; border-color: #4580f2; }
-  button:focus-visible { outline: 2px solid #8fb4ff; outline-offset: 2px; }
+  button:hover { background: light-dark(#2559cf, #4580f2); border-color: light-dark(#2559cf, #4580f2); }
+  button:focus-visible { outline: 2px solid light-dark(#2156c9, #8fb4ff); outline-offset: 2px; }
   button:disabled { opacity: .6; cursor: default; }
-  .status { margin: 16px 0 0; color: #969ba3; font-size: 12px; min-height: 18px; }
+  .status { margin: 16px 0 0; color: light-dark(#6a7079, #969ba3); font-size: 12px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -49,6 +50,9 @@
     <p class="status" id="status" role="status"></p>
   </main>
 <script>
+  // Как в приложении: с 6:00 до 15:00 светлая тема, иначе тёмная.
+  (function () { var h = new Date().getHours(); if (h >= 6 && h < 15) document.documentElement.dataset.theme = "light"; })();
+
   // Текст подставляется через textContent: причина приходит из описания
   // сетевой ошибки, и разметкой она быть не должна.
   (function () {

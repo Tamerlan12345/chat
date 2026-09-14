@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import Icon from './Icon';
 
 export default function ServerConnectModal({ currentUrl, onClose, onApplyServer }) {
   const parseUrl = (rawUrl) => {
@@ -122,7 +123,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
       <div className="server-connect-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="server-connect-header">
           <h3>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2" strokeLinecap="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round">
               <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
               <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
               <line x1="6" y1="6" x2="6.01" y2="6" />
@@ -130,7 +131,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
             </svg>
             Подключение к серверу MyChat
           </h3>
-          <button className="server-connect-close-btn" onClick={onClose} title="Закрыть">✕</button>
+          <button className="server-connect-close-btn" onClick={onClose} title="Закрыть" aria-label="Закрыть"><Icon name="x" size={16} /></button>
         </div>
 
         <div className="server-connect-body">
@@ -162,10 +163,10 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                 onChange={(e) => setProtocol(e.target.value)}
                 style={{
                   padding: '8px',
-                  border: '1px solid rgba(126, 151, 180, 0.38)',
+                  border: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))',
                   borderRadius: '5px',
                   fontSize: '13px',
-                  background: '#313338',
+                  background: 'light-dark(#f8fafc, #313338)',
                   outline: 'none'
                 }}
               >
@@ -212,7 +213,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                   </>
                 )}
                 {pingState.status === 'error' && (
-                  <span style={{ color: '#ec8383' }}>
+                  <span style={{ color: 'light-dark(#b91c1c, #ec8383)' }}>
                     Не удалось подключиться: {pingState.error}
                   </span>
                 )}
@@ -240,7 +241,11 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
             onClick={handleTestConnection}
             disabled={pingState.status === 'testing'}
           >
-            {pingState.status === 'testing' ? 'Проверка...' : '⚡ Проверить связь'}
+            {pingState.status === 'testing' ? 'Проверка...' : (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Icon name="zap" size={14} /> Проверить связь
+              </span>
+            )}
           </button>
           <button
             type="button"

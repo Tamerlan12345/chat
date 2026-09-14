@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import Icon from './Icon';
 import { getRdIceServers, RD_HOST_CONNECT_TIMEOUT_MS } from '../lib/rd-config.mjs';
 import {
   normalizeAccessLevel,
@@ -544,15 +545,18 @@ export default function RemoteDesktopHostModal(props) {
           <span className="rd-bar-title">Идет сеанс удаленного доступа:</span>
           <strong>{session.operatorName}</strong>
           <span className="rd-bar-mode-badge">
-            {session.accessLevel === 'full' ? '🎮 Полный доступ (управление)' : '👁️ Только просмотр'}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Icon name={session.accessLevel === 'full' ? 'pointer' : 'eye'} size={14} />
+              {session.accessLevel === 'full' ? 'Полный доступ (управление)' : 'Только просмотр'}
+            </span>
           </span>
           <button className="rd-stop-btn" onClick={() => stopSession({ notify: true })}>
-            ⏹ Завершить доступ
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="stop" size={14} />Завершить доступ</span>
           </button>
           {clipboardAllowed && (
             <>
               <span className="rd-bar-mode-badge" title="Скопированный текст передаётся между компьютерами">
-                📋 Буфер обмена общий
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="clipboard" size={14} />Буфер обмена общий</span>
               </span>
               <button className="rd-stop-btn" onClick={() => disableClipboard({ notify: true })}>
                 Выключить общий буфер
@@ -573,7 +577,7 @@ export default function RemoteDesktopHostModal(props) {
           )}
           {notice && (
             <span className="rd-bar-hint" title="Скрыть" style={{ cursor: 'pointer' }} onClick={() => setNotice('')}>
-              {notice} ✕
+              {notice} <Icon name="x" size={12} />
             </span>
           )}
         </div>
@@ -584,20 +588,20 @@ export default function RemoteDesktopHostModal(props) {
   return (
     <div className="modal-backdrop" onClick={handleReject}>
       <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
-        <div className="modal-header" style={{ background: '#313338', borderBottom: '1px solid rgba(126, 151, 180, 0.38)' }}>
+        <div className="modal-header" style={{ background: 'light-dark(#f8fafc, #313338)', borderBottom: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '18px' }}>🖥️</span>
-            <span style={{ fontWeight: 700, fontSize: '15px', color: '#a0b2cf' }}>
+            <Icon name="monitor" size={18} />
+            <span style={{ fontWeight: 700, fontSize: '15px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
               Запрос на удаленный рабочий стол
             </span>
           </div>
-          <button className="btn-close-modal" onClick={handleReject} disabled={accepting}>✕</button>
+          <button className="btn-close-modal" onClick={handleReject} disabled={accepting} aria-label="Закрыть"><Icon name="x" size={16} /></button>
         </div>
 
         <div style={{ padding: '24px 20px' }}>
           <div className="rd-operator-card">
             <div className="rd-operator-avatar">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="1.8">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="1.8">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                 <circle cx="12" cy="7" r="4"></circle>
               </svg>
@@ -609,12 +613,12 @@ export default function RemoteDesktopHostModal(props) {
             </div>
           </div>
 
-          <p style={{ fontSize: '13px', color: '#a6b4c9', lineHeight: '1.5', margin: '16px 0 14px' }}>
+          <p style={{ fontSize: '13px', color: 'light-dark(#334155, #a6b4c9)', lineHeight: '1.5', margin: '16px 0 14px' }}>
             Коллега запрашивает подключение к вашему компьютеру для оказания помощи или демонстрации экрана.
           </p>
 
           {error ? (
-            <div className="rd-security-notice" role="alert" style={{ color: '#ec8383' }}>
+            <div className="rd-security-notice" role="alert" style={{ color: 'light-dark(#b91c1c, #ec8383)' }}>
               {error}
             </div>
           ) : (
@@ -652,13 +656,13 @@ export default function RemoteDesktopHostModal(props) {
               </div>
 
               <div className="rd-security-notice">
-                🔒 Вы можете в любой момент прервать сеанс нажатием кнопки «Завершить доступ».
+                <Icon name="lock" size={14} /> Вы можете в любой момент прервать сеанс нажатием кнопки «Завершить доступ».
               </div>
             </>
           )}
         </div>
 
-        <div className="modal-footer" style={{ background: '#313338', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <div className="modal-footer" style={{ background: 'light-dark(#f8fafc, #313338)', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
           {error ? (
             <button type="button" className="btn btn-secondary" onClick={closeModal}>
               Закрыть
@@ -666,7 +670,7 @@ export default function RemoteDesktopHostModal(props) {
           ) : (
             <>
               <button type="button" className="btn btn-secondary" onClick={handleReject} disabled={accepting}>
-                ✕ Отклонить
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="x" size={14} />Отклонить</span>
               </button>
               <button
                 type="button"
@@ -675,7 +679,7 @@ export default function RemoteDesktopHostModal(props) {
                 onClick={handleAccept}
                 disabled={accepting}
               >
-                {accepting ? 'Запускаем трансляцию…' : '✓ Разрешить доступ'}
+                {accepting ? 'Запускаем трансляцию…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="check" size={14} />Разрешить доступ</span>}
               </button>
             </>
           )}

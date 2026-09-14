@@ -20,12 +20,9 @@ const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const SYSTEM_PRESENCE = new Set(['online', 'away']);
 const CUSTOM_STATUS_MAX = 200;
 
-// Побудка собеседника.
-const WAKE_MINUTES = new Set([1, 2, 3, 5, 10, 15, 30]);
-function wakeMinuteMs() {
-  const value = Number(process.env.WAKE_MINUTE_MS);
-  return Number.isFinite(value) && value > 0 ? value : 60000;
-}
+// Побудка собеседника: сигнал уходит сразу, следующий — не раньше чем через
+// минуту. Пауза общая на отправителя, а не на пару: иначе можно было бы по
+// очереди будить весь отдел.
 function wakeCooldownMs() {
   const value = Number(process.env.WAKE_COOLDOWN_MS);
   return Number.isFinite(value) && value > 0 ? value : 60000;
@@ -68,10 +65,9 @@ class WsServer {
     // Последний сигнал системы о присутствии: что показать, когда режим
     // «Не беспокоить» выключат.
     this.presence = new Map(); // userId -> 'online' | 'away'
-    // Побудки: `${fromId}:${toId}` -> { fromId, toId, minutes, fireAt, timer }.
-    this.wakeTimers = new Map();
-    // Когда закончилась последняя побудка пары: следующая — не раньше паузы.
-    this.wakeEndedAt = new Map();
+    // Последняя побудка каждого отправителя: fromId -> { toId, at }.
+    this.lastWake = new Map();
+    this.wakeInFlight = new Set();
   }
 
   effectiveStatus(userId) {
@@ -104,97 +100,53 @@ class WsServer {
 
   // ── Побудка ──────────────────────────────────────────────────────────────
 
-  wakeKey(fromId, toId) {
-    return `${fromId}:${toId}`;
+  wakeRetryAt(fromId) {
+    const last = this.lastWake.get(fromId);
+    return last ? last.at + wakeCooldownMs() : 0;
   }
 
-  wakeRetryAt(fromId, toId) {
-    const ended = this.wakeEndedAt.get(this.wakeKey(fromId, toId));
-    return ended ? ended + wakeCooldownMs() : 0;
-  }
-
-  endWake(entry) {
-    clearTimeout(entry.timer);
-    const key = this.wakeKey(entry.fromId, entry.toId);
-    this.wakeTimers.delete(key);
-    const now = Date.now();
-    this.wakeEndedAt.set(key, now);
-    return now + wakeCooldownMs();
-  }
-
-  async scheduleWake(sender, msg) {
+  async sendWake(sender, msg) {
     const reply = (payload) => this.sendToUser(sender.id, payload);
     const targetId = Number(msg.targetUserId);
-    const minutes = typeof msg.minutes === 'number' ? msg.minutes : NaN;
 
-    if (!WAKE_MINUTES.has(minutes)) {
-      return reply({ type: 'wake_error', code: 'invalid_minutes', targetUserId: targetId, message: 'Можно выбрать 1, 2, 3, 5, 10, 15 или 30 минут' });
+    const retryAt = this.wakeRetryAt(sender.id);
+    if (retryAt > Date.now() || this.wakeInFlight.has(sender.id)) {
+      return reply({ type: 'wake_error', code: 'cooldown', targetUserId: targetId, retryAt: Math.max(retryAt, Date.now() + 1000), message: 'Будить можно не чаще раза в минуту' });
     }
-    const target = Number.isInteger(targetId) && targetId !== sender.id ? await UserService.getUserById(targetId) : null;
+    // Пока идёт запрос к базе, второй сигнал того же человека ждёт отказа —
+    // иначе два быстрых нажатия проскочили бы паузу.
+    this.wakeInFlight.add(sender.id);
+    let target;
+    try {
+      target = Number.isInteger(targetId) && targetId !== sender.id ? await UserService.getUserById(targetId) : null;
+    } finally {
+      this.wakeInFlight.delete(sender.id);
+    }
     if (!target || target.is_active === 0 || target.is_active === false) {
       return reply({ type: 'wake_error', code: 'invalid_target', targetUserId: targetId, message: 'Разбудить можно только коллегу' });
     }
+    if (this.wakeRetryAt(sender.id) > Date.now()) {
+      return reply({ type: 'wake_error', code: 'cooldown', targetUserId: targetId, retryAt: this.wakeRetryAt(sender.id), message: 'Будить можно не чаще раза в минуту' });
+    }
+    // Отказы ниже паузу не запускают: сигнал никто не услышал.
     if (this.dndUsers.has(targetId)) {
       return reply({ type: 'wake_error', code: 'dnd', targetUserId: targetId, message: 'У собеседника включено «Не беспокоить»' });
     }
-    const key = this.wakeKey(sender.id, targetId);
-    if (this.wakeTimers.has(key)) {
-      return reply({ type: 'wake_error', code: 'already_scheduled', targetUserId: targetId, message: 'Побудка уже поставлена' });
-    }
-    const retryAt = this.wakeRetryAt(sender.id, targetId);
-    if (retryAt > Date.now()) {
-      return reply({ type: 'wake_error', code: 'cooldown', targetUserId: targetId, retryAt, message: 'Будить можно не чаще раза в минуту' });
+    if (!this.isUserOnline(targetId)) {
+      return reply({ type: 'wake_error', code: 'offline', targetUserId: targetId, message: 'Собеседник не в сети' });
     }
 
-    const fireAt = Date.now() + minutes * wakeMinuteMs();
-    const entry = { fromId: sender.id, fromName: sender.full_name, toId: targetId, minutes, fireAt, timer: null };
-    entry.timer = setTimeout(() => this.fireWake(entry), fireAt - Date.now());
-    entry.timer.unref?.();
-    this.wakeTimers.set(key, entry);
-    reply({ type: 'wake_scheduled', targetUserId: targetId, minutes, fireAt });
-  }
-
-  cancelWake(sender, msg) {
-    const targetId = Number(msg.targetUserId);
-    const entry = this.wakeTimers.get(this.wakeKey(sender.id, targetId));
-    if (!entry) return;
-    const retryAt = this.endWake(entry);
-    this.sendToUser(sender.id, { type: 'wake_cancelled', targetUserId: targetId, retryAt });
-  }
-
-  fireWake(entry) {
-    if (this.wakeTimers.get(this.wakeKey(entry.fromId, entry.toId)) !== entry) return;
-    const retryAt = this.endWake(entry);
     const at = Date.now();
-    let outcome = 'delivered';
-    if (this.dndUsers.has(entry.toId)) outcome = 'dnd';
-    else if (!this.isUserOnline(entry.toId)) outcome = 'offline';
-    else this.sendToUser(entry.toId, { type: 'wake_ring', fromUserId: entry.fromId, fromName: entry.fromName, at });
-    this.sendToUser(entry.fromId, { type: 'wake_result', targetUserId: entry.toId, outcome, at, retryAt });
-  }
-
-  // Включили «Не беспокоить» — идущие к человеку побудки гаснут сразу, и
-  // отправитель узнаёт причину, а не ждёт впустую до конца отсчёта.
-  dropWakesTo(userId) {
-    for (const entry of [...this.wakeTimers.values()]) {
-      if (entry.toId !== userId) continue;
-      const retryAt = this.endWake(entry);
-      this.sendToUser(entry.fromId, { type: 'wake_result', targetUserId: userId, outcome: 'dnd', at: Date.now(), retryAt });
-    }
+    this.lastWake.set(sender.id, { toId: targetId, at });
+    this.sendToUser(targetId, { type: 'wake_ring', fromUserId: sender.id, fromName: sender.full_name, at });
+    reply({ type: 'wake_sent', targetUserId: targetId, at, retryAt: at + wakeCooldownMs() });
   }
 
   wakeStateFor(userId) {
-    const scheduled = [];
-    const cooldowns = [];
-    const now = Date.now();
-    for (const entry of this.wakeTimers.values()) {
-      if (entry.fromId === userId) scheduled.push({ targetUserId: entry.toId, minutes: entry.minutes, fireAt: entry.fireAt });
-    }
-    for (const [key, ended] of this.wakeEndedAt) {
-      const [fromId, toId] = key.split(':').map(Number);
-      if (fromId === userId && ended + wakeCooldownMs() > now) cooldowns.push({ targetUserId: toId, retryAt: ended + wakeCooldownMs() });
-    }
-    return { type: 'wake_state', scheduled, cooldowns };
+    const last = this.lastWake.get(userId);
+    const retryAt = this.wakeRetryAt(userId);
+    if (!last || retryAt <= Date.now()) return { type: 'wake_state', retryAt: 0 };
+    return { type: 'wake_state', targetUserId: last.toId, at: last.at, retryAt };
   }
 
   init(httpServer) {
@@ -520,7 +472,6 @@ class WsServer {
         const enabled = type === 'set_dnd' ? Boolean(msg.enabled) : true;
         if (enabled) this.dndUsers.add(currentUser.id);
         else this.dndUsers.delete(currentUser.id);
-        if (enabled) this.dropWakesTo(currentUser.id);
       } else {
         const state = String(type === 'presence' ? msg.state : msg.status || '');
         if (!SYSTEM_PRESENCE.has(state)) return;
@@ -532,8 +483,7 @@ class WsServer {
     }
 
     // Побудка собеседника.
-    if (type === 'wake_schedule') return this.scheduleWake(currentUser, msg);
-    if (type === 'wake_cancel') return this.cancelWake(currentUser, msg);
+    if (type === 'wake_send') return this.sendWake(currentUser, msg);
 
     // 6. Voice call signalling
     if (['call_offer', 'call_answer', 'ice_candidate', 'call_end', 'call_rejected'].includes(type)) {

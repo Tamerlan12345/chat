@@ -50,7 +50,7 @@ export default function PersonInfoPanel({
         <div className="person-info-details">
           {/* Full Name */}
           <div className="person-info-item name-item">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2" strokeLinecap="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
             </svg>
             <span className="person-info-value-bold">{displayName}</span>
@@ -59,10 +59,10 @@ export default function PersonInfoPanel({
           {/* Job Title */}
           {user.job_title && (
             <div className="person-info-item">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a9aeb5" strokeWidth="2" strokeLinecap="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#64748b, #a9aeb5)" }} strokeWidth="2" strokeLinecap="round">
                 <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
               </svg>
-              <span className="person-info-dept-text" style={{ fontWeight: 500, color: '#a6b4c9' }}>
+              <span className="person-info-dept-text" style={{ fontWeight: 500, color: 'light-dark(#334155, #a6b4c9)' }}>
                 {user.job_title}
               </span>
             </div>
@@ -70,7 +70,7 @@ export default function PersonInfoPanel({
 
           {/* Department */}
           <div className="person-info-item">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a9aeb5" strokeWidth="2" strokeLinecap="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#64748b, #a9aeb5)" }} strokeWidth="2" strokeLinecap="round">
               <rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><line x1="9" y1="22" x2="9" y2="22.01"/><line x1="15" y1="22" x2="15.01" y2="22"/>
             </svg>
             <span className="person-info-dept-text" title={department}>
@@ -81,7 +81,7 @@ export default function PersonInfoPanel({
           {/* Email */}
           {email && (
             <div className="person-info-item">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a9aeb5" strokeWidth="2" strokeLinecap="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#64748b, #a9aeb5)" }} strokeWidth="2" strokeLinecap="round">
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
               </svg>
               <a href={`mailto:${email}`} className="person-info-email-link">
@@ -93,7 +93,7 @@ export default function PersonInfoPanel({
           {/* Extension / Phone if available */}
           {user.extension && (
             <div className="person-info-item">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#81eea9" strokeWidth="2" strokeLinecap="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#16a34a, #81eea9)" }} strokeWidth="2" strokeLinecap="round">
                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
               </svg>
               <span className="person-info-subtext">внутр. номер: <strong>{user.extension}</strong></span>
@@ -158,7 +158,7 @@ export default function PersonInfoPanel({
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px' }}
               onClick={() => onOpenAdminUser && onOpenAdminUser(user)}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
               Управление пользователем (Консоль)

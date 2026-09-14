@@ -1,65 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { WAKE_MINUTES, formatCountdown, minutesLabel, reduceWake, wakeView } from '../src/renderer/src/lib/wake.mjs';
-
-test('выбор минут совпадает с тем, что принимает сервер', () => {
-  assert.deepStrictEqual(WAKE_MINUTES, [1, 2, 3, 5, 10, 15, 30]);
-});
+import { formatCountdown, initialWake, reduceWake, wakeView } from '../src/renderer/src/lib/wake.mjs';
 
 test('обратный отсчёт в минутах и секундах, с округлением вверх', () => {
-  assert.strictEqual(formatCountdown(5 * 60000), '5:00');
-  assert.strictEqual(formatCountdown(245500), '4:06');
+  assert.strictEqual(formatCountdown(60000), '1:00');
+  assert.strictEqual(formatCountdown(59001), '1:00');
   assert.strictEqual(formatCountdown(999), '0:01');
   assert.strictEqual(formatCountdown(-10), '0:00');
 });
 
-test('минуты склоняются', () => {
-  assert.strictEqual(minutesLabel(1), '1 минуту');
-  assert.strictEqual(minutesLabel(3), '3 минуты');
-  assert.strictEqual(minutesLabel(5), '5 минут');
-  assert.strictEqual(minutesLabel(15), '15 минут');
+test('до нажатия будить можно', () => {
+  assert.strictEqual(wakeView(initialWake, 7).phase, 'ready');
 });
 
-test('поставленная побудка показывает отсчёт и долю прошедшего', () => {
+test('нажали — кнопка ждёт ответа сервера во всех чатах', () => {
+  const state = reduceWake(initialWake, { type: 'wake_request', targetUserId: 7 });
+  assert.strictEqual(wakeView(state, 7).phase, 'sending');
+  assert.strictEqual(wakeView(state, 8).phase, 'sending');
+});
+
+test('после сигнала у этого собеседника виден таймер, у остальных — пауза', () => {
   const now = 1_000_000;
-  const state = reduceWake({}, { type: 'wake_scheduled', targetUserId: 7, minutes: 2, fireAt: now + 120000 }, now);
-  const half = wakeView(state[7], now + 60000);
-  assert.strictEqual(half.phase, 'scheduled');
-  assert.strictEqual(half.remaining, 60000);
-  assert.strictEqual(half.progress, 0.5);
+  const sent = reduceWake(reduceWake(initialWake, { type: 'wake_request', targetUserId: 7 }), { type: 'wake_sent', targetUserId: 7, at: now, retryAt: now + 60000 });
+  const here = wakeView(sent, 7, now + 15000);
+  assert.strictEqual(here.phase, 'sent');
+  assert.strictEqual(here.retryIn, 45000);
+  assert.strictEqual(here.progress, 0.25);
+  assert.strictEqual(wakeView(sent, 8, now + 15000).phase, 'cooldown');
+  assert.strictEqual(wakeView(sent, 7, now + 60001).phase, 'ready');
 });
 
-test('после срабатывания виден итог, пока нельзя будить снова', () => {
+test('отказ из-за «Не беспокоить» или «не в сети» показывается и не запускает паузу', () => {
   const now = 2_000_000;
-  const state = reduceWake({}, { type: 'wake_result', targetUserId: 7, outcome: 'delivered', at: now, retryAt: now + 60000 }, now);
-  const view = wakeView(state[7], now + 20000);
-  assert.strictEqual(view.phase, 'result');
-  assert.strictEqual(view.outcome, 'delivered');
-  assert.strictEqual(view.retryIn, 40000);
-  assert.strictEqual(wakeView(state[7], now + 70000).phase, 'idle');
+  const state = reduceWake(initialWake, { type: 'wake_error', targetUserId: 7, code: 'offline', message: 'Собеседник не в сети' }, now);
+  const view = wakeView(state, 7, now + 1000);
+  assert.strictEqual(view.phase, 'ready');
+  assert.strictEqual(view.error.code, 'offline');
+  assert.strictEqual(wakeView(state, 8, now + 1000).error, null, 'в другом чате ошибки нет');
+  assert.strictEqual(wakeView(state, 7, now + 7000).error, null, 'ошибка гаснет сама');
 });
 
-test('после отмены — пауза, затем снова можно', () => {
+test('отказ по паузе от сервера обновляет таймер', () => {
   const now = 3_000_000;
-  const state = reduceWake({}, { type: 'wake_cancelled', targetUserId: 7, retryAt: now + 60000 }, now);
-  assert.strictEqual(wakeView(state[7], now + 1000).phase, 'cooldown');
-  assert.strictEqual(wakeView(state[7], now + 61000).phase, 'idle');
+  const state = reduceWake(initialWake, { type: 'wake_error', targetUserId: 7, code: 'cooldown', retryAt: now + 30000 }, now);
+  const view = wakeView(state, 7, now);
+  assert.strictEqual(view.phase, 'cooldown');
+  assert.strictEqual(view.retryIn, 30000);
+  assert.strictEqual(view.error, null);
 });
 
-test('отказ сервера из-за «Не беспокоить» показывается как ошибка, а не как отсчёт', () => {
-  const state = reduceWake({}, { type: 'wake_error', targetUserId: 7, code: 'dnd', message: 'У собеседника включено «Не беспокоить»' });
-  const view = wakeView(state[7]);
-  assert.strictEqual(view.phase, 'idle');
-  assert.match(view.error, /Не беспокоить/);
-});
-
-test('состояние после переподключения восстанавливает и отсчёты, и паузы', () => {
+test('после переподключения пауза восстанавливается', () => {
   const now = 4_000_000;
-  const state = reduceWake({}, {
-    type: 'wake_state',
-    scheduled: [{ targetUserId: 3, minutes: 5, fireAt: now + 60000 }],
-    cooldowns: [{ targetUserId: 4, retryAt: now + 30000 }]
-  }, now);
-  assert.strictEqual(wakeView(state[3], now).phase, 'scheduled');
-  assert.strictEqual(wakeView(state[4], now).phase, 'cooldown');
+  const state = reduceWake(initialWake, { type: 'wake_state', targetUserId: 3, at: now - 20000, retryAt: now + 40000 }, now);
+  assert.strictEqual(wakeView(state, 3, now).phase, 'sent');
+  assert.strictEqual(wakeView(state, 4, now).phase, 'cooldown');
+  assert.strictEqual(reduceWake(state, { type: 'wake_state', retryAt: 0 }, now).retryAt, 0);
+});
+
+test('обрыв связи во время нажатия не оставляет кнопку в ожидании', () => {
+  const state = reduceWake(reduceWake(initialWake, { type: 'wake_request', targetUserId: 7 }), { type: 'wake_disconnected' });
+  assert.strictEqual(wakeView(state, 7).phase, 'ready');
 });
