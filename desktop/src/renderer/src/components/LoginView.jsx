@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from './Icon';
 
 const APP_ORIGIN = window.location.origin.startsWith('http') ? window.location.origin : '';
 const MIN_PASSWORD_LENGTH = 8;
@@ -285,31 +286,23 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         {notice && !error && !pendingMessage && (
           // Это объяснение, а не ошибка: красная рамка пугала сотрудника так,
           // будто он сам что-то сломал.
-          <div
-            role="status"
-            style={{
-              background: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              color: '#1e3a8a',
-              borderRadius: '8px',
-              padding: '10px 14px',
-              fontSize: '13px',
-              marginBottom: '14px'
-            }}
-          >
-            ℹ️ {notice}
+          <div role="status" className="login-notice-box">
+            <Icon name="info" size={14} />
+            <span>{notice}</span>
           </div>
         )}
 
         {error && (
           <div className="login-error-box" role="alert">
-            ⚠️ {error}
+            <Icon name="alert" size={14} />
+            <span>{error}</span>
           </div>
         )}
 
         {pendingMessage && (
           <div className="login-pending-box" role="status">
-            ✓ {pendingMessage}
+            <Icon name="check" size={14} />
+            <span>{pendingMessage}</span>
           </div>
         )}
 
@@ -321,8 +314,9 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 подряд незачем. Сменить его при необходимости можно через
                 «Сетевой сервер…» в меню. */}
             <div className="form-group">
-              <label className="form-label">Логин:</label>
+              <label className="form-label" htmlFor="login-username">Логин:</label>
               <input
+                id="login-username"
                 type="text"
                 className="form-input"
                 value={username}
@@ -336,8 +330,9 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Пароль:</label>
+              <label className="form-label" htmlFor="login-password">Пароль:</label>
               <input
+                id="login-password"
                 type="password"
                 className="form-input"
                 value={password}
@@ -350,7 +345,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 required
               />
               {capsLock && (
-                <div style={{ color: '#b45309', fontSize: '12px', marginTop: '4px' }}>
+                <div className="form-hint is-warning">
                   Включён Caps Lock — пароль вводится заглавными буквами
                 </div>
               )}

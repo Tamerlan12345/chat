@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EmojiPicker from './EmojiPicker';
+import Avatar from './Avatar';
+import Icon from './Icon';
 
 export default function ChatView({
   activeChat,
@@ -249,17 +251,6 @@ export default function ChatView({
     });
   };
 
-  // Stable per-person colour so the same colleague always reads the same way
-  // down the thread, instead of every name sharing one accent.
-  const AVATAR_COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#db2777', '#4f46e5'];
-  const colorForName = (name) => {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-    return AVATAR_COLORS[hash % AVATAR_COLORS.length];
-  };
-  const initialsOf = (name) =>
-    name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-
   const renderMessages = () => {
     const elements = [];
     let hasDrawnUnreadSeparator = false;
@@ -316,13 +307,9 @@ export default function ChatView({
         >
           <div className="classic-msg-avatar-slot">
             {startsGroup ? (
-              <span
-                className="classic-msg-avatar"
-                style={{ backgroundColor: colorForName(senderDisplayName) }}
-                title={senderDisplayName}
-              >
-                {initialsOf(senderDisplayName)}
-              </span>
+              // Цвет несёт аватар; имя остаётся обычным текстом — радуга из
+              // имён в ленте спорила с самими сообщениями.
+              <Avatar name={senderDisplayName} size={32} />
             ) : (
               <span className="classic-msg-hover-time">{timeStr}</span>
             )}
@@ -331,10 +318,7 @@ export default function ChatView({
           <div className="classic-msg-main">
             {startsGroup && (
               <div className="classic-msg-header">
-                <span
-                  className="classic-sender-name"
-                  style={{ color: isMine ? '#0f172a' : colorForName(senderDisplayName) }}
-                >
+                <span className="classic-sender-name">
                   {senderDisplayName}
                   {isMine && <span className="classic-sender-you">вы</span>}
                 </span>
@@ -372,7 +356,7 @@ export default function ChatView({
             {/* Attachments */}
             {m.type === 'file' ? (
               <div className="chat-file-attachment">
-                <span className="chat-file-icon">📄</span>
+                <span className="chat-file-icon"><Icon name="file" size={20} /></span>
                 <div className="chat-file-info">
                   <div className="chat-file-name">{m.text}</div>
                   <div className="chat-file-meta">
@@ -383,7 +367,7 @@ export default function ChatView({
                       disabled={!metadata?.file_id}
                       onClick={() => downloadAttachment(metadata?.file_id, m.text)}
                     >
-                      {metadata?.file_id ? '⬇ Скачать файл' : 'Файл недоступен'}
+                      {metadata?.file_id ? 'Скачать файл' : 'Файл недоступен'}
                     </button>
                   </div>
                 </div>
@@ -490,7 +474,7 @@ export default function ChatView({
                     onTogglePersonPanel && onTogglePersonPanel();
                   }}
                 >
-                  <span>👤 Профиль сотрудника</span>
+                  <Icon name="user" size={14} /><span>Профиль сотрудника</span>
                 </div>
                 {canRemoteControl && (
                   <div
@@ -500,7 +484,7 @@ export default function ChatView({
                       onRequestRemoteDesktop && onRequestRemoteDesktop(activeChat.user);
                     }}
                   >
-                    <span>🖥️ Подключиться к экрану</span>
+                    <Icon name="monitor" size={14} /><span>Подключиться к экрану</span>
                   </div>
                 )}
                 <div
@@ -518,7 +502,7 @@ export default function ChatView({
                     }
                   }}
                 >
-                  <span>📋 Копировать контакты</span>
+                  <Icon name="copy" size={14} /><span>Копировать контакты</span>
                 </div>
               </div>
             )}
@@ -536,7 +520,7 @@ export default function ChatView({
           </div>
         ) : messages.length === 0 ? (
           <div className="chat-empty-state">
-            <div className="chat-empty-icon">💬</div>
+            <div className="chat-empty-icon"><Icon name={isDirect ? "message" : "hash"} size={22} /></div>
             <div className="chat-empty-title">Начало переписки</div>
             <div className="chat-empty-desc">
               {isDirect
@@ -579,8 +563,8 @@ export default function ChatView({
             </span>
             <div className="chat-reply-banner-text">{replyingTo.text}</div>
           </div>
-          <button className="chat-reply-banner-close" onClick={() => setReplyingTo(null)}>
-            ✕
+          <button className="chat-reply-banner-close" onClick={() => setReplyingTo(null)} aria-label="Отменить ответ">
+            <Icon name="x" size={14} />
           </button>
         </div>
       )}
@@ -638,7 +622,7 @@ export default function ChatView({
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
               </svg>
               <span>Вставить...</span>
-              <span className="arrow-down">⌵</span>
+              <Icon name="chevronDown" size={12} className="arrow-down" />
             </button>
 
             {showAttachMenu && (
@@ -650,7 +634,7 @@ export default function ChatView({
                     setShowAttachMenu(false);
                   }}
                 >
-                  <span>📄 Вставить файл...</span>
+                  <Icon name="file" size={14} /><span>Вставить файл…</span>
                 </div>
                 <div
                   className="classic-popup-menu-item"
@@ -659,7 +643,7 @@ export default function ChatView({
                     setShowAttachMenu(false);
                   }}
                 >
-                  <span>🖼️ Вставить изображение...</span>
+                  <Icon name="image" size={14} /><span>Вставить изображение…</span>
                 </div>
               </div>
             )}
@@ -680,7 +664,7 @@ export default function ChatView({
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
               <span>Фраза</span>
-              <span className="arrow-down">⌵</span>
+              <Icon name="chevronDown" size={12} className="arrow-down" />
             </button>
 
             {showPhrasesMenu && (

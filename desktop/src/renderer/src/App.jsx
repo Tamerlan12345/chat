@@ -17,6 +17,8 @@ import CommandPalette from './components/CommandPalette';
 import ToastNotificationStack, { playNotificationSound } from './components/ToastNotificationStack';
 import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
+import Avatar from './components/Avatar';
+import Icon from './components/Icon';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -1115,7 +1117,7 @@ export default function App() {
             setChannelUnread((prev) => ({ ...prev, [msg.target_id]: (prev[msg.target_id] || 0) + 1 }));
             const ch = channelsRef.current.find((c) => c.id === msg.target_id);
             addToast({
-              title: ch ? `#${ch.name}` : 'Канал',
+              title: ch ? channelLabel(ch.name) : 'Канал',
               body: `${msg.sender_name || 'Коллега'}: ${msg.text}`,
               type: 'channel',
               avatarText: ch ? ch.name.substring(0, 2).toUpperCase() : 'КН',
@@ -1735,7 +1737,7 @@ export default function App() {
               Продолжить работу можно только после смены временного пароля.
             </p>
           </div>
-          {pwError && <div className="login-error-box">⚠️ {pwError}</div>}
+          {pwError && <div className="login-error-box" role="alert"><Icon name="alert" size={14} />{pwError}</div>}
           <form onSubmit={handleForcedPasswordChange} className="login-form">
             <div className="form-group">
               <label className="form-label">Текущий пароль:</label>
@@ -1860,7 +1862,6 @@ export default function App() {
             <div className="sub-panel-top-bar">
               <div className="sub-panel-dropdown-trigger">
                 <span>Диалоги</span>
-                <span className="arrow-down">⌵</span>
               </div>
               <div className="sub-panel-search-box">
                 <input
@@ -1870,7 +1871,7 @@ export default function App() {
                   value={dialogSearch}
                   onChange={(e) => setDialogSearch(e.target.value)}
                 />
-                <span className="search-icon">🔍</span>
+                <Icon name="search" size={13} className="search-icon" />
               </div>
               <button
                 type="button"
@@ -1934,18 +1935,7 @@ export default function App() {
                     className={`dialog-list-item ${isActive ? 'active' : ''} ${unreadBadge > 0 ? 'has-unread-item' : ''} ${isOnline ? 'online-bar' : 'offline-bar'}`}
                     onClick={() => openDirectChat(u)}
                   >
-                    <div className="dialog-avatar-container">
-                      {u.avatar_url ? (
-                        <img src={u.avatar_url} alt="" className="dialog-avatar-img" />
-                      ) : (
-                        <div className="dialog-avatar-placeholder">
-                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.6">
-                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                            <circle cx="12" cy="13" r="4" />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
+                    <Avatar name={displayName} src={u.avatar_url} size={36} />
 
                     <div className="dialog-info-column">
                       <div className="dialog-row-top">
@@ -1984,7 +1974,6 @@ export default function App() {
             <div className="sub-panel-top-bar">
               <div className="sub-panel-dropdown-trigger">
                 <span>Конференции</span>
-                <span className="arrow-down">⌵</span>
               </div>
               <div className="sub-panel-search-box">
                 {/* Поле было ни к чему не подключено: набранное в нём не
@@ -1996,7 +1985,7 @@ export default function App() {
                   value={channelSearch}
                   onChange={(e) => setChannelSearch(e.target.value)}
                 />
-                <span className="search-icon">🔍</span>
+                <Icon name="search" size={13} className="search-icon" />
               </div>
             </div>
 
@@ -2008,9 +1997,9 @@ export default function App() {
                     className={`dialog-list-item ${activeChat?.type === 'channel' && activeChat.id === ch.id ? 'active' : ''}`}
                     onClick={() => openChannelChat(ch)}
                   >
-                    <div className="dialog-avatar-container">
-                      <div className="dialog-avatar-placeholder channel">#</div>
-                    </div>
+                    <span className="ui-avatar is-square channel-avatar" style={{ width: 36, height: 36 }}>
+                      <Icon name="hash" size={16} strokeWidth={2} />
+                    </span>
                     <div className="dialog-info-column">
                       <div className="dialog-row-top">
                         <span className="dialog-peer-name">{channelLabel(ch.name)}</span>
@@ -2181,13 +2170,13 @@ export default function App() {
 
         <div className="status-bar-center">
           <span className="status-bar-stat">
-            👥 В сети: <strong>{users.filter((u) => u.status === 'online').length}</strong>
+            <Icon name="users" size={12} /> В сети: <strong>{users.filter((u) => u.status === 'online').length}</strong>
           </span>
-          <span className="status-bar-divider">|</span>
+          <span className="status-bar-divider" aria-hidden="true" />
           <span className="status-bar-stat">
-            🕒 Отошли: <strong>{users.filter((u) => u.status === 'away').length}</strong>
+            <Icon name="clock" size={12} /> Отошли: <strong>{users.filter((u) => u.status === 'away').length}</strong>
           </span>
-          <span className="status-bar-divider">|</span>
+          <span className="status-bar-divider" aria-hidden="true" />
           <span className="status-bar-stat">
             Всего: <strong>{users.length}</strong>
           </span>
@@ -2211,7 +2200,7 @@ export default function App() {
                   ? 'Не беспокоить'
                   : 'Не в сети'}
               </span>
-              <span className="arrow-down">⌵</span>
+              <Icon name="chevronDown" size={12} className="arrow-down" />
             </button>
 
             {showStatusDropdown && (
@@ -2260,7 +2249,7 @@ export default function App() {
             )}
           </div>
 
-          <span className="status-bar-divider">|</span>
+          <span className="status-bar-divider" aria-hidden="true" />
 
           {/* Log out */}
           <button
@@ -2268,7 +2257,7 @@ export default function App() {
             onClick={handleLogout}
             title="Выйти из учётной записи"
           >
-            <span>👤 {currentUser ? (currentUser.full_name || currentUser.username) : 'Вход'}</span>
+            <Icon name="user" size={12} /><span>{currentUser ? (currentUser.full_name || currentUser.username) : 'Вход'}</span>
             <span className="persona-switch-badge">⇄</span>
           </button>
         </div>

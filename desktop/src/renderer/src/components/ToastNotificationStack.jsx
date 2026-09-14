@@ -1,4 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import Avatar from './Avatar';
+import Icon from './Icon';
 
 // Crystal-clear corporate notification chime using Web Audio API synthesis
 export function playNotificationSound(isUrgent = false) {
@@ -84,11 +86,13 @@ function ToastItem({ toast, onDismiss, onAction }) {
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
   const timerRef = useRef(null);
+  const [paused, setPaused] = useState(false);
   // Предупреждения об ошибках держатся дольше: их нужно успеть прочитать.
   const lifetimeMs = toast.type === 'system' || toast.isUrgent ? 9000 : 6000;
 
   const startTimer = () => {
     clearTimeout(timerRef.current);
+    setPaused(false);
     timerRef.current = setTimeout(() => dismissRef.current(), lifetimeMs);
   };
 
@@ -106,43 +110,55 @@ function ToastItem({ toast, onDismiss, onAction }) {
 
   return (
     <div
-      className={`toast-card ${kind}`}
+      className={`toast-card ${kind}${hasTarget ? ' has-target' : ''}`}
+      role={isUrgent ? 'alert' : 'status'}
       onClick={hasTarget ? onAction : onDismiss}
+      title={hasTarget ? 'Открыть' : undefined}
       // Пока человек читает — не убирать из-под курсора.
-      onMouseEnter={() => clearTimeout(timerRef.current)}
+      onMouseEnter={() => { clearTimeout(timerRef.current); setPaused(true); }}
       onMouseLeave={startTimer}
     >
-      <span className="toast-accent" />
-
-      <span className="toast-avatar">
-        {toast.icon || toast.avatarText || (isUrgent ? '🖥️' : isAnnouncement ? '📢' : '💬')}
-      </span>
+      {kind === 'chat' && toast.type === 'chat' && toast.title ? (
+        <Avatar name={toast.title} size={32} />
+      ) : (
+        <span className="toast-avatar">
+          <Icon
+            name={isUrgent ? 'monitor' : isAnnouncement ? 'megaphone' : toast.type === 'channel' ? 'hash' : toast.type === 'system' ? 'info' : 'message'}
+            size={16}
+          />
+        </span>
+      )}
 
       <div className="toast-body">
         <div className="toast-head">
           <span className="toast-title">{toast.title || 'Новое уведомление'}</span>
-          <span className="toast-tag">
-            {isUrgent ? 'Срочно' : isAnnouncement ? 'Оповещение' : 'MyChat'}
-          </span>
+          {/* Метка нужна только там, где она что-то сообщает: «MyChat» на
+              каждом сообщении внутри MyChat — шум. */}
+          {(isUrgent || isAnnouncement) && (
+            <span className="toast-tag">{isUrgent ? 'Срочно' : 'Оповещение'}</span>
+          )}
         </div>
         <p className="toast-text">{toast.body || ''}</p>
-        {hasTarget && (
-          <div className="toast-foot">
-            <span className="toast-action">Нажмите, чтобы открыть →</span>
-          </div>
-        )}
       </div>
 
       <button
         type="button"
         className="toast-close"
         title="Закрыть"
+        aria-label="Закрыть уведомление"
         onClick={(e) => { e.stopPropagation(); onDismiss(); }}
       >
-        ✕
+        <Icon name="x" size={14} />
       </button>
 
-      <span className="toast-progress" />
+      {/* Полоса показывает, сколько осталось, — поэтому идёт ровно столько же,
+          сколько живёт уведомление, и стоит, пока на него навели курсор. Раньше
+          она кончалась за 6 с даже у девятисекундных. */}
+      <span
+        key={paused ? 'paused' : 'running'}
+        className="toast-progress"
+        style={{ animationDuration: `${lifetimeMs}ms`, animationPlayState: paused ? 'paused' : 'running' }}
+      />
     </div>
   );
 }

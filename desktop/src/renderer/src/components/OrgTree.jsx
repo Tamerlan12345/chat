@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import Icon from './Icon';
 
 // «1 сотрудник», «3 сотрудника», «5 сотрудников».
 function plural(n, one, few, many) {
@@ -169,7 +170,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
     const isUnassigned = dept.id === UNASSIGNED_ID;
     const isSelected = selectedDeptId === dept.id;
     const isCompany = !isUnassigned && (dept.dept_type === 'company' || depth === 0);
-    const icon = isUnassigned ? '🗂️' : isCompany ? '🏢' : dept.dept_type === 'branch' ? '🏛️' : '👥';
+    const icon = isUnassigned ? 'folder' : isCompany ? 'building' : dept.dept_type === 'branch' ? 'branch' : 'users';
 
     // Flat calculated indentation
     const indentPx = depth * (isCompact ? 10 : 14) + 6;
@@ -187,12 +188,12 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
         >
           <span className="tree-toggle-icon">
             {hasChildren ? (
-              <span className="toggle-arrow">{isExpanded ? '▼' : '▶'}</span>
+              <Icon name={isExpanded ? "chevronDown" : "chevronRight"} size={12} strokeWidth={2.2} className="toggle-arrow" />
             ) : (
               <span className="tree-toggle-spacer" />
             )}
           </span>
-          <span className={isCompany ? 'tree-root-icon' : 'tree-folder-icon'}>{icon}</span>
+          <span className={isCompany ? 'tree-root-icon' : 'tree-folder-icon'}><Icon name={icon} size={14} /></span>
           <span className="tree-dept-name-text">
             {dept.name}
           </span>
@@ -239,8 +240,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
       <div className="sub-panel-top-bar">
         <div className="sub-panel-dropdown-trigger" title="Контакты компании АО СК «Сентрас Иншуранс»">
           <span>Общие контакты</span>
-          <span className="arrow-down">⌵</span>
-        </div>
+                  </div>
 
         <div className="tree-quick-actions">
           <button
@@ -249,7 +249,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             onClick={() => setOnlyOnline(!onlyOnline)}
             title={onlyOnline ? 'Показать всех сотрудников' : 'Показать только сотрудников в сети'}
           >
-            🟢 {onlyOnline ? 'Все' : 'Онлайн'}
+            <span className="tree-online-dot" aria-hidden="true" />{onlyOnline ? 'Все' : 'Онлайн'}
           </button>
           <button
             type="button"
@@ -257,7 +257,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             onClick={handleToggleExpandAll}
             title="Развернуть или свернуть все подразделения"
           >
-            ↕️
+            <Icon name="expand" size={13} />
           </button>
           <button
             type="button"
@@ -265,7 +265,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             onClick={() => setIsCompact(!isCompact)}
             title={isCompact ? 'Обычный режим' : 'Компактный режим (максимум информации)'}
           >
-            {isCompact ? '📏' : '📐'}
+            <Icon name="rows" size={13} />
           </button>
         </div>
       </div>
@@ -282,15 +282,15 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             onKeyDown={(e) => { if (e.key === 'Escape' && search) { e.stopPropagation(); setSearch(''); } }}
           />
           {search ? (
-            <span className="search-clear-btn" onClick={() => setSearch('')} title="Очистить поиск">✕</span>
+            <button type="button" className="search-clear-btn" onClick={() => setSearch('')} title="Очистить поиск" aria-label="Очистить поиск"><Icon name="x" size={12} /></button>
           ) : (
-            <span className="search-icon">🔍</span>
+            <Icon name="search" size={13} className="search-icon" />
           )}
         </div>
         <div className="tree-meta-stats">
           <span>{totalUsers} {plural(totalUsers, 'сотрудник', 'сотрудника', 'сотрудников')}</span>
           <span className="meta-sep">•</span>
-          <span style={{ color: '#16a34a', fontWeight: 600 }}>{onlineUsers} в сети</span>
+          <span className="tree-meta-online">{onlineUsers} в сети</span>
           {onlyOnline && <span className="meta-filter-active">(фильтр)</span>}
         </div>
       </div>
@@ -315,7 +315,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
           // Раньше здесь в любом случае висела «Загрузка…»: при отказе сервера
           // она не сменялась никогда, и понять, что произошло, было нельзя.
           <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px' }}>
-            <div style={{ fontSize: '28px', marginBottom: '10px' }}>⚠️</div>
+            <div className="tree-state-icon is-error"><Icon name="alert" size={22} /></div>
             <div style={{ color: '#b91c1c', fontWeight: 600, marginBottom: '6px' }}>{error}</div>
             <div style={{ color: '#64748b', marginBottom: '14px', lineHeight: 1.6 }}>
               Структура компании не загрузилась. Переписка и уже открытые

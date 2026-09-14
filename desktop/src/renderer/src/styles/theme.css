@@ -1720,19 +1720,19 @@ input, textarea, button, select {
 
 /* Reply Banner */
 .chat-reply-banner {
-  background: #f1f5f9;
-  border-top: 1px solid #e2e8f0;
-  border-left: 3px solid #1e70bf;
-  padding: 6px 14px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
+  padding: 8px 16px;
+  gap: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .chat-reply-banner-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #1e70bf;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--primary);
 }
 
 .chat-reply-banner-text {
@@ -1968,7 +1968,6 @@ input, textarea, button, select {
 .rail-tab-btn.active {
   color: #ffffff;
   background-color: #374151;
-  border-left: 3px solid #22c55e;
 }
 
 .rail-tab-label {
@@ -2440,9 +2439,9 @@ input, textarea, button, select {
 .dept-hint {
   margin-bottom: 12px;
   padding: 8px 10px;
-  background: #f1f5f9;
-  border-left: 3px solid #94a3b8;
-  border-radius: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   color: #64748b;
   font-size: 11.5px;
   line-height: 1.45;
@@ -2619,9 +2618,9 @@ input, textarea, button, select {
 .profile-field-hint {
   margin-top: 10px;
   padding: 8px 10px;
-  background: #f1f5f9;
-  border-left: 3px solid #94a3b8;
-  border-radius: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   color: #64748b;
   font-size: 11.5px;
   line-height: 1.45;
@@ -4344,10 +4343,10 @@ input, textarea, button, select {
   margin-top: 14px;
   font-size: 11px;
   color: #475569;
-  background: #f8fafc;
-  border-left: 3px solid #2563eb;
-  padding: 6px 10px;
-  border-radius: 0 4px 4px 0;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
 }
 
 /* Remote Desktop Viewer */
@@ -6245,4 +6244,815 @@ select:focus-visible {
   background: rgba(245, 158, 11, 0.12);
   color: #fbbf24;
   font-size: 12px;
+}
+
+/* ==========================================================================
+   ДОВОДКА ОСНОВНОГО ИНТЕРФЕЙСА
+   Раскладка MyChat остаётся прежней: тёмная полоса слева, список, переписка,
+   строка состояния. Меняется то, из-за чего интерфейс выглядел собранным из
+   разных наборов:
+   — глянцевые кнопки с градиентом, внутренним бликом и «прыжком» при
+     наведении — теперь плоские, с одной рамкой и понятным нажатием;
+   — зелёный цвет у текста, который статусом не является (заголовок
+     «корпоративный канал», подпись «не в сети» зелёным) — зелёным остаётся
+     только точка присутствия;
+   — светящиеся ореолы вокруг точек и бесконечно пульсирующие счётчики;
+   — три разных вида аватара одного и того же человека;
+   — эмодзи вместо значков.
+   Правила ниже стоят последними и задают итоговые значения: в файле выше
+   одни и те же элементы переопределены по нескольку раз.
+   ========================================================================== */
+
+:root {
+  --primary-ring: rgba(37, 99, 235, 0.22);
+  --rail-accent: #60a5fa;
+  --text-secondary: #475569;
+  --control-height: 30px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::selection { background: #bfdbfe; color: var(--text-strong); }
+input, textarea { caret-color: var(--primary); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ── Аватар и значки ─────────────────────────────────────────────────────── */
+
+.ui-icon { flex-shrink: 0; display: inline-block; vertical-align: middle; }
+
+.ui-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+  background-color: var(--text-dim);
+}
+.ui-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ui-avatar.is-square { border-radius: var(--radius-md); }
+.ui-avatar.channel-avatar { background: var(--primary-soft); color: var(--primary-hover); }
+
+/* ── Кнопки ──────────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  box-shadow: none;
+}
+.btn-primary:active:not(:disabled) {
+  background: #1e40af;
+  transform: none;
+  box-shadow: none;
+}
+.btn-secondary {
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--text-dim);
+  box-shadow: none;
+}
+.btn-secondary:active:not(:disabled) {
+  background: var(--bg-active);
+  transform: none;
+  box-shadow: none;
+}
+
+.classic-action-icon-btn,
+.classic-tool-item,
+.classic-tool-item-with-arrow {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.classic-action-icon-btn { width: var(--control-height); height: var(--control-height); border-radius: var(--radius-md); }
+.classic-tool-item { height: 28px; min-width: 28px; padding: 0 7px; border-radius: var(--radius-md); }
+.classic-tool-item-with-arrow { height: 28px; padding: 0 9px; border-radius: var(--radius-md); gap: 6px; }
+
+.classic-action-icon-btn:hover,
+.classic-tool-item:hover,
+.classic-tool-item-with-arrow:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+  box-shadow: none;
+}
+.classic-action-icon-btn:hover svg { transform: none; }
+.classic-action-icon-btn:active,
+.classic-tool-item:active,
+.classic-tool-item-with-arrow:active {
+  background: var(--bg-active);
+  transform: none;
+  box-shadow: none;
+}
+.classic-action-icon-btn.active,
+.classic-tool-item.active {
+  background: var(--primary-soft);
+  border-color: #93c5fd;
+  color: var(--primary-hover);
+  transform: none;
+  box-shadow: none;
+}
+.classic-tool-item-with-arrow .arrow-down { color: var(--text-dim); }
+
+/* ── Верхнее меню ────────────────────────────────────────────────────────── */
+
+.menu-top-btn:hover,
+.menu-top-btn.active { background-color: var(--bg-active); }
+
+.menu-dropdown,
+.menu-dropdown-layer,
+.classic-popup-menu,
+.status-bar-menu {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+.menu-dropdown-item,
+.classic-popup-menu-item,
+.status-bar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-main);
+}
+.menu-dropdown-item:hover,
+.classic-popup-menu-item:hover,
+.status-bar-menu-item:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-strong);
+}
+.menu-dropdown-item:hover .menu-icon { color: inherit; }
+.classic-popup-menu-item .ui-icon { color: var(--text-muted); }
+
+/* ── Левая полоса разделов ───────────────────────────────────────────────── */
+
+/* Выбранный раздел отмечался зелёной чертой — тем же цветом, что «в сети».
+   Выбор и присутствие — разные вещи. */
+.rail-tab-btn.active {
+  border-left: none;
+  background-color: #3b4455;
+  box-shadow: inset 3px 0 0 var(--rail-accent);
+}
+.rail-badge { box-shadow: 0 0 0 2px #2e3642; }
+
+/* ── Списки: диалоги и конференции ───────────────────────────────────────── */
+
+.sub-panel-top-bar {
+  min-height: 44px;
+  padding: 8px 10px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+.sub-panel-dropdown-trigger {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  cursor: default;
+}
+.sub-panel-search-input {
+  height: 28px;
+  padding: 0 26px 0 9px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  font-size: 12px;
+  color: var(--text-main);
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.sub-panel-search-input::placeholder { color: var(--text-muted); }
+.sub-panel-search-input:hover { border-color: var(--border-strong); }
+.sub-panel-search-input:focus,
+.sub-panel-search-input:focus-visible {
+  outline: none;
+  background: var(--bg-card);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.sub-panel-search-box .search-icon {
+  right: 8px;
+  color: var(--text-dim);
+}
+.command-palette-trigger-btn {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  font-family: var(--font-family);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.command-palette-trigger-btn:active { transform: none; }
+
+.dialog-list-item {
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 12px 8px 14px;
+  border-bottom: none;
+  transition: background-color 0.12s ease;
+}
+.dialog-list-item:hover { background-color: var(--bg-hover); }
+.dialog-list-item:active { background-color: var(--bg-active); }
+.dialog-list-item.has-unread-item { background-color: transparent; }
+.dialogs-scrollable-list .dialog-list-item.active,
+.conference-items-list .dialog-list-item.active { background-color: var(--bg-active-chat); }
+.dialogs-scrollable-list .dialog-list-item.active .dialog-peer-name { color: var(--text-strong); font-weight: 600; }
+
+/* Черта присутствия у левого края — узнаваемая деталь MyChat; остаётся, но
+   без серой полосы у всех, кто не в сети: так она сообщает только «в сети». */
+.dialog-list-item.online-bar::before { background-color: var(--online); width: 3px; }
+.dialog-list-item.offline-bar::before { background-color: transparent; }
+
+.dialog-info-column { gap: 3px; }
+.dialog-row-top { gap: 8px; }
+.dialog-peer-name { font-size: 13px; font-weight: 500; color: var(--text-main); }
+.dialog-list-item.has-unread-item .dialog-peer-name { font-weight: 600 !important; color: var(--text-strong) !important; }
+.dialog-timestamp { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dialog-snippet { font-size: 12px; color: var(--text-muted); }
+.dialog-list-item.has-unread-item .dialog-snippet { color: var(--text-secondary); }
+.dialog-read-ticks { color: var(--primary); font-weight: 600; }
+
+/* Счётчик непрочитанных пульсировал без остановки: движение, которое не
+   сообщает ничего нового, отвлекает от самих сообщений. */
+.dialog-unread-badge {
+  animation: none;
+  box-shadow: none !important;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.dialogs-empty { padding: 32px 20px; }
+
+/* ── Шапка переписки ─────────────────────────────────────────────────────── */
+
+.classic-chat-header {
+  height: 56px;
+  padding: 0 16px;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+.classic-header-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.classic-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.classic-header-status {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.classic-header-actions { gap: 6px; }
+
+.chat-header-status-dot { width: 8px; height: 8px; margin-right: 6px; }
+.chat-header-status-dot.online,
+.chat-header-status-dot.away,
+.chat-header-status-dot.dnd,
+.status-net-dot.online,
+.status-pill-dot.online,
+.status-pill-dot.away,
+.tree-presence-dot.online,
+.tree-presence-dot.away,
+.server-status-dot.online { box-shadow: none; }
+.chat-header-status-dot.away,
+.status-pill-dot.away,
+.tree-presence-dot.away { background-color: var(--away); }
+
+/* ── Лента сообщений ─────────────────────────────────────────────────────── */
+
+.classic-chat-stream {
+  padding: 16px 20px 12px;
+  gap: 0;
+}
+
+.chat-day-separator { margin: 16px 0 8px; color: var(--text-muted); font-size: 11px; font-weight: 500; }
+.chat-day-separator::before,
+.chat-day-separator::after { background: var(--border-color); }
+.chat-day-separator span { background: var(--bg-card); border: 1px solid var(--border-color); padding: 2px 10px; }
+
+.chat-unread-separator { margin: 12px 0 4px; font-size: 11px; font-weight: 600; color: var(--danger); }
+
+/* Внутри группы строки идут плотно, между группами — заметный отступ: так
+   видно, где заканчивается реплика одного человека. */
+.classic-chat-message-row {
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 2px 8px;
+  margin: 0 -8px;
+  border-radius: var(--radius-md);
+  transition: background-color 0.12s ease;
+}
+.classic-chat-message-row.starts-group { margin-top: 14px; padding-top: 4px; }
+.classic-chat-message-row:first-child { margin-top: 0; }
+.classic-chat-message-row:hover { background: var(--bg-panel); }
+
+.classic-msg-avatar-slot { padding-top: 1px; }
+.classic-msg-hover-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.classic-msg-header { gap: 8px; margin-bottom: 1px; align-items: baseline; }
+.classic-sender-name { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.classic-sender-you {
+  margin-left: 6px;
+  padding: 1px 5px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.classic-msg-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.classic-msg-ticks { color: var(--text-dim); font-weight: 600; }
+.classic-msg-ticks.read { color: var(--primary); }
+.classic-msg-text { font-size: 13.5px; line-height: 1.5; color: var(--text-main); max-width: 72ch; }
+.continues-group .classic-msg-body { padding-top: 1px; }
+
+.chat-file-attachment {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 10px;
+  padding: 10px 14px 10px 12px;
+  margin-top: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+.chat-file-icon { font-size: 0; color: var(--primary); display: flex; }
+.chat-file-name { font-size: 13px; font-weight: 600; color: var(--text-strong); overflow-wrap: anywhere; }
+.chat-file-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.chat-file-download-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-file-download-link:disabled { color: var(--text-dim); cursor: default; text-decoration: none; }
+
+/* Пустая переписка и загрузка — по центру ленты, а не прижатые к левому
+   верхнему углу мелким текстом. */
+.chat-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.chat-empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+  font-size: 0;
+}
+.chat-empty-title { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.chat-empty-desc { font-size: 13px; color: var(--text-muted); max-width: 44ch; line-height: 1.5; }
+
+.chat-typing-indicator { padding: 8px 0 0 46px; font-style: normal; }
+
+.chat-jump-to-latest {
+  background: var(--text-strong);
+  box-shadow: var(--shadow-md);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── Поле ввода ──────────────────────────────────────────────────────────── */
+
+.classic-input-container {
+  padding: 8px 16px 12px;
+  gap: 8px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border-color);
+}
+.classic-input-toolbar { gap: 6px; }
+
+/* Рамка фокуса обводила только сам текст, а кнопка отправки оставалась
+   снаружи: поле выглядело разорванным. Теперь подсвечивается всё поле. */
+.classic-textarea-row {
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.classic-textarea-row:hover { border-color: var(--text-dim); }
+.classic-textarea-row:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.classic-chat-textarea,
+.classic-chat-textarea:focus-visible {
+  outline: none;
+  padding: 5px 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-main);
+  background: transparent;
+}
+.classic-chat-textarea::placeholder { color: var(--text-muted); }
+
+.classic-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.classic-send-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  box-shadow: none;
+  transform: none;
+}
+.classic-send-btn:hover:not(:disabled) svg { transform: none; }
+.classic-send-btn:active:not(:disabled) { background: #1e40af; transform: none; box-shadow: none; }
+.classic-send-btn:disabled { background: var(--bg-hover); border-color: var(--bg-hover); }
+.classic-send-btn:disabled svg { stroke: var(--text-dim) !important; }
+
+/* ── Приветствие ─────────────────────────────────────────────────────────── */
+
+.greeting-heading {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+  margin-bottom: 16px;
+  text-wrap: balance;
+}
+.greeting-illustration-box { margin-bottom: 20px; }
+.greeting-links-section { gap: 4px; }
+.greeting-text-link { color: var(--primary); font-size: 13px; font-weight: 600; text-underline-offset: 3px; }
+.greeting-instruction { font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin: 2px 0 12px; }
+.greeting-user-info,
+.greeting-switch-desc { font-size: 12.5px; color: var(--text-secondary); }
+
+/* ── Дерево контактов ────────────────────────────────────────────────────── */
+
+.tree-quick-actions { gap: 4px; }
+.tree-action-btn {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 8px;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tree-action-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text-strong); }
+.tree-action-btn.active { background: var(--primary-soft); border-color: #93c5fd; color: var(--primary-hover); font-weight: 500; }
+.tree-online-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--online); }
+/* В узкой колонке третья кнопка уходила за край: название уступает место
+   кнопкам, а у кнопок-значков нет лишних полей. */
+.org-tree-panel .sub-panel-dropdown-trigger { min-width: 0; overflow: hidden; }
+.org-tree-panel .sub-panel-dropdown-trigger span { overflow: hidden; text-overflow: ellipsis; }
+.tree-quick-actions { flex-shrink: 0; }
+.tree-action-btn:has(> .ui-icon:only-child) { padding: 0; }
+
+.tree-search-wrapper { padding: 8px 10px; gap: 6px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); }
+.tree-meta-stats { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.tree-meta-online { color: var(--success); font-weight: 600; }
+
+.search-clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  right: 4px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+}
+.search-clear-btn:hover { color: var(--text-strong); background: var(--bg-hover); }
+
+.org-tree-scrollable { padding: 6px; font-size: 12.5px; }
+
+.tree-root-row,
+.tree-dept-row,
+.tree-employee-node {
+  min-height: 28px;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+}
+.tree-root-row { background: transparent; margin: 4px 0 0; font-weight: 600; color: var(--text-strong); }
+.tree-dept-name-text { font-size: 12.5px; font-weight: 500; color: var(--text-main); }
+.tree-root-row .tree-dept-name-text { font-weight: 600; color: var(--text-strong); }
+.tree-dept-row.active-selection { background: var(--bg-hover); outline: none; }
+
+.tree-toggle-icon { color: var(--text-dim); font-size: 0; }
+.tree-root-icon,
+.tree-folder-icon { display: flex; color: var(--text-muted); font-size: 0; }
+.tree-root-row .tree-root-icon { color: var(--text-secondary); }
+
+/* «0/0» в плашке у каждого отдела превращал дерево в столбик одинаковых
+   значков. Пустой счёт — просто приглушённые цифры; плашка остаётся только
+   там, где кто-то в сети. */
+.tree-count-pill { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; padding: 1px 6px; }
+.tree-count-pill.all-offline { background: transparent; color: var(--text-dim); }
+.tree-count-pill.has-online { background: #dcfce7; color: #166534; }
+.cnt-online { font-weight: 600; }
+
+.tree-employee-node { color: var(--text-main); }
+.tree-employee-node.selected { background: var(--bg-active-chat); color: var(--text-strong); font-weight: 500; }
+.tree-emp-name { font-size: 12.5px; }
+.tree-emp-job { font-size: 11.5px; color: var(--text-muted); }
+.tree-emp-ext { background: transparent; color: var(--text-muted); padding: 0; font-variant-numeric: tabular-nums; }
+.tree-presence-dot { width: 7px; height: 7px; margin-right: 2px; }
+.tree-presence-dot.offline { border: 1.5px solid var(--text-dim); }
+.tree-employee-node.has-unread { background: var(--danger-soft) !important; border-left: none; }
+.tree-unread-badge { box-shadow: none; font-weight: 600; }
+
+.tree-state-icon { display: flex; justify-content: center; margin-bottom: 10px; }
+.tree-state-icon.is-error { color: var(--danger); }
+
+/* ── Строка состояния ────────────────────────────────────────────────────── */
+
+.native-status-bar {
+  height: 28px;
+  padding: 0 12px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.status-bar-stat { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.status-bar-stat .ui-icon { color: var(--text-muted); }
+.status-bar-divider { width: 1px; height: 12px; background: var(--border-strong); }
+.status-bar-presence-btn {
+  height: 22px;
+  padding: 0 8px;
+  gap: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.status-bar-presence-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.status-bar-presence-btn:active { transform: none; background: var(--bg-active); }
+.status-bar-presence-btn .arrow-down { color: var(--text-muted); }
+.status-bar-persona-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-strong); border-radius: var(--radius-md); }
+.status-bar-persona-btn .ui-icon { color: var(--text-muted); }
+.status-bar-persona-btn:hover { background: var(--bg-hover); border-color: var(--border-color); }
+.status-bar-persona-btn:active { transform: none; }
+
+/* ── Всплывающие уведомления ─────────────────────────────────────────────── */
+
+/* Тёмные карточки стопкой в правом нижнем углу закрывали поле ввода и кнопку
+   отправки — ответить, не закрыв их, было нельзя. Теперь светлые, компактные
+   и под шапкой переписки, где ничего важного нет. */
+.toast-stack {
+  top: 116px;
+  bottom: auto;
+  right: 16px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  flex-direction: column;
+  gap: 8px;
+}
+.toast-card {
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 10px 12px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-main);
+  cursor: default;
+  animation: toast-in 0.22s var(--ease-out);
+}
+.toast-card.has-target { cursor: pointer; }
+.toast-card:hover { border-color: var(--border-strong); }
+.toast-card.urgent { border-color: #fecaca; }
+
+.toast-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0;
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+.toast-card.urgent .toast-avatar { background: var(--danger-soft); color: var(--danger); }
+.toast-card.announcement .toast-avatar { background: #fef3c7; color: #b45309; }
+
+.toast-head { margin-bottom: 2px; gap: 8px; }
+.toast-title { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.toast-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+}
+.toast-card.urgent .toast-tag { background: var(--danger-soft); color: #b91c1c; }
+.toast-card.announcement .toast-tag { background: #fef3c7; color: #92400e; }
+.toast-text { font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
+
+.toast-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: -4px -2px 0 0;
+  color: var(--text-dim);
+}
+.toast-close:hover { color: var(--text-strong); background: var(--bg-hover); }
+
+.toast-progress { height: 2px; background: var(--primary); opacity: 0.55; }
+.toast-card.urgent .toast-progress { background: var(--danger); }
+.toast-card.announcement .toast-progress { background: var(--warning); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Быстрый переход (Ctrl+K) ────────────────────────────────────────────── */
+
+.command-palette-dialog { border-radius: 12px; border-color: var(--border-color); box-shadow: var(--shadow-lg); }
+.command-palette-input-row { padding: 12px 16px; }
+.command-palette-icon { color: var(--text-dim); }
+.command-palette-input::placeholder { color: var(--text-muted); }
+.command-palette-input:focus-visible { outline: none; }
+.command-palette-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+.command-palette-item { gap: 10px; padding: 7px 10px; }
+.command-palette-item:hover,
+.command-palette-item.active { background: var(--bg-active-chat); }
+.cp-item-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 0;
+}
+.command-palette-empty { color: var(--text-muted); font-size: 13px; }
+
+/* ── Вход ────────────────────────────────────────────────────────────────── */
+
+.login-container { background: #1e293b; }
+.login-card {
+  max-width: 420px;
+  padding: 32px 32px 24px;
+  border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(2, 6, 23, 0.4);
+}
+.login-header { margin-bottom: 18px; }
+.login-logo-circle { width: 48px; height: 48px; border-radius: 12px; background: var(--primary); box-shadow: none; margin-bottom: 14px; }
+.login-logo-circle svg { width: 26px; height: 26px; }
+.login-title { font-size: 18px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; text-wrap: balance; }
+.login-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+/* Состояние связи — строка текста, а не отдельная плашка на всю ширину. */
+.login-server-badge {
+  flex-wrap: wrap;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.login-tabs { padding: 3px; border-radius: var(--radius-lg); background: var(--bg-hover); }
+.login-tab-btn { border-radius: 7px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); }
+.login-tab-btn:hover:not(.active) { color: var(--text-strong); }
+.login-tab-btn.active { color: var(--text-strong); font-weight: 600; box-shadow: var(--shadow-sm); }
+
+.login-error-box,
+.login-notice-box,
+.login-pending-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.login-error-box .ui-icon,
+.login-notice-box .ui-icon,
+.login-pending-box .ui-icon { margin-top: 1px; }
+.login-error-box { background: var(--danger-soft); border: 1px solid #fecaca; color: #b91c1c; }
+.login-notice-box { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; }
+
+/* Подписи полей были заглавными с разрядкой — и ещё с двоеточием. */
+.form-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: 5px;
+}
+.form-input {
+  height: 36px;
+  padding: 0 12px;
+  border-color: var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 13.5px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select.form-input { padding-right: 8px; }
+.form-input::placeholder { color: var(--text-muted); }
+.form-input:hover:not(:disabled):not(:focus) { border-color: var(--text-dim); }
+.form-input:focus,
+.form-input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.form-input:disabled { background: var(--bg-panel); color: var(--text-muted); }
+.login-form .form-group { margin-bottom: 14px; }
+.form-hint { font-size: 12px; margin-top: 5px; color: var(--text-muted); }
+.form-hint.is-warning { color: #b45309; }
+.checkbox-label { font-size: 12.5px; color: var(--text-secondary); }
+.checkbox-label input { accent-color: var(--primary); width: 15px; height: 15px; }
+.login-submit-btn { height: 40px; padding: 0 16px; font-size: 14px; font-weight: 600; border-radius: var(--radius-md); }
+.login-footer-text { margin-top: 18px; font-size: 11.5px; color: var(--text-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-card,
+  .chat-jump-to-latest { animation: none; }
+  .toast-progress { animation: none; width: 0; }
 }

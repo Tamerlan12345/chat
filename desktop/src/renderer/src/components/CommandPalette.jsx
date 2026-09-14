@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import Avatar from './Avatar';
+import Icon from './Icon';
 
 // Ctrl+K quick-switcher: instant client-side match over people/channels,
 // plus a debounced server-side full-text search over message history
@@ -127,11 +129,11 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
     <div className="modal-backdrop command-palette-backdrop" onClick={onClose}>
       <div className="command-palette-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="command-palette-input-row">
-          <span className="command-palette-icon">⌘</span>
+          <Icon name="search" size={16} className="command-palette-icon" />
           <input
             ref={inputRef}
             className="command-palette-input"
-            placeholder="Найти коллегу, канал или сообщение..."
+            placeholder="Найти коллегу, канал или сообщение…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -142,7 +144,7 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
         <div className="command-palette-results">
           {matchedUsers.length === 0 && matchedChannels.length === 0 && messageResults.length === 0 && (
             <div className="command-palette-empty">
-              {searchingMessages ? 'Ищу...' : 'Ничего не найдено'}
+              {searchingMessages ? 'Ищу…' : 'Ничего не найдено'}
             </div>
           )}
 
@@ -159,7 +161,7 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
                     onMouseEnter={() => setSelectedIndex(idx)}
                     onClick={() => activate({ kind: 'user', data: u })}
                   >
-                    <span className="cp-item-icon">👤</span>
+                    <Avatar name={u.full_name || u.username} src={u.avatar_url} size={24} />
                     <span className="cp-item-title">{u.full_name || u.username}</span>
                     <span className="cp-item-sub">{u.job_title || ''}</span>
                   </div>
@@ -181,7 +183,7 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
                     onMouseEnter={() => setSelectedIndex(idx)}
                     onClick={() => activate({ kind: 'channel', data: c })}
                   >
-                    <span className="cp-item-icon">#</span>
+                    <span className="cp-item-icon"><Icon name="hash" size={14} /></span>
                     <span className="cp-item-title">{String(c.name || '').replace(/^#+/, '')}</span>
                     <span className="cp-item-sub">{c.topic || ''}</span>
                   </div>
@@ -203,7 +205,7 @@ export default function CommandPalette({ users, channels, token, serverUrl, curr
                     onMouseEnter={() => setSelectedIndex(idx)}
                     onClick={() => activate({ kind: 'message', data: m })}
                   >
-                    <span className="cp-item-icon">💬</span>
+                    <span className="cp-item-icon"><Icon name="message" size={14} /></span>
                     <span className="cp-item-title">{m.sender_name}{m.channel_name ? ` в #${m.channel_name}` : ''}</span>
                     <span className="cp-item-sub cp-item-snippet">{m.text}</span>
                   </div>

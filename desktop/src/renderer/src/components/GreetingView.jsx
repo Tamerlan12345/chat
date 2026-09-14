@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { parseFullName } from '../lib/person-name.mjs';
+import { greetingName } from '../lib/avatar.mjs';
 
 export default function GreetingView({
   currentUser,
@@ -13,9 +13,9 @@ export default function GreetingView({
   //
   // ФИО хранится как «Фамилия Имя Отчество»: первое слово — фамилия, и
   // сотрудника приветствовали «Добрый день, Иванов!». Запись из одного слова
-  // (например, «Администратор») остаётся как есть.
-  const parsedName = parseFullName(currentUser?.full_name);
-  const firstName = parsedName.firstName || parsedName.lastName || '';
+  // (например, «Администратор») остаётся как есть, а служебная запись
+  // «Администратор системы» — целиком, а не «Доброе утро, системы!».
+  const firstName = greetingName(currentUser?.full_name);
   const username = currentUser?.username || '';
   const uin = currentUser?.uin || '';
 
@@ -27,7 +27,7 @@ export default function GreetingView({
     <div className="greeting-screen">
       <div className="greeting-wrapper">
         <h1 className="greeting-heading">
-          {timeGreeting}, {firstName}!
+          {firstName ? `${timeGreeting}, ${firstName}!` : `${timeGreeting}!`}
         </h1>
 
         {/* Vector Illustration matching Screenshot 1 */}
@@ -76,7 +76,7 @@ export default function GreetingView({
           </div>
 
           <div className="greeting-instruction">
-            Откройте &quot;Контакты&quot;, &quot;Чаты&quot; либо &quot;Каналы&quot;,<br />
+            Откройте «Контакты», «Чаты» либо «Каналы»,<br />
             чтобы отправить сообщение, документ или позвонить.
           </div>
 
