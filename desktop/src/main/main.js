@@ -13,6 +13,7 @@ const {
   describeLoadFailure,
   describeHttpFailure
 } = require('./offline');
+const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isAutostartSupported } = require('./autostart');
 
 const logFile = path.join(__dirname, '../../electron_debug.log');
 function log(msg) {
@@ -35,6 +36,11 @@ const INDICATOR_PAGE = path.join(__dirname, 'rd-indicator.html');
 const INDICATOR_PRELOAD = path.join(__dirname, 'rd-indicator-preload.js');
 
 let mainWindow = null;
+
+// Запущено ли приложение самой Windows при входе. Тогда окно не показывается —
+// приложение подключается к серверу и ждёт в трее.
+let launchedAtLogin = false;
+let autostartEnabled = false;
 let tray = null;
 let viewerWindows = new Map(); // sessionId -> BrowserWindow
 let toastWindows = []; // Active corner toast notification windows
@@ -229,9 +235,12 @@ function createMainWindow() {
     height: 840,
     minWidth: 960,
     minHeight: 640,
+    // При автозапуске окно создаётся скрытым: страница грузится, соединение
+    // устанавливается и уведомления приходят, но работа не перекрывается.
+    show: !launchedAtLogin,
     frame: true, // Native Windows form frame
     title: 'MyChat Enterprise Client',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#0b1017',
     // Omit the key entirely (not `icon: null`) when the file can't be found —
     // an explicit null blanks the taskbar icon instead of falling back to the
     // .exe's own embedded icon.
@@ -426,6 +435,17 @@ function updateTrayMenu(status = 'online') {
     ...(hostSession.active
       ? [{ type: 'separator' }, { label: 'Завершить удалённый доступ', click: () => stopFromIndicator('tray menu') }]
       : []),
+    ...(isAutostartSupported(app)
+      ? [
+          { type: 'separator' },
+          {
+            label: 'Запускать при входе в Windows',
+            type: 'checkbox',
+            checked: autostartEnabled,
+            click: (item) => setAutostart(item.checked)
+          }
+        ]
+      : []),
     { type: 'separator' },
     {
       label: 'Статус: В сети',
@@ -494,6 +514,9 @@ function createTray() {
 
   updateTrayMenu(currentTrayStatus);
 
+  // После автозапуска окно спрятано, и значок в трее — единственный путь к
+  // нему. Двойного клика ждал не каждый: одного достаточно, как у мессенджеров.
+  tray.on('click', () => showMainWindow());
   tray.on('double-click', () => showMainWindow());
 }
 
@@ -1076,8 +1099,25 @@ process.on('uncaughtException', (err) => {
   log('UncaughtException: ' + err.stack);
 });
 
+function setAutostart(enabled) {
+  try {
+    writePreference(app.getPath('userData'), enabled);
+    autostartEnabled = applyAutostart(app, { enabled, log });
+  } catch (err) {
+    log('autostart change failed: ' + err.message);
+  }
+  updateTrayMenu(currentTrayStatus);
+}
+
 app.whenReady().then(() => {
   log('app.whenReady resolved! Calling createMainWindow...');
+  try {
+    launchedAtLogin = wasLaunchedAtLogin(process.argv, app.getLoginItemSettings?.({ args: ['--autostart'] }));
+    autostartEnabled = applyAutostart(app, { enabled: resolveEnabled(app.getPath('userData')), log });
+    log('launchedAtLogin: ' + launchedAtLogin);
+  } catch (err) {
+    log('autostart setup failed: ' + err.message);
+  }
   try {
     createMainWindow();
     log('createMainWindow called successfully!');

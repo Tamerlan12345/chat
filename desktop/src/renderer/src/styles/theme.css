@@ -7056,3 +7056,355 @@ select.form-input { padding-right: 8px; }
   .chat-jump-to-latest { animation: none; }
   .toast-progress { animation: none; width: 0; }
 }
+
+/* ==========================================================================
+   ГРАФИТОВАЯ РАМКА
+   Интерфейс делится на две зоны с разной работой:
+   — рамка (меню, полоса разделов, списки, строка состояния) — навигация.
+     Она графитовая: тёмное поле отступает, и глаз не цепляется за списки;
+   — холст (переписка, карточка сотрудника, оповещения) — работа и чтение.
+     Он остаётся светлым: длинный текст на светлом читается легче.
+   Фирменный синий «Сентрас» — только там, где что-то выбрано или активно.
+
+   Рамка не красит каждый элемент заново: внутри неё переопределены те же
+   переменные, на которых построены правила выше. Всплывающие меню остаются
+   светлыми — это отдельный слой поверх рамки.
+   ========================================================================== */
+
+:root {
+  --font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+
+  --frame-0: #0b1017;      /* полоса разделов — самый глубокий слой */
+  --frame-1: #111823;      /* меню, списки, строка состояния */
+  --frame-2: #18212e;      /* наведение */
+  --frame-3: #202b3a;      /* нажатие */
+  --frame-line: rgba(255, 255, 255, 0.07);
+  --frame-line-strong: rgba(255, 255, 255, 0.14);
+  --frame-selected: rgba(76, 141, 255, 0.16);
+  --frame-accent: #4c8dff;  /* фирменный синий, поднятый для тёмного фона */
+}
+
+body { font-feature-settings: 'ss01' 0; -webkit-font-smoothing: antialiased; }
+
+.native-menu-bar,
+.vertical-nav-rail,
+.sub-panel-dialogs,
+.native-status-bar {
+  color-scheme: dark;
+  --bg-card: var(--frame-1);
+  --bg-panel: var(--frame-1);
+  --bg-hover: var(--frame-2);
+  --bg-active: var(--frame-3);
+  --bg-active-chat: var(--frame-selected);
+  --border-color: var(--frame-line);
+  --border-strong: var(--frame-line-strong);
+  --text-main: #d3dbe5;
+  --text-strong: #f3f6fa;
+  --text-secondary: #a9b4c2;
+  --text-muted: #8a97a8;
+  --text-dim: #647184;
+  --primary: var(--frame-accent);
+  --primary-hover: #8cb6ff;
+  --primary-soft: rgba(76, 141, 255, 0.16);
+  --primary-ring: rgba(76, 141, 255, 0.32);
+  --danger-soft: rgba(248, 81, 73, 0.14);
+  --shadow-sm: none;
+}
+
+/* Всплывающие меню — светлый слой поверх рамки. */
+.menu-dropdown-layer,
+.status-bar-menu {
+  color-scheme: light;
+  --bg-card: #ffffff;
+  --bg-panel: #f8fafc;
+  --bg-hover: #f1f5f9;
+  --bg-active: #e2e8f0;
+  --border-color: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-main: #1e293b;
+  --text-strong: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --shadow-md: 0 12px 32px rgba(2, 6, 23, 0.28), 0 2px 6px rgba(2, 6, 23, 0.12);
+}
+
+/* ── Меню приложения ─────────────────────────────────────────────────────── */
+
+.native-menu-bar {
+  height: 30px;
+  padding: 0 6px;
+  gap: 2px;
+  background: var(--frame-1);
+  border-bottom: 1px solid var(--frame-line);
+}
+.menu-top-btn {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.menu-top-btn:hover,
+.menu-top-btn.active { background-color: var(--frame-2); color: var(--text-strong); }
+
+.menu-dropdown-layer {
+  top: calc(100% + 4px);
+  min-width: 232px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  animation: popover-in 0.14s var(--ease-out);
+}
+.menu-drop-item {
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-main);
+}
+.menu-drop-item:hover { background-color: var(--bg-hover); color: var(--text-strong); }
+.menu-drop-item.disabled:hover { background: transparent; color: var(--text-main); }
+.menu-drop-divider { margin: 4px 6px; background-color: var(--border-color); }
+
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Полоса разделов ─────────────────────────────────────────────────────── */
+
+.vertical-nav-rail {
+  width: 64px;
+  padding-top: 10px;
+  background: var(--frame-0);
+  border-right: 1px solid var(--frame-line);
+}
+.rail-hamburger-item {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  transition: background-color 0.12s ease;
+}
+.rail-hamburger-item:hover { background-color: var(--frame-2); }
+.rail-hamburger-item:active { transform: none; background-color: var(--frame-3); }
+.rail-self-avatar { box-shadow: 0 0 0 2px var(--frame-0), 0 0 0 3px var(--frame-line-strong); }
+
+.rail-nav-tabs { gap: 4px; }
+.rail-tab-btn {
+  position: relative;
+  width: 56px;
+  height: 52px;
+  gap: 3px;
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.rail-tab-btn:hover { background-color: var(--frame-2); color: var(--text-strong); }
+.rail-tab-btn:active { transform: none; background-color: var(--frame-3); }
+.rail-tab-btn.active {
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--text-strong);
+}
+.rail-tab-btn.active:hover { background-color: var(--frame-2); }
+.rail-tab-btn:focus-visible { outline: 2px solid var(--frame-accent); outline-offset: -2px; }
+.rail-tab-icon-box { position: relative; display: flex; }
+.rail-tab-icon-box svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.rail-tab-label { font-size: 10.5px; font-weight: 500; letter-spacing: 0.01em; }
+
+/* Метка выбранного раздела. Одна на полосу: при переключении она переезжает
+   к новому пункту (см. switchTab), поэтому видно, откуда и куда перешёл. */
+.rail-active-indicator {
+  position: absolute;
+  left: -4px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--frame-accent);
+  view-transition-name: rail-indicator;
+}
+
+.rail-badge {
+  top: -5px;
+  right: -9px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--frame-0);
+}
+
+/* ── Панель списков ──────────────────────────────────────────────────────── */
+
+.sub-panel-dialogs {
+  position: relative;
+  background: var(--frame-1);
+  border-right: 1px solid var(--frame-line);
+  view-transition-name: side-panel;
+}
+.dialogs-scrollable-list,
+.org-tree-panel,
+.conferences-container { background: var(--frame-1); }
+
+.sub-panel-top-bar { background: var(--frame-1); min-height: 48px; }
+.sub-panel-dropdown-trigger {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.sub-panel-search-input { background: var(--frame-2); border-color: transparent; }
+.sub-panel-search-input:hover { border-color: var(--frame-line-strong); }
+.sub-panel-search-input:focus,
+.sub-panel-search-input:focus-visible { background: var(--frame-0); }
+.command-palette-trigger-btn { background: transparent; border-color: var(--frame-line-strong); color: var(--text-muted); }
+.command-palette-trigger-btn:hover { background: var(--frame-2); color: var(--text-strong); border-color: var(--frame-line-strong); }
+
+.dialog-list-item { margin: 1px 6px; padding: 8px 10px 8px 12px; border-radius: 8px; min-height: 58px; }
+.dialog-list-item.online-bar::before { top: 12px; bottom: 12px; left: 0; border-radius: 0 3px 3px 0; }
+.dialogs-scrollable-list .dialog-list-item.active,
+.conference-items-list .dialog-list-item.active { background-color: var(--frame-selected); }
+.dialogs-scrollable-list .dialog-list-item.active .dialog-peer-name,
+.conference-items-list .dialog-list-item.active .dialog-peer-name { color: #ffffff; }
+.dialog-list-item.active .dialog-snippet { color: var(--text-secondary); }
+.dialog-list-item.has-unread-item .dialog-timestamp { color: var(--frame-accent); }
+.dialog-read-ticks { color: var(--frame-accent); }
+.dialog-unread-badge { box-shadow: none !important; animation: badge-pop 0.24s var(--ease-out); }
+
+@keyframes badge-pop {
+  from { transform: scale(0.6); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.sub-panel-dialogs .ui-avatar.channel-avatar { background: var(--frame-2); color: var(--text-secondary); }
+.dialog-list-item.active .ui-avatar.channel-avatar { background: rgba(76, 141, 255, 0.22); color: #cfe0ff; }
+
+.dialogs-empty-title,
+.no-conf-title { color: var(--text-strong); font-weight: 600; }
+.dialogs-empty-text,
+.no-conf-desc { color: var(--text-muted); }
+.no-conferences-box { background: transparent; border-top: 1px solid var(--frame-line); }
+.sub-panel-dialogs .conf-link-btn { color: var(--frame-accent); text-decoration: none; }
+.sub-panel-dialogs .conf-link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.sidebar-resizer:hover,
+.sidebar-resizer.is-dragging { background-color: var(--frame-accent); box-shadow: none; }
+
+/* Дерево контактов в рамке. */
+.tree-search-wrapper { background: var(--frame-1); }
+.tree-action-btn { background: transparent; border-color: var(--frame-line-strong); }
+.tree-action-btn.active { background: var(--frame-selected); border-color: rgba(76, 141, 255, 0.45); color: #cfe0ff; }
+.tree-meta-online { color: #4ade80; }
+.tree-count-pill.has-online { background: rgba(74, 222, 128, 0.12); color: #86efac; }
+.tree-employee-node.selected { background: var(--frame-selected); color: #ffffff; }
+.tree-employee-node.has-unread { background: rgba(248, 81, 73, 0.1) !important; }
+.tree-root-row:hover,
+.tree-dept-row:hover,
+.tree-employee-node:hover { background-color: var(--frame-2); }
+.tree-presence-dot.offline { border-color: var(--text-dim); }
+.search-clear-btn:hover { background: var(--frame-3); }
+
+/* ── Строка состояния ────────────────────────────────────────────────────── */
+
+.native-status-bar {
+  height: 28px;
+  background: var(--frame-1);
+  border-top: 1px solid var(--frame-line);
+  color: var(--text-muted);
+}
+.status-bar-stat strong { color: var(--text-strong); font-weight: 600; }
+.status-bar-divider { background: var(--frame-line-strong); }
+.status-bar-presence-btn { background: transparent; color: var(--text-main); border-color: var(--frame-line-strong); }
+.status-bar-persona-btn { color: var(--text-main); }
+.persona-switch-badge { background: var(--frame-2); color: var(--text-secondary); }
+.status-net-dot.online,
+.status-pill-dot.online { background-color: #3fb950; }
+
+/* ── Холст: переписка ────────────────────────────────────────────────────── */
+
+.classic-header-title,
+.greeting-heading,
+.chat-empty-title,
+.login-title { font-family: var(--font-display); }
+.classic-header-title { font-size: 16px; letter-spacing: -0.01em; }
+
+/* Смена чата: лента проявляется за 180 мс. Без этого новый чат подменял
+   старый рывком, и было непонятно, открылся ли он вообще. */
+.classic-chat-container { animation: canvas-in 0.18s var(--ease-out); }
+@keyframes canvas-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.classic-chat-message-row.is-fresh { animation: message-in 0.26s var(--ease-out) both; }
+.classic-chat-message-row.is-mine.is-fresh { animation-name: message-sent; }
+@keyframes message-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes message-sent {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Смена статуса собеседника — плавная: точка перекрашивается, а не мигает. */
+.chat-header-status-dot,
+.tree-presence-dot,
+.status-pill-dot,
+.status-net-dot { transition: background-color 0.3s ease, border-color 0.3s ease; }
+
+/* ── Переходы между разделами (View Transitions) ─────────────────────────── */
+
+/* Страница целиком не перетекает — это выглядело бы как медленная загрузка.
+   Движутся только метка раздела и панель списков. */
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; }
+
+::view-transition-group(rail-indicator) {
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(side-panel) { animation: 0.1s ease-out both side-panel-out; }
+::view-transition-new(side-panel) { animation: 0.18s var(--ease-out) both side-panel-in; }
+::view-transition-group(side-panel) { animation-duration: 0.18s; }
+@keyframes side-panel-out { to { opacity: 0; } }
+@keyframes side-panel-in { from { opacity: 0; transform: translateX(-6px); } }
+
+/* ── Вход ────────────────────────────────────────────────────────────────── */
+
+.login-container { background: var(--frame-0); }
+.login-card { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 32px 64px rgba(0, 0, 0, 0.5); }
+.login-title { font-size: 19px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .classic-chat-container,
+  .classic-chat-message-row.is-fresh,
+  .dialog-unread-badge,
+  .menu-dropdown-layer { animation: none; }
+  .chat-header-status-dot,
+  .tree-presence-dot,
+  .status-pill-dot,
+  .status-net-dot { transition: none; }
+}
+
+/* Доводка после проверки рамки */
+.sub-panel-dialogs .tree-dept-row .tree-dept-name-text { font-weight: 400; color: var(--text-main); }
+.sub-panel-dialogs .tree-root-row .tree-dept-name-text { font-weight: 600; color: var(--text-strong); }
+.classic-chat-header { justify-content: flex-start; }
+.classic-header-avatar { margin-right: 2px; }
+.classic-header-info { flex: 1; }
+.classic-header-actions { margin-left: auto; }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import OrgTree from './components/OrgTree';
 import ChatView from './components/ChatView';
 import GreetingView from './components/GreetingView';
@@ -1762,6 +1763,35 @@ export default function App() {
     );
   }
 
+  // Переключение разделов слева. Метка выбранного раздела переезжает к новому
+  // пункту, а не исчезает в одном месте и появляется в другом: так видно,
+  // откуда и куда перешёл. Там, где View Transitions нет или человек просил
+  // меньше движения, раздел просто сменяется.
+  const switchTab = (tab) => {
+    if (tab === activeTab) return;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || reduceMotion) {
+      setActiveTab(tab);
+      return;
+    }
+    document.startViewTransition(() => flushSync(() => setActiveTab(tab)));
+  };
+
+  // Пункты полосы были простыми блоками: до них нельзя было добраться
+  // клавиатурой.
+  const railTabProps = (tab) => ({
+    role: 'tab',
+    tabIndex: 0,
+    'aria-selected': activeTab === tab,
+    onClick: () => switchTab(tab),
+    onKeyDown: (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        switchTab(tab);
+      }
+    }
+  });
+
   return (
     <div className="app-container">
       <MenuBar
@@ -1786,17 +1816,33 @@ export default function App() {
           <div
             className="rail-hamburger-item"
             title="Мой профиль"
+            role="button"
+            tabIndex={0}
             onClick={() => setShowProfileModal(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setShowProfileModal(true);
+              }
+            }}
           >
-            <span className="rail-hamburger-icon">☰</span>
+            {/* Пункт открывает профиль, а выглядел как «гамбургер» меню. Теперь
+                на его месте сам человек, под которым выполнен вход. */}
+            <Avatar
+              name={currentUser?.full_name || currentUser?.username}
+              src={currentUser?.avatar_url}
+              size={32}
+              className="rail-self-avatar"
+            />
           </div>
 
-          <div className="rail-nav-tabs">
+          <div className="rail-nav-tabs" role="tablist" aria-orientation="vertical">
             <div
               className={`rail-tab-btn ${activeTab === 'chats' ? 'active' : ''}`}
-              onClick={() => setActiveTab('chats')}
+              {...railTabProps('chats')}
               title="Чаты"
             >
+              {activeTab === 'chats' && <span className="rail-active-indicator" aria-hidden="true" />}
               <div className="rail-tab-icon-box">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -1807,9 +1853,10 @@ export default function App() {
 
             <div
               className={`rail-tab-btn ${activeTab === 'channels' ? 'active' : ''}`}
-              onClick={() => setActiveTab('channels')}
+              {...railTabProps('channels')}
               title="Каналы и конференции"
             >
+              {activeTab === 'channels' && <span className="rail-active-indicator" aria-hidden="true" />}
               <div className="rail-tab-icon-box">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
@@ -1823,9 +1870,10 @@ export default function App() {
 
             <div
               className={`rail-tab-btn ${activeTab === 'contacts' ? 'active' : ''}`}
-              onClick={() => setActiveTab('contacts')}
+              {...railTabProps('contacts')}
               title="Контакты и оргструктура"
             >
+              {activeTab === 'contacts' && <span className="rail-active-indicator" aria-hidden="true" />}
               <div className="rail-tab-icon-box">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
@@ -1839,9 +1887,10 @@ export default function App() {
 
             <div
               className={`rail-tab-btn ${activeTab === 'important' ? 'active' : ''}`}
-              onClick={() => setActiveTab('important')}
+              {...railTabProps('important')}
               title="Официальные оповещения"
             >
+              {activeTab === 'important' && <span className="rail-active-indicator" aria-hidden="true" />}
               <div className="rail-tab-icon-box relative">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
@@ -1950,7 +1999,7 @@ export default function App() {
                           {snippet}
                         </span>
                         {unreadBadge > 0 ? (
-                          <span className="dialog-unread-badge">{unreadBadge}</span>
+                          <span key={unreadBadge} className="dialog-unread-badge">{unreadBadge}</span>
                         ) : (
                           lastConvo?.is_read === 1 && <span className="dialog-read-ticks">✓✓</span>
                         )}
@@ -2007,7 +2056,7 @@ export default function App() {
                       <div className="dialog-row-bottom">
                         <span className="dialog-snippet">{ch.topic || 'Корпоративный канал'}</span>
                         {channelUnread[ch.id] > 0 && (
-                          <span className="dialog-unread-badge">{channelUnread[ch.id]}</span>
+                          <span key={channelUnread[ch.id]} className="dialog-unread-badge">{channelUnread[ch.id]}</span>
                         )}
                       </div>
                     </div>

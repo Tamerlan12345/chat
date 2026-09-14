@@ -303,7 +303,12 @@ export default function ChatView({
       elements.push(
         <div
           key={m.id || idx}
-          className={`classic-chat-message-row${isMine ? ' is-mine' : ''}${startsGroup ? ' starts-group' : ' continues-group'}`}
+          // Только что пришедшее сообщение появляется с коротким движением —
+          // своё поднимается от поля ввода. История при открытии чата не
+          // анимируется: строка уже существует, и анимация не повторяется.
+          className={`classic-chat-message-row${isMine ? ' is-mine' : ''}${startsGroup ? ' starts-group' : ' continues-group'}${
+            Date.now() - msgDate.getTime() < 8000 ? ' is-fresh' : ''
+          }`}
         >
           <div className="classic-msg-avatar-slot">
             {startsGroup ? (
@@ -403,6 +408,15 @@ export default function ChatView({
     <div className="classic-chat-container">
       {/* 1. Header Matching Screenshot 2 */}
       <div className="classic-chat-header">
+        {/* Лицо собеседника в шапке: тот же аватар, что в списке и в ленте, —
+            видно, кому пишешь, ещё до того, как прочитано имя. */}
+        {isDirect ? (
+          <Avatar name={chatTitle} src={activeChat.user?.avatar_url} size={36} className="classic-header-avatar" />
+        ) : (
+          <span className="ui-avatar is-square channel-avatar classic-header-avatar" style={{ width: 36, height: 36 }}>
+            <Icon name="hash" size={16} strokeWidth={2} />
+          </span>
+        )}
         <div className="classic-header-info">
           <div className="classic-header-title">{chatTitle}</div>
           <div className="classic-header-status">
