@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import EmojiPicker from './EmojiPicker';
 import Avatar from './Avatar';
 import Icon from './Icon';
+import WakeControl from './WakeControl';
 
 export default function ChatView({
   activeChat,
@@ -19,7 +20,11 @@ export default function ChatView({
   onTyping,
   token,
   serverUrl,
-  onNotice
+  onNotice,
+  connected = true,
+  wakeEntry = null,
+  onWakeSchedule,
+  onWakeCancel
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -426,6 +431,15 @@ export default function ChatView({
         </div>
 
         <div className="classic-header-actions">
+          {isDirect && onWakeSchedule && (
+            <WakeControl
+              peer={activeChat.user}
+              entry={wakeEntry}
+              connected={connected}
+              onSchedule={onWakeSchedule}
+              onCancel={onWakeCancel}
+            />
+          )}
           {/* Только личные диалоги: звонить в канал некому. Видеозвонка нет
               намеренно — кнопка без работающей функции хуже её отсутствия. */}
           {isDirect && (
@@ -723,7 +737,7 @@ export default function ChatView({
             disabled={!inputText.trim()}
             onClick={handleSend}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
             </svg>

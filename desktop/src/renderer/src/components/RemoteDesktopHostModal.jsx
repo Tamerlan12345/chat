@@ -584,10 +584,10 @@ export default function RemoteDesktopHostModal(props) {
   return (
     <div className="modal-backdrop" onClick={handleReject}>
       <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
-        <div className="modal-header" style={{ background: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}>
+        <div className="modal-header" style={{ background: '#313338', borderBottom: '1px solid rgba(126, 151, 180, 0.38)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '18px' }}>🖥️</span>
-            <span style={{ fontWeight: 700, fontSize: '15px', color: '#1e293b' }}>
+            <span style={{ fontWeight: 700, fontSize: '15px', color: '#a0b2cf' }}>
               Запрос на удаленный рабочий стол
             </span>
           </div>
@@ -597,7 +597,7 @@ export default function RemoteDesktopHostModal(props) {
         <div style={{ padding: '24px 20px' }}>
           <div className="rd-operator-card">
             <div className="rd-operator-avatar">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="1.8">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#7ca1f3" strokeWidth="1.8">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                 <circle cx="12" cy="7" r="4"></circle>
               </svg>
@@ -609,12 +609,12 @@ export default function RemoteDesktopHostModal(props) {
             </div>
           </div>
 
-          <p style={{ fontSize: '13px', color: '#334155', lineHeight: '1.5', margin: '16px 0 14px' }}>
+          <p style={{ fontSize: '13px', color: '#a6b4c9', lineHeight: '1.5', margin: '16px 0 14px' }}>
             Коллега запрашивает подключение к вашему компьютеру для оказания помощи или демонстрации экрана.
           </p>
 
           {error ? (
-            <div className="rd-security-notice" role="alert" style={{ color: '#b91c1c' }}>
+            <div className="rd-security-notice" role="alert" style={{ color: '#ec8383' }}>
               {error}
             </div>
           ) : (
@@ -658,7 +658,7 @@ export default function RemoteDesktopHostModal(props) {
           )}
         </div>
 
-        <div className="modal-footer" style={{ background: '#f8fafc', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <div className="modal-footer" style={{ background: '#313338', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
           {error ? (
             <button type="button" className="btn btn-secondary" onClick={closeModal}>
               Закрыть

@@ -285,10 +285,10 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           color: 'var(--text-muted)'
         }}>
           <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath ?? '—'}</strong></div>
-          <div>Размер: <strong style={{ color: '#10b981' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
+          <div>Размер: <strong style={{ color: '#7cf4cc' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
           <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
           <div>Режим: <strong style={{ color: '#ffffff' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
-          <div>Целостность: <strong style={{ color: '#10b981' }}>{stats.integrity ?? '—'}</strong></div>
+          <div>Целостность: <strong style={{ color: '#7cf4cc' }}>{stats.integrity ?? '—'}</strong></div>
           <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows ?? '—'}</strong></div>
         </div>
       )}
@@ -363,7 +363,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                     </thead>
                     <tbody>
                       {tableRows.map((row, rIdx) => (
-                        <tr key={rIdx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <tr key={rIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
                           {schemaColumns.map(c => (
                             <td key={c.name} style={{ padding: '8px 12px', whiteSpace: 'nowrap', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {row[c.name] === null ? <span style={{ color: 'var(--text-dim)' }}>NULL</span> : String(row[c.name])}
@@ -431,7 +431,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                         </thead>
                         <tbody>
                           {shownQuery.rows.map((r, idx) => (
-                            <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <tr key={idx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
                               {queryColumns.map(col => (
                                 <td key={col} style={{ padding: '6px 12px', whiteSpace: 'nowrap' }}>
                                   {r[col] === null ? 'NULL' : String(r[col])}

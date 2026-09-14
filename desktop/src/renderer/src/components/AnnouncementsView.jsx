@@ -172,7 +172,7 @@ export default function AnnouncementsView({
       <div className="announcements-sidebar">
         <div className="announcements-sidebar-header">
           <div className="announcements-sidebar-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f4bc7b" strokeWidth="2" strokeLinecap="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
               <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
             </svg>
@@ -248,7 +248,7 @@ export default function AnnouncementsView({
                 <span className={`announcement-priority-badge ${selectedAnn.priority === 'urgent' ? 'urgent' : 'normal'}`}>
                   {selectedAnn.priority === 'urgent' ? '🔥 Срочный приказ' : '📢 Служебное оповещение'}
                 </span>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>
+                <span style={{ fontSize: '12px', color: '#a9aeb5' }}>
                   Опубликовано: {new Date(selectedAnn.created_at).toLocaleString()}
                 </span>
               </div>
@@ -284,7 +284,7 @@ export default function AnnouncementsView({
                     ? '✓ Вы подтвердили ознакомление со служебным распоряжением'
                     : 'Обязательное подтверждение ознакомления'}
                 </div>
-                <div style={{ fontSize: '12px', color: '#64748b' }}>
+                <div style={{ fontSize: '12px', color: '#a9aeb5' }}>
                   {selectedAnn.is_confirmed === 1
                     ? `Отметка зафиксирована в реестре аудита: ${new Date(selectedAnn.confirmed_at || Date.now()).toLocaleString()}`
                     : 'Нажимая кнопку, вы подтверждаете факт прочтения и принятия условий распоряжения.'}
@@ -306,25 +306,25 @@ export default function AnnouncementsView({
             {/* Audit statistics table (for Administrator only) */}
             {canSeeAudit(selectedAnn) && auditData?.stats && (
               <div style={{
-                backgroundColor: '#f8fafc',
-                border: '1px solid #cbd5e1',
+                backgroundColor: '#313338',
+                border: '1px solid rgba(126, 151, 180, 0.38)',
                 borderRadius: '8px',
                 padding: '18px 20px',
                 marginTop: '10px'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                  <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>
+                  <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#96aad9' }}>
                     📊 Реестр ознакомления сотрудников (Контроль исполнения)
                   </h4>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#1d4ed8', background: '#eff6ff', padding: '3px 8px', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#819eee', background: 'rgba(62, 137, 234, 0.16)', padding: '3px 8px', borderRadius: '4px' }}>
                     Подтвердили: {auditData.stats.confirmedCount} из {auditData.stats.total} ({auditData.stats.percentage}%)
                   </div>
                 </div>
 
-                <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px', background: '#ffffff' }}>
+                <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid rgba(121, 148, 185, 0.38)', borderRadius: '6px', background: '#2c2e33' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                     <thead>
-                      <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1', color: '#475569', textAlign: 'left' }}>
+                      <tr style={{ background: 'rgba(105, 148, 191, 0.16)', borderBottom: '1px solid rgba(126, 151, 180, 0.38)', color: '#d3d6db', textAlign: 'left' }}>
                         <th style={{ padding: '8px 12px' }}>Сотрудник</th>
                         <th style={{ padding: '8px 12px' }}>Подразделение</th>
                         <th style={{ padding: '8px 12px' }}>Статус</th>
@@ -333,17 +333,17 @@ export default function AnnouncementsView({
                     </thead>
                     <tbody>
                       {(Array.isArray(auditData.recipients) ? auditData.recipients : []).map((r) => (
-                        <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '7px 12px', fontWeight: 600, color: '#1e293b' }}>{r.full_name}</td>
-                          <td style={{ padding: '7px 12px', color: '#64748b' }}>{r.department_name || '—'}</td>
+                        <tr key={r.id} style={{ borderBottom: '1px solid rgba(112, 153, 194, 0.38)' }}>
+                          <td style={{ padding: '7px 12px', fontWeight: 600, color: '#a0b2cf' }}>{r.full_name}</td>
+                          <td style={{ padding: '7px 12px', color: '#a9aeb5' }}>{r.department_name || '—'}</td>
                           <td style={{ padding: '7px 12px' }}>
                             {r.is_confirmed === 1 ? (
-                              <span style={{ color: '#15803d', fontWeight: 600 }}>✓ Ознакомлен</span>
+                              <span style={{ color: '#84ebab', fontWeight: 600 }}>✓ Ознакомлен</span>
                             ) : (
-                              <span style={{ color: '#b91c1c', fontWeight: 500 }}>⏳ Не прочитано</span>
+                              <span style={{ color: '#ec8383', fontWeight: 500 }}>⏳ Не прочитано</span>
                             )}
                           </td>
-                          <td style={{ padding: '7px 12px', color: '#64748b', fontSize: '11px' }}>
+                          <td style={{ padding: '7px 12px', color: '#a9aeb5', fontSize: '11px' }}>
                             {r.confirmed_at ? new Date(r.confirmed_at).toLocaleString() : '—'}
                           </td>
                         </tr>

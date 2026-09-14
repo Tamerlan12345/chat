@@ -5,29 +5,30 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <title>Нет связи с сервером</title>
 <style>
-  :root { color-scheme: light; }
+  :root { color-scheme: dark; }
   html, body { height: 100%; margin: 0; }
   body {
     display: flex; align-items: center; justify-content: center;
-    background: #f1f5f9; color: #0f172a;
-    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    background: #1d1e21; color: #dcdee2;
+    font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
   .card {
     width: min(520px, calc(100% - 48px));
-    background: #fff; border: 1px solid #cbd5e1; border-radius: 12px;
-    padding: 32px 32px 24px; box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+    background: #33363b; border: 1px solid rgba(255, 255, 255, .09); border-radius: 14px;
+    padding: 32px 32px 24px; box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
   }
-  .icon { width: 44px; height: 44px; color: #dc2626; margin-bottom: 12px; }
-  h1 { font-size: 20px; margin: 0 0 8px; }
-  .reason { margin: 0 0 12px; color: #334155; word-break: break-word; }
-  .server { margin: 0 0 20px; color: #64748b; font-size: 12px; word-break: break-all; }
+  .icon { width: 44px; height: 44px; color: #ff8b8b; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0 0 8px; color: #f2f3f5; font-weight: 600; }
+  .reason { margin: 0 0 12px; color: #b5b9bf; word-break: break-word; }
+  .server { margin: 0 0 20px; color: #969ba3; font-size: 12px; word-break: break-all; }
   button {
-    font: inherit; font-weight: 600; color: #fff; background: #2563eb;
-    border: 1px solid #1d4ed8; border-radius: 8px; padding: 8px 20px; cursor: pointer;
+    font: inherit; font-weight: 600; color: #fff; background: #2f6bec;
+    border: 1px solid #2f6bec; border-radius: 8px; padding: 8px 20px; cursor: pointer;
   }
-  button:hover { background: #1d4ed8; }
+  button:hover { background: #4580f2; border-color: #4580f2; }
+  button:focus-visible { outline: 2px solid #8fb4ff; outline-offset: 2px; }
   button:disabled { opacity: .6; cursor: default; }
-  .status { margin: 16px 0 0; color: #64748b; font-size: 12px; min-height: 18px; }
+  .status { margin: 16px 0 0; color: #969ba3; font-size: 12px; min-height: 18px; }
 </style>
 </head>
 <body>

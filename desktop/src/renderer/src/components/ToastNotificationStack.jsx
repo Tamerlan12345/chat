@@ -123,7 +123,7 @@ function ToastItem({ toast, onDismiss, onAction }) {
       ) : (
         <span className="toast-avatar">
           <Icon
-            name={isUrgent ? 'monitor' : isAnnouncement ? 'megaphone' : toast.type === 'channel' ? 'hash' : toast.type === 'system' ? 'info' : 'message'}
+            name={toast.type === 'wake' ? 'alarm' : isUrgent ? 'monitor' : isAnnouncement ? 'megaphone' : toast.type === 'channel' ? 'hash' : toast.type === 'system' ? 'info' : 'message'}
             size={16}
           />
         </span>

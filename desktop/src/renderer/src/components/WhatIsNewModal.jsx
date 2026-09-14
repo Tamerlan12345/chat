@@ -8,10 +8,10 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '24px' }}>💬</span>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '16px', color: '#1e293b' }}>
+              <div style={{ fontWeight: 700, fontSize: '16px', color: '#a0b2cf' }}>
                 OpenMyChat Enterprise Client
               </div>
-              <div style={{ fontSize: '11px', color: '#64748b' }}>
+              <div style={{ fontSize: '11px', color: '#a9aeb5' }}>
                 {serverInfo?.company_name || 'Корпоративная сеть'} • Версия 2026.3.1 (LTS)
               </div>
             </div>
@@ -81,7 +81,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
         </div>
 
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid #e2e8f0' }}>
+        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid rgba(121, 148, 185, 0.38)' }}>
           <button className="btn btn-primary" onClick={onClose}>
             Закрыть
           </button>

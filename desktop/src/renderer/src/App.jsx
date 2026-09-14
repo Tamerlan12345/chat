@@ -20,6 +20,9 @@ import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
 import Avatar from './components/Avatar';
 import Icon from './components/Icon';
+import PresenceControl from './components/PresenceControl';
+import WakeAlert from './components/WakeAlert';
+import { reduceWake } from './lib/wake.mjs';
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -169,6 +172,10 @@ export default function App() {
 
   // Floating Corner Toasts & Remote Desktop
   const [toasts, setToasts] = useState([]);
+  // Побудки, которые поставил я: { [id собеседника]: последнее событие }.
+  const [wakes, setWakes] = useState({});
+  // Побудка, которая пришла мне и ещё не отозвана.
+  const [incomingWake, setIncomingWake] = useState(null);
   const [rdPrompt, setRdPrompt] = useState(null);
   const [inlineRdViewer, setInlineRdViewer] = useState(null);
   const [rdPendingTarget, setRdPendingTarget] = useState(null);
@@ -614,13 +621,14 @@ export default function App() {
         const title = '🔔 Напоминание о непрочитанных сообщениях';
         const body = 'У вас ' + totalUnread + ' непрочитанных сообщений от: ' + (senderNames || 'коллег') + '. Нажмите, чтобы открыть.';
 
+        if (currentUserRef.current?.status === 'dnd') return;
         if (window.electronAPI && window.electronAPI.showNotification) {
           window.electronAPI.showNotification({ title, body, type: 'chat', isUrgent: true });
           window.electronAPI.flashFrame(true);
         } else {
           addToast({ title, body, type: 'chat', isUrgent: true });
         }
-        playChimeSound();
+        if (currentUserRef.current?.status !== 'dnd') playChimeSound();
       }
     }, randomDelay);
 
@@ -630,7 +638,7 @@ export default function App() {
   useEffect(() => {
     const company = serverInfo?.company_name || 'АО "Страховая компания "Сентрас Иншуранс"';
     if (currentUser) {
-      const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошел' : 'Не в сети';
+      const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошёл' : currentUser.status === 'dnd' ? 'Не беспокоить' : 'Не в сети';
       const extText = currentUser.extension ? ` (в.н.${currentUser.extension})` : '';
       const name = currentUser.full_name || currentUser.username;
       document.title = `MyChat Client 2025.3.1 — ${name}${extText} [${company}] (${statusText})`;
@@ -644,6 +652,11 @@ export default function App() {
   // Окно в фокусе — человек и так смотрит в приложение, карточки достаточно.
   // Окно свёрнуто или перекрыто — карточку никто не увидит, нужно системное.
   const addToast = ({ title, body, type = 'chat', isUrgent = false, avatarText = '', data = null }) => {
+    // «Не беспокоить»: сообщения из переписок и каналов не всплывают и не
+    // звучат — счётчики непрочитанного остаются. Запросы удалённого доступа,
+    // оповещения и ошибки показываются, но без звука.
+    const quiet = currentUserRef.current?.status === 'dnd';
+    if (quiet && (type === 'chat' || type === 'channel')) return;
     const useNative = !windowFocusedRef.current && window.electronAPI?.showNotification;
 
     if (useNative) {
@@ -656,7 +669,7 @@ export default function App() {
 
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
     setToasts((prev) => [{ id, title, body, type, isUrgent, avatarText, data }, ...prev].slice(0, 5));
-    playNotificationSound(isUrgent);
+    if (!quiet) playNotificationSound(isUrgent);
   };
 
   const dismissToast = (id) => {
@@ -837,12 +850,18 @@ export default function App() {
 
       // ── Состояние сеанса ────────────────────────────────────────────────
       case 'auth_success':
+        // Сервер считает только что подключившегося человека «в сети».
+        presenceRef.current = 'online';
         setWsConnected(true);
         reconnectAttemptRef.current = 0;
         // Пока связи не было, могли прийти сообщения и смениться статусы —
         // без досинхронизации они не появлялись до перезапуска приложения.
+        // И при первом подключении тоже: список сотрудников приходит запросом
+        // раньше, чем открывается соединение, и смены статуса в этот промежуток
+        // терялись — коллега, который уже в сети, до следующего события
+        // показывался «не в сети».
+        loadBaseData(tokenRef.current);
         if (hadSocketSessionRef.current) {
-          loadBaseData(tokenRef.current);
           reloadActiveChatHistory();
         }
         hadSocketSessionRef.current = true;
@@ -1091,7 +1110,7 @@ export default function App() {
             if (window.electronAPI && window.electronAPI.flashFrame) {
               window.electronAPI.flashFrame(true);
             }
-            playChimeSound();
+            if (currentUserRef.current?.status !== 'dnd') playChimeSound();
           }
         }
         break;
@@ -1128,7 +1147,7 @@ export default function App() {
             if (window.electronAPI && window.electronAPI.flashFrame) {
               window.electronAPI.flashFrame(true);
             }
-            playChimeSound();
+            if (currentUserRef.current?.status !== 'dnd') playChimeSound();
           }
         }
         break;
@@ -1167,9 +1186,12 @@ export default function App() {
             const updatedSubs = d.subDepartments?.map(updateDept);
             return { ...d, employees: updatedEmps, subDepartments: updatedSubs };
           };
+          // «Без подразделения» — отдельный список, и статус его сотрудников
+          // не менялся никогда: они оставались такими, какими были при загрузке.
           return {
             ...prev,
-            tree: prev.tree?.map(updateDept)
+            tree: prev.tree?.map(updateDept),
+            unassigned: prev.unassigned?.map((e) => (e.id === targetId ? { ...e, status: newStatus } : e))
           };
         });
 
@@ -1185,9 +1207,30 @@ export default function App() {
 
         if (currentUserRef.current?.id === targetId) {
           setCurrentUser((prev) => (prev ? { ...prev, status: newStatus, custom_status: newCustomStatus ?? prev.custom_status } : prev));
+          window.electronAPI?.syncTrayStatus?.(newStatus);
         }
         break;
       }
+
+      // ── Побудка ──
+      case 'wake_state':
+      case 'wake_scheduled':
+      case 'wake_cancelled':
+      case 'wake_result':
+      case 'wake_error':
+        setWakes((prev) => reduceWake(prev, event));
+        break;
+
+      case 'wake_ring':
+        setIncomingWake({ fromUserId: event.fromUserId, fromName: event.fromName, at: event.at || Date.now() });
+        addToast({
+          title: `Вас будит ${event.fromName}`,
+          body: 'Коллега ждёт ответа',
+          type: 'wake',
+          isUrgent: true,
+          data: { user: usersRef.current.find((u) => u.id === event.fromUserId) }
+        });
+        break;
 
       default:
         break;
@@ -1444,17 +1487,15 @@ export default function App() {
     }
   };
 
-  // ── Presence State Engine ──
-  const updateMyPresence = (newStatus, customStatus = null) => {
-    if (!currentUserRef.current) return;
-    const userId = currentUserRef.current.id;
+  // ── Статус ──
+  // Статус выставляет система: «в сети» и «отошёл» определяются по активности
+  // за компьютером, «не в сети» — по разрыву соединения. Человек управляет
+  // только режимом «Не беспокоить». Итоговый статус присылает сервер
+  // (user_status_changed) — он учитывает и режим, и последний сигнал системы.
+  const presenceRef = useRef('online');
 
-    setCurrentUser((prev) => (prev ? { ...prev, status: newStatus, custom_status: customStatus ?? prev.custom_status } : prev));
-
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, status: newStatus, custom_status: customStatus ?? u.custom_status } : u))
-    );
-
+  const applyUserStatus = (userId, newStatus) => {
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u)));
     setTreeData((prev) => {
       if (!prev) return prev;
       const updateDept = (d) => {
@@ -1462,63 +1503,86 @@ export default function App() {
         const updatedSubs = d.subDepartments?.map(updateDept);
         return { ...d, employees: updatedEmps, subDepartments: updatedSubs };
       };
-      return { ...prev, tree: prev.tree?.map(updateDept) };
+      return {
+        ...prev,
+        tree: prev.tree?.map(updateDept),
+        unassigned: prev.unassigned?.map((e) => (e.id === userId ? { ...e, status: newStatus } : e))
+      };
     });
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: 'set_status',
-          status: newStatus,
-          customStatus: customStatus ?? currentUserRef.current.custom_status
-        })
-      );
-    }
-
-    if (window.electronAPI?.syncTrayStatus) {
-      window.electronAPI.syncTrayStatus(newStatus);
+    if (currentUserRef.current?.id === userId) {
+      setCurrentUser((prev) => (prev ? { ...prev, status: newStatus } : prev));
+      window.electronAPI?.syncTrayStatus?.(newStatus);
     }
   };
 
-  const handleStatusChange = (newStatus) => {
-    updateMyPresence(newStatus);
+  // Сигнал системы. Уходит на сервер только «в сети» или «отошёл».
+  const updateMyPresence = (state) => {
+    if (state !== 'online' && state !== 'away') return;
+    if (presenceRef.current === state) return;
+    presenceRef.current = state;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'presence', state }));
+    }
+  };
+
+  const isDnd = currentUser?.status === 'dnd';
+
+  const scheduleWake = (targetUserId, minutes) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    // Прежняя ошибка не должна висеть над новой попыткой.
+    setWakes((prev) => {
+      if (!prev[targetUserId]?.error) return prev;
+      const { error, errorCode, ...rest } = prev[targetUserId];
+      return { ...prev, [targetUserId]: rest };
+    });
+    wsRef.current.send(JSON.stringify({ type: 'wake_schedule', targetUserId, minutes }));
+  };
+
+  const cancelWake = (targetUserId) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'wake_cancel', targetUserId }));
+  };
+
+  const setDnd = (enabled) => {
+    const me = currentUserRef.current;
+    if (!me || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'set_dnd', enabled: Boolean(enabled) }));
+    // Сразу показываем выбранное; подтверждение сервера придёт следом.
+    applyUserStatus(me.id, enabled ? 'dnd' : presenceRef.current);
   };
 
   // ── Automated Presence Triggers (Electron OS + Web Engine) ──
   useEffect(() => {
-    // 1. Electron Native OS Hooks (powerMonitor)
+    // 1. Сигналы Windows: блокировка, сон, простой.
     // Подписки создаются один раз: раньше эффект перезапускался при каждой
     // смене токена и добавлял ещё по обработчику — статус уходил на сервер
     // по нескольку раз.
-    const offPower = window.electronAPI?.onPowerMonitorEvent?.(({ state, status, idleSeconds }) => {
-      console.log(`[Presence Trigger] OS Power Event: ${state} (status: ${status}, idle: ${idleSeconds}s)`);
-      if (status) {
-        updateMyPresence(status);
-      }
-    });
-
-    const offTray = window.electronAPI?.onTrayStatusChange?.((status) => {
-      console.log(`[Presence Trigger] Tray Status Selected: ${status}`);
+    const offPower = window.electronAPI?.onPowerMonitorEvent?.(({ status }) => {
       updateMyPresence(status);
     });
 
-    // 2. Web Inactivity / Idle Trigger Engine (Fallback and Browser clients)
+    // Меню значка в трее. Новое меню присылает «dnd-on» / «dnd-off»; старые
+    // установленные версии — прежние пункты статуса, из которых осмысленны
+    // только «Не беспокоить» и «В сети» (выключить режим).
+    const offTray = window.electronAPI?.onTrayStatusChange?.((value) => {
+      if (value === 'dnd' || value === 'dnd-on') setDnd(true);
+      else if (value === 'dnd-off' || value === 'online') setDnd(false);
+    });
+
+    // 2. Простой без мыши и клавиатуры — запасной путь, если сигналов Windows нет.
     let idleTimer = null;
     let isAwayDueToIdle = false;
     let isAwayDueToHidden = false;
 
     const resetIdleTimer = () => {
-      if (isAwayDueToIdle && currentUserRef.current?.status === 'away') {
+      if (isAwayDueToIdle && presenceRef.current === 'away') {
         isAwayDueToIdle = false;
-        console.log('[Presence Trigger] Activity resumed -> restoring "online"');
         updateMyPresence('online');
       }
 
       if (idleTimer) clearTimeout(idleTimer);
-      // 5 minutes (300,000 ms) of zero mouse/keyboard action -> "away"
       idleTimer = setTimeout(() => {
-        if (currentUserRef.current?.status === 'online') {
-          console.log('[Presence Trigger] 5 min of inactivity -> setting "away"');
+        if (presenceRef.current === 'online') {
           isAwayDueToIdle = true;
           updateMyPresence('away');
         }
@@ -1529,47 +1593,36 @@ export default function App() {
     activityEvents.forEach((evt) => window.addEventListener(evt, resetIdleTimer, { passive: true }));
     resetIdleTimer();
 
-    // 3. Tab Visibility Change (Tab background / minimize)
+    // 3. Окно скрыто дольше трёх минут.
     let visibilityTimeout = null;
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab hidden for > 3 minutes -> "away"
         visibilityTimeout = setTimeout(() => {
-          if (currentUserRef.current?.status === 'online') {
-            console.log('[Presence Trigger] Tab hidden for 3 minutes -> setting "away"');
+          if (presenceRef.current === 'online') {
             isAwayDueToHidden = true;
             updateMyPresence('away');
           }
         }, 180000);
       } else {
         if (visibilityTimeout) clearTimeout(visibilityTimeout);
-        if (isAwayDueToHidden && currentUserRef.current?.status === 'away') {
+        if (isAwayDueToHidden && presenceRef.current === 'away') {
           isAwayDueToHidden = false;
-          console.log('[Presence Trigger] Tab focused -> restoring "online"');
           updateMyPresence('online');
         }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // 4. Network Connectivity Triggers (Online / Offline)
+    // 4. Сеть. «Не в сети» выставляет сервер, когда соединение рвётся, — здесь
+    //    только быстрое переподключение.
     const handleOnline = () => {
-      console.log('[Presence Trigger] Network connection restored -> "online"');
-      // Сеть вернулась — подключаемся сразу, не дожидаясь очередной паузы.
       if (tokenRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
         reconnectAttemptRef.current = 0;
         initWebSocket(tokenRef.current);
       }
-      updateMyPresence('online');
-    };
-
-    const handleOffline = () => {
-      console.log('[Presence Trigger] Network disconnected -> "offline"');
-      updateMyPresence('offline');
     };
 
     window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
 
     return () => {
       if (idleTimer) clearTimeout(idleTimer);
@@ -1577,7 +1630,6 @@ export default function App() {
       activityEvents.forEach((evt) => window.removeEventListener(evt, resetIdleTimer));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
       if (typeof offPower === 'function') offPower();
       if (typeof offTray === 'function') offTray();
     };
@@ -1798,7 +1850,9 @@ export default function App() {
         currentUser={currentUser}
         onOpenProfile={() => setShowProfileModal(true)}
         onSwitchAccount={handleLogout}
-        onStatusChange={handleStatusChange}
+        isDnd={isDnd}
+        canToggleDnd={wsConnected}
+        onToggleDnd={setDnd}
         onSelectTab={setActiveTab}
         onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
         onOpenDbStudio={() => isSuperAdmin && setActiveTab('db')}
@@ -2172,6 +2226,10 @@ export default function App() {
                 token={token}
                 serverUrl={serverUrl}
                 onNotice={(title, body) => addToast({ title, body: body || '', type: 'system' })}
+                connected={wsConnected}
+                wakeEntry={activeChat.type === 'direct' ? wakes[activeChat.id] : null}
+                onWakeSchedule={scheduleWake}
+                onWakeCancel={cancelWake}
               />
             ) : (
               <GreetingView
@@ -2233,70 +2291,7 @@ export default function App() {
 
         <div className="status-bar-right">
           {/* User Presence Switcher Button */}
-          <div className="status-dropdown-wrapper">
-            <button
-              className="status-bar-presence-btn"
-              onClick={() => setShowStatusDropdown((prev) => !prev)}
-              title="Изменить мой статус присутствия"
-            >
-              <span className={`status-pill-dot ${currentUser?.status || 'offline'}`} />
-              <span className="status-pill-text">
-                {currentUser?.status === 'online'
-                  ? 'В сети'
-                  : currentUser?.status === 'away'
-                  ? 'Отошел'
-                  : currentUser?.status === 'dnd'
-                  ? 'Не беспокоить'
-                  : 'Не в сети'}
-              </span>
-              <Icon name="chevronDown" size={12} className="arrow-down" />
-            </button>
-
-            {showStatusDropdown && (
-              <div className="status-bar-menu">
-                <div
-                  className="status-bar-menu-item"
-                  onClick={() => {
-                    handleStatusChange('online');
-                    setShowStatusDropdown(false);
-                  }}
-                >
-                  <span className="status-pill-dot online" />
-                  <span>В сети (активен)</span>
-                </div>
-                <div
-                  className="status-bar-menu-item"
-                  onClick={() => {
-                    handleStatusChange('away');
-                    setShowStatusDropdown(false);
-                  }}
-                >
-                  <span className="status-pill-dot away" />
-                  <span>Отошел (перерыв / экран заблокирован)</span>
-                </div>
-                <div
-                  className="status-bar-menu-item"
-                  onClick={() => {
-                    handleStatusChange('dnd');
-                    setShowStatusDropdown(false);
-                  }}
-                >
-                  <span className="status-pill-dot dnd" />
-                  <span>Не беспокоить (совещание)</span>
-                </div>
-                <div
-                  className="status-bar-menu-item"
-                  onClick={() => {
-                    handleStatusChange('offline');
-                    setShowStatusDropdown(false);
-                  }}
-                >
-                  <span className="status-pill-dot offline" />
-                  <span>Не в сети (отключен)</span>
-                </div>
-              </div>
-            )}
-          </div>
+          <PresenceControl status={currentUser?.status} connected={wsConnected} onToggleDnd={setDnd} />
 
           <span className="status-bar-divider" aria-hidden="true" />
 
@@ -2313,6 +2308,18 @@ export default function App() {
       </div>
 
       {confirmDialog}
+
+      {incomingWake && (
+        <WakeAlert
+          wake={incomingWake}
+          onDismiss={() => setIncomingWake(null)}
+          onOpenChat={() => {
+            const from = users.find((u) => u.id === incomingWake.fromUserId);
+            setIncomingWake(null);
+            if (from) openDirectChat(from);
+          }}
+        />
+      )}
 
       <ToastNotificationStack
         toasts={toasts}

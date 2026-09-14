@@ -1170,7 +1170,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
             <div className="admin-sidebar-footer">
               <div><strong>Порт чата:</strong> 2004 TCP</div>
-              <div><strong>Статус:</strong> <span style={{ color: '#16a34a' }}>● Активен</span></div>
+              <div><strong>Статус:</strong> <span style={{ color: '#81eea9' }}>● Активен</span></div>
               <div><strong>Версия:</strong> 2025.3.1</div>
             </div>
           </div>
@@ -1194,7 +1194,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 1: MYCHAT SERVER (info.html) */}
             {activeTab === 'server' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Общая информация о сервере MyChat (info.html)
                 </h3>
 
@@ -1213,7 +1213,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                   </div>
                   <div className="admin-stat-card">
                     <span className="admin-stat-label">Подключений онлайн</span>
-                    <span className="admin-stat-value" style={{ color: '#16a34a' }}>
+                    <span className="admin-stat-value" style={{ color: '#81eea9' }}>
                       {onlineList.length}
                     </span>
                   </div>
@@ -1225,7 +1225,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                 <div style={{ marginTop: '20px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <h4 style={{ margin: 0, color: '#1e293b' }}>
+                    <h4 style={{ margin: 0, color: '#a0b2cf' }}>
                       Активные подключения в сети ({onlineList.length})
                     </h4>
                     <button className="admin-btn-action" onClick={loadServerOverview}>
@@ -1261,11 +1261,11 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                               <td>{conn.department_name}</td>
                               <td><code>{conn.ip}</code></td>
                               <td>{conn.clientType}</td>
-                              <td><span style={{ color: '#16a34a' }}>{formatPing(conn.pingMs)}</span></td>
+                              <td><span style={{ color: '#81eea9' }}>{formatPing(conn.pingMs)}</span></td>
                               <td>
                                 <button
                                   className="admin-btn-action"
-                                  style={{ color: '#dc2626' }}
+                                  style={{ color: '#eb8484' }}
                                   onClick={() => handleDisconnectUser(conn.userId, conn.full_name)}
                                   title="Принудительно сбросить сессию"
                                 >
@@ -1286,7 +1286,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {activeTab === 'users' && (
               <div className="admin-tab-pane">
                 {/* Sub-tabs */}
-                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(121, 148, 185, 0.38)', paddingBottom: '10px', marginBottom: '14px' }}>
                   <button
                     className={`admin-btn-action ${userSubTab === 'list' ? 'highlight-admin' : ''}`}
                     onClick={() => setUserSubTab('list')}
@@ -1327,7 +1327,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                       <div>
                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 600 }}>Очередь подключений по IP (Стучащиеся клиенты)</h4>
-                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#a9aeb5' }}>
                           Клиенты при первом запуске автоматически отправляют сетевой запрос. Свяжите узел с сотрудником для входа без пароля.
                         </p>
                       </div>
@@ -1349,24 +1349,24 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                       </div>
                       <div className="admin-stat-card">
                         <span className="admin-stat-label">Успешно авторизовано</span>
-                        <span className="admin-stat-value" style={{ color: '#16a34a' }}>
+                        <span className="admin-stat-value" style={{ color: '#81eea9' }}>
                           {pendingDevices.filter((d) => d.status === 'paired').length}
                         </span>
                       </div>
                       <div className="admin-stat-card">
                         <span className="admin-stat-label">Ожидает связывания</span>
-                        <span className="admin-stat-value" style={{ color: '#ea580c' }}>
+                        <span className="admin-stat-value" style={{ color: '#f4a47b' }}>
                           {pendingDevices.filter((d) => d.status !== 'paired').length}
                         </span>
                       </div>
                       <div
                         className="admin-stat-card"
-                        style={{ cursor: 'pointer', background: '#f0fdf4', borderColor: '#bbf7d0' }}
+                        style={{ cursor: 'pointer', background: 'rgba(66, 230, 116, 0.16)', borderColor: 'rgba(72, 234, 129, 0.38)' }}
                         onClick={handleAutoMatchIp}
                         title="Нажмите для запуска автосвязывания по IP"
                       >
-                        <span className="admin-stat-label" style={{ color: '#166534' }}>⚡ Готовы к связке</span>
-                        <span className="admin-stat-value" style={{ color: '#15803d', fontSize: '18px' }}>
+                        <span className="admin-stat-label" style={{ color: '#8ae5ad' }}>⚡ Готовы к связке</span>
+                        <span className="admin-stat-value" style={{ color: '#84ebab', fontSize: '18px' }}>
                           {pendingDevices.filter((d) => d.suggested_user && d.status !== 'paired').length} ПК
                         </span>
                       </div>
@@ -1400,7 +1400,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         <tbody>
                           {pendingDevices.length === 0 ? (
                             <tr>
-                              <td colSpan="7" style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
+                              <td colSpan="7" style={{ textAlign: 'center', padding: '24px', color: '#a9aeb5' }}>
                                 Очередь пуста. Новые устройства появятся здесь при первом запуске клиента в сети.
                               </td>
                             </tr>
@@ -1430,9 +1430,9 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                                 <td>{d.last_knock_at ? new Date(d.last_knock_at).toLocaleTimeString() : '—'}</td>
                                 <td>
                                   {d.paired_user_name ? (
-                                    <span style={{ color: '#166534', fontWeight: 600 }}>👤 {d.paired_user_name}</span>
+                                    <span style={{ color: '#8ae5ad', fontWeight: 600 }}>👤 {d.paired_user_name}</span>
                                   ) : d.suggested_user ? (
-                                    <span style={{ color: '#2563eb' }}>💡 Совпадение IP: {d.suggested_user.full_name}</span>
+                                    <span style={{ color: '#7ca1f3' }}>💡 Совпадение IP: {d.suggested_user.full_name}</span>
                                   ) : (
                                     <span style={{ color: '#94a3b8' }}>Не назначен</span>
                                   )}
@@ -1515,7 +1515,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 600 }}>Универсальный парсер и пакетный импорт оргструктуры</h4>
-                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#a9aeb5' }}>
                           Вставьте структуру отделов и сотрудников в произвольном формате: пути со слэшем (/), отступы (дерево) или CSV.
                         </p>
                       </div>
@@ -1562,7 +1562,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: '#64748b' }}>Формат:</span>
+                        <span style={{ fontSize: '12px', color: '#a9aeb5' }}>Формат:</span>
                         <select
                           value={parserFormat}
                           onChange={(e) => setParserFormat(e.target.value)}
@@ -1593,13 +1593,13 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     {/* Preview Area */}
                     {parserPreview && (
                       <div className="parser-preview-box">
-                        <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', fontWeight: 600, color: '#1e293b' }}>
+                        <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', fontWeight: 600, color: '#a0b2cf' }}>
                           <span>🏢 Подразделений к созданию: {parserPreview.stats.departmentsCount}</span>
                           <span>👤 Сотрудников к созданию/обновлению: {parserPreview.stats.employeesCount}</span>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                           <div>
-                            <strong style={{ fontSize: '11px', color: '#64748b' }}>ИЕРАРХИЯ ПОДРАЗДЕЛЕНИЙ:</strong>
+                            <strong style={{ fontSize: '11px', color: '#a9aeb5' }}>ИЕРАРХИЯ ПОДРАЗДЕЛЕНИЙ:</strong>
                             <div style={{ marginTop: '6px' }}>
                               {parserPreview.departments.map((d, i) => (
                                 <div key={i} className="parser-tree-item" style={{ paddingLeft: ((d.level - 1) * 16) + 'px' }}>
@@ -1609,13 +1609,13 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                             </div>
                           </div>
                           <div>
-                            <strong style={{ fontSize: '11px', color: '#64748b' }}>СОТРУДНИКИ:</strong>
+                            <strong style={{ fontSize: '11px', color: '#a9aeb5' }}>СОТРУДНИКИ:</strong>
                             <div style={{ marginTop: '6px' }}>
                               {parserPreview.employees.map((e, i) => (
                                 <div key={i} className="parser-tree-item">
                                   👤 <strong>{e.full_name}</strong> ({e.username})
                                   {e.bound_ip && <code style={{ marginLeft: '6px', fontSize: '10px' }}>IP: {e.bound_ip}</code>}
-                                  {e.extension && <span style={{ marginLeft: '6px', color: '#64748b', fontSize: '11px' }}>вн.{e.extension}</span>}
+                                  {e.extension && <span style={{ marginLeft: '6px', color: '#a9aeb5', fontSize: '11px' }}>вн.{e.extension}</span>}
                                   <div style={{ fontSize: '10px', color: '#94a3b8', paddingLeft: '16px' }}>{e.department_path}</div>
                                 </div>
                               ))}
@@ -1803,7 +1803,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                                     {u.paired_device_id && (
                                       <button
                                         className="admin-btn-action"
-                                        style={{ padding: '1px 5px', fontSize: '10px', color: '#dc2626' }}
+                                        style={{ padding: '1px 5px', fontSize: '10px', color: '#eb8484' }}
                                         onClick={() => handleUnbindDevice(u.paired_device_id)}
                                         title="Отвязать узел"
                                       >
@@ -1818,7 +1818,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                                 ) : (
                                   <button
                                     className="admin-btn-action"
-                                    style={{ fontSize: '10px', color: '#2563eb' }}
+                                    style={{ fontSize: '10px', color: '#7ca1f3' }}
                                     onClick={() => {
                                       setUserSubTab('devices');
                                       loadPendingDevices();
@@ -2043,7 +2043,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                               value={formData.password}
                               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             />
-                            <div style={{ fontSize: '10.5px', color: '#64748b', marginTop: '4px', lineHeight: 1.5 }}>
+                            <div style={{ fontSize: '10.5px', color: '#a9aeb5', marginTop: '4px', lineHeight: 1.5 }}>
                               Сотрудник обязан сменить его при первом входе. Пустое поле надёжнее
                               общего пароля: между заведением учётной записи и первым входом
                               известный всем пароль — открытая дверь.
@@ -2071,8 +2071,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* ЗАЯВКИ НА РЕГИСТРАЦИЮ */}
             {activeTab === 'registrations' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '6px', color: '#1e293b' }}>Заявки на регистрацию</h3>
-                <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px', lineHeight: 1.6 }}>
+                <h3 style={{ marginBottom: '6px', color: '#a0b2cf' }}>Заявки на регистрацию</h3>
+                <p style={{ fontSize: '12px', color: '#a9aeb5', marginBottom: '16px', lineHeight: 1.6 }}>
                   Сотрудник заполняет форму сам, но войти сможет только после вашего
                   подтверждения. Пока заявка ждёт решения, учётной записи фактически нет:
                   ни в справочнике, ни в общих каналах человек не появляется.
@@ -2081,7 +2081,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                   {superAdmin && sysSettings.allow_registration !== 'true' && (
                     <>
                       <br />
-                      <strong style={{ color: '#b45309' }}>
+                      <strong style={{ color: '#f4af7b' }}>
                         Самостоятельная регистрация сейчас отключена — новых заявок не появится.
                       </strong>{' '}
                       Включить её можно в разделе «Настройки».
@@ -2091,8 +2091,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                 {registrations.length === 0 ? (
                   <div style={{
-                    padding: '32px', textAlign: 'center', background: '#f8fafc',
-                    border: '1px dashed #cbd5e1', borderRadius: '8px', color: '#64748b', fontSize: '13px'
+                    padding: '32px', textAlign: 'center', background: '#313338',
+                    border: '1px dashed rgba(126, 151, 180, 0.38)', borderRadius: '8px', color: '#a9aeb5', fontSize: '13px'
                   }}>
                     Заявок, ожидающих решения, нет.
                   </div>
@@ -2116,12 +2116,12 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                             <td style={{ fontWeight: 600 }}>{r.full_name}</td>
                             <td><code>{r.username}</code></td>
                             <td>{r.job_title || '—'}</td>
-                            <td>{r.department_name || <span style={{ color: '#b45309' }}>не указано</span>}</td>
+                            <td>{r.department_name || <span style={{ color: '#f4af7b' }}>не указано</span>}</td>
                             <td style={{ fontSize: '12px' }}>
                               {r.email || '—'}
                               {r.phone ? <><br />{r.phone}</> : null}
                             </td>
-                            <td style={{ fontSize: '12px', color: '#64748b' }}>
+                            <td style={{ fontSize: '12px', color: '#a9aeb5' }}>
                               {r.registered_at ? new Date(r.registered_at).toLocaleString('ru-RU') : '—'}
                             </td>
                             <td>
@@ -2154,15 +2154,15 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 3: CONFERENCES (conference.html) */}
             {activeTab === 'conferences' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Управление корпоративными конференциями (conference.html)
                 </h3>
-                <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', color: '#a9aeb5', marginBottom: '16px' }}>
                   Список текстовых конференций с автоматическим добавлением сотрудников.
                 </p>
 
                 {/* Create Channel Form */}
-                <form onSubmit={handleCreateChannel} style={{ display: 'flex', gap: '10px', marginBottom: '20px', background: '#f8fafc', padding: '14px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                <form onSubmit={handleCreateChannel} style={{ display: 'flex', gap: '10px', marginBottom: '20px', background: '#313338', padding: '14px', borderRadius: '6px', border: '1px solid rgba(121, 148, 185, 0.38)' }}>
                   <input
                     type="text"
                     required
@@ -2215,7 +2215,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                             {c.name !== '#Общий' ? (
                               <button
                                 className="admin-btn-action"
-                                style={{ color: '#dc2626' }}
+                                style={{ color: '#eb8484' }}
                                 onClick={() => handleDeleteChannel(c)}
                               >
                                 ✕ Удалить
@@ -2235,10 +2235,10 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 4: GROUP RIGHTS (grouprightsmanage.html) */}
             {activeTab === 'rights' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Управление группами прав и ограничениями (grouprightsmanage.html)
                 </h3>
-                <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', color: '#a9aeb5', marginBottom: '16px' }}>
                   Права действуют на всех сотрудников с этой ролью. Изменения вступают в силу
                   при следующем действии пользователя — перезаходить ему не нужно.
                 </p>
@@ -2254,7 +2254,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                           <span>{r.name}</span>
                           {changed && <span className="rights-changed">не сохранено</span>}
                         </h4>
-                        <p style={{ fontSize: '11px', color: '#64748b', marginBottom: '12px' }}>
+                        <p style={{ fontSize: '11px', color: '#a9aeb5', marginBottom: '12px' }}>
                           {r.description}
                         </p>
                         <div className="admin-rights-list">
@@ -2303,7 +2303,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 5: TOOLS (tools.html) */}
             {activeTab === 'tools' && (
               <div className="admin-tab-pane">
-                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(121, 148, 185, 0.38)', paddingBottom: '10px', marginBottom: '16px' }}>
                   <button
                     className={`admin-btn-action ${toolSubTab === 'audit' ? 'highlight-admin' : ''}`}
                     onClick={() => setToolSubTab('audit')}
@@ -2368,7 +2368,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                           ) : (
                             auditResults.map((m) => (
                               <tr key={m.id}>
-                                <td style={{ whiteSpace: 'nowrap', fontSize: '11px', color: '#64748b' }}>
+                                <td style={{ whiteSpace: 'nowrap', fontSize: '11px', color: '#a9aeb5' }}>
                                   {new Date(m.created_at).toLocaleString()}
                                 </td>
                                 <td><strong>{m.sender_name}</strong> ({m.sender_username})</td>
@@ -2386,7 +2386,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                 {toolSubTab === 'ports' && (
                   <div>
                     <h4 style={{ marginBottom: '8px' }}>Диагностика сетевых портов MyChat Server</h4>
-                    <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px' }}>
+                    <p style={{ fontSize: '12px', color: '#a9aeb5', marginBottom: '14px' }}>
                       Проверка готовности сокетов к подключению клиентов LAN/WAN.
                     </p>
                     <button className="btn btn-primary" onClick={handleRunPortTest} disabled={loading} style={{ marginBottom: '14px' }}>
@@ -2394,8 +2394,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     </button>
 
                     {portTestResult && (
-                      <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', padding: '16px', borderRadius: '6px' }}>
-                        <div style={{ color: '#16a34a', fontWeight: 700, marginBottom: '8px' }}>
+                      <div style={{ background: '#313338', border: '1px solid rgba(126, 151, 180, 0.38)', padding: '16px', borderRadius: '6px' }}>
+                        <div style={{ color: '#81eea9', fontWeight: 700, marginBottom: '8px' }}>
                           ✓ Статус: {portTestResult.status} (Задержка: {portTestResult.response_time_ms} мс)
                         </div>
                         <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
@@ -2412,7 +2412,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                 {toolSubTab === 'vacuum' && (
                   <div>
                     <h4 style={{ marginBottom: '8px' }}>Очистка и дефрагментация базы данных SQLite</h4>
-                    <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px' }}>
+                    <p style={{ fontSize: '12px', color: '#a9aeb5', marginBottom: '14px' }}>
                       Выполняет SQL-команду VACUUM, удаляет временные фрагменты журнала WAL и обновляет индексы.
                     </p>
                     <button className="btn btn-primary" onClick={handleRunVacuum} disabled={loading} style={{ marginBottom: '14px' }}>
@@ -2420,8 +2420,8 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     </button>
 
                     {vacuumResult && (
-                      <div style={{ background: '#f0fdf4', border: '1px solid #86efac', padding: '16px', borderRadius: '6px' }}>
-                        <h4 style={{ color: '#15803d', margin: '0 0 10px 0' }}>Результат оптимизации:</h4>
+                      <div style={{ background: 'rgba(66, 230, 116, 0.16)', border: '1px solid #86efac', padding: '16px', borderRadius: '6px' }}>
+                        <h4 style={{ color: '#84ebab', margin: '0 0 10px 0' }}>Результат оптимизации:</h4>
                         <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
                           <div><strong>Размер файла базы:</strong> {vacuumResult.dbSizeFormatted}</div>
                           <div><strong>Размер журнала WAL:</strong> {vacuumResult.walSizeFormatted}</div>
@@ -2436,7 +2436,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                 {toolSubTab === 'announcements' && (
                   <div>
                     <h4 style={{ marginBottom: '8px' }}>Создать общекорпоративное объявление</h4>
-                    <form onSubmit={handleCreateAnnouncement} style={{ background: '#f8fafc', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <form onSubmit={handleCreateAnnouncement} style={{ background: '#313338', padding: '16px', borderRadius: '6px', border: '1px solid rgba(121, 148, 185, 0.38)' }}>
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ fontSize: '11px', fontWeight: 600 }}>Заголовок объявления *</label>
                         <input
@@ -2479,7 +2479,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 6: FILTERS (filters.html) */}
             {activeTab === 'filters' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Настройка антифлуда и фильтров содержимого (filters.html)
                 </h3>
 
@@ -2496,7 +2496,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                       value={filterSettings.antiflood_limit}
                       onChange={(e) => setFilterSettings({ ...filterSettings, antiflood_limit: Number(e.target.value) })}
                     />
-                    <small style={{ display: 'block', color: '#64748b', marginTop: '4px' }}>
+                    <small style={{ display: 'block', color: '#a9aeb5', marginTop: '4px' }}>
                       При превышении лимита пользователь временно блокируется на 60 секунд.
                     </small>
                   </div>
@@ -2549,7 +2549,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 7: SETTINGS (settings.html) */}
             {activeTab === 'settings' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Общие настройки MyChat Server (settings.html)
                 </h3>
 
@@ -2611,19 +2611,19 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
                   {/* Telegram Gateway Section */}
                   <div style={{
-                    border: '1px solid #cbd5e1',
+                    border: '1px solid rgba(126, 151, 180, 0.38)',
                     borderRadius: '8px',
                     padding: '16px',
-                    backgroundColor: '#f8fafc',
+                    backgroundColor: '#313338',
                     marginBottom: '20px'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2" strokeLinecap="round">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7bcbf4" strokeWidth="2" strokeLinecap="round">
                           <line x1="22" y1="2" x2="11" y2="13"/>
                           <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                         </svg>
-                        <strong style={{ fontSize: '14px', color: '#0f172a' }}>Интеграция с Telegram (Шлюз оповещений)</strong>
+                        <strong style={{ fontSize: '14px', color: '#96aad9' }}>Интеграция с Telegram (Шлюз оповещений)</strong>
                       </div>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
                         <input
@@ -2638,7 +2638,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     {sysSettings.telegram_enabled === 'true' && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div>
-                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#d3d6db', display: 'block', marginBottom: '4px' }}>
                             Токен Telegram Бота (от @BotFather)
                           </label>
                           <input
@@ -2652,7 +2652,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                         </div>
 
                         <div>
-                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#d3d6db', display: 'block', marginBottom: '4px' }}>
                             ID канала или чата оповещений компании (опционально)
                           </label>
                           <input
@@ -2718,20 +2718,20 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
             {/* TAB 8: LICENSES (licenses.html) */}
             {activeTab === 'licenses' && (
               <div className="admin-tab-pane">
-                <h3 style={{ marginBottom: '14px', color: '#1e293b' }}>
+                <h3 style={{ marginBottom: '14px', color: '#a0b2cf' }}>
                   Лицензии MyChat Server (licenses.html)
                 </h3>
 
-                <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '20px', maxWidth: '640px' }}>
+                <div style={{ background: '#313338', border: '1px solid rgba(126, 151, 180, 0.38)', borderRadius: '8px', padding: '20px', maxWidth: '640px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                     <span style={{ fontSize: '32px' }}>🏢</span>
                     <div>
-                      <h4 style={{ margin: 0, color: '#0f172a' }}>{licenseData?.product_name || 'MyChat Server Enterprise'}</h4>
-                      <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 600 }}>● Лицензия активна</span>
+                      <h4 style={{ margin: 0, color: '#96aad9' }}>{licenseData?.product_name || 'MyChat Server Enterprise'}</h4>
+                      <span style={{ fontSize: '12px', color: '#81eea9', fontWeight: 600 }}>● Лицензия активна</span>
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '10px', fontSize: '12px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '10px', fontSize: '12px', borderTop: '1px solid rgba(121, 148, 185, 0.38)', paddingTop: '14px' }}>
                     <strong>Владелец лицензии:</strong>
                     <span>{licenseData?.license_owner}</span>
 
@@ -2739,7 +2739,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     <span>{licenseData?.license_type}</span>
 
                     <strong>Лимит подключений:</strong>
-                    <span><strong style={{ color: '#2563eb' }}>{licenseData?.max_online_users}</strong> (Зарегистрировано: {users.length})</span>
+                    <span><strong style={{ color: '#7ca1f3' }}>{licenseData?.max_online_users}</strong> (Зарегистрировано: {users.length})</span>
 
                     <strong>Регистрационный ключ:</strong>
                     <span><code>{licenseData?.license_key}</code></span>

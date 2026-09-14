@@ -240,7 +240,7 @@ function createMainWindow() {
     show: !launchedAtLogin,
     frame: true, // Native Windows form frame
     title: 'MyChat Enterprise Client',
-    backgroundColor: '#0b1017',
+    backgroundColor: '#26282c',
     // Omit the key entirely (not `icon: null`) when the file can't be found —
     // an explicit null blanks the taskbar icon instead of falling back to the
     // .exe's own embedded icon.
@@ -424,9 +424,14 @@ function refreshTrayTooltip() {
   tray.setToolTip(text.slice(0, 127));
 }
 
+const TRAY_STATUS_LABELS = { online: 'в сети', away: 'отошёл', offline: 'не в сети' };
+// Последний статус от системы — чтобы при «Не беспокоить» было видно, что под ним.
+let trayPresence = 'online';
+
 function updateTrayMenu(status = 'online') {
   if (!tray) return;
   currentTrayStatus = status;
+  if (status !== 'dnd') trayPresence = status;
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Открыть MyChat',
@@ -447,36 +452,18 @@ function updateTrayMenu(status = 'online') {
         ]
       : []),
     { type: 'separator' },
+    // Статус выставляет система — здесь он только виден. Вручную меняется
+    // лишь «Не беспокоить».
     {
-      label: 'Статус: В сети',
-      type: 'radio',
-      checked: status === 'online',
-      click: () => {
-        if (mainWindow) mainWindow.webContents.send('tray-status-change', 'online');
-      }
+      label: `Статус: ${TRAY_STATUS_LABELS[status === 'dnd' ? trayPresence : status] || 'В сети'}${status === 'dnd' ? ' · не беспокоить' : ''}`,
+      enabled: false
     },
     {
-      label: 'Статус: Отошел',
-      type: 'radio',
-      checked: status === 'away',
-      click: () => {
-        if (mainWindow) mainWindow.webContents.send('tray-status-change', 'away');
-      }
-    },
-    {
-      label: 'Статус: Не беспокоить',
-      type: 'radio',
+      label: 'Не беспокоить',
+      type: 'checkbox',
       checked: status === 'dnd',
-      click: () => {
-        if (mainWindow) mainWindow.webContents.send('tray-status-change', 'dnd');
-      }
-    },
-    {
-      label: 'Статус: Не в сети',
-      type: 'radio',
-      checked: status === 'offline',
-      click: () => {
-        if (mainWindow) mainWindow.webContents.send('tray-status-change', 'offline');
+      click: (item) => {
+        if (mainWindow) mainWindow.webContents.send('tray-status-change', item.checked ? 'dnd-on' : 'dnd-off');
       }
     },
     { type: 'separator' },
@@ -520,6 +507,12 @@ function createTray() {
   tray.on('double-click', () => showMainWindow());
 }
 
+// Сигнал системы меняет строку статуса в трее, но не снимает «Не беспокоить».
+function setTrayPresence(state) {
+  trayPresence = state;
+  updateTrayMenu(currentTrayStatus === 'dnd' ? 'dnd' : state);
+}
+
 let isCurrentlyIdle = false;
 let presenceInterval = null;
 
@@ -528,7 +521,7 @@ function setupPowerAndPresenceMonitoring() {
 
   powerMonitor.on('lock-screen', () => {
     log('powerMonitor: lock-screen detected -> triggering away');
-    updateTrayMenu('away');
+    setTrayPresence('away');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('power-monitor-event', { state: 'locked', status: 'away' });
     }
@@ -537,7 +530,7 @@ function setupPowerAndPresenceMonitoring() {
   powerMonitor.on('unlock-screen', () => {
     log('powerMonitor: unlock-screen detected -> triggering online');
     isCurrentlyIdle = false;
-    updateTrayMenu('online');
+    setTrayPresence('online');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('power-monitor-event', { state: 'unlocked', status: 'online' });
     }
@@ -545,7 +538,7 @@ function setupPowerAndPresenceMonitoring() {
 
   powerMonitor.on('suspend', () => {
     log('powerMonitor: suspend (sleep/hibernation) detected -> triggering offline');
-    updateTrayMenu('offline');
+    setTrayPresence('offline');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('power-monitor-event', { state: 'suspend', status: 'offline' });
     }
@@ -554,7 +547,7 @@ function setupPowerAndPresenceMonitoring() {
   powerMonitor.on('resume', () => {
     log('powerMonitor: resume from sleep detected -> triggering online');
     isCurrentlyIdle = false;
-    updateTrayMenu('online');
+    setTrayPresence('online');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('power-monitor-event', { state: 'resume', status: 'online' });
     }
@@ -569,14 +562,14 @@ function setupPowerAndPresenceMonitoring() {
       if (idleSeconds >= 300 && !isCurrentlyIdle) {
         isCurrentlyIdle = true;
         log(`powerMonitor: idle for ${idleSeconds}s -> transitioning to away`);
-        updateTrayMenu('away');
+        setTrayPresence('away');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('power-monitor-event', { state: 'idle', status: 'away', idleSeconds });
         }
       } else if (idleSeconds < 10 && isCurrentlyIdle) {
         isCurrentlyIdle = false;
         log(`powerMonitor: user resumed input (idle ${idleSeconds}s) -> transitioning to online`);
-        updateTrayMenu('online');
+        setTrayPresence('online');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('power-monitor-event', { state: 'active', status: 'online', idleSeconds });
         }

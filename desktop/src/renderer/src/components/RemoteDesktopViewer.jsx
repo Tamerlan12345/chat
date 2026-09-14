@@ -641,7 +641,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
             {failure ? (
               <div className="rd-rejected-box">
                 <div style={{ fontSize: '48px', marginBottom: '12px' }}>⚠️</div>
-                <h3 style={{ color: '#f59e0b', marginBottom: '8px' }}>Сеанс не удался</h3>
+                <h3 style={{ color: '#f4c77b', marginBottom: '8px' }}>Сеанс не удался</h3>
                 <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', maxWidth: '520px' }}>
                   {failure}
                 </p>
