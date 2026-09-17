@@ -100,8 +100,11 @@ class UserService {
       );
     }
 
+    // Справочник для сотрудников — только подтверждённые учётные записи:
+    // ожидающие и отклонённые заявки видят администраторы в разделе заявок.
+    const approvedOnly = adminUser ? '' : "WHERE u.approval_status = 'approved'";
     return db.all(
-      `SELECT ${fields}, ${NAMED}${pairing} ${JOINS} ${pairingJoin} ORDER BY u.full_name ASC`
+      `SELECT ${fields}, ${NAMED}${pairing} ${JOINS} ${pairingJoin} ${approvedOnly} ORDER BY u.full_name ASC`
     );
   }
 
@@ -245,7 +248,9 @@ class UserService {
   static async adminResetPassword(userId, newPassword = null) {
     const generated = !newPassword;
     const password = newPassword || generateTempPassword();
-    assertPasswordPolicy(password, { allowWeakInitial: true });
+    // Пароль, придуманный администратором, проходит ту же политику: «1» или
+    // «123456» до первой смены защищают учётную запись ничем.
+    assertPasswordPolicy(password);
     await this.setPassword(userId, password, { mustChange: true });
     return { password, generated };
   }
@@ -297,7 +302,7 @@ class UserService {
     // требование сменить его при первом входе. Если пароль не задан вовсе,
     // он генерируется — общего для всех новых сотрудников пароля быть не должно.
     const initial = password || generateTempPassword();
-    assertPasswordPolicy(initial, { allowWeakInitial: true });
+    assertPasswordPolicy(initial);
     const encoded = await hashPassword(initial);
 
     const assignedUin = uin ? parseInt(uin, 10) : Math.floor(1000 + Math.random() * 9000);
@@ -459,4 +464,12 @@ function assertPasswordPolicy(password, { allowWeakInitial = false } = {}) {
 
 module.exports = UserService;
 module.exports.assertPasswordPolicy = assertPasswordPolicy;
+module.exports.isWeakPassword = (password) => {
+  try {
+    assertPasswordPolicy(password);
+    return false;
+  } catch {
+    return true;
+  }
+};
 module.exports.generateTempPassword = generateTempPassword;

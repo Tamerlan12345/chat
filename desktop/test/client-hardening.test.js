@@ -7,6 +7,9 @@ const {
   buildConsentDialog,
   resolveConsent,
   isFullAccessDisabled,
+  isRemoteDesktopDisabled,
+  readRdPolicy,
+  policyDecline,
   policyPaths,
   buildClipboardDialog,
   buildFileDialog
@@ -153,6 +156,62 @@ test('источники политики: переменная, файл, ис�
   const paths = policyPaths({ programData: 'C:\\ProgramData', userData: 'C:\\Users\\u\\AppData\\Roaming\\app' });
   assert.strictEqual(paths.length, 2);
   assert.ok(paths[0].endsWith(path.join('OpenMyChat Enterprise', 'policy.json')));
+});
+
+test('политика запрещает удалённый доступ целиком: переменная и файл', () => {
+  const none = () => { throw Object.assign(new Error('нет'), { code: 'ENOENT' }); };
+  assert.strictEqual(isRemoteDesktopDisabled({ env: {}, paths: ['a'], readFile: none }), false);
+  assert.strictEqual(isRemoteDesktopDisabled({ env: { MYCHAT_RD_DISABLE: '1' }, paths: [], readFile: none }), true);
+  assert.strictEqual(isRemoteDesktopDisabled({ env: { MYCHAT_RD_DISABLE: 'TRUE ' }, paths: [], readFile: none }), true);
+  assert.strictEqual(isRemoteDesktopDisabled({ env: { MYCHAT_RD_DISABLE: '0' }, paths: [], readFile: none }), false);
+  assert.strictEqual(isRemoteDesktopDisabled({ env: { MYCHAT_RD_DISABLE_FULL: '1' }, paths: [], readFile: none }), false, 'запрет полного доступа не отключает просмотр');
+  assert.strictEqual(isRemoteDesktopDisabled({ env: {}, paths: ['p'], readFile: () => '﻿{"disableRemoteDesktop": true}' }), true);
+  assert.strictEqual(isRemoteDesktopDisabled({ env: {}, paths: ['p'], readFile: () => '{"disableRemoteDesktop": "true"}' }), false, 'только настоящее true');
+  assert.strictEqual(isRemoteDesktopDisabled({ env: {}, paths: ['p'], readFile: () => '{oops' }), true, 'испорченный файл — запрет');
+  // Второй файл дополняет первый, а не отменяет его.
+  const files = { a: '{"disableRemoteDesktop": true}', b: '{"disableRemoteDesktop": false}' };
+  assert.strictEqual(isRemoteDesktopDisabled({ env: {}, paths: ['a', 'b'], readFile: (f) => files[f] }), true);
+});
+
+test('без удалённого доступа нет и полного', () => {
+  const policy = readRdPolicy({ env: { MYCHAT_RD_DISABLE: 'yes' }, paths: [], readFile: () => '' });
+  assert.deepStrictEqual(policy, { remoteDesktopDisabled: true, fullAccessDisabled: true });
+  assert.strictEqual(isFullAccessDisabled({ env: {}, paths: ['p'], readFile: () => '{"disableRemoteDesktop": true}' }), true);
+});
+
+test('при запрете rd-session-start отвечает отказом policy без окна', () => {
+  assert.deepStrictEqual(
+    policyDecline({ remoteDesktopDisabled: true, fullAccessDisabled: true }),
+    { accepted: false, accessLevel: null, reason: 'policy' }
+  );
+  assert.strictEqual(policyDecline({ remoteDesktopDisabled: false, fullAccessDisabled: true }), null);
+  assert.strictEqual(policyDecline(null), null);
+
+  // В main.js проверка политики стоит раньше окна согласия.
+  const fs = require('node:fs');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  const handler = main.slice(main.indexOf("ipcMain.handle('rd-session-start'"));
+  const policyAt = handler.indexOf('policyDecline(');
+  assert.ok(policyAt > 0, 'проверка политики есть');
+  assert.ok(policyAt < handler.indexOf('buildConsentDialog('), 'и она раньше окна согласия');
+  assert.ok(policyAt < handler.indexOf('askUser('));
+});
+
+test('при запрете сеанс не начинается — экран и ввод недоступны', () => {
+  let blocked = true;
+  const session = new HostSession({ isBlocked: () => blocked });
+  assert.strictEqual(session.start({ sessionId: 's1', operatorName: 'X', accessLevel: 'full' }), false);
+  assert.strictEqual(session.active, false);
+  assert.strictEqual(session.allowsCapture, false);
+  assert.strictEqual(session.allowsInput, false);
+
+  const broken = new HostSession({ isBlocked: () => { throw new Error('EACCES'); } });
+  assert.strictEqual(broken.start({ sessionId: 's1', accessLevel: 'full' }), false, 'политику не прочитать — отказ');
+
+  blocked = false;
+  assert.strictEqual(session.start({ sessionId: 's1', operatorName: 'X', accessLevel: 'full' }), true);
+  assert.strictEqual(session.allowsInput, true);
+  assert.strictEqual(new HostSession().start({ sessionId: 's2' }), true, 'без политики — как раньше');
 });
 
 test('окна буфера и файла: по умолчанию — отказ', () => {

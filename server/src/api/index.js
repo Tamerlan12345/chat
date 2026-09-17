@@ -21,6 +21,66 @@ const wsServer = require('../ws/server');
 const config = require('../config');
 
 const router = express.Router();
+const SecurityMonitor = require('../services/security-monitor.service');
+const BackupService = require('../services/backup.service');
+
+// Публичный STUN Google — прежнее поведение, пока администратор не задал свой
+// список. Пустой список в настройке — только локальная сеть.
+const DEFAULT_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+const ICE_SCHEMES = /^(stun|stuns|turn|turns):/i;
+
+function sanitizeIceServers(list) {
+  if (!Array.isArray(list)) throw new Error('Список ICE-серверов должен быть массивом');
+  if (list.length > 10) throw new Error('Не больше 10 ICE-серверов');
+  return list.map((entry) => {
+    if (!entry || typeof entry !== 'object') throw new Error('Неверная запись ICE-сервера');
+    const urls = [].concat(entry.urls).filter((u) => typeof u === 'string' && ICE_SCHEMES.test(u) && u.length <= 256);
+    if (!urls.length) throw new Error('У ICE-сервера должен быть адрес stun:, stuns:, turn: или turns:');
+    const clean = { urls: urls.length === 1 ? urls[0] : urls };
+    if (entry.username !== undefined) clean.username = String(entry.username).slice(0, 128);
+    if (entry.credential !== undefined) clean.credential = String(entry.credential).slice(0, 256);
+    return clean;
+  });
+}
+
+// Проверка значений, от которых зависит безопасность: мусор в них ломал бы
+// либо защиту, либо саму функцию.
+const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_)/;
+function publicSettings(all) {
+  return Object.fromEntries(Object.entries(all || {}).filter(([key]) => !INTERNAL_SETTING.test(key)));
+}
+
+const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_telegram', 'allow_registration']);
+function validateSettingsUpdate(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
+  const clean = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!/^[a-z0-9_]{1,64}$/.test(key)) throw new Error(`Недопустимое имя настройки: ${key}`);
+    if (INTERNAL_SETTING.test(key)) throw new Error(`Настройка ${key} служебная и не меняется вручную`);
+    if (BOOLEAN_SETTINGS.has(key)) {
+      const normalized = String(value);
+      if (normalized !== 'true' && normalized !== 'false') throw new Error(`Настройка ${key} принимает true или false`);
+      clean[key] = normalized;
+    } else if (key === 'rd_ice_servers') {
+      if (value === '' || value === null) {
+        clean[key] = '[]';
+      } else {
+        let parsed;
+        try {
+          parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        } catch {
+          throw new Error('Список ICE-серверов — неверный JSON');
+        }
+        clean[key] = JSON.stringify(sanitizeIceServers(parsed));
+      }
+    } else if (value !== null && typeof value === 'object') {
+      throw new Error(`Настройка ${key} должна быть строкой`);
+    } else {
+      clean[key] = String(value ?? '').slice(0, 10000);
+    }
+  }
+  return clean;
+}
 // Файл пишется во временную папку на диске, а не в память: двадцать
 // одновременных загрузок по 100 МБ держали в памяти около 2 ГБ.
 const UPLOAD_TMP_DIR = path.join(config.UPLOADS_DIR, '.incoming');
@@ -38,7 +98,7 @@ const route = (handler) => (req, res, next) =>
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
-const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password']);
+const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password', '/auth/logout', '/auth/refresh']);
 
 const requireAuth = route(async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -49,12 +109,15 @@ const requireAuth = route(async (req, res, next) => {
   // resolveSession проверяет не только подпись и срок, но и поколение токена:
   // выданный до смены пароля, до смены роли или до отключения сотрудника
   // перестаёт действовать сразу, а не доживает свою неделю.
-  const user = await AuthService.resolveSession(authHeader.substring(7));
-  if (!user) {
+  const session = await AuthService.resolveSessionDetailed(authHeader.substring(7));
+  if (!session) {
     return res.status(401).json({ error: 'Недействительный или истекший токен' });
   }
 
+  const { user } = session;
   req.user = user;
+  req.tokenPayload = session.payload;
+  req.rawToken = authHeader.substring(7);
   if (user.must_change_password && !PASSWORD_CHANGE_ALLOWLIST.has(req.path)) {
     return res.status(403).json({
       error: 'Требуется смена пароля перед продолжением работы',
@@ -185,6 +248,11 @@ router.post('/auth/knock', route(async (req, res) => {
 // Вход по паролю на привязанном устройстве выдаёт ему секрет для следующих
 // входов без пароля. Секрет придумывает клиент, сервер хранит только отпечаток.
 router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
+  // Только сразу после входа по паролю. Иначе украденный токен позволял бы
+  // привязать к устройству сотрудника свой секрет и входить без пароля.
+  const payload = req.tokenPayload || {};
+  const fresh = payload.amr === 'pwd' && Number.isFinite(payload.auth_time) && Date.now() / 1000 - payload.auth_time <= 300;
+  if (!fresh) return res.status(403).json({ claimed: false, error: 'Требуется недавний вход по паролю' });
   const { device_id, device_secret } = req.body || {};
   const result = await DeviceService.claimDeviceSecret({ userId: req.user.id, device_id, device_secret });
   if (result.claimed) {
@@ -256,6 +324,31 @@ router.post('/auth/register', route(async (req, res) => {
   }
 }));
 
+// Продление токена, пока сотрудник работает: срок жизни токена — часы, а не
+// неделя. Открытые соединения этого сотрудника переводятся на новый токен —
+// старый сразу отзывается.
+router.post('/auth/refresh', requireAuth, route(async (req, res) => {
+  // Токен прежнего формата не превращается в новый: у него нет ни времени
+  // входа, ни номера, и продление выдало бы «свежий вход по паролю».
+  // Уже продлённый (идёт пауза) повторно не продлевается: иначе один украденный
+  // токен размножался бы в несколько независимых.
+  if (req.tokenPayload.legacy || !req.tokenPayload.jti || (await AuthService.hasRevocationRecord(req.tokenPayload.jti))) {
+    return res.status(401).json({ error: 'Войдите заново' });
+  }
+  const token = await AuthService.refreshToken(req.user, req.tokenPayload);
+  wsServer.replaceSocketToken(req.rawToken, token);
+  res.json({ token });
+}));
+
+// Выход отзывает именно этот токен: раньше «выйти» значило только забыть токен
+// на своём компьютере, а скопированный продолжал работать неделю.
+router.post('/auth/logout', requireAuth, route(async (req, res) => {
+  await AuthService.revokeToken(req.tokenPayload);
+  AuditService.log({ userId: req.user.id, action: 'logout', ip: getClientIp(req) });
+  wsServer.disconnectSocketsWithToken(req.rawToken, 'Выход из системы');
+  res.json({ success: true });
+}));
+
 router.get('/auth/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
@@ -305,7 +398,7 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     res.json({
       success: true,
       message: 'Пароль успешно изменен',
-      token: AuthService.generateToken(refreshed),
+      token: AuthService.generateToken(refreshed, { amr: 'pwd' }),
       user: refreshed
     });
   } catch (err) {
@@ -477,7 +570,8 @@ router.get('/admin/server/overview', requireAuth, requireAdmin, route(async (req
       online_connections: onlineList
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 }));
 
@@ -573,7 +667,8 @@ router.get('/admin/channels', requireAuth, requireAdmin, (req, res) => {
     `).all();
     res.json(channels);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -644,7 +739,8 @@ router.get('/admin/audit/messages', requireAuth, requireAdmin, route(async (req,
     });
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 }));
 
@@ -664,9 +760,11 @@ router.get('/admin/tools/port-test', requireAuth, requireAdmin, (req, res) => {
 router.post('/admin/tools/vacuum', requireAuth, requireAdmin, (req, res) => {
   try {
     const stats = DbStudioService.optimizeDatabase();
+    AuditService.log({ userId: req.user.id, action: 'db_vacuum', ip: getClientIp(req) });
     res.json({ success: true, message: 'Оптимизация базы переписки завершена успешно', stats });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -704,17 +802,67 @@ router.post('/admin/filters', requireAuth, requireAdmin, route(async (req, res) 
 
 // ── НАСТРОЙКИ ──
 router.get('/admin/settings', requireAuth, requireAdmin, route(async (req, res) => {
-  const { last_admin_password_reset, ...visible } = await SettingsService.getAllSettings({ fresh: true });
-  res.json(visible);
+  res.json(publicSettings(await SettingsService.getAllSettings({ fresh: true })));
 }));
 
 router.put('/admin/settings', requireAuth, requireAdmin, route(async (req, res) => {
   try {
-    AuditService.log({ userId: req.user.id, action: 'settings_changed', ip: getClientIp(req), details: { keys: Object.keys(req.body || {}) } });
-    res.json(await SettingsService.updateSettings(req.body));
+    const body = validateSettingsUpdate(req.body);
+    AuditService.log({ userId: req.user.id, action: 'settings_changed', ip: getClientIp(req), details: { keys: Object.keys(body) } });
+    const updated = await SettingsService.updateSettings(body);
+    if (body.remote_desktop_enabled === 'false') {
+      wsServer.endAllRemoteSessions('Удалённый рабочий стол отключён администратором');
+    }
+    res.json(publicSettings(updated));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+// ── ЦЕНТР БЕЗОПАСНОСТИ ──
+// Только главный администратор: состояние защиты, оповещения, журнал.
+router.get('/admin/security/status', requireAuth, requireAdmin, route(async (req, res) => {
+  res.json(await SecurityMonitor.getStatus());
+}));
+
+router.get('/admin/security/alerts', requireAuth, requireAdmin, route(async (req, res) => {
+  res.json(await SecurityMonitor.listAlerts({ limit: req.query.limit, onlyOpen: req.query.open === 'true' }));
+}));
+
+router.post('/admin/security/alerts/:id/ack', requireAuth, requireAdmin, route(async (req, res) => {
+  const ok = await SecurityMonitor.acknowledge(Number(req.params.id), req.user.id);
+  if (!ok) return res.status(404).json({ error: 'Оповещение не найдено или уже просмотрено' });
+  AuditService.log({ userId: req.user.id, action: 'security_alert_acknowledged', ip: getClientIp(req), details: { alertId: Number(req.params.id) } });
+  res.json({ success: true });
+}));
+
+router.get('/admin/audit/verify', requireAuth, requireAdmin, route(async (req, res) => {
+  const result = await AuditService.verify();
+  if (!result.ok) {
+    await SecurityMonitor.raiseNow('audit_chain_broken', 'critical', 'Нарушена целостность журнала аудита', {
+      brokenAt: result.brokenAt, checked: result.checked, requestedBy: req.user.id
+    });
+  }
+  res.json(result);
+}));
+
+// Настройки удалённого стола для приложения: включён ли он и через какие
+// серверы соединяться. Пустой список — только локальная сеть, без внешних
+// обращений.
+router.get('/settings/rd', requireAuth, route(async (req, res) => {
+  const settings = await SettingsService.getAllSettings();
+  let iceServers = null;
+  if (settings.rd_ice_servers !== undefined && settings.rd_ice_servers !== '') {
+    try {
+      iceServers = sanitizeIceServers(JSON.parse(settings.rd_ice_servers));
+    } catch {
+      iceServers = [];
+    }
+  }
+  res.json({
+    enabled: settings.remote_desktop_enabled !== 'false',
+    iceServers: iceServers === null ? DEFAULT_ICE_SERVERS : iceServers
+  });
 }));
 
 router.post('/admin/telegram/test', requireAuth, requireAdmin, route(async (req, res) => {
@@ -1066,21 +1214,28 @@ router.post('/admin/registrations/:id/reject', requireAuth, requireAdminOrScoped
 // Журнал действий. Читать может только суперадминистратор.
 router.get('/admin/audit', requireAuth, requireAdmin, route(async (req, res) => {
   try {
-    res.json(await AuditService.list({ action: req.query.action || null, limit: req.query.limit }));
+    res.json(await AuditService.list({ action: req.query.action || null, userId: req.query.userId ?? null, limit: req.query.limit }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 }));
 
 // Полные настройки содержат токен Telegram-бота и чёрный список адресов —
 // только администратору. Сотрудникам нужное отдаёт /settings/info.
 router.get('/settings', requireAuth, requireAdmin, route(async (req, res) => {
-  res.json(await SettingsService.getAllSettings());
+  res.json(publicSettings(await SettingsService.getAllSettings()));
 }));
 
 router.put('/settings', requireAuth, requireAdmin, route(async (req, res) => {
   try {
-    res.json(await SettingsService.updateSettings(req.body));
+    const body = validateSettingsUpdate(req.body);
+    AuditService.log({ userId: req.user.id, action: 'settings_changed', ip: getClientIp(req), details: { keys: Object.keys(body) } });
+    const updated = await SettingsService.updateSettings(body);
+    if (body.remote_desktop_enabled === 'false') {
+      wsServer.endAllRemoteSessions('Удалённый рабочий стол отключён администратором');
+    }
+    res.json(publicSettings(updated));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1202,7 +1357,8 @@ router.get('/admin/db/stats', requireAuth, requireAdmin, route(async (req, res) 
   try {
     res.json({ ...DbStudioService.getDatabaseStats(), identity: await DbStudioService.getIdentityStats() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 }));
 
@@ -1210,7 +1366,8 @@ router.get('/admin/db/tables', requireAuth, requireAdmin, (req, res) => {
   try {
     res.json(DbStudioService.getTables());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -1249,16 +1406,20 @@ router.post('/admin/db/query', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-router.post('/admin/db/backup', requireAuth, requireAdmin, (req, res) => {
+router.post('/admin/db/backup', requireAuth, requireAdmin, route(async (req, res) => {
   try {
-    res.json(DbStudioService.backupDatabase());
+    const result = await BackupService.createBackup();
+    AuditService.log({ userId: req.user.id, action: 'db_backup_created', ip: getClientIp(req), details: { files: result.files.map((f) => f.fileName), encrypted: result.encrypted } });
+    const { filePath, ...safe } = result;
+    res.json(safe);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
-});
+}));
 
 router.get('/admin/db/backups', requireAuth, requireAdmin, (req, res) => {
-  res.json(DbStudioService.listBackups());
+  res.json(BackupService.listBackups());
 });
 
 router.get('/admin/db/backups/:filename', requireAuth, requireAdmin, (req, res) => {
@@ -1279,7 +1440,8 @@ router.get('/admin/devices/pending', requireAuth, requireAdminOrScopedAdmin, rou
   try {
     res.json(await DeviceService.getPendingDevices(req.user));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[API] ${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 }));
 

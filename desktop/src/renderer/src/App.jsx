@@ -24,6 +24,16 @@ import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
+import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
+import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
+
+// Токен живёт 12 часов; продлеваем с большим запасом, чтобы работающий
+// человек не упирался в истечение посреди дня.
+const TOKEN_REFRESH_MS = 30 * 60 * 1000;
+// Включён ли удалённый стол и какие серверы соединения — настройка сервера.
+// Отдельного события об её изменении нет, поэтому перечитываем периодически.
+const RD_CONFIG_REFRESH_MS = 5 * 60 * 1000;
+const LOGOUT_REQUEST_TIMEOUT_MS = 1500;
 
 function formatDialogTime(timeStr) {
   if (!timeStr) return '';
@@ -213,6 +223,16 @@ export default function App() {
   useEffect(() => { inlineRdViewerRef.current = inlineRdViewer; }, [inlineRdViewer]);
   useEffect(() => { rdSessionIdRef.current = rdSessionId; }, [rdSessionId]);
   useEffect(() => { rdPromptRef.current = rdPrompt; }, [rdPrompt]);
+  // Настройки удалённого стола с сервера. До ответа — прежнее поведение:
+  // разрешено, серверы по умолчанию (сервер всё равно проверяет сам).
+  const [rdConfig, setRdConfig] = useState({ enabled: true, iceServers: null });
+  const rdEnabledRef = useRef(true);
+  useEffect(() => { rdEnabledRef.current = rdConfig.enabled; }, [rdConfig.enabled]);
+  // Оповещения безопасности, пришедшие по WebSocket за этот сеанс, — для
+  // раздела «Безопасность» консоли (только суперадминистратору).
+  const [securityAlerts, setSecurityAlerts] = useState([]);
+  const lastTokenRefreshRef = useRef(0);
+  const tokenRefreshingRef = useRef(false);
 
   // Escape closes whichever modal/dropdown is open, so the user never has
   // to hunt for a tiny ✕ button.
@@ -510,6 +530,10 @@ export default function App() {
   const handleRequestRemoteDesktop = (targetUser) => {
     const target = targetUser || activeChat?.user;
     if (!target) return;
+    if (!rdEnabledRef.current) {
+      addToast({ title: 'Удалённый рабочий стол выключен', body: 'Администратор отключил его на сервере', type: 'system' });
+      return;
+    }
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       addToast({ title: 'Нет связи с сервером', body: 'Подключение потеряно, повторите попытку', type: 'system' });
       return;
@@ -532,6 +556,11 @@ export default function App() {
       return;
     }
     localStorage.setItem('mychat_logged_out', '1');
+    // Токен отзывается и на сервере: иначе скопированный токен оставался бы
+    // действующим до двенадцати часов после выхода. Ждём недолго — без связи
+    // выход всё равно должен случиться; keepalive даёт запросу пережить
+    // перезагрузку окна.
+    await revokeTokenOnServer();
     // Раньше очищались только токен и пользователь: открытый чат, сообщения,
     // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
     // кто входил следующим за этим компьютером, видел чужую переписку.
@@ -556,6 +585,73 @@ export default function App() {
       try { sessionStorage.setItem('mychat_logout_reason', reason); } catch {}
     }
     window.location.reload();
+  };
+
+  const revokeTokenOnServer = async () => {
+    const currentToken = tokenRef.current;
+    if (!currentToken) return;
+    let timer = null;
+    try {
+      // По таймауту запрос не отменяется: keepalive доводит его до сервера
+      // и после перезагрузки окна.
+      await Promise.race([
+        fetch(`${serverUrlRef.current}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${currentToken}` },
+          keepalive: true
+        }).catch(() => {}),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, LOGOUT_REQUEST_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // Продление токена. Новый токен сохраняется там же, где и при входе;
+  // WebSocket уже авторизован и не переподключается. 401 — сеанс отозван.
+  const refreshAuthToken = async () => {
+    const sentToken = tokenRef.current;
+    if (!sentToken || tokenRefreshingRef.current || loggingOutRef.current) return;
+    tokenRefreshingRef.current = true;
+    try {
+      const res = await fetch(`${serverUrlRef.current}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sentToken}` }
+      });
+      if (res.status === 401) {
+        forceLogout('Сеанс истёк или был отозван — войдите заново');
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      // Пока шёл запрос, токен мог смениться (смена пароля) — более новый
+      // не затираем.
+      if (typeof data?.token !== 'string' || !data.token || tokenRef.current !== sentToken) return;
+      tokenRef.current = data.token;
+      setToken(data.token);
+      localStorage.setItem('mychat_token', data.token);
+      lastTokenRefreshRef.current = Date.now();
+    } catch {
+      // Нет связи — попробуем при следующем срабатывании таймера или фокусе.
+    } finally {
+      tokenRefreshingRef.current = false;
+    }
+  };
+
+  const loadRdConfig = async () => {
+    try {
+      const res = await authFetch(`${serverUrlRef.current}/api/settings/rd`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setRdConfig({
+        enabled: data?.enabled !== false,
+        iceServers: Array.isArray(data?.iceServers) ? data.iceServers : null
+      });
+    } catch {
+      // Сервер недоступен или старой версии — оставляем то, что было.
+    }
   };
 
   // Запрос от имени текущего сеанса. Отказ 401 означает, что сеанс отозван, —
@@ -634,6 +730,38 @@ export default function App() {
       setPwSubmitting(false);
     }
   };
+
+  // Продление токена: сразу после входа, затем каждые полчаса и при
+  // возвращении в окно, если с прошлого продления прошло больше получаса
+  // (у спящего ноутбука таймеры не срабатывают).
+  const mustChangePassword = Boolean(currentUser?.must_change_password);
+  useEffect(() => {
+    if (authState !== 'authenticated' || mustChangePassword) return undefined;
+    refreshAuthToken();
+    const interval = setInterval(refreshAuthToken, TOKEN_REFRESH_MS);
+    const onFocus = () => {
+      if (Date.now() - lastTokenRefreshRef.current > TOKEN_REFRESH_MS) refreshAuthToken();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState, mustChangePassword]);
+
+  useEffect(() => {
+    if (authState !== 'authenticated' || mustChangePassword) return undefined;
+    loadRdConfig();
+    const interval = setInterval(loadRdConfig, RD_CONFIG_REFRESH_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState, mustChangePassword, serverUrl]);
 
   const handleApplyServer = (newUrl) => {
     if (!isAllowedServerUrl(newUrl)) return;
@@ -967,8 +1095,31 @@ export default function App() {
       // ── Удалённый рабочий стол ──────────────────────────────────────────
       case 'rd_prompt':
         // Прилетает сотруднику, у которого просят доступ к экрану.
+        // Удалённый стол выключен на сервере — отказываем сами, не показывая
+        // окна. Сервер такие запросы и так не пропускает; это вторая линия.
+        if (!rdEnabledRef.current) {
+          if (event.sessionId && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'rd_response', sessionId: event.sessionId, accepted: false, reason: 'disabled' }));
+          }
+          break;
+        }
         setRdPrompt(event);
         break;
+
+      // ── Оповещения безопасности (только суперадминистратору) ─────────────
+      case 'security_alert': {
+        const alert = event.alert;
+        if (!alert || !userIsSuperAdmin(currentUserRef.current)) break;
+        setSecurityAlerts((prev) => mergeAlerts(prev, [alert]).slice(0, 100));
+        const summary = summarizeDetails(alert.details, 140);
+        addToast({
+          title: `Безопасность: ${String(alert.title || 'подозрительное событие')}`,
+          body: `${severityLabel(alert.severity)}${summary ? ` — ${summary}` : ''}. Подробности — в консоли, раздел «Безопасность».`,
+          type: 'system',
+          isUrgent: true
+        });
+        break;
+      }
 
       case 'rd_denied':
         setRdPendingTarget(null);
@@ -1105,6 +1256,10 @@ export default function App() {
               ? `У сотрудника ${who} не запустилась трансляция экрана`
               : event.reason === 'superseded'
               ? 'Запрос заменён более новым'
+              : event.reason === 'policy'
+              ? `На компьютере сотрудника ${who} удалённый доступ запрещён политикой`
+              : event.reason === 'disabled'
+              ? 'Удалённый рабочий стол выключен администратором'
               : `${who} отказал в доступе к рабочему столу`;
           addToast({ title: 'Запрос отклонён', body, type: 'system' });
           setRdSessionId(null);
@@ -2281,6 +2436,7 @@ export default function App() {
                 connected={wsConnected}
                 wake={wake}
                 onWake={sendWake}
+                rdEnabled={rdConfig.enabled}
               />
             ) : (
               <GreetingView
@@ -2479,6 +2635,10 @@ export default function App() {
           onRefreshData={() => {
             loadBaseData();
           }}
+          securityAlerts={securityAlerts}
+          onSecurityAlertAcknowledged={(id, ack) =>
+            setSecurityAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, ...ack } : a)))
+          }
         />
       )}
 
@@ -2495,6 +2655,7 @@ export default function App() {
         <RemoteDesktopHostModal
           request={rdPrompt}
           wsClient={wsRef.current}
+          iceServers={rdConfig.iceServers}
           onClose={() => setRdPrompt(null)}
         />
       )}
@@ -2539,6 +2700,7 @@ export default function App() {
                 wsClient={wsRef.current}
                 pendingOffer={rdPendingOffer}
                 pendingCandidates={rdPendingCandidates}
+                iceServers={rdConfig.iceServers}
                 onEndSession={endRdViewerSession}
               />
             </div>

@@ -13,6 +13,27 @@ const INVALID_CREDENTIALS = 'Неверный логин или пароль. П
 // столько же, сколько настоящая, и отказ не выдаёт себя скоростью. Считается
 // один раз и лениво — чтобы не замедлять запуск сервера.
 let dummyHashPromise = null;
+
+const TOKEN_ISSUER = 'openmychat-server';
+const TOKEN_AUDIENCE = 'openmychat-client';
+// Отозванные номера держатся в памяти, чтобы не ходить в базу на каждом
+// запросе за уже известным ответом. Размер ограничен сроком жизни токенов.
+const revokedCache = new Set();
+
+function tokenTtlSeconds() {
+  const hours = Number(process.env.TOKEN_TTL_HOURS);
+  return Math.round((Number.isFinite(hours) && hours > 0 ? Math.min(hours, 168) : 12) * 3600);
+}
+
+function refreshGraceSeconds() {
+  const value = Number(process.env.TOKEN_REFRESH_GRACE_SECONDS);
+  return Number.isFinite(value) && value >= 0 ? Math.min(value, 300) : 60;
+}
+
+function sessionMaxSeconds() {
+  const days = Number(process.env.SESSION_MAX_DAYS);
+  return Math.round((Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 30) * 86400);
+}
 function dummyHash() {
   if (!dummyHashPromise) {
     dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
@@ -22,19 +43,34 @@ function dummyHash() {
 
 class AuthService {
   /**
-   * Токен подписывается HMAC-SHA256 на серверном секрете. Помимо кто и когда,
-   * в него кладётся token_version — номер поколения учётной записи. При смене
-   * пароля, смене роли или отключении сотрудника номер сдвигается, и все ранее
-   * выданные токены перестают приниматься немедленно, не дожидаясь истечения
-   * недельного срока.
+   * Токен подписывается HMAC-SHA256 на серверном секрете. Внутри:
+   *   tv        — поколение учётной записи: смена пароля, роли или отключение
+   *               сдвигают его, и прежние токены перестают приниматься сразу;
+   *   iat/exp   — выдан и истекает, в секундах; срок — TOKEN_TTL_HOURS (12 ч),
+   *               клиент продлевает его сам, пока сотрудник работает;
+   *   auth_time — когда человек в последний раз подтвердил себя (пароль или
+   *               устройство); продление её не сдвигает, поэтому бесконечно
+   *               жить на продлениях нельзя (SESSION_MAX_DAYS);
+   *   amr       — чем подтвердил: pwd (пароль) или device (секрет устройства);
+   *   jti       — номер токена, по нему выход из системы отзывает именно его;
+   *   iss/aud   — чей токен и для кого: подпись тем же ключом другого
+   *               назначения здесь не пройдёт.
+   * Прежде токен жил неделю, и выйти из системы по-настоящему было нельзя.
    */
-  static generateToken(user) {
+  static generateToken(user, { amr = 'pwd', authTime = null } = {}) {
+    const now = Math.floor(Date.now() / 1000);
     const payload = {
       userId: user.id,
       username: user.username,
       roleId: user.role_id,
       tv: Number(user.token_version || 1),
-      exp: Date.now() + 1000 * 60 * 60 * 24 * 7
+      iss: TOKEN_ISSUER,
+      aud: TOKEN_AUDIENCE,
+      iat: now,
+      exp: now + tokenTtlSeconds(),
+      auth_time: Number.isFinite(authTime) ? authTime : now,
+      amr: amr === 'device' ? 'device' : 'pwd',
+      jti: crypto.randomBytes(16).toString('hex')
     };
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -47,7 +83,7 @@ class AuthService {
 
   static verifyToken(token) {
     try {
-      if (!token || typeof token !== 'string') return null;
+      if (!token || typeof token !== 'string' || token.length > 4096) return null;
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       const [header, body, signature] = parts;
@@ -63,8 +99,26 @@ class AuthService {
       const b = Buffer.from(expected);
       if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
 
+      const head = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
+      if (!head || head.alg !== 'HS256') return null;
+
       const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-      if (!payload || typeof payload.exp !== 'number' || payload.exp < Date.now()) return null;
+      if (!payload || typeof payload.exp !== 'number') return null;
+
+      const nowMs = Date.now();
+      // Токены прежнего формата хранили срок в миллисекундах и жили неделю.
+      // Принимаются до своего срока, чтобы обновление сервера не выбросило всех
+      // разом; новых таких не выдаётся.
+      if (payload.exp > 1e11) {
+        if (payload.exp < nowMs) return null;
+        payload.legacy = true;
+        return payload;
+      }
+
+      if (payload.exp * 1000 < nowMs) return null;
+      if (payload.iss !== TOKEN_ISSUER || payload.aud !== TOKEN_AUDIENCE) return null;
+      if (typeof payload.iat !== 'number' || payload.iat * 1000 > nowMs + 60000) return null;
+      if (typeof payload.auth_time !== 'number' || (payload.auth_time + sessionMaxSeconds()) * 1000 < nowMs) return null;
       return payload;
     } catch {
       return null;
@@ -72,13 +126,15 @@ class AuthService {
   }
 
   /**
-   * Проверяет, что токен всё ещё относится к действующей учётной записи.
-   * Вызывается на каждом запросе — здесь же отсекаются токены, выданные до
-   * смены пароля или до отключения сотрудника.
+   * Проверяет, что токен всё ещё относится к действующей учётной записи и не
+   * отозван выходом. Вызывается на каждом запросе — здесь же отсекаются
+   * токены, выданные до смены пароля или до отключения сотрудника.
    */
-  static async resolveSession(token) {
+  static async resolveSessionDetailed(token) {
     const payload = this.verifyToken(token);
     if (!payload) return null;
+
+    if (payload.jti && (await this.isRevoked(payload.jti))) return null;
 
     const user = await UserService.getUserById(payload.userId);
     if (!user || !user.is_active) return null;
@@ -90,7 +146,58 @@ class AuthService {
     const tokenVersion = Number(payload.tv || 1);
     if (tokenVersion !== Number(user.token_version || 1)) return null;
 
-    return user;
+    return { user, payload };
+  }
+
+  static async resolveSession(token) {
+    const session = await this.resolveSessionDetailed(token);
+    return session ? session.user : null;
+  }
+
+  // Продление: новый токен с тем же способом и временем подтверждения, но с
+  // новым сроком. Старый отзывается не мгновенно, а через короткую паузу:
+  // запросы, отправленные со старым токеном за миг до продления, иначе
+  // получали бы отказ, и сотрудника выбрасывало на экран входа.
+  static async refreshToken(user, payload) {
+    const token = this.generateToken(user, {
+      amr: payload.amr,
+      authTime: Number.isFinite(payload.auth_time) ? payload.auth_time : null
+    });
+    if (payload.jti) await this.revokeToken(payload, { graceSeconds: refreshGraceSeconds() });
+    return token;
+  }
+
+  // Выход отзывает сразу; продление — с паузой (graceSeconds).
+  static async revokeToken(payload, { graceSeconds = 0 } = {}) {
+    if (!payload?.jti) return false;
+    const expiresAt = new Date((payload.exp > 1e11 ? payload.exp : payload.exp * 1000)).toISOString();
+    const effectiveAt = new Date(Date.now() + graceSeconds * 1000).toISOString();
+    await identity().run(
+      `INSERT INTO revoked_tokens (jti, user_id, expires_at, revoked_at) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (jti) DO UPDATE SET revoked_at = CASE
+         WHEN EXCLUDED.revoked_at < revoked_tokens.revoked_at THEN EXCLUDED.revoked_at
+         ELSE revoked_tokens.revoked_at END`,
+      [String(payload.jti), Number(payload.userId) || null, expiresAt, effectiveAt]
+    );
+    if (graceSeconds <= 0) revokedCache.add(String(payload.jti));
+    // Истёкшие записи больше ничего не отзывают — таблица не должна расти вечно.
+    if (Math.random() < 0.05) {
+      identity().run('DELETE FROM revoked_tokens WHERE expires_at < $1', [new Date().toISOString()]).catch(() => {});
+    }
+    return true;
+  }
+
+  static async hasRevocationRecord(jti) {
+    return Boolean(await identity().get('SELECT 1 AS hit FROM revoked_tokens WHERE jti = $1', [String(jti)]));
+  }
+
+  static async isRevoked(jti) {
+    if (revokedCache.has(String(jti))) return true;
+    const row = await identity().get('SELECT revoked_at FROM revoked_tokens WHERE jti = $1', [String(jti)]);
+    if (!row) return false;
+    if (new Date(row.revoked_at).getTime() > Date.now()) return false; // ещё идёт пауза после продления
+    revokedCache.add(String(jti));
+    return true;
   }
 
   static async login(username, password, { ip = null } = {}) {
@@ -148,12 +255,16 @@ class AuthService {
     }
 
     const nowIso = new Date().toISOString();
+    // Старые учётные записи с паролем вроде «123456» заводились до появления
+    // политики. Верный, но слабый пароль пускает — и сразу требует сменить.
+    const weak = UserService.isWeakPassword(String(password));
     await db.run(
       `UPDATE users
        SET status = 'online', last_seen = $1, last_login_at = $1, last_login_ip = $2,
-           failed_login_count = 0, locked_until = NULL
+           failed_login_count = 0, locked_until = NULL,
+           must_change_password = CASE WHEN $4 = 1 THEN 1 ELSE must_change_password END
        WHERE id = $3`,
-      [nowIso, ip, row.id]
+      [nowIso, ip, row.id, weak ? 1 : 0]
     );
 
     const user = await UserService.getUserById(row.id);
@@ -179,6 +290,7 @@ class AuthService {
     );
 
     if (reachedLimit) {
+      require('./audit.service').log({ userId: row.id, action: 'account_locked', details: { minutes: config.LOGIN_LOCKOUT_MINUTES } });
       console.warn(
         `[Auth] Учётная запись "${row.username}" заблокирована на ${config.LOGIN_LOCKOUT_MINUTES} мин. ` +
           `после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток входа.`

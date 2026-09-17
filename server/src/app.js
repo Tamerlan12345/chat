@@ -101,7 +101,12 @@ if (corsOrigins.length) {
 }
 // Самое крупное тело — фотография профиля в data URL. 50 МБ на разбор JSON до
 // всякой авторизации — готовый способ занять память сервера.
-app.use(express.json({ limit: '5mb' }));
+// До проверки входа разбирается только небольшое тело. Крупное (фото профиля
+// в data URL) допускается лишь на своём маршруте.
+const LARGE_BODY_PATHS = new Set(['/api/users/profile']);
+const smallJson = express.json({ limit: '256kb' });
+const largeJson = express.json({ limit: '5mb' });
+app.use((req, res, next) => (LARGE_BODY_PATHS.has(req.path) ? largeJson : smallJson)(req, res, next));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Security headers (defense in depth — this SPA is also reachable from any
@@ -116,6 +121,26 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('X-DNS-Prefetch-Control', 'off');
+  // Политика содержимого для интерфейса. Любая будущая уязвимость XSS
+  // упрётся в неё: чужой скрипт не загрузится, данные не уйдут на чужой адрес,
+  // страницу нельзя встроить. blob: — для обработчика звука (AudioWorklet) и
+  // картинок переписки; 'unsafe-inline' только для стилей — React задаёт
+  // style у элементов.
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; '));
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=()');
   // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
   // и не пойдут по http даже по подменённой ссылке.
   if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
@@ -193,6 +218,10 @@ if (fs.existsSync(staticDir)) {
 app.use((err, req, res, next) => {
   console.error(`[HTTP Error] ${req.method} ${req.path}:`, err?.message || err);
   if (res.headersSent) return next(err);
+  // Ошибки разбора запроса (слишком большое тело, неверный JSON) — это отказ
+  // клиенту, а не сбой сервера: 413 и 400 с понятным текстом.
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Слишком большой запрос' });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'Неверный формат запроса' });
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 

@@ -26,12 +26,23 @@ class HostSession {
     return cleanName(value);
   }
 
-  constructor() {
+  // isBlocked — запрет удалённого доступа политикой ПК. Проверяется при
+  // старте: даже если обработчик согласия где-то пропустит проверку, сеанс,
+  // а значит и снятие экрана с вводом, не начнётся.
+  constructor({ isBlocked } = {}) {
     this.current = null;
+    this.isBlocked = typeof isBlocked === 'function' ? isBlocked : () => false;
   }
 
   start({ sessionId, operatorName, accessLevel } = {}) {
     if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) return false;
+    let blocked = true;
+    try {
+      blocked = Boolean(this.isBlocked());
+    } catch {
+      // Не удалось прочитать политику — не открываем экран.
+    }
+    if (blocked) return false;
     this.current = {
       sessionId,
       operatorName: cleanName(operatorName),

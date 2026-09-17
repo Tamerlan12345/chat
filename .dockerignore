@@ -15,3 +15,12 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 docs
+
+# Настройки развёртывания с секретами не должны попасть в образ
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key

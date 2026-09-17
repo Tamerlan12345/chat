@@ -35,6 +35,10 @@ const SIGNALING_TYPES = new Set(['rd_webrtc_answer', 'rd_ice_candidate']);
 export default function RemoteDesktopHostModal(props) {
   const data = props.promptData || props.request || {};
   const { wsClient, onClose } = props;
+  // Серверы соединения из настроек сервера (null — сервер их не прислал).
+  // Через ref: соединение создаётся в асинхронном обработчике согласия.
+  const iceServersRef = useRef(props.iceServers ?? null);
+  iceServersRef.current = props.iceServers ?? null;
 
   // По умолчанию — только просмотр: полный доступ сотрудник выбирает сам.
   const [accessLevel, setAccessLevel] = useState('view_only');
@@ -177,7 +181,10 @@ export default function RemoteDesktopHostModal(props) {
         if (!accepted) {
           s.ended = true;
           sessionRef.current = null;
-          respond(s.sessionId, false, consent?.reason === 'busy' ? { reason: 'busy' } : {});
+          // «busy» и «policy» оператору полезно знать: повторять запрос
+          // бессмысленно. Остальные причины — просто отказ.
+          const reason = consent?.reason;
+          respond(s.sessionId, false, reason === 'busy' || reason === 'policy' ? { reason } : {});
           if (aliveRef.current) setAccepting(false);
           closeModal();
           return;
@@ -208,7 +215,7 @@ export default function RemoteDesktopHostModal(props) {
       if (s.accessLevel === 'full') await window.electronAPI?.rdInputEnable?.();
       if (s.ended) return;
 
-      const pc = new RTCPeerConnection({ iceServers: getRdIceServers() });
+      const pc = new RTCPeerConnection({ iceServers: getRdIceServers(iceServersRef.current) });
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 

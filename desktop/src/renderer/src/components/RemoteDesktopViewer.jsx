@@ -19,7 +19,7 @@ const SERVER_LOST_TEXT =
 // «только просмотр»: показывать управление, которого нет, хуже, чем на
 // секунду его не показать. Сотрудник дополнительно сообщает уровень вместе со
 // списком мониторов (rd_screens).
-export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, pendingCandidates, onEndSession, accessLevel: accessLevelProp }) {
+export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, pendingOffer, pendingCandidates, onEndSession, accessLevel: accessLevelProp, iceServers = null }) {
   const [scaleMode, setScaleMode] = useState('fit');
   const [remoteStream, setRemoteStream] = useState(null);
   const [statusText, setStatusText] = useState('Устанавливаем соединение с экраном сотрудника…');
@@ -135,7 +135,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   useEffect(() => {
     connectedRef.current = false;
     setFailure(null);
-    const pc = new RTCPeerConnection({ iceServers: getRdIceServers() });
+    const pc = new RTCPeerConnection({ iceServers: getRdIceServers(iceServers) });
     peerConnectionRef.current = pc;
 
     // Кандидаты нередко приходят раньше описания соединения. Добавить их в

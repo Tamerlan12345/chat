@@ -35,7 +35,7 @@ COPY --from=desktop-build /app/desktop/dist ../desktop/dist
 # MUST be mounted as a volume in production — see docker-compose.yml. Without
 # it, every `docker compose up` after a rebuild starts from an empty
 # database and a brand new JWT secret (logging everyone out).
-RUN mkdir -p /app/server/data && chown -R mychat:mychat /app/server/data /app/server
+RUN mkdir -p /app/server/data && chown -R mychat:mychat /app/server/data
 
 USER mychat
 

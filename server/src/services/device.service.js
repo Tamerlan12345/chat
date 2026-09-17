@@ -54,7 +54,7 @@ class DeviceService {
         status: 'paired',
         auto_matched: false,
         user,
-        token: AuthService.generateToken(user)
+        token: AuthService.generateToken(user, { amr: 'device' })
       };
     }
 

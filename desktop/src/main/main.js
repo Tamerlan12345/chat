@@ -23,7 +23,8 @@ const {
   buildConsentDialog,
   resolveConsent,
   policyPaths,
-  isFullAccessDisabled,
+  readRdPolicy,
+  policyDecline,
   buildClipboardDialog,
   buildFileDialog
 } = require('./rd-consent');
@@ -101,7 +102,8 @@ let viewerWindows = new Map(); // sessionId -> BrowserWindow
 
 // Что сотрудник подтвердил. Пока сеанса нет, экран не отдаётся и ввод не
 // включается, что бы ни попросила страница.
-const hostSession = new HostSession();
+// Функция объявлена ниже, но вызывается только при старте сеанса.
+const hostSession = new HostSession({ isBlocked: () => isRemoteDesktopDisabledHere() });
 
 // Согласия на общий буфер обмена (см. clipboard-grants.js).
 const clipboardGrants = new ClipboardGrants();
@@ -129,12 +131,22 @@ async function askUser(options, { signal, bringToFront = false } = {}) {
 
 // Запрет полного доступа на этом ПК (см. rd-consent.js). Читается на каждый
 // запрос: политику можно разложить, не перезапуская приложение.
-function isFullAccessDisabledHere() {
-  return isFullAccessDisabled({
+function readRdPolicyHere() {
+  return readRdPolicy({
     env: process.env,
     paths: policyPaths({ programData: process.env.ProgramData, userData: app.getPath('userData') }),
     readFile: (file) => fs.readFileSync(file, 'utf8')
   });
+}
+
+function isFullAccessDisabledHere() {
+  return readRdPolicyHere().fullAccessDisabled;
+}
+
+// Полный запрет удалённого доступа к этому ПК (MYCHAT_RD_DISABLE /
+// disableRemoteDesktop). Тоже читается на каждый запрос.
+function isRemoteDesktopDisabledHere() {
+  return readRdPolicyHere().remoteDesktopDisabled;
 }
 
 // Экран, который выбрал оператор (id источника desktopCapturer), и экран,
@@ -389,6 +401,7 @@ function createMainWindow() {
         callback({});
       };
       if (!hostSession.allowsCapture) return deny('no accepted remote session');
+      if (isRemoteDesktopDisabledHere()) return deny('remote desktop disabled by policy');
       if (!isMainWindowFrame(request.frame)) return deny(`not the main window page (${frameUrl(request.frame).slice(0, 120)})`);
 
       desktopCapturer
@@ -779,6 +792,15 @@ ipcMain.handle('rd-session-start', async (event, info) => {
   const { sessionId, operatorName, accessLevel } = info || {};
   if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) return declined('invalid');
 
+  // Политика ПК запрещает удалённый доступ: отказ сразу, без окна. Идущий
+  // сеанс (политику разложили посреди него) тоже обрывается.
+  const policyAnswer = policyDecline(readRdPolicyHere());
+  if (policyAnswer) {
+    if (hostSession.active) endHostSession('remote desktop disabled by policy');
+    log(`remote session declined by policy: ${sessionId}`);
+    return policyAnswer;
+  }
+
   // Повторный вызов для уже подтверждённого сеанса ничего не расширяет.
   if (hostSession.active && hostSession.sessionId === sessionId) {
     return { accepted: true, accessLevel: hostSession.accessLevel };
@@ -842,7 +864,7 @@ ipcMain.handle('rd-session-end', (event, info) => {
 // Миниатюры экранов — только внутри идущего сеанса.
 ipcMain.handle('rd-list-screens', async (event) => {
   if (!isFromServerPage(event, { mainWindowOnly: true })) return [];
-  if (!hostSession.active) return [];
+  if (!hostSession.active || isRemoteDesktopDisabledHere()) return [];
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: 240, height: 135 }
@@ -1026,6 +1048,11 @@ ipcMain.handle('rd-input-enable', (event) => {
     log('remote control: enable refused — no accepted full-access session');
     return { enabled: false, panicKeyArmed: false };
   }
+  if (isRemoteDesktopDisabledHere()) {
+    endHostSession('remote desktop disabled by policy');
+    log('remote control: enable refused — remote desktop disabled by policy');
+    return { enabled: false, panicKeyArmed: false };
+  }
   remoteInput.enable();
   globalShortcut.unregister(PANIC_ACCELERATOR);
   const registered = globalShortcut.register(PANIC_ACCELERATOR, () => {
@@ -1072,6 +1099,7 @@ function writeZoneIdentifier(target) {
 ipcMain.handle('rd-save-file', async (event, { fileName, data } = {}) => {
   if (!isFromServerPage(event, { mainWindowOnly: true })) return { success: false, error: 'Недоверенный источник' };
   if (!hostSession.allowsInput) return { success: false, error: 'Нет активного сеанса с полным доступом' };
+  if (isRemoteDesktopDisabledHere()) return { success: false, error: 'Удалённый доступ к этому компьютеру запрещён политикой' };
   if (!(Array.isArray(data) || data instanceof Uint8Array) || data.length > MAX_SAVED_FILE_BYTES) {
     return { success: false, error: 'Некорректный файл' };
   }

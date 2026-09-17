@@ -30,3 +30,14 @@ npm-debug.log*
 # OS / editor cruft
 .DS_Store
 Thumbs.db
+
+# Ключи и сертификаты подписи — только в защищённом хранилище, не в репозитории
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Промежуточные результаты сборки установщика
+installer/win-unpacked/
+installer/app/
+*.zip

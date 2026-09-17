@@ -3,7 +3,17 @@ import { useConfirm } from './ConfirmDialog';
 import { useInlineToast } from './InlineToast';
 import Icon from './Icon';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
+import SecurityCenter from './SecurityCenter';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
+
+// Ключи настроек, которыми владеет раздел «Безопасность».
+const SECURITY_SETTING_KEYS = ['remote_desktop_enabled', 'rd_ice_servers', 'security_alerts_telegram'];
+
+function withoutSecurityKeys(settings) {
+  const rest = { ...settings };
+  for (const key of SECURITY_SETTING_KEYS) delete rest[key];
+  return rest;
+}
 
 // Права, которыми управляет администратор. defaultOn — как трактуется
 // отсутствующее значение: три права считаются разрешёнными, пока их явно не
@@ -25,7 +35,16 @@ const PERMISSION_FIELDS = [
   { key: 'can_manage_db', label: 'Доступ к базе данных', emphasis: true, note: 'выполнение SQL-запросов' }
 ];
 
-export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onClose, onRefreshData, focusUserId = null }) {
+export default function AdminUserModal({
+  currentUser,
+  serverInfo,
+  serverUrl,
+  onClose,
+  onRefreshData,
+  focusUserId = null,
+  securityAlerts = [],
+  onSecurityAlertAcknowledged
+}) {
   // Консоль открывают и суперадминистратор, и администратор подразделения.
   // Второму сервер отдаёт только сотрудников, заявки, узлы и импорт — остальные
   // разделы отвечали ему отказом на каждое нажатие. Флаги те же, что на сервере.
@@ -34,7 +53,7 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
 
   // Official MyChat Control Panel Sections
   const [activeTab, setActiveTab] = useState(superAdmin ? 'server' : 'users');
-  // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'licenses'
+  // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
 
   const [loading, setLoading] = useState(false);
   const [showToast, toastElement] = useInlineToast();
@@ -1017,7 +1036,10 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(sysSettings)
+        // Настройки удалённого стола и оповещений меняются в разделе
+        // «Безопасность». Здесь они могли загрузиться раньше и затёрли бы
+        // свежие значения при сохранении общих параметров.
+        body: JSON.stringify(withoutSecurityKeys(sysSettings))
       });
       if (!res.ok) {
         showToast(await readError(res, 'Параметры сервера не сохранены'), 'error');
@@ -1157,6 +1179,16 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     onClick={() => setActiveTab('settings')}
                   >
                     <Icon name="settings" size={16} /> <span>Настройки</span>
+                  </button>
+
+                  <button
+                    className={`admin-nav-item ${activeTab === 'security' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('security')}
+                  >
+                    <Icon name="shieldCheck" size={16} /> <span>Безопасность</span>
+                    {securityAlerts.some((a) => a && !a.acknowledged_at) && (
+                      <span className="admin-nav-badge">{securityAlerts.filter((a) => a && !a.acknowledged_at).length}</span>
+                    )}
                   </button>
 
                   <button
@@ -2717,6 +2749,18 @@ export default function AdminUserModal({ currentUser, serverInfo, serverUrl, onC
                     Применить параметры сервера
                   </button>
                 </form>
+              </div>
+            )}
+
+            {activeTab === 'security' && superAdmin && (
+              <div className="admin-tab-pane">
+                <SecurityCenter
+                  serverUrl={serverUrl}
+                  currentUser={currentUser}
+                  liveAlerts={securityAlerts}
+                  onAlertAcknowledged={onSecurityAlertAcknowledged}
+                  showToast={showToast}
+                />
               </div>
             )}
 

@@ -1,53 +1,34 @@
-const fs = require('node:fs');
-const path = require('node:path');
 const config = require('../config');
-const DbStudioService = require('./db-studio.service');
+const BackupService = require('./backup.service');
 
-// mychat.db is the single, only copy of the company's data (see
-// docs/designs/auth-access-control-remediation.md and Architecture -
-// Database.md). The admin console already has a manual "Backup now" button;
-// this makes that happen unattended on a schedule, with retention so the
-// backups/ folder doesn't grow forever.
+// Резервные копии по расписанию, с хранением последних N. Сбой копии — не
+// строка в консоли, которую никто не читает, а критическое оповещение
+// безопасности: без копий данные компании держатся на одном диске.
 let intervalHandle = null;
 
-function runBackupCycle() {
+async function runBackupCycle() {
   try {
-    const result = DbStudioService.backupDatabase();
-    console.log(`[Backup] Scheduled backup created: ${result.fileName} (${result.sizeFormatted})`);
+    const result = await BackupService.createBackup();
+    console.log(`[Backup] Резервная копия создана: ${result.files.map((f) => f.fileName).join(', ')}`);
+    require('./audit.service').log({ action: 'db_backup_created', details: { files: result.files.map((f) => f.fileName), encrypted: result.encrypted, scheduled: true } });
   } catch (err) {
-    console.error('[Backup] Scheduled backup failed:', err.message);
+    console.error('[Backup] Плановая копия не создана:', err.message);
+    require('./security-monitor.service').raise('backup_failed', 'critical', 'Резервная копия не создана', { error: err.message });
     return;
   }
   try {
-    enforceRetention();
+    BackupService.enforceRetention();
   } catch (err) {
-    console.error('[Backup] Retention cleanup failed:', err.message);
-  }
-}
-
-function enforceRetention() {
-  if (!fs.existsSync(config.BACKUPS_DIR)) return;
-  const keep = Math.max(1, config.BACKUP_RETENTION_COUNT);
-  const files = fs.readdirSync(config.BACKUPS_DIR)
-    .filter((f) => f.startsWith('mychat-backup-') && f.endsWith('.db'))
-    .map((f) => {
-      const full = path.join(config.BACKUPS_DIR, f);
-      return { full, mtime: fs.statSync(full).mtimeMs };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
-
-  for (const old of files.slice(keep)) {
-    fs.unlinkSync(old.full);
-    console.log(`[Backup] Removed old backup beyond retention (${keep}): ${path.basename(old.full)}`);
+    console.error('[Backup] Очистка старых копий не удалась:', err.message);
   }
 }
 
 function start() {
   const intervalMs = config.BACKUP_INTERVAL_HOURS * 60 * 60 * 1000;
   if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(runBackupCycle, intervalMs);
-  intervalHandle.unref(); // don't keep the process alive just for this timer
-  console.log(`[Backup] Automatic backups enabled: every ${config.BACKUP_INTERVAL_HOURS}h, keeping last ${config.BACKUP_RETENTION_COUNT}`);
+  intervalHandle = setInterval(() => { runBackupCycle(); }, intervalMs);
+  intervalHandle.unref(); // таймер не должен держать процесс
+  console.log(`[Backup] Автоматические копии: каждые ${config.BACKUP_INTERVAL_HOURS} ч, хранить ${config.BACKUP_RETENTION_COUNT}`);
 }
 
 module.exports = { start, runBackupCycle };

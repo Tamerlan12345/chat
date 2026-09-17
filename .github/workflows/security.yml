@@ -1,0 +1,68 @@
+# Автопроверка при каждом изменении: тесты сервера и приложения (включая
+# тесты атак), известные уязвимости зависимостей и поиск секретов в истории.
+# Изменение, которое ломает защиту, не пройдёт незамеченным.
+name: security-checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    # Раз в неделю: новые уязвимости в зависимостях появляются и без наших изменений.
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Тесты сервера, включая тесты атак
+        run: npm test
+      - name: Уязвимости зависимостей (high и выше)
+        run: npm audit --omit=dev --audit-level=high
+
+  desktop:
+    # Главный процесс работает на Windows — тесты гоняются там же.
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Тесты приложения
+        run: npm test
+      - name: Сборка интерфейса
+        run: npx vite build
+      - name: Уязвимости зависимостей (high и выше)
+        run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Поиск секретов в истории
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

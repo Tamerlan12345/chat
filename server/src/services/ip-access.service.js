@@ -22,7 +22,15 @@ function normalizeIp(raw) {
   // limiter keys, /auth/knock ip_address) — a real IPv6 address without an
   // embedded IPv4 tail gets mangled too, but that fails CLOSED (won't match
   // any configured allowlist entry), never open.
-  return raw.replace(/^.*:/, '');
+  const value = String(raw).trim();
+  // IPv4 внутри IPv6 («::ffff:10.0.0.1») — это IPv4. Настоящий IPv6 раньше
+  // обрезался до последней группы («2001:db8::1» превращался в «1»), и разные
+  // клиенты попадали в один счётчик попыток. Теперь адрес остаётся целым.
+  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  const net = require('node:net');
+  if (net.isIPv4(value) || net.isIPv6(value)) return value.toLowerCase();
+  return value.replace(/^.*:/, '');
 }
 
 function ipToInt(ip) {

@@ -26,7 +26,8 @@ export default function ChatView({
   onNotice,
   connected = true,
   wake = null,
-  onWake
+  onWake,
+  rdEnabled = true
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -291,7 +292,9 @@ export default function ChatView({
   const isDirect = activeChat.type === 'direct';
   // Сервер пускает к чужому экрану только с правом can_remote_control —
   // кнопка без него лишь выдавала отказ.
-  const canRemoteControl = Boolean(currentUser?.permissions?.can_remote_control);
+  // Удалённый стол выключен администратором для всей компании — кнопки
+  // подключения не показываются: сервер всё равно отклонил бы запрос.
+  const canRemoteControl = Boolean(currentUser?.permissions?.can_remote_control) && rdEnabled !== false;
   const chatTitle = activeChat.name || (isDirect ? activeChat.user?.full_name : `#${activeChat.channel?.name}`);
   const isOnline = isDirect ? (activeChat.user?.status === 'online') : true;
 

@@ -58,9 +58,12 @@ function resolveConsent(choices, response, { fullAccessDisabled } = {}) {
   return null;
 }
 
-// Запрет полного доступа на конкретном ПК: переменная окружения или файл
+// Политика удалённого доступа на конкретном ПК: переменные окружения или файл
 // policy.json. Файл в ProgramData раскладывает администратор (у сотрудника
 // нет прав его менять); файл в папке данных приложения — для ручной настройки.
+//   MYCHAT_RD_DISABLE_FULL=1 / {"disableRemoteFullAccess": true} — только просмотр;
+//   MYCHAT_RD_DISABLE=1      / {"disableRemoteDesktop": true}    — к этому ПК
+//   нельзя подключиться вовсе: ни окна согласия, ни снятия экрана, ни ввода.
 const POLICY_FILE = 'policy.json';
 
 function isTruthyFlag(value) {
@@ -74,8 +77,11 @@ function policyPaths({ programData, userData } = {}) {
   return out;
 }
 
-function isFullAccessDisabled({ env = {}, paths = [], readFile } = {}) {
-  if (isTruthyFlag(env.MYCHAT_RD_DISABLE_FULL)) return true;
+function readRdPolicy({ env = {}, paths = [], readFile } = {}) {
+  const policy = {
+    remoteDesktopDisabled: isTruthyFlag(env.MYCHAT_RD_DISABLE),
+    fullAccessDisabled: isTruthyFlag(env.MYCHAT_RD_DISABLE_FULL)
+  };
   for (const file of paths) {
     let raw;
     try {
@@ -84,15 +90,36 @@ function isFullAccessDisabled({ env = {}, paths = [], readFile } = {}) {
       continue;
     }
     try {
-      const policy = JSON.parse(String(raw).replace(/^﻿/, ''));
-      if (policy && policy.disableRemoteFullAccess === true) return true;
+      const parsed = JSON.parse(String(raw).replace(/^﻿/, ''));
+      if (parsed && parsed.disableRemoteDesktop === true) policy.remoteDesktopDisabled = true;
+      if (parsed && parsed.disableRemoteFullAccess === true) policy.fullAccessDisabled = true;
     } catch {
       // Испорченный файл политики — считаем, что запрет задуман: безопаснее
-      // остаться без управления, чем молча его разрешить.
-      return true;
+      // остаться без удалённого доступа, чем молча его разрешить. Что именно
+      // хотели запретить, из файла уже не понять — запрещается всё.
+      policy.remoteDesktopDisabled = true;
+      policy.fullAccessDisabled = true;
     }
   }
-  return false;
+  // Без удалённого доступа нет и полного.
+  if (policy.remoteDesktopDisabled) policy.fullAccessDisabled = true;
+  return policy;
+}
+
+function isFullAccessDisabled(options) {
+  return readRdPolicy(options).fullAccessDisabled;
+}
+
+function isRemoteDesktopDisabled(options) {
+  return readRdPolicy(options).remoteDesktopDisabled;
+}
+
+// Ответ на rd-session-start до всякого окна: при запрете сотрудника даже не
+// спрашивают — случайное «Разрешить» не должно ничего открыть.
+function policyDecline(policy) {
+  return policy && policy.remoteDesktopDisabled
+    ? { accepted: false, accessLevel: null, reason: 'policy' }
+    : null;
 }
 
 // Системное окно согласия на общий буфер обмена.
@@ -144,7 +171,10 @@ module.exports = {
   buildConsentDialog,
   resolveConsent,
   policyPaths,
+  readRdPolicy,
   isFullAccessDisabled,
+  isRemoteDesktopDisabled,
+  policyDecline,
   buildClipboardDialog,
   buildFileDialog
 };

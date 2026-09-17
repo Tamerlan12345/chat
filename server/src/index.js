@@ -22,6 +22,28 @@ async function start() {
 
   server.listen(config.PORT, config.HOST, () => {
     backupScheduler.start();
+    require('./services/security-monitor.service').startScheduledChecks();
+    // Журнал, начатый до появления якоря цепочки, закрепляется один раз. Если
+    // это случилось на рабочей базе с записями — об этом нужно знать.
+    require('./services/audit.service')
+      .ensureAnchor()
+      .then((created) => {
+        if (created) {
+          require('./services/security-monitor.service').raise('audit_anchor_created', 'high',
+            'Закреплено начало цепочки журнала аудита для существующих записей', {});
+        }
+      })
+      .catch((err) => console.warn('[Audit] якорь цепочки не закреплён:', err.message));
+    // Самопроверка при запуске: предупреждения видно в журнале сервера сразу,
+    // а не только когда администратор откроет консоль.
+    require('./services/security-monitor.service')
+      .getStatus()
+      .then(({ checks }) => {
+        for (const c of checks.filter((x) => x.status !== 'ok')) {
+          console.warn(`[Security] ${c.status === 'fail' ? 'ОШИБКА' : 'ВНИМАНИЕ'}: ${c.title} — ${c.detail}`);
+        }
+      })
+      .catch((err) => console.warn('[Security] самопроверка не выполнена:', err.message));
 
     const identityLine =
       config.IDENTITY_DRIVER === 'postgres'

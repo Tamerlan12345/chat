@@ -287,7 +287,12 @@ class OrgParserService {
   /**
    * Apply parsed hierarchy and users into database
    */
-  static async applyImport({ parsedData, defaultPassword = '123456', adminScopeDeptId = null }) {
+  static async applyImport({ parsedData, defaultPassword = null, adminScopeDeptId = null }) {
+    // Общего пароля по умолчанию больше нет: он случайный на каждый импорт, а
+    // заданный администратором проходит политику паролей.
+    const UserService = require('./user.service');
+    if (defaultPassword) UserService.assertPasswordPolicy(defaultPassword);
+    else defaultPassword = UserService.generateTempPassword();
     const db = identity();
     const now = new Date().toISOString();
     const { departments, employees } = parsedData;

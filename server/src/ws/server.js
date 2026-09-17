@@ -78,6 +78,11 @@ function rdRequestTtlMs() {
 }
 const RD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
 
+function isRemoteDesktopEnabled() {
+  const SettingsService = require('../services/settings.service');
+  return SettingsService.getSettingSync('remote_desktop_enabled', 'true') !== 'false';
+}
+
 function allowRate(ws, key) {
   const [limit, windowMs] = RATE_LIMITS[key] || RATE_LIMITS['*'];
   if (!ws.rate) ws.rate = new Map();
@@ -119,7 +124,7 @@ const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
 // оператора сам их не отправит, нельзя.
 const OPERATOR_CONTROL_TYPES = new Set(['rd_input_event', 'rd_file', 'rd_clipboard', 'rd_clipboard_mode']);
 
-const RD_DECLINE_REASONS = new Set(['busy', 'superseded', 'capture_failed']);
+const RD_DECLINE_REASONS = new Set(['busy', 'superseded', 'capture_failed', 'policy', 'disabled']);
 
 const RD_RELAY_TYPES = new Set([
   'rd_webrtc_offer', 'rd_webrtc_answer', 'rd_ice_candidate', 'rd_input_event', 'rd_file',
@@ -416,6 +421,7 @@ class WsServer {
       const user = await AuthService.resolveSession(msg.token);
       if (!user) {
         registerFailure(limitKey, AUTH_LIMIT);
+        require('../services/security-monitor.service').recordWsAuthFailure(ws.remoteIp);
         return ws.send(JSON.stringify({
           type: 'auth_error',
           code: 'INVALID_TOKEN',
@@ -691,6 +697,12 @@ class WsServer {
       // (can_remote_control). The employee's own consent prompt below is a
       // second gate, not the first one — without this check any employee
       // could pop that prompt on any other employee at will.
+      // Общий выключатель в консоли: удалённый стол — функция повышенного риска,
+      // и компания может отключить её целиком, не трогая права ролей.
+      if (!isRemoteDesktopEnabled()) {
+        ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Удалённый рабочий стол отключён администратором' }));
+        return;
+      }
       if (!operator.permissions?.can_remote_control) {
         ws.send(JSON.stringify({
           type: 'rd_denied',
@@ -1078,6 +1090,36 @@ class WsServer {
       return true;
     }
     return false;
+  }
+
+  // Продление токена: соединения, вошедшие старым токеном, переходят на новый.
+  // Иначе ближайшая перепроверка закрыла бы их — старый токен уже отозван.
+  replaceSocketToken(oldToken, newToken) {
+    for (const ws of this.socketUser.keys()) {
+      if (ws.authToken === oldToken) ws.authToken = newToken;
+    }
+  }
+
+  // Выход из системы закрывает только соединения этого токена — другие
+  // устройства сотрудника остаются на связи.
+  disconnectSocketsWithToken(token, reason) {
+    for (const ws of [...this.socketUser.keys()]) {
+      if (ws.authToken === token) this.revokeSocket(ws, reason);
+    }
+  }
+
+  // Удалённый стол выключен в консоли — идущие сеансы и запросы завершаются.
+  endAllRemoteSessions(reason) {
+    let ended = 0;
+    for (const session of [...RemoteDesktopService.sessions.values()]) {
+      if (session.status !== 'REQUESTED' && session.status !== 'ACCEPTED') continue;
+      const payload = { type: 'rd_end', sessionId: session.sessionId, reason };
+      this.sendToUser(session.targetUserId, { ...payload, fromUserId: session.operatorId });
+      this.sendToUser(session.operatorId, { ...payload, fromUserId: session.targetUserId });
+      this.finishRdSession(session, null);
+      ended += 1;
+    }
+    return ended;
   }
 
   // Права роли изменились — открытые соединения её носителей закрываются.

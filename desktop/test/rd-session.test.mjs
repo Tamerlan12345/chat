@@ -165,12 +165,33 @@ test('мусор в настройке не ломает соединение', 
 });
 
 test('недоступное хранилище — значения по умолчанию', () => {
-  assert.deepStrictEqual(getRdIceServers({ getItem: () => { throw new Error('denied'); } }), RD_DEFAULT_ICE_SERVERS);
-  assert.deepStrictEqual(getRdIceServers(null), RD_DEFAULT_ICE_SERVERS);
-  const custom = getRdIceServers({ getItem: () => JSON.stringify([{ urls: 'turns:t.kz:443' }]) });
+  assert.deepStrictEqual(getRdIceServers(null, { getItem: () => { throw new Error('denied'); } }), RD_DEFAULT_ICE_SERVERS);
+  assert.deepStrictEqual(getRdIceServers(null, null), RD_DEFAULT_ICE_SERVERS);
+  const custom = getRdIceServers(undefined, { getItem: () => JSON.stringify([{ urls: 'turns:t.kz:443' }]) });
   assert.deepStrictEqual(custom, [{ urls: 'turns:t.kz:443' }]);
-  getRdIceServers(null).push({ urls: 'stun:x' });
+  getRdIceServers(null, null).push({ urls: 'stun:x' });
   assert.ok(RD_DEFAULT_ICE_SERVERS.every((s) => s.urls !== 'stun:x'), 'значения по умолчанию не портятся');
+});
+
+test('список с сервера главнее локальной настройки', () => {
+  const local = { getItem: () => JSON.stringify([{ urls: 'stun:local.kz' }]) };
+  const fromServer = [{ urls: 'turn:turn.corp.kz:3478', username: 'u', credential: 'p' }];
+  assert.deepStrictEqual(getRdIceServers(fromServer, local), fromServer);
+});
+
+test('пустой список с сервера — только локальная сеть, без Google', () => {
+  const local = { getItem: () => JSON.stringify([{ urls: 'stun:local.kz' }]) };
+  assert.deepStrictEqual(getRdIceServers([], local), []);
+  assert.deepStrictEqual(getRdIceServers([], null), []);
+});
+
+test('мусор с сервера отбрасывается, запасные серверы не подставляются', () => {
+  assert.deepStrictEqual(getRdIceServers([{ urls: 'http://evil' }, null, 'x'], null), []);
+  assert.deepStrictEqual(
+    getRdIceServers([{ urls: 'stun:a.kz', credential: 5 }, { urls: 'javascript:x' }], null),
+    [{ urls: 'stun:a.kz' }]
+  );
+  assert.deepStrictEqual(parseIceServers([{ urls: 'turns:t.kz:443' }]), [{ urls: 'turns:t.kz:443' }]);
 });
 
 // ── Клавиатура оператора ────────────────────────────────────────────────────
