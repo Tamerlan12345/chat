@@ -10,6 +10,8 @@ const UserService = require('./user.service');
 
 const DIALOG_LIST_LIMIT = 50;
 
+const MESSAGE_TYPES = new Set(['text', 'file', 'image']);
+
 class MessageService {
   // У канала нет негласного правила «читать может каждый»: участие
   // проверяется явно, и в REST, и в WebSocket.
@@ -31,7 +33,7 @@ class MessageService {
         SELECT c.*, cm.role AS member_role, cm.last_read_message_id,
           (SELECT COUNT(*) FROM channel_members WHERE channel_id = c.id) AS members_count,
           (SELECT COUNT(*) FROM messages WHERE conversation_type = 'channel' AND target_id = c.id AND id > COALESCE(cm.last_read_message_id, 0)) AS unread_count,
-          (SELECT text FROM messages WHERE conversation_type = 'channel' AND target_id = c.id ORDER BY id DESC LIMIT 1) AS last_message_text,
+          CASE WHEN cm.user_id IS NOT NULL THEN (SELECT text FROM messages WHERE conversation_type = 'channel' AND target_id = c.id ORDER BY id DESC LIMIT 1) END AS last_message_text,
           (SELECT created_at FROM messages WHERE conversation_type = 'channel' AND target_id = c.id ORDER BY id DESC LIMIT 1) AS last_message_time
         FROM channels c
         LEFT JOIN channel_members cm ON c.id = cm.channel_id AND cm.user_id = ?
@@ -176,8 +178,39 @@ class MessageService {
     const db = getDatabase();
     const now = new Date().toISOString();
 
+    // Только известные виды переписки и сообщений. Раньше принималось что
+    // угодно — например «system» с пустым текстом несуществующему адресату.
+    if (conversationType !== 'direct' && conversationType !== 'channel') {
+      throw new Error('Неизвестный вид переписки');
+    }
+    if (!MESSAGE_TYPES.has(type)) {
+      throw new Error('Недопустимый тип сообщения');
+    }
+    if (!Number.isInteger(Number(targetId)) || Number(targetId) <= 0) {
+      throw new Error('Не указан получатель');
+    }
+
     if (conversationType === 'channel') {
       this.assertChannelMember(Number(targetId), Number(senderId));
+    } else {
+      const recipient = await UserService.getUserById(Number(targetId));
+      if (!recipient || !recipient.is_active || recipient.approval_status !== 'approved') {
+        throw new Error('Получатель не найден');
+      }
+    }
+
+    // Ответ — только на сообщение из этой же переписки: ссылка на чужое
+    // подтягивала бы его текст туда, где его видеть не должны.
+    if (replyToId) {
+      const original = db.prepare('SELECT conversation_type, target_id, sender_id FROM messages WHERE id = ?').get(Number(replyToId));
+      const sameConversation =
+        original &&
+        original.conversation_type === conversationType &&
+        (conversationType === 'channel'
+          ? Number(original.target_id) === Number(targetId)
+          : (Number(original.sender_id) === Number(senderId) && Number(original.target_id) === Number(targetId)) ||
+            (Number(original.sender_id) === Number(targetId) && Number(original.target_id) === Number(senderId)));
+      if (!sameConversation) replyToId = null;
     }
 
     const body = typeof text === 'string' ? text : String(text ?? '');

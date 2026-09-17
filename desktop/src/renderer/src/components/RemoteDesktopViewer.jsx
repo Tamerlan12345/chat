@@ -46,6 +46,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   const handlersRef = useRef(null);
   const connectedRef = useRef(false);
   const clipboardStateRef = useRef('off');
+  const canControlRef = useRef(false);
   const watcherRef = useRef(null);
   const liveTokenRef = useRef(null);
 
@@ -283,14 +284,17 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
         // Сотрудник скопировал текст у себя — кладём его в буфер оператора.
         if (clipboardStateRef.current === 'on' && typeof msg.text === 'string') {
           watcherRef.current?.remember(msg.text);
-          window.electronAPI?.rdClipboardWrite?.(msg.text);
+          window.electronAPI?.rdClipboardWrite?.(msg.text, { role: 'operator', sessionId: sessionIdRef.current });
         }
         return;
 
       case 'rd_clipboard_mode':
-        // Решение об общем буфере принимает сотрудник.
+        // Решение об общем буфере принимает сотрудник — но только в ответ на
+        // просьбу оператора и только при полном доступе. Раньше «включено» от
+        // сотрудника принималось в любой момент, и буфер оператора начинал
+        // уходить на чужую машину без его ведома.
         if (msg.enabled) {
-          setClipboardState('on');
+          if (clipboardStateRef.current === 'pending' && canControlRef.current) setClipboardState('on');
         } else {
           watcherRef.current = null;
           setClipboardState('off');
@@ -354,6 +358,7 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   }, [wsClient]);
 
   const canControl = accessLevel === 'full' && !failure;
+  canControlRef.current = canControl;
 
   const sendInputEvent = useCallback((inputEvent) => {
     if (!canControl) return;
@@ -370,12 +375,28 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
 
   // Общий буфер включается только с согласия сотрудника: оператор просит,
   // сотрудник разрешает у себя в панели сеанса.
-  const toggleClipboardSync = () => {
+  const toggleClipboardSync = async () => {
     if (!canControl) return;
     if (clipboardState === 'off') {
+      // Свой буфер оператор отдаёт тоже только с согласия в системном окне:
+      // без него главный процесс чтение буфера не выполнит.
+      const api = window.electronAPI;
+      if (api?.rdClipboardGrant) {
+        let granted = false;
+        try {
+          granted = await api.rdClipboardGrant({
+            role: 'operator',
+            sessionId,
+            peerName: targetUserRef.current?.full_name || ''
+          });
+        } catch {}
+        if (!granted || clipboardStateRef.current !== 'off' || !canControlRef.current) return;
+      }
       if (sendWs({ type: 'rd_clipboard_mode', sessionId, enabled: true })) {
         setClipboardState('pending');
         setTransferState({ kind: 'progress', text: 'Ждём, пока сотрудник разрешит общий буфер обмена…' });
+      } else {
+        window.electronAPI?.rdClipboardRevoke?.({ role: 'operator', sessionId });
       }
     } else {
       watcherRef.current = null;
@@ -387,10 +408,10 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
   // Свой буфер опрашивается: событий об изменении Windows не присылает. Как и
   // у сотрудника, уходит только скопированное после включения.
   useEffect(() => {
-    if (clipboardState !== 'on' || !window.electronAPI?.rdClipboardRead) return;
+    if (clipboardState !== 'on' || !canControl || !window.electronAPI?.rdClipboardRead) return;
     setTransferState(null);
     const watcher = new ClipboardWatcher({
-      read: () => window.electronAPI.rdClipboardRead(),
+      read: () => window.electronAPI.rdClipboardRead({ role: 'operator', sessionId }),
       send: (text) => sendWs({ type: 'rd_clipboard', sessionId, text })
     });
     watcherRef.current = watcher;
@@ -403,7 +424,26 @@ export default function RemoteDesktopViewer({ sessionId, targetUser, wsClient, p
       if (watcherRef.current === watcher) watcherRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipboardState, canControl, sessionId]);
+
+  // Управление пропало (понижение до просмотра, сбой) — общий буфер тоже.
+  useEffect(() => {
+    if (!canControl && clipboardState !== 'off') {
+      watcherRef.current = null;
+      setClipboardState('off');
+    }
+  }, [canControl, clipboardState]);
+
+  // Буфер выключен любым путём (оператор, отказ сотрудника, конец сеанса,
+  // закрытие окна) — согласие в главном процессе снимается.
+  useEffect(() => {
+    if (clipboardState !== 'off') return undefined;
+    window.electronAPI?.rdClipboardRevoke?.({ role: 'operator', sessionId });
+    return undefined;
   }, [clipboardState, sessionId]);
+  useEffect(() => () => {
+    window.electronAPI?.rdClipboardRevoke?.({ role: 'operator', sessionId });
+  }, [sessionId]);
 
   const switchScreen = (screenId) => {
     setActiveScreenId(screenId);

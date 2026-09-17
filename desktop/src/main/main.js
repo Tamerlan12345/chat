@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard, shell, net, dialog, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { RemoteInput } = require('./remote-input');
 const { HostSession } = require('./host-session');
 const { findCapturedDisplay, physicalRect } = require('./display-map');
@@ -15,20 +16,67 @@ const {
 } = require('./offline');
 const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isAutostartSupported } = require('./autostart');
 
-const logFile = path.join(__dirname, '../../electron_debug.log');
+const { decidePermissionRequest, decidePermissionCheck } = require('./permissions');
+const { resolveServerUrl, isInsecureRequestBlocked } = require('./server-url');
+const { planReceivedFileName, zoneIdentifierContent, formatFileSize } = require('./received-file');
+const {
+  buildConsentDialog,
+  resolveConsent,
+  policyPaths,
+  isFullAccessDisabled,
+  buildClipboardDialog,
+  buildFileDialog
+} = require('./rd-consent');
+const { ClipboardGrants } = require('./clipboard-grants');
+
+// Все окна — в песочнице Chromium. preload-скриптам из require нужен только
+// 'electron', его песочница оставляет.
+app.enableSandbox();
+
+// Журнал — в папке журналов профиля. Раньше он писался рядом с исходниками:
+// в собранном приложении — внутрь app.asar, то есть никуда, а в разработке —
+// в рабочую копию репозитория.
+const LOG_LIMIT_BYTES = 5 * 1024 * 1024;
+let logFile = null;
+
+function resolveLogFile() {
+  if (logFile) return logFile;
+  let dir;
+  try { dir = app.getPath('logs'); } catch { dir = path.join(app.getPath('userData'), 'logs'); }
+  fs.mkdirSync(dir, { recursive: true });
+  logFile = path.join(dir, 'main.log');
+  return logFile;
+}
+
 function log(msg) {
   try {
-    fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    const file = resolveLogFile();
+    // Один предыдущий файл вместо бесконечного роста.
+    try {
+      if (fs.statSync(file).size > LOG_LIMIT_BYTES) fs.renameSync(file, file + '.old');
+    } catch {}
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${msg}\n`);
   } catch (e) {}
 }
 
-log('Electron main.js loaded. argv: ' + JSON.stringify(process.argv));
+// Адреса пишутся в журнал без строки запроса и якоря: там бывают токены.
+function redactUrl(url) {
+  const text = String(url || '');
+  const cut = text.search(/[?#]/);
+  return (cut === -1 ? text : text.slice(0, cut) + '?…').slice(0, 200);
+}
+
+log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 
 // Адрес сервера — один на всё приложение. Раньше главное окно и окно
 // просмотра брали его из разных переменных и могли смотреть на разные серверы.
 // От него же отсчитывается, какой странице доверять (см. security.js).
+// В рабочей сборке переменные окружения не читаются, а http не принимается
+// вовсе (см. server-url.js).
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
-const SERVER_URL = process.env.VITE_DEV_SERVER_URL || process.env.MYCHAT_SERVER_URL || DEFAULT_SERVER_URL;
+const serverChoice = resolveServerUrl({ isPackaged: app.isPackaged, env: process.env, defaultUrl: DEFAULT_SERVER_URL });
+if (serverChoice.ignored) log(`server URL from environment rejected: ${redactUrl(serverChoice.ignored)}`);
+const SERVER_URL = serverChoice.url;
 const SERVER_ORIGIN = originOf(SERVER_URL);
 
 const OFFLINE_PAGE = path.join(__dirname, 'offline.html');
@@ -48,13 +96,46 @@ let launchedAtLogin = false;
 let autostartEnabled = false;
 let tray = null;
 let viewerWindows = new Map(); // sessionId -> BrowserWindow
-let toastWindows = []; // Active corner toast notification windows
 
 // ── Сеанс удалённого доступа к этой машине ──────────────────────────────────
 
 // Что сотрудник подтвердил. Пока сеанса нет, экран не отдаётся и ввод не
 // включается, что бы ни попросила страница.
 const hostSession = new HostSession();
+
+// Согласия на общий буфер обмена (см. clipboard-grants.js).
+const clipboardGrants = new ClipboardGrants();
+
+// Системные окна сеанса, которые надо закрыть, если сеанс кончился раньше
+// ответа: иначе «Сохранить» в забытом окне сработало бы уже без сеанса.
+const sessionDialogs = new Set(); // AbortController
+
+function abortSessionDialogs() {
+  for (const controller of sessionDialogs) controller.abort();
+  sessionDialogs.clear();
+}
+
+// Системное окно поверх главного, если оно на виду; иначе — само по себе:
+// модальное к скрытому окну сотрудник бы просто не увидел.
+async function askUser(options, { signal, bringToFront = false } = {}) {
+  if (bringToFront) showMainWindow();
+  const visible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized();
+  const parent = visible ? mainWindow : null;
+  if (parent && !parent.isFocused()) parent.flashFrame(true);
+  const opts = signal ? { ...options, signal } : options;
+  const result = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return result.response;
+}
+
+// Запрет полного доступа на этом ПК (см. rd-consent.js). Читается на каждый
+// запрос: политику можно разложить, не перезапуская приложение.
+function isFullAccessDisabledHere() {
+  return isFullAccessDisabled({
+    env: process.env,
+    paths: policyPaths({ programData: process.env.ProgramData, userData: app.getPath('userData') }),
+    readFile: (file) => fs.readFileSync(file, 'utf8')
+  });
+}
 
 // Экран, который выбрал оператор (id источника desktopCapturer), и экран,
 // который реально транслируется сейчас. Второй нужен вводу: курсор ставится
@@ -126,11 +207,40 @@ function hardenWebContents(contents) {
     const url = event?.url || legacyUrl;
     if (isSameOrigin(url, SERVER_ORIGIN)) return;
     event.preventDefault();
-    log(`navigation blocked: ${String(url).slice(0, 200)}`);
+    log(`navigation blocked: ${redactUrl(url)}`);
     if (isExternalLink(url)) {
       shell.openExternal(url).catch((err) => log(`openExternal failed: ${err.message}`));
     }
   });
+
+  // Перенаправление с сервера на чужой адрес (или ответ посредника в сети)
+  // увело бы окно вместе с preload туда же — will-navigate его не видит.
+  contents.on('will-redirect', (event, legacyUrl) => {
+    const url = event?.url || legacyUrl;
+    if (isSameOrigin(url, SERVER_ORIGIN)) return;
+    event.preventDefault();
+    log(`redirect blocked: ${redactUrl(url)}`);
+  });
+
+  // Встроенные кадры: главный разбирает will-navigate выше, остальным —
+  // только свой сервер или пустая страница.
+  contents.on('will-frame-navigate', (event) => {
+    if (event?.isMainFrame) return;
+    const url = String(event?.url || '');
+    if (isSameOrigin(url, SERVER_ORIGIN) || url === 'about:blank' || url === 'about:srcdoc') return;
+    event.preventDefault();
+    log(`frame navigation blocked: ${redactUrl(url)}`);
+  });
+
+  // Согласие оператора на буфер обмена живёт не дольше страницы, которая
+  // его получила.
+  const contentsId = contents.id;
+  contents.on('did-start-navigation', (details, legacyUrl, legacyInPlace, legacyMainFrame) => {
+    const isMainFrame = details?.isMainFrame ?? legacyMainFrame;
+    const isSameDocument = details?.isSameDocument ?? legacyInPlace;
+    if (isMainFrame && !isSameDocument) clipboardGrants.forgetWebContents(contentsId);
+  });
+  contents.once('destroyed', () => clipboardGrants.forgetWebContents(contentsId));
 }
 
 function isMainWindowSender(event) {
@@ -142,7 +252,7 @@ function isMainWindowSender(event) {
 // iframe внутри страницы до них не дотягиваются.
 function isFromServerPage(event, { mainWindowOnly = false, quiet = false } = {}) {
   const ok = isTrustedFrame(event.senderFrame, SERVER_ORIGIN) && (!mainWindowOnly || isMainWindowSender(event));
-  if (!ok && !quiet) log(`IPC rejected from ${frameUrl(event.senderFrame).slice(0, 200) || 'unknown frame'}`);
+  if (!ok && !quiet) log(`IPC rejected from ${redactUrl(frameUrl(event.senderFrame)) || 'unknown frame'}`);
   return ok;
 }
 
@@ -256,6 +366,7 @@ function createMainWindow() {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   });
@@ -310,22 +421,37 @@ function createMainWindow() {
   // отклоняется. Интерфейс приходит с сервера, то есть это удалённый код, и
   // раздавать ему разрешения «на всякий случай» нельзя. И только ему: странице
   // без связи или чужому адресу микрофон не положен.
-  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-read', 'clipboard-sanitized-write']);
-
+  //
+  // `media` — только микрофон: камера и снятие экрана через getUserMedia
+  // (chromeMediaSource: 'desktop') отклоняются. Экран отдаётся лишь через
+  // getDisplayMedia внутри подтверждённого сеанса (обработчик выше).
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const requestingUrl = details?.requestingUrl || webContents?.getURL?.() || '';
-    const allowed = ALLOWED_PERMISSIONS.has(permission) && isSameOrigin(requestingUrl, SERVER_ORIGIN);
-    if (!allowed) log(`permission denied: ${permission} for ${String(requestingUrl).slice(0, 120)}`);
+    const allowed = decidePermissionRequest({
+      permission,
+      mediaTypes: details?.mediaTypes,
+      requestingUrl,
+      serverOrigin: SERVER_ORIGIN
+    });
+    if (!allowed) {
+      const media = Array.isArray(details?.mediaTypes) ? ` [${details.mediaTypes.join(',')}]` : '';
+      log(`permission denied: ${permission}${media} for ${redactUrl(requestingUrl)}`);
+    }
     callback(allowed);
   });
 
-  win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) =>
-    ALLOWED_PERMISSIONS.has(permission) && (!requestingOrigin || isSameOrigin(requestingOrigin, SERVER_ORIGIN))
+  win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    decidePermissionCheck({
+      permission,
+      mediaType: details?.mediaType,
+      requestingOrigin,
+      serverOrigin: SERVER_ORIGIN
+    })
   );
 
   // Сервер недоступен — раньше окно оставалось белым навсегда.
   win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    log(`did-fail-load: code ${errorCode}, desc: ${errorDescription}, url: ${validatedURL}`);
+    log(`did-fail-load: code ${errorCode}, desc: ${errorDescription}, url: ${redactUrl(validatedURL)}`);
     if (shouldShowOfflineForFailure({ errorCode, isMainFrame, url: validatedURL, serverOrigin: SERVER_ORIGIN })) {
       showOfflinePage(describeLoadFailure(errorCode, errorDescription));
     }
@@ -345,13 +471,16 @@ function createMainWindow() {
   win.webContents.on('did-start-navigation', (details, legacyUrl, legacyInPlace, legacyMainFrame) => {
     const isMainFrame = details?.isMainFrame ?? legacyMainFrame;
     const isSameDocument = details?.isSameDocument ?? legacyInPlace;
-    if (isMainFrame && !isSameDocument && (hostSession.active || remoteInput.enabled)) {
-      endHostSession('page navigation or reload');
+    if (isMainFrame && !isSameDocument) {
+      // Окно согласия от прежней страницы больше не к кому относить.
+      consentDialog?.controller.abort();
+      if (hostSession.active || remoteInput.enabled) endHostSession('page navigation or reload');
     }
   });
 
   win.webContents.on('render-process-gone', (event, details) => {
     log(`render-process-gone: ${details?.reason} (exit ${details?.exitCode})`);
+    consentDialog?.controller.abort();
     endHostSession('renderer gone');
     if (details?.reason !== 'clean-exit' && !app.isQuitting) {
       showOfflinePage('Окно приложения аварийно завершилось — перезапускаем, как только сервер ответит.');
@@ -612,7 +741,8 @@ ipcMain.handle('open-remote-desktop-viewer', (event, { sessionId, targetUser } =
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
   hardenWebContents(viewer.webContents);
@@ -635,33 +765,84 @@ ipcMain.handle('open-remote-desktop-viewer', (event, { sessionId, targetUser } =
   return true;
 });
 
-// Сотрудник подтвердил сеанс. С этого момента и до rd-session-end главный
-// процесс отдаёт экран и (при полном доступе) соглашается включить ввод.
-ipcMain.handle('rd-session-start', (event, info) => {
-  if (!isFromServerPage(event, { mainWindowOnly: true })) return false;
+// Страница просит начать сеанс. Решает не она: главный процесс сам
+// показывает системное окно, и сеанс получает ровно тот уровень, который
+// сотрудник выбрал в нём. accessLevel от страницы лишь ограничивает выбор —
+// если в окне приложения выбран просмотр, полный доступ не предлагается.
+//
+// Ответ: { accepted, accessLevel } — страница сообщает серверу именно его.
+let consentDialog = null; // { sessionId, controller }
+
+ipcMain.handle('rd-session-start', async (event, info) => {
+  const declined = (reason) => ({ accepted: false, accessLevel: null, reason });
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return declined('untrusted');
   const { sessionId, operatorName, accessLevel } = info || {};
-  if (hostSession.active && hostSession.sessionId !== sessionId) {
-    disableInput('replaced by a new session');
+  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) return declined('invalid');
+
+  // Повторный вызов для уже подтверждённого сеанса ничего не расширяет.
+  if (hostSession.active && hostSession.sessionId === sessionId) {
+    return { accepted: true, accessLevel: hostSession.accessLevel };
   }
-  if (!hostSession.start({ sessionId, operatorName, accessLevel })) return false;
+  // Второе окно поверх открытого — путь к тому, чтобы сотрудник нажал не туда.
+  if (consentDialog) return declined('busy');
+
+  const fullAccessDisabled = isFullAccessDisabledHere();
+  const { choices, options } = buildConsentDialog({
+    operatorName: HostSession.cleanName(operatorName),
+    requestedLevel: accessLevel === 'full' ? 'full' : 'view_only',
+    fullAccessDisabled
+  });
+
+  const pending = { sessionId, controller: new AbortController() };
+  consentDialog = pending;
+  const page = mainWindow?.webContents;
+  let response = null;
+  try {
+    response = await askUser(options, { signal: pending.controller.signal, bringToFront: true });
+  } catch (err) {
+    log(`consent dialog failed: ${err.message}`);
+  } finally {
+    if (consentDialog === pending) consentDialog = null;
+  }
+
+  if (pending.controller.signal.aborted) return declined('cancelled');
+  // Пока окно было открыто, страница могла смениться.
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents !== page || !isMainWindowFrame(page.mainFrame)) {
+    return declined('page changed');
+  }
+
+  const level = resolveConsent(choices, response, { fullAccessDisabled });
+  if (!level) {
+    log(`remote session declined in the consent dialog: ${sessionId}`);
+    return declined('declined');
+  }
+
+  if (hostSession.active && hostSession.sessionId !== sessionId) {
+    endHostSession('replaced by a new session');
+  }
+  if (!hostSession.start({ sessionId, operatorName, accessLevel: level })) return declined('invalid');
   selectedScreenId = null;
   capturedScreen = null;
-  log(`remote session started: ${hostSession.sessionId} (${hostSession.accessLevel})`);
+  log(`remote session started: ${hostSession.sessionId} (${hostSession.accessLevel}, consented in the system dialog)`);
   onHostSessionChanged();
-  return true;
+  return { accepted: true, accessLevel: hostSession.accessLevel };
 });
 
 // Завершить сеанс ничем не опасно, поэтому достаточно, что просит главное окно.
 ipcMain.handle('rd-session-end', (event, info) => {
   if (!isMainWindowSender(event)) return false;
   const sessionId = info?.sessionId;
+  // Оператор отменил запрос, пока окно согласия ещё открыто.
+  if (consentDialog && (!sessionId || consentDialog.sessionId === sessionId)) consentDialog.controller.abort();
   if (hostSession.active && sessionId && sessionId !== hostSession.sessionId) return false;
   endHostSession('session ended by the page');
   return true;
 });
 
+// Миниатюры экранов — только внутри идущего сеанса.
 ipcMain.handle('rd-list-screens', async (event) => {
   if (!isFromServerPage(event, { mainWindowOnly: true })) return [];
+  if (!hostSession.active) return [];
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: 240, height: 135 }
@@ -692,10 +873,93 @@ ipcMain.handle('rd-select-screen', (event, screenId, options) => {
 
 // Буфер обмена сеанса. Синхронизируется только пока сеанс идёт и только
 // текстом: файлы и картинки через буфер — отдельная история с иными рисками.
-ipcMain.handle('rd-clipboard-read', (event) => (isFromServerPage(event) ? clipboard.readText() : ''));
-ipcMain.handle('rd-clipboard-write', (event, text) => {
-  if (!isFromServerPage(event)) return false;
+//
+// Раньше чтение отдавалось странице в любой момент. Теперь нужна отметка
+// согласия, которую ставит главный процесс после системного окна
+// (rd-clipboard-grant):
+//  - role 'host' — сотрудник: идущий сеанс с полным доступом, главное окно;
+//  - role 'operator' — тот, кто подключился: согласие привязано к окну и
+//    сеансу и снимается вместе со страницей.
+function clipboardAllowed(event, opts) {
+  const role = opts?.role === 'operator' ? 'operator' : 'host';
+  const sessionId = opts?.sessionId;
+  if (role === 'operator') {
+    return isFromServerPage(event, { quiet: true }) && clipboardGrants.operatorAllowed(event.sender.id, sessionId);
+  }
+  return isFromServerPage(event, { mainWindowOnly: true, quiet: true }) && clipboardGrants.hostAllowed(hostSession, sessionId);
+}
+
+// Опрос идёт раз в секунду — отказы не пишутся в журнал.
+ipcMain.handle('rd-clipboard-read', (event, opts) => (clipboardAllowed(event, opts) ? clipboard.readText() : null));
+
+ipcMain.handle('rd-clipboard-write', (event, text, opts) => {
+  if (!clipboardAllowed(event, opts)) return false;
   clipboard.writeText(String(text ?? '').slice(0, 100000));
+  return true;
+});
+
+let clipboardDialogOpen = false;
+
+ipcMain.handle('rd-clipboard-grant', async (event, opts) => {
+  const role = opts?.role === 'operator' ? 'operator' : 'host';
+  const sessionId = opts?.sessionId;
+  if (typeof sessionId !== 'string' || !sessionId) return false;
+
+  if (role === 'host') {
+    if (!isFromServerPage(event, { mainWindowOnly: true })) return false;
+    if (!clipboardGrants.canAskHost(hostSession, sessionId)) return false;
+    if (clipboardGrants.hostAllowed(hostSession, sessionId)) return true;
+  } else {
+    if (!isFromServerPage(event)) return false;
+    if (clipboardGrants.operatorAllowed(event.sender.id, sessionId)) return true;
+  }
+  if (clipboardDialogOpen) return false;
+
+  const controller = new AbortController();
+  if (role === 'host') sessionDialogs.add(controller);
+  clipboardDialogOpen = true;
+  let response = 1;
+  try {
+    const options = buildClipboardDialog({
+      role,
+      peerName: role === 'host' ? hostSession.operatorName : (opts?.peerName ? HostSession.cleanName(opts.peerName) : '')
+    });
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (role === 'operator' && owner && owner !== mainWindow && !owner.isDestroyed()) {
+      response = (await dialog.showMessageBox(owner, { ...options, signal: controller.signal })).response;
+    } else {
+      response = await askUser(options, { signal: controller.signal });
+    }
+  } catch (err) {
+    log(`clipboard consent dialog failed: ${err.message}`);
+  } finally {
+    clipboardDialogOpen = false;
+    sessionDialogs.delete(controller);
+  }
+  if (controller.signal.aborted || response !== 0) return false;
+
+  if (role === 'host') {
+    // Сеанс мог закончиться или смениться, пока окно было открыто.
+    if (!clipboardGrants.canAskHost(hostSession, sessionId)) return false;
+    clipboardGrants.grantHost(sessionId);
+    log(`remote session ${sessionId}: shared clipboard allowed by the employee`);
+    return true;
+  }
+  if (event.sender.isDestroyed()) return false;
+  clipboardGrants.grantOperator(event.sender.id, sessionId);
+  log(`remote session ${sessionId}: operator allowed sending own clipboard`);
+  return true;
+});
+
+// Выключить общий буфер можно всегда.
+ipcMain.handle('rd-clipboard-revoke', (event, opts) => {
+  if (opts?.role === 'operator') {
+    // Снять можно только своё согласие — оно привязано к окну-отправителю.
+    if (!isFromServerPage(event, { quiet: true })) return false;
+    return clipboardGrants.revokeOperator(event.sender.id, opts?.sessionId);
+  }
+  if (!isMainWindowSender(event)) return false;
+  clipboardGrants.revokeHost();
   return true;
 });
 
@@ -722,6 +986,8 @@ function releaseControl(reason) {
 
 function endHostSession(reason) {
   disableInput(reason);
+  clipboardGrants.revokeHost();
+  abortSessionDialogs();
   const hadSession = hostSession.end();
   selectedScreenId = null;
   capturedScreen = null;
@@ -784,10 +1050,24 @@ ipcMain.on('rd-input-event', (event, payload) => {
 });
 
 // Файл, переданный оператором в ходе сеанса, кладётся в «Загрузки»
-// сотрудника. Имя очищается от путей: строка вида "..\\..\\Windows\\x.dll"
-// не должна уводить запись за пределы папки. Принимается только внутри
-// сеанса с полным доступом.
+// сотрудника — только внутри сеанса с полным доступом и только после «Сохранить»
+// в системном окне. Имя очищается (received-file.js): без путей, без
+// зарезервированных имён Windows, исполняемые типы получают «.txt». На файл
+// ставится пометка «из интернета» (Zone.Identifier), чтобы SmartScreen и
+// Office проверили его при открытии. Раньше любой файл, включая .exe и .lnk,
+// сохранялся молча и без пометки.
 const MAX_SAVED_FILE_BYTES = 12 * 1024 * 1024;
+let fileDialogOpen = false;
+
+function writeZoneIdentifier(target) {
+  if (process.platform !== 'win32') return;
+  try {
+    fs.writeFileSync(`${target}:Zone.Identifier`, zoneIdentifierContent(SERVER_ORIGIN || undefined));
+  } catch (err) {
+    // Не NTFS (флешка FAT32) — потока нет. Файл остаётся, но в журнале видно.
+    log(`Zone.Identifier not written for ${path.basename(target)}: ${err.message}`);
+  }
+}
 
 ipcMain.handle('rd-save-file', async (event, { fileName, data } = {}) => {
   if (!isFromServerPage(event, { mainWindowOnly: true })) return { success: false, error: 'Недоверенный источник' };
@@ -795,39 +1075,82 @@ ipcMain.handle('rd-save-file', async (event, { fileName, data } = {}) => {
   if (!(Array.isArray(data) || data instanceof Uint8Array) || data.length > MAX_SAVED_FILE_BYTES) {
     return { success: false, error: 'Некорректный файл' };
   }
+  // По одному окну за раз: поток файлов не должен превращаться в поток окон,
+  // в котором «Сохранить» нажимается не глядя.
+  if (fileDialogOpen) return { success: false, error: 'Предыдущий файл ещё ждёт решения — файл отклонён' };
+
+  const sessionId = hostSession.sessionId;
+  const bytes = Buffer.from(data);
+  const plan = planReceivedFileName(fileName);
+  const controller = new AbortController();
+  sessionDialogs.add(controller);
+  fileDialogOpen = true;
+  let response = 1;
   try {
-    const safeName = path.basename(String(fileName || 'файл')).replace(/[<>:"/\\|?*]/g, '_');
+    response = await askUser(
+      buildFileDialog({
+        operatorName: hostSession.operatorName,
+        fileName: plan.name,
+        original: plan.original,
+        renamed: plan.renamed,
+        sizeText: formatFileSize(bytes.length)
+      }),
+      { signal: controller.signal }
+    );
+  } catch (err) {
+    log(`file consent dialog failed: ${err.message}`);
+  } finally {
+    fileDialogOpen = false;
+    sessionDialogs.delete(controller);
+  }
+
+  if (controller.signal.aborted || response !== 0) {
+    log(`remote file declined by the employee: ${plan.name} (${bytes.length} bytes)`);
+    return { success: false, declined: true, error: 'Сотрудник отказался принять файл' };
+  }
+  if (!hostSession.allowsInput || hostSession.sessionId !== sessionId) {
+    return { success: false, error: 'Сеанс завершён — файл не сохранён' };
+  }
+
+  try {
     const dir = app.getPath('downloads');
-    let target = path.join(dir, safeName);
-
-    // Не затираем то, что у человека уже лежит.
-    const ext = path.extname(safeName);
-    const base = path.basename(safeName, ext);
+    const ext = path.extname(plan.name);
+    const base = path.basename(plan.name, ext);
+    let target = path.join(dir, plan.name);
     let n = 1;
-    while (fs.existsSync(target)) {
-      target = path.join(dir, `${base} (${n++})${ext}`);
+    // Не затираем то, что у человека уже лежит: 'wx' отказывает, если файл
+    // появился между проверкой и записью.
+    for (;;) {
+      try {
+        fs.writeFileSync(target, bytes, { flag: 'wx' });
+        break;
+      } catch (err) {
+        if (err.code !== 'EEXIST' || n > 999) throw err;
+        target = path.join(dir, `${base} (${n++})${ext}`);
+      }
     }
+    writeZoneIdentifier(target);
 
-    fs.writeFileSync(target, Buffer.from(data));
-    log(`remote file received: ${target}`);
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    log(`remote file received in session ${sessionId}: ${path.basename(target)}, ${bytes.length} bytes, sha256 ${sha256}${plan.renamed ? ' (executable type renamed)' : ''}`);
 
     new Notification({
       title: 'Получен файл',
       body: `${path.basename(target)} сохранён в папку «Загрузки»`
     }).show();
 
-    return { success: true, path: target };
+    return { success: true, path: target, renamed: plan.renamed, name: path.basename(target) };
   } catch (err) {
     log(`rd-save-file failed: ${err.message}`);
-    return { success: false, error: err.message };
+    return { success: false, error: 'Не удалось сохранить файл' };
   }
 });
 
 // ── Плашка «Ваш рабочий стол просматривает…» ────────────────────────────────
-// Панель сеанса живёт внутри окна приложения. Окно свернули или закрыли в
-// трей — и сотрудник переставал видеть, что к его экрану кто-то подключён.
-// Пока окно не на виду, поверх всех окон висит небольшая плашка с кнопкой
-// «Завершить доступ».
+// Панель сеанса живёт внутри окна приложения, а оно приходит с сервера и
+// может её не показать. Поэтому плашка главного процесса висит поверх всех
+// окон на ВСЁ время сеанса — раньше она появлялась, только когда окно
+// свернули или убрали в трей.
 
 let indicatorWindow = null;
 
@@ -839,8 +1162,7 @@ function closeIndicator() {
 
 function syncIndicator() {
   if (!app.isReady()) return;
-  const mainHidden = !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized();
-  if (!hostSession.active || !mainHidden) {
+  if (!hostSession.active) {
     closeIndicator();
     return;
   }
@@ -917,84 +1239,15 @@ app.on('before-quit', () => {
   endHostSession('app quit');
 });
 
-// Remote Desktop: Get Screen Sources for local host sharing
-ipcMain.handle('get-desktop-sources', async (event) => {
-  if (!isFromServerPage(event)) return [];
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: 320, height: 180 }
-  });
-  return sources.map(s => ({
-    id: s.id,
-    name: s.name,
-    thumbnail: s.thumbnail.toDataURL()
-  }));
-});
+// Обработчик get-desktop-sources удалён: интерфейс его не вызывал, а отдавал
+// он миниатюры всех экранов любой странице сервера в любой момент, без сеанса.
+// Окно всплывающих уведомлений (toast.html с доступом к Node) тоже удалено —
+// оно давно не показывалось, уведомления системные.
 
-// Floating Screen Corner Toast Window (sliding from bottom-right)
-function showToastNotification(data) {
-  try {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { workArea } = primaryDisplay;
-
-    const width = 380;
-    const height = 90;
-    const marginX = 20;
-    const marginY = 14;
-
-    // Prune closed windows
-    toastWindows = toastWindows.filter(w => !w.isDestroyed());
-
-    // Max 3 toasts stacked
-    if (toastWindows.length >= 3) {
-      const oldest = toastWindows.shift();
-      if (!oldest.isDestroyed()) oldest.close();
-    }
-
-    const index = toastWindows.length;
-    const x = Math.round(workArea.x + workArea.width - width - marginX);
-    const y = Math.round(workArea.y + workArea.height - (height + marginY) * (index + 1));
-
-    const toastWin = new BrowserWindow({
-      width,
-      height,
-      x,
-      y,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      focusable: false,
-      hasShadow: false,
-      show: false,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false
-      }
-    });
-
-    toastWindows.push(toastWin);
-
-    toastWin.loadFile(path.join(__dirname, 'toast.html'));
-
-    toastWin.webContents.once('did-finish-load', () => {
-      if (!toastWin.isDestroyed()) {
-        toastWin.webContents.send('render-toast', data);
-        toastWin.showInactive();
-      }
-    });
-
-    toastWin.on('closed', () => {
-      toastWindows = toastWindows.filter(w => w !== toastWin && !w.isDestroyed());
-    });
-  } catch (err) {
-    console.error('Error showing toast notification window:', err);
-  }
-}
-
-// Native Notification & Corner Toast Handler
+// Системное уведомление. Только от страницы сервера: иначе любая страница в
+// окне могла бы показать поддельное уведомление от имени приложения.
 ipcMain.handle('show-notification', (event, data) => {
+  if (!isFromServerPage(event)) return false;
   const { title, body, isUrgent } = data || {};
 
   // Flash taskbar icon if window is not focused
@@ -1015,8 +1268,8 @@ ipcMain.handle('show-notification', (event, data) => {
       } catch (_) {}
 
       const notifOptions = {
-        title: title || 'Centras Chat',
-        body: body || '',
+        title: String(title || 'Centras Chat').slice(0, 200),
+        body: String(body || '').slice(0, 1000),
         urgency: isUrgent ? 'critical' : 'normal',
         timeoutType: isUrgent ? 'never' : 'default'
       };
@@ -1031,28 +1284,14 @@ ipcMain.handle('show-notification', (event, data) => {
       });
       notif.show();
     } catch (e) {
-      console.warn('Notification error:', e);
+      log(`Notification error: ${e.message}`);
     }
   }
   return true;
 });
 
-// Toast Window IPC callbacks
-ipcMain.on('toast-clicked', (event, toastData) => {
-  if (mainWindow) {
-    showMainWindow();
-    mainWindow.webContents.send('toast-action', toastData);
-  }
-});
-
-ipcMain.on('toast-close', (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (win && !win.isDestroyed()) {
-    win.close();
-  }
-});
-
-ipcMain.handle('get-system-idle-time', () => {
+ipcMain.handle('get-system-idle-time', (event) => {
+  if (!isFromServerPage(event, { quiet: true })) return 0;
   try {
     return powerMonitor.getSystemIdleTime();
   } catch (e) {
@@ -1060,29 +1299,35 @@ ipcMain.handle('get-system-idle-time', () => {
   }
 });
 
-
 ipcMain.on('flash-frame', (event, flag) => {
+  if (!isFromServerPage(event)) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.flashFrame(Boolean(flag));
   }
 });
 
 ipcMain.on('set-badge-count', (event, count) => {
+  if (!isFromServerPage(event)) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBadgeCount(count || 0);
+    const n = Number(count);
+    mainWindow.setBadgeCount(Number.isInteger(n) && n > 0 ? Math.min(n, 9999) : 0);
   }
 });
 
 ipcMain.on('set-tray-tooltip', (event, text) => {
+  if (!isFromServerPage(event)) return;
   rendererTrayTooltip = typeof text === 'string' && text ? text : null;
   refreshTrayTooltip();
 });
 
-ipcMain.on('focus-window', () => {
+ipcMain.on('focus-window', (event) => {
+  if (!isFromServerPage(event)) return;
   showMainWindow();
 });
 
-ipcMain.handle('get-device-info', () => {
+// Имя компьютера и учётной записи Windows — только странице сервера.
+ipcMain.handle('get-device-info', (event) => {
+  if (!isFromServerPage(event)) return null;
   const os = require('node:os');
   return {
     hostname: os.hostname(),
@@ -1091,8 +1336,11 @@ ipcMain.handle('get-device-info', () => {
   };
 });
 
+const TRAY_STATUSES = new Set(['online', 'away', 'offline', 'dnd']);
+
 ipcMain.on('sync-tray-status', (event, status) => {
-  updateTrayMenu(status);
+  if (!isFromServerPage(event)) return;
+  updateTrayMenu(TRAY_STATUSES.has(status) ? status : 'online');
 });
 
 process.on('uncaughtException', (err) => {
@@ -1111,6 +1359,16 @@ function setAutostart(enabled) {
 
 app.whenReady().then(() => {
   log('app.whenReady resolved! Calling createMainWindow...');
+
+  // Незащищённые запросы и WebSocket (http:, ws:) в рабочей сборке не уходят
+  // вовсе — что бы ни указали в «Сетевом сервере» интерфейса. В разработке
+  // разрешён только localhost.
+  session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'ws://*/*'] }, (details, callback) => {
+    const cancel = isInsecureRequestBlocked(details.url, { isPackaged: app.isPackaged });
+    if (cancel) log(`insecure request blocked: ${redactUrl(details.url)}`);
+    callback({ cancel });
+  });
+
   try {
     launchedAtLogin = wasLaunchedAtLogin(process.argv, app.getLoginItemSettings?.({ args: ['--autostart'] }));
     autostartEnabled = applyAutostart(app, { enabled: resolveEnabled(app.getPath('userData')), log });

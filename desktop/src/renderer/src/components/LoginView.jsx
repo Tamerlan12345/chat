@@ -1,8 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
 
-const APP_ORIGIN = window.location.origin.startsWith('http') ? window.location.origin : '';
 const MIN_PASSWORD_LENGTH = 8;
+const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
+
+// Только https. http — лишь для сервера на своей машине в разработке: по
+// открытому каналу пароль уходит как есть. Адрес, сохранённый раньше
+// (например, офисный по http), больше не подхватывается молча.
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+const ALLOW_LOCAL_HTTP =
+  Boolean(import.meta.env.DEV) ||
+  (window.location.protocol === 'http:' && LOCAL_HOSTS.includes(window.location.hostname));
+
+function isAllowedServerUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) return false;
+    if (u.protocol === 'https:') return true;
+    return u.protocol === 'http:' && ALLOW_LOCAL_HTTP && LOCAL_HOSTS.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+const APP_ORIGIN = isAllowedServerUrl(window.location.origin) ? window.location.origin : '';
+const INSECURE_SERVER_TEXT = 'Адрес сервера должен начинаться с https:// — подключение без шифрования запрещено';
+
+function initialServerUrlFrom(...candidates) {
+  return candidates.find((url) => url && isAllowedServerUrl(url)) || DEFAULT_SERVER_URL;
+}
 
 // Ответ сервера бывает не JSON: страница «Not found» при закрытом браузерном
 // доступе, ошибка прокси во время выкладки. Раньше человек видел
@@ -26,8 +52,8 @@ function describeFailure(res, data, fallback) {
 
 export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [isRegister, setIsRegister] = useState(false);
-  const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('mychat_server_url') || initialServerUrl || APP_ORIGIN || 'https://chat-production-0456.up.railway.app'
+  const [serverUrl, setServerUrl] = useState(() =>
+    initialServerUrlFrom(localStorage.getItem('mychat_server_url'), initialServerUrl, APP_ORIGIN)
   );
   const [serverInfo, setServerInfo] = useState(null);
   const [checkingServer, setCheckingServer] = useState(false);
@@ -68,10 +94,15 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   }, []);
 
   const checkServer = async (url) => {
+    const cleanUrl = String(url || '').replace(/\/+$/, '');
+    if (!isAllowedServerUrl(cleanUrl)) {
+      setServerInfo(null);
+      setError(INSECURE_SERVER_TEXT);
+      return;
+    }
     setCheckingServer(true);
     setError('');
     try {
-      const cleanUrl = url.replace(/\/+$/, '');
       const res = await fetch(`${cleanUrl}/api/settings/info`);
       if (res.ok) {
         const data = await res.json();
@@ -127,6 +158,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     setError('');
 
     const cleanUrl = serverUrl.replace(/\/+$/, '');
+    // Пароль по открытому каналу не отправляется.
+    if (!isAllowedServerUrl(cleanUrl)) {
+      setError(INSECURE_SERVER_TEXT);
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch(`${cleanUrl}/api/auth/login`, {
@@ -183,6 +220,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     setError('');
 
     const cleanUrl = serverUrl.replace(/\/+$/, '');
+    // Пароль по открытому каналу не отправляется.
+    if (!isAllowedServerUrl(cleanUrl)) {
+      setError(INSECURE_SERVER_TEXT);
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch(`${cleanUrl}/api/auth/register`, {

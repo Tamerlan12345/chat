@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title Разблокировка приложений Centras Chat
 
@@ -6,15 +6,15 @@ echo ================================================================
 echo   Снятие блокировки SmartScreen с дистрибутивов Centras Chat
 echo ================================================================
 echo.
+echo Блокировка снимается только с файлов, подписанных корпоративным
+echo сертификатом Centras. Если сертификат ещё не установлен, сначала
+echo запустите установить-сертификат.bat.
+echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path '%~dp0*.exe' | Unblock-File; Write-Host '✓ Файлы успешно разблокированы!' -ForegroundColor Green"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0разблокировать-запуск.ps1"
 
 echo.
-echo Теперь вы можете запускать:
-echo   - OpenMyChat-Enterprise-Setup.exe
-echo   - OpenMyChat-Enterprise-Portable.exe
-echo.
-echo Если окно SmartScreen все еще появляется:
-echo   Нажмите 'Подробнее' -> затем 'Выполнить в любом случае'.
+echo Если Windows всё равно предупреждает о файле, НЕ запускайте его
+echo и сообщите в ИТ-отдел.
 echo.
 pause

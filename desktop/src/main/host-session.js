@@ -20,6 +20,12 @@ function cleanName(value) {
 }
 
 class HostSession {
+  // Имя оператора для системного окна согласия — та же очистка, что и для
+  // плашки.
+  static cleanName(value) {
+    return cleanName(value);
+  }
+
   constructor() {
     this.current = null;
   }

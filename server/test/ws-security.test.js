@@ -174,7 +174,9 @@ test('успешные подключения из одной сети не уп
     for (let i = 0; i < 14; i += 1) {
       const client = openRaw();
       await client.opened;
-      client.sock.send(JSON.stringify({ type: 'auth', token: people.sidorov.token }));
+      // Разные сотрудники: у одного человека число окон ограничено отдельно.
+      const person = Object.values(people)[i % Object.keys(people).length];
+      client.sock.send(JSON.stringify({ type: 'auth', token: person.token }));
       const reply = await waitFor(client, (m) => m.type === 'auth_success' || m.type === 'auth_error');
       extra.push(client);
       assert.strictEqual(reply.type, 'auth_success', `подключение №${i + 1}: ${reply.message || ''}`);

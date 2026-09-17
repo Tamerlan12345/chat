@@ -1,0 +1,61 @@
+﻿# Общая часть подписи: поиск сертификата и подпись одного файла.
+# Подключается точкой из sign-file.ps1 (его вызывает electron-builder для
+# каждого exe и dll ДО упаковки в установщик) и из sign-and-publish.ps1.
+#
+# Сертификат выбирается по отпечатку, а не «первый подходящий в хранилище»:
+# иначе при втором сертификате подписи кода в хранилище сборщика (тестовом,
+# чужом) дистрибутив молча подписался бы не тем, и на машинах сотрудников
+# подпись перестала бы сходиться с закреплённым отпечатком в
+# installer/установить-сертификат.ps1.
+
+$MyChatPinnedThumbprint = '0EB61614FC390FCD11BDF8DBFD40BE62EE10862A'
+
+function Get-MyChatExpectedThumbprint {
+    $override = $env:MYCHAT_SIGN_THUMBPRINT
+    if ($override) { return ($override -replace '\s', '').ToUpperInvariant() }
+    return $MyChatPinnedThumbprint
+}
+
+function Get-MyChatSigningCert {
+    $thumb = Get-MyChatExpectedThumbprint
+    Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue |
+        Where-Object { $_.Thumbprint -eq $thumb -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } |
+        Select-Object -First 1
+}
+
+# Службы меток времени перебираются по очереди: они бывают недоступны, а
+# подпись без метки времени умирает вместе с сертификатом.
+$MyChatTimestampServers = @(
+    'http://timestamp.digicert.com',
+    'http://timestamp.sectigo.com',
+    'http://timestamp.globalsign.com/tsa/r6advanced1'
+)
+
+# Подписан ли файл нашим сертификатом. Статус тут не годится: на машине
+# сборщика корень самоподписанный и не в доверенных, статус — UnknownError.
+function Test-MyChatSignature([string]$Path) {
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    return [bool]($sig.SignerCertificate -and $sig.SignerCertificate.Thumbprint -eq (Get-MyChatExpectedThumbprint))
+}
+
+# Файлы, уже подписанные третьей стороной (например, d3dcompiler_47.dll от
+# Microsoft), не переподписываются: их подпись действительна сама по себе.
+function Test-ThirdPartySigned([string]$Path) {
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    return [bool]($sig.Status -eq 'Valid' -and $sig.SignerCertificate -and
+        $sig.SignerCertificate.Thumbprint -ne (Get-MyChatExpectedThumbprint))
+}
+
+function Invoke-MyChatSign([string]$Path, $Cert) {
+    $result = $null
+    foreach ($server in $MyChatTimestampServers) {
+        $result = Set-AuthenticodeSignature -LiteralPath $Path -Certificate $Cert `
+                  -HashAlgorithm SHA256 -TimestampServer $server -ErrorAction SilentlyContinue
+        if ($result -and $result.TimeStamperCertificate) { break }
+    }
+    $check = Get-AuthenticodeSignature -LiteralPath $Path
+    return [pscustomobject]@{
+        Signed    = [bool]($check.SignerCertificate -and $check.SignerCertificate.Thumbprint -eq $Cert.Thumbprint)
+        Timestamp = [bool]$check.TimeStamperCertificate
+    }
+}

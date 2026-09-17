@@ -1,21 +1,43 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
+// Сервер — только по https. По http пароль, токен и вся переписка идут в
+// открытую, а подменить такой сервер может любой в той же сети. http остаётся
+// лишь для сервера на своей машине в разработке; собранное приложение такие
+// запросы и само не выпускает.
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+const ALLOW_LOCAL_HTTP =
+  Boolean(import.meta.env.DEV) ||
+  (window.location.protocol === 'http:' && LOCAL_HOSTS.includes(window.location.hostname));
+const DEFAULT_HOST = 'chat-production-0456.up.railway.app';
+
+function isAllowedServerUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) return false;
+    if (u.protocol === 'https:') return true;
+    return u.protocol === 'http:' && ALLOW_LOCAL_HTTP && LOCAL_HOSTS.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export default function ServerConnectModal({ currentUrl, onClose, onApplyServer }) {
   const parseUrl = (rawUrl) => {
     try {
-      const u = new URL(rawUrl.startsWith('http') ? rawUrl : 'http://' + rawUrl);
+      const u = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : 'https://' + rawUrl);
+      if (!isAllowedServerUrl(u.toString())) throw new Error('insecure');
       return {
         protocol: u.protocol.replace(':', ''),
         host: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? '443' : '2004')
+        port: u.port
       };
     } catch {
-      return { protocol: 'http', host: 'localhost', port: '2004' };
+      return { protocol: 'https', host: DEFAULT_HOST, port: '' };
     }
   };
 
-  const initial = parseUrl(currentUrl || 'http://localhost:2004');
+  const initial = parseUrl(currentUrl || 'https://' + DEFAULT_HOST);
   const [protocol, setProtocol] = useState(initial.protocol);
   const [host, setHost] = useState(initial.host);
   const [port, setPort] = useState(initial.port);
@@ -27,23 +49,18 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
     error: null
   });
 
+  // Профиль офисной сети по http убран: в рабочей сборке он не открылся бы.
   const presets = [
-    {
-      id: 'local',
-      title: 'Локальный ПК',
-      host: 'localhost',
-      port: '2004',
-      protocol: 'http',
-      desc: '127.0.0.1:2004'
-    },
-    {
-      id: 'lan',
-      title: 'Centras Офис LAN',
-      host: '192.168.10.15',
-      port: '2004',
-      protocol: 'http',
-      desc: 'Интранет СК «Сентрас»'
-    },
+    ...(ALLOW_LOCAL_HTTP
+      ? [{
+          id: 'local',
+          title: 'Локальный ПК',
+          host: 'localhost',
+          port: '2004',
+          protocol: 'http',
+          desc: '127.0.0.1:2004 · только разработка'
+        }]
+      : []),
     {
       id: 'domain',
       title: 'Centras Облако/WAN',
@@ -58,6 +75,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
   ];
 
   const fullUrl = `${protocol}://${host}${port ? ':' + port : ''}`;
+  const urlAllowed = Boolean(host.trim()) && isAllowedServerUrl(`${protocol}://${host.trim()}${port ? ':' + port : ''}`);
 
   const applyPreset = (p) => {
     setProtocol(p.protocol);
@@ -67,6 +85,10 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
   };
 
   const handleTestConnection = async () => {
+    if (!urlAllowed) {
+      setPingState({ status: 'error', latencyMs: null, info: null, error: 'разрешено только защищённое подключение (https)' });
+      return;
+    }
     setPingState({ status: 'testing', latencyMs: null, info: null, error: null });
     const targetUrl = `${protocol}://${host}${port ? ':' + port : ''}`;
     const startTime = performance.now();
@@ -114,6 +136,10 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
   const handleSave = () => {
     if (!host.trim()) return;
     const cleanUrl = `${protocol}://${host.trim()}${port ? ':' + port : ''}`;
+    if (!isAllowedServerUrl(cleanUrl)) {
+      setPingState({ status: 'error', latencyMs: null, info: null, error: 'разрешено только защищённое подключение (https)' });
+      return;
+    }
     onApplyServer(cleanUrl);
     onClose();
   };
@@ -170,8 +196,8 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                   outline: 'none'
                 }}
               >
-                <option value="http">http://</option>
                 <option value="https">https://</option>
+                {ALLOW_LOCAL_HTTP && <option value="http">http:// (только localhost)</option>}
               </select>
 
               <input
@@ -188,13 +214,13 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
               <input
                 type="text"
                 className="server-port-field"
-                placeholder="2004"
+                placeholder="443"
                 value={port}
                 onChange={(e) => {
                   setPort(e.target.value);
                   setPingState({ status: 'idle', latencyMs: null, info: null, error: null });
                 }}
-                title="Порт сервера (по умолчанию 2004)"
+                title="Порт сервера (пусто — 443)"
               />
             </div>
           </div>
@@ -258,6 +284,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
             type="button"
             className="btn-primary"
             onClick={handleSave}
+            disabled={!urlAllowed}
           >
             Подключиться
           </button>

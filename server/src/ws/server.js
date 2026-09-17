@@ -6,6 +6,7 @@ const RemoteDesktopService = require('../services/remote-desktop.service');
 const AuditService = require('../services/audit.service');
 const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed } = require('../services/ip-access.service');
+const config = require('../config');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -28,6 +29,87 @@ function wakeCooldownMs() {
   return Number.isFinite(value) && value > 0 ? value : 60000;
 }
 const AUTH_LIMIT = { maxAttempts: 10, windowMs: 60000 };
+
+// До входа сокет — никто. Ему позволено одно короткое сообщение «auth»: раньше
+// анонимное соединение могло прислать 16 МБ JSON и заставить сервер его
+// разобрать, а десяток таких соединений замораживал обработку для всех.
+const PRE_AUTH_MAX_BYTES = 4096;
+
+// Сколько соединений держит один адрес и один сотрудник. Офис за одним NAT —
+// это сотни человек, поэтому предел на адрес щедрый; на человека — несколько
+// окон и устройств.
+const MAX_SOCKETS_PER_IP = Number(process.env.WS_MAX_SOCKETS_PER_IP) || 500;
+const MAX_SOCKETS_PER_USER = 8;
+
+// Частота сообщений на соединение: [сколько, за сколько мс]. Без предела одна
+// учётная запись рассылала тысячи смен статуса в секунду всей компании и
+// звонила коллеге без остановки.
+const RATE_LIMITS = {
+  presence: [10, 1000],
+  set_dnd: [10, 1000],
+  set_status: [10, 1000],
+  status_update: [10, 1000],
+  typing: [6, 1000],
+  send_message: [10, 1000],
+  direct_message: [10, 1000],
+  channel_message: [10, 1000],
+  mark_read: [20, 1000],
+  call_offer: [3, 10000],
+  rd_request: [3, 30000],
+  wake_send: [20, 10000],
+  rd_input_event: [120, 1000],
+  rd_ice_candidate: [60, 1000],
+  ice_candidate: [60, 1000],
+  '*': [60, 1000],
+  audio: [120, 1000]
+};
+
+// Как часто перепроверять, что сессия соединения всё ещё действительна.
+function revalidateIntervalMs() {
+  const value = Number(process.env.WS_REVALIDATE_MS);
+  return Number.isFinite(value) && value > 0 ? value : 60000;
+}
+
+// Запрос удалённого доступа, на который не ответили, истекает: иначе висящее
+// окно согласия можно было нажать спустя час, когда оператор уже ушёл.
+function rdRequestTtlMs() {
+  const value = Number(process.env.RD_REQUEST_TTL_MS);
+  return Number.isFinite(value) && value > 0 ? value : 60000;
+}
+const RD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
+
+function allowRate(ws, key) {
+  const [limit, windowMs] = RATE_LIMITS[key] || RATE_LIMITS['*'];
+  if (!ws.rate) ws.rate = new Map();
+  const now = Date.now();
+  const bucket = ws.rate.get(key);
+  if (!bucket || now - bucket.start >= windowMs) {
+    ws.rate.set(key, { start: now, count: 1 });
+    return true;
+  }
+  bucket.count += 1;
+  return bucket.count <= limit;
+}
+
+// Браузерная страница с чужого сайта может открыть соединение к серверу от
+// имени пользователя. Токен в cookie не хранится, поэтому вреда сейчас нет,
+// но пускать чужие источники незачем: интерфейс приходит с этого же сервера.
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true; // не браузер: служебные клиенты и тесты
+  let host;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (host && host === req.headers.host) return true;
+  const allowed = String(config.CORS_ALLOWED_ORIGINS || process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return allowed.includes(origin);
+}
 
 // Вызов, на который так и не ответили, перестаёт давать право «ответить».
 const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
@@ -68,6 +150,7 @@ class WsServer {
     // Последняя побудка каждого отправителя: fromId -> { toId, at }.
     this.lastWake = new Map();
     this.wakeInFlight = new Set();
+    this.socketsPerIp = new Map(); // ip -> число соединений
   }
 
   effectiveStatus(userId) {
@@ -75,8 +158,9 @@ class WsServer {
     return this.presence.get(userId) || 'online';
   }
 
-  async publishStatus(user) {
+  async publishStatus(user, previous = null) {
     const status = this.effectiveStatus(user.id);
+    if (previous !== null && previous === status) return;
     user.status = status;
     await UserService.updateStatus(user.id, status, user.custom_status ?? null);
     for (const socketUser of this.socketsOf(user.id)) socketUser.status = status;
@@ -162,12 +246,15 @@ class WsServer {
       verifyClient: (info, callback) => {
         const ip = getClientIp(info.req) || '127.0.0.1';
         if (!isIpAllowed(ip)) return callback(false, 403, 'IP not allowed');
+        if (!originAllowed(info.req)) return callback(false, 403, 'Origin not allowed');
+        if ((this.socketsPerIp.get(ip) || 0) >= MAX_SOCKETS_PER_IP) return callback(false, 429, 'Too many connections');
         callback(true);
       }
     });
 
     this.wss.on('connection', (ws, req) => {
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
+      this.socketsPerIp.set(ws.remoteIp, (this.socketsPerIp.get(ws.remoteIp) || 0) + 1);
       ws.isAlive = true;
       ws.connectedAt = new Date().toISOString();
 
@@ -186,12 +273,18 @@ class WsServer {
       });
 
       ws.on('message', (raw, isBinary) => {
+        if (ws.revoked) return;
+        const authenticated = this.socketUser.has(ws);
+        if (!authenticated && (isBinary || raw.length > PRE_AUTH_MAX_BYTES)) {
+          try { ws.close(1008, 'Authentication required'); } catch {}
+          return;
+        }
         // Двоичные кадры — это звук разговора. Он идёт по тому же соединению,
         // что и переписка, и по тому же 443 порту: прямое соединение между
         // компьютерами (WebRTC) в корпоративных сетях обычно не устанавливается,
         // а TURN-сервер — отдельная служба и отдельные расходы.
         if (isBinary) {
-          this.relayAudioFrame(ws, raw);
+          if (allowRate(ws, 'audio')) this.relayAudioFrame(ws, raw);
           return;
         }
         let data;
@@ -202,6 +295,12 @@ class WsServer {
           return;
         }
         if (!data || typeof data !== 'object') return;
+        if (!authenticated && data.type !== 'auth') {
+          try { ws.close(1008, 'Authentication required'); } catch {}
+          return;
+        }
+        const rateKey = RATE_LIMITS[data.type] ? data.type : '*';
+        if (!allowRate(ws, rateKey)) return;
         // Обработчик обращается к двум базам и потому асинхронен. Отказ
         // обещания без перехвата завершает процесс Node — одно кривое
         // сообщение роняло бы сервер для всех.
@@ -217,6 +316,9 @@ class WsServer {
 
       ws.on('close', () => {
         clearTimeout(ws.authTimer);
+        const left = (this.socketsPerIp.get(ws.remoteIp) || 1) - 1;
+        if (left > 0) this.socketsPerIp.set(ws.remoteIp, left);
+        else this.socketsPerIp.delete(ws.remoteIp);
         Promise.resolve(this.handleDisconnect(ws)).catch((err) =>
           console.error('[WS Error] Разрыв соединения обработан с ошибкой:', err.message)
         );
@@ -241,6 +343,15 @@ class WsServer {
       });
     }, 30000);
     this.heartbeat.unref();
+
+    // Токен, которым соединение вошло, мог быть отозван: смена пароля, роли,
+    // отключение. Соединение хранит снимок учётной записи на момент входа —
+    // раз в минуту он сверяется с базой и заменяется свежим, а недействительное
+    // соединение закрывается.
+    this.revalidator = setInterval(() => {
+      this.revalidateAll().catch((err) => console.warn('[WS] перепроверка сессий не удалась:', err.message));
+    }, revalidateIntervalMs());
+    this.revalidator.unref();
 
     console.log('[WS Server] Realtime WebSocket gateway ready at /ws');
   }
@@ -315,9 +426,14 @@ class WsServer {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Требуется смена пароля перед продолжением работы', code: 'MUST_CHANGE_PASSWORD' }));
       }
 
+      if ((this.userSockets.get(user.id)?.size || 0) >= MAX_SOCKETS_PER_USER && !this.userSockets.get(user.id)?.has(ws)) {
+        return ws.send(JSON.stringify({ type: 'auth_error', code: 'TOO_MANY_SESSIONS', message: 'Слишком много открытых окон. Закройте лишние.' }));
+      }
+
       // Повторная авторизация того же сокета под другим именем не должна
       // оставлять его в списках прежнего владельца.
       if (this.socketUser.has(ws)) this.unbindSocket(ws);
+      ws.authToken = msg.token;
 
       clearTimeout(ws.authTimer);
       this.socketUser.set(ws, user);
@@ -452,7 +568,7 @@ class WsServer {
         for (const memberId of members) {
           if (memberId !== currentUser.id) this.sendToUser(memberId, payload);
         }
-      } else {
+      } else if (targetId !== currentUser.id) {
         this.sendToUser(targetId, payload);
       }
       return;
@@ -468,6 +584,8 @@ class WsServer {
         currentUser.custom_status = msg.customStatus === null ? null : String(msg.customStatus).slice(0, CUSTOM_STATUS_MAX);
       }
 
+      const previous = this.effectiveStatus(currentUser.id);
+      const customChanged = msg.customStatus !== undefined;
       if (type === 'set_dnd' || ((type === 'set_status' || type === 'status_update') && msg.status === 'dnd')) {
         const enabled = type === 'set_dnd' ? Boolean(msg.enabled) : true;
         if (enabled) this.dndUsers.add(currentUser.id);
@@ -478,7 +596,7 @@ class WsServer {
         this.presence.set(currentUser.id, state);
       }
 
-      await this.publishStatus(currentUser);
+      await this.publishStatus(currentUser, customChanged ? null : previous);
       return;
     }
 
@@ -494,10 +612,22 @@ class WsServer {
       // rejecting stay open so a call already in progress can always be
       // ended, whatever the caller's role became meanwhile.
       if (type === 'call_offer') {
-        if (!currentUser.permissions?.can_call) {
+        const fresh = await this.freshUser(ws);
+        if (!fresh) return;
+        if (!fresh.permissions?.can_call) {
           ws.send(JSON.stringify({
             type: 'call_denied',
             reason: 'Звонки не разрешены для вашей роли. Обратитесь к администратору.'
+          }));
+          return;
+        }
+        // «Не беспокоить» — значит не звонить: раньше вызов проходил, и один
+        // сотрудник мог звонить коллеге без остановки.
+        if (this.dndUsers.has(targetUserId)) {
+          ws.send(JSON.stringify({
+            type: 'call_unavailable',
+            targetUserId,
+            reason: 'У сотрудника включено «Не беспокоить»'
           }));
           return;
         }
@@ -552,12 +682,16 @@ class WsServer {
     // 7. Remote Desktop Plugin Signalling
     if (type === 'rd_request') {
       const targetUserId = Number(msg.targetUserId);
+      // Права — по базе, а не по снимку на момент входа: пониженный
+      // администратор не должен продолжать открывать чужие экраны.
+      const operator = await this.freshUser(ws);
+      if (!operator) return;
 
       // Viewing a colleague's screen is granted per role by an administrator
       // (can_remote_control). The employee's own consent prompt below is a
       // second gate, not the first one — without this check any employee
       // could pop that prompt on any other employee at will.
-      if (!currentUser.permissions?.can_remote_control) {
+      if (!operator.permissions?.can_remote_control) {
         ws.send(JSON.stringify({
           type: 'rd_denied',
           reason: 'Удалённый доступ к рабочим столам не разрешён для вашей роли. Обратитесь к администратору.'
@@ -573,8 +707,32 @@ class WsServer {
         ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Сотрудник сейчас не в сети' }));
         return;
       }
+      // Администратор подразделения подключается только к сотрудникам своей
+      // зоны: право на удалённый доступ не должно распространяться на всю
+      // компанию, включая руководство других подразделений.
+      if (operator.permissions?.is_scoped_admin) {
+        const target = await UserService.getUserById(targetUserId);
+        const OrgService = require('../services/org.service');
+        const allowed = operator.admin_scope_dept_id
+          ? new Set(await OrgService.getSubtreeDepartmentIds(operator.admin_scope_dept_id))
+          : new Set();
+        if (!target || !allowed.has(Number(target.department_id))) {
+          ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Сотрудник вне вашей зоны ответственности' }));
+          return;
+        }
+      }
+      // Один ожидающий запрос на пару: иначе окно согласия можно было
+      // показывать снова и снова, пока его не нажмут.
+      const pending = RemoteDesktopService.findOpenSessionsForUser(currentUser.id).find(
+        (sess) => sess.operatorId === currentUser.id && sess.targetUserId === targetUserId && sess.status === 'REQUESTED'
+      );
+      if (pending) {
+        ws.send(JSON.stringify({ type: 'rd_denied', reason: 'Запрос этому сотруднику уже отправлен — дождитесь ответа' }));
+        return;
+      }
 
       const session = RemoteDesktopService.createSession(currentUser.id, targetUserId);
+      this.scheduleRdExpiry(session);
       AuditService.log({
         userId: currentUser.id,
         action: 'remote_desktop_request',
@@ -660,6 +818,29 @@ class WsServer {
 
       if (isOperator && session.accessLevel !== 'full' && OPERATOR_CONTROL_TYPES.has(type)) return;
 
+      // Буфер обмена — в обе стороны только в сеансе с полным доступом и только
+      // после того, как оператор попросил, а сотрудник согласился. Раньше
+      // сотрудник мог сам «включить» общий буфер и получать всё, что копирует
+      // администратор у себя.
+      if (type === 'rd_clipboard_mode' || type === 'rd_clipboard') {
+        if (session.accessLevel !== 'full') return;
+        if (type === 'rd_clipboard_mode') {
+          const enabled = Boolean(msg.enabled);
+          if (isOperator) {
+            session.clipboardRequested = enabled;
+            if (!enabled) session.clipboardEnabled = false;
+          } else if (enabled) {
+            if (!session.clipboardRequested) return;
+            session.clipboardEnabled = true;
+          } else {
+            session.clipboardEnabled = false;
+            session.clipboardRequested = false;
+          }
+        } else if (!session.clipboardEnabled) {
+          return;
+        }
+      }
+
       // Передача файла на чужую машину — то, о чём владелец компьютера должен
       // иметь возможность узнать постфактум, поэтому пишется в журнал.
       if (type === 'rd_file') {
@@ -667,7 +848,9 @@ class WsServer {
           userId: currentUser.id,
           action: 'remote_desktop_file_sent',
           ip: ws.remoteIp,
-          details: { sessionId, fileName: String(msg.fileName || '').slice(0, 260), size: msg.size || null }
+          // Размер, названный клиентом, проверить нельзя — рядом пишется объём,
+          // который сервер действительно переслал.
+          details: { sessionId, fileName: String(msg.fileName || '').slice(0, 260), declaredSize: msg.size || null, relayedBytes: Buffer.byteLength(JSON.stringify(msg)) }
         });
       }
 
@@ -684,6 +867,63 @@ class WsServer {
       }
       return;
     }
+  }
+
+  // Учётная запись соединения по свежим данным. Недействительное соединение
+  // закрывается, и вызывающий получает null.
+  async freshUser(ws) {
+    const fresh = ws.authToken ? await AuthService.resolveSession(ws.authToken) : null;
+    if (!fresh || !this.socketUser.has(ws)) {
+      this.revokeSocket(ws, 'Сессия недействительна — войдите заново');
+      return null;
+    }
+    const current = this.socketUser.get(ws);
+    // Статус и собственный статус живут в памяти соединения — их не терять.
+    fresh.status = current.status;
+    fresh.custom_status = current.custom_status ?? fresh.custom_status;
+    this.socketUser.set(ws, fresh);
+    return fresh;
+  }
+
+  async revalidateAll() {
+    for (const ws of [...this.socketUser.keys()]) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      await this.freshUser(ws);
+    }
+  }
+
+  // Закрыть соединение сразу: сначала оно перестаёт обрабатывать сообщения,
+  // потом закрывается, а если клиент не отвечает на закрытие — обрывается.
+  revokeSocket(ws, reason) {
+    if (ws.revoked) return;
+    ws.revoked = true;
+    try { ws.send(JSON.stringify({ type: 'server_disconnect', reason })); } catch {}
+    try { ws.close(4003, 'Session revoked'); } catch {}
+    const killer = setTimeout(() => { try { ws.terminate(); } catch {} }, 1000);
+    killer.unref?.();
+  }
+
+  scheduleRdExpiry(session) {
+    const expire = setTimeout(() => {
+      const current = RemoteDesktopService.getSession(session.sessionId);
+      if (!current || current.status !== 'REQUESTED') return;
+      const payload = { type: 'rd_end', sessionId: session.sessionId, reason: 'Запрос истёк без ответа' };
+      this.sendToUser(current.targetUserId, { ...payload, fromUserId: current.operatorId });
+      this.sendToUser(current.operatorId, { ...payload, fromUserId: current.targetUserId });
+      this.finishRdSession(current, current.operatorId);
+    }, rdRequestTtlMs());
+    expire.unref?.();
+    // Сеанс не длится бесконечно: забытый открытым доступ к чужому экрану —
+    // тоже доступ.
+    const cap = setTimeout(() => {
+      const current = RemoteDesktopService.getSession(session.sessionId);
+      if (!current || current.status !== 'ACCEPTED') return;
+      const payload = { type: 'rd_end', sessionId: session.sessionId, reason: 'Сеанс завершён по времени' };
+      this.sendToUser(current.targetUserId, { ...payload, fromUserId: current.operatorId });
+      this.sendToUser(current.operatorId, { ...payload, fromUserId: current.targetUserId });
+      this.finishRdSession(current, current.operatorId);
+    }, RD_MAX_SESSION_MS);
+    cap.unref?.();
   }
 
   finishRdSession(session, endedByUserId) {
@@ -799,7 +1039,7 @@ class WsServer {
   broadcastToAdmins(data) {
     const payload = JSON.stringify(data);
     for (const [client, user] of this.socketUser) {
-      if (user.permissions?.is_admin && client.readyState === WebSocket.OPEN) {
+      if (user.permissions?.is_admin && !user.permissions?.is_scoped_admin && client.readyState === WebSocket.OPEN) {
         client.send(payload);
       }
     }
@@ -834,12 +1074,7 @@ class WsServer {
   disconnectUser(userId, reason = 'Сессия принудительно завершена администратором через панель управления') {
     const sockets = this.userSockets.get(Number(userId));
     if (sockets && sockets.size > 0) {
-      for (const ws of [...sockets]) {
-        try {
-          ws.send(JSON.stringify({ type: 'server_disconnect', reason }));
-          ws.close();
-        } catch (e) {}
-      }
+      for (const ws of [...sockets]) this.revokeSocket(ws, reason);
       return true;
     }
     return false;

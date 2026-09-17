@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { identity } = require('../db/identity');
 const AuthService = require('./auth.service');
 const UserService = require('./user.service');
@@ -9,7 +10,7 @@ class DeviceService {
    * Клиент «стучится» при запуске. Если его устройство уже связано с
    * сотрудником — получает токен, иначе встаёт в очередь на связывание.
    */
-  static async knock({ device_id, device_name, ip_address, platform, client_version }) {
+  static async knock({ device_id, device_secret, device_name, ip_address, platform, client_version }) {
     if (!device_id) {
       throw new Error('device_id обязателен для регистрации узла');
     }
@@ -19,19 +20,34 @@ class DeviceService {
     const cleanIp = String(ip_address || '127.0.0.1').replace(/^.*:/, '');
 
     const pairing = await db.get(
-      `SELECT p.device_id, p.user_id, u.is_active
+      `SELECT p.device_id, p.user_id, p.secret_hash, p.secret_token_version,
+              u.is_active, u.approval_status, u.token_version
        FROM device_pairings p
        JOIN users u ON u.id = p.user_id
        WHERE p.device_id = $1 AND p.is_active = 1`,
       [String(device_id)]
     );
 
-    if (pairing && pairing.is_active) {
+    if (pairing) {
       await db.run(
         `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired'
          WHERE device_id = $3`,
         [now, cleanIp, String(device_id)]
       );
+
+      // Номер устройства видят администраторы, и угадать его несложно — сам по
+      // себе он не пропуск. Токен выдаётся только тому, кто предъявил секрет,
+      // полученный этим устройством при входе по паролю, и только пока пароль
+      // с тех пор не менялся (поколение токенов то же).
+      const trusted =
+        pairing.is_active &&
+        pairing.approval_status === 'approved' &&
+        secretMatches(device_secret, pairing.secret_hash) &&
+        Number(pairing.secret_token_version) === Number(pairing.token_version || 1);
+
+      if (!trusted) {
+        return { status: 'login_required', message: 'Войдите по паролю — устройство запомнит вход.' };
+      }
 
       const user = await UserService.getUserById(pairing.user_id);
       return {
@@ -193,7 +209,9 @@ class DeviceService {
       /* нет слушателей */
     }
 
-    return { success: true, device_id, user, token: AuthService.generateToken(user) };
+    // Токен сотрудника администратору не выдаётся: иначе привязка устройства
+    // была бы способом войти под любым сотрудником своего отдела.
+    return { success: true, device_id, user: UserService.toPublicUser(user) };
   }
 
   static async autoMatchByIp(adminUser) {
@@ -242,6 +260,37 @@ class DeviceService {
     return { matched_count: count };
   }
 
+  /**
+   * Вход по паролю на привязанном устройстве: сотрудник доказал, кто он, и
+   * устройство получает секрет для входа без пароля. Привязку делает
+   * администратор; здесь она только подтверждается владельцем.
+   */
+  static async claimDeviceSecret({ userId, device_id, device_secret }) {
+    if (!device_id || typeof device_secret !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(device_secret)) {
+      return { claimed: false };
+    }
+    const db = identity();
+    const pairing = await db.get(
+      'SELECT user_id FROM device_pairings WHERE device_id = $1 AND is_active = 1',
+      [String(device_id)]
+    );
+    if (!pairing || Number(pairing.user_id) !== Number(userId)) return { claimed: false };
+    const user = await db.get('SELECT token_version FROM users WHERE id = $1', [Number(userId)]);
+    await db.run(
+      'UPDATE device_pairings SET secret_hash = $1, secret_token_version = $2 WHERE device_id = $3',
+      [hashSecret(device_secret), Number(user?.token_version || 1), String(device_id)]
+    );
+    return { claimed: true };
+  }
+
+  static async getPairingOwner(device_id) {
+    const row = await identity().get(
+      'SELECT p.user_id, u.department_id FROM device_pairings p JOIN users u ON u.id = p.user_id WHERE p.device_id = $1',
+      [String(device_id)]
+    );
+    return row || null;
+  }
+
   static async unbindDevice(device_id) {
     const db = identity();
     await db.run('DELETE FROM device_pairings WHERE device_id = $1', [String(device_id)]);
@@ -257,6 +306,19 @@ class DeviceService {
 
     return { success: true };
   }
+}
+
+function hashSecret(secret) {
+  return crypto.createHash('sha256').update(String(secret)).digest('hex');
+}
+
+// Секрет — 256 случайных бит, поэтому хватает SHA-256; сравнение — за
+// постоянное время, чтобы ответ не подсказывал, сколько символов совпало.
+function secretMatches(secret, storedHash) {
+  if (typeof secret !== 'string' || !secret || !storedHash) return false;
+  const a = Buffer.from(hashSecret(secret), 'hex');
+  const b = Buffer.from(String(storedHash), 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 module.exports = DeviceService;

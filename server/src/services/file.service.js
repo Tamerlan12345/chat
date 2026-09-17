@@ -5,26 +5,36 @@ const { getDatabase } = require('../db');
 const config = require('../config');
 
 class FileService {
-  static saveUploadedFile({ uploaderId, originalName, buffer, mimeType }) {
+  // Файл уже лежит во временной папке: хеш считается потоком, а сам файл
+  // переносится на место без чтения в память и без блокировки сервера на
+  // синхронной записи ста мегабайт.
+  static async saveUploadedFile({ uploaderId, originalName, tempPath, size, mimeType }) {
     const db = getDatabase();
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-    const ext = path.extname(originalName);
+    const sha256 = await new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      fs.createReadStream(tempPath)
+        .on('data', (chunk) => hash.update(chunk))
+        .on('end', () => resolve(hash.digest('hex')))
+        .on('error', reject);
+    });
+    // Расширение — только безопасные символы: имя файла задаёт отправитель.
+    const ext = path.extname(originalName).replace(/[^.A-Za-z0-9]/g, '').slice(0, 16);
     const storedFilename = `${Date.now()}_${crypto.randomBytes(8).toString('hex')}${ext}`;
     const filePath = path.join(config.UPLOADS_DIR, storedFilename);
 
-    fs.writeFileSync(filePath, buffer);
+    await fs.promises.rename(tempPath, filePath);
 
     const now = new Date().toISOString();
     const result = db.prepare(`
       INSERT INTO files (uploader_id, original_name, stored_filename, file_size, mime_type, sha256, path, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(uploaderId, originalName, storedFilename, buffer.length, mimeType, sha256, filePath, now);
+    `).run(uploaderId, originalName, storedFilename, Number(size), mimeType, sha256, filePath, now);
 
     return {
       id: result.lastInsertRowid,
       originalName,
       storedFilename,
-      fileSize: buffer.length,
+      fileSize: Number(size),
       mimeType,
       url: `/api/files/download/${result.lastInsertRowid}`
     };

@@ -5,7 +5,9 @@ const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
 
-const INVALID_CREDENTIALS = 'Неверный логин или пароль';
+// Одно сообщение на все отказы, включая временную блокировку: отдельный
+// текст о блокировке выдавал, что такой логин существует.
+const INVALID_CREDENTIALS = 'Неверный логин или пароль. После нескольких неудачных попыток вход временно заблокирован.';
 
 // Хэш-приманка для несуществующего логина: проверка против него занимает
 // столько же, сколько настоящая, и отказ не выдаёт себя скоростью. Считается
@@ -111,13 +113,8 @@ class AuthService {
 
     const now = Date.now();
     if (row.locked_until && new Date(row.locked_until).getTime() > now) {
-      const minutes = Math.max(
-        1,
-        Math.ceil((new Date(row.locked_until).getTime() - now) / 60000)
-      );
-      throw new Error(
-        `Учётная запись временно заблокирована после неудачных попыток входа. Повторите через ${minutes} мин.`
-      );
+      await verifyPassword(password, await dummyHash()).catch(() => {});
+      throw new Error(INVALID_CREDENTIALS);
     }
 
     const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);

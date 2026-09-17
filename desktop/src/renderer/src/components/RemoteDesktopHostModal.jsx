@@ -36,7 +36,8 @@ export default function RemoteDesktopHostModal(props) {
   const data = props.promptData || props.request || {};
   const { wsClient, onClose } = props;
 
-  const [accessLevel, setAccessLevel] = useState('full');
+  // По умолчанию — только просмотр: полный доступ сотрудник выбирает сам.
+  const [accessLevel, setAccessLevel] = useState('view_only');
   const [session, setSession] = useState(null);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState('');
@@ -159,13 +160,30 @@ export default function RemoteDesktopHostModal(props) {
     setError('');
 
     try {
-      // Главный процесс отдаёт экран только внутри подтверждённого сеанса.
-      await window.electronAPI?.rdSessionStart?.({
-        sessionId: s.sessionId,
-        operatorName: s.operatorName,
-        accessLevel: s.accessLevel
-      });
-      if (s.ended) return;
+      // Главный процесс отдаёт экран только внутри подтверждённого сеанса и
+      // сам спрашивает сотрудника в системном окне. Выбор здесь лишь
+      // ограничивает, что там будет предложено; серверу уходит уровень,
+      // выбранный в системном окне.
+      const api = window.electronAPI;
+      if (api?.rdSessionStart) {
+        const consent = await api.rdSessionStart({
+          sessionId: s.sessionId,
+          operatorName: s.operatorName,
+          accessLevel: s.accessLevel
+        });
+        if (s.ended) return;
+        // Прежние версии приложения отвечали true/false.
+        const accepted = consent === true || consent?.accepted === true;
+        if (!accepted) {
+          s.ended = true;
+          sessionRef.current = null;
+          respond(s.sessionId, false, consent?.reason === 'busy' ? { reason: 'busy' } : {});
+          if (aliveRef.current) setAccepting(false);
+          closeModal();
+          return;
+        }
+        if (consent && typeof consent === 'object') s.accessLevel = normalizeAccessLevel(consent.accessLevel);
+      }
 
       const stream = await navigator.mediaDevices.getDisplayMedia(CAPTURE_CONSTRAINTS);
       if (s.ended) {
@@ -304,15 +322,28 @@ export default function RemoteDesktopHostModal(props) {
   const saveFile = (msg) => {
     // Файл от оператора кладётся в «Загрузки» и ничем не запускается —
     // решение открыть его остаётся за сотрудником.
+    // Перед записью главный процесс спрашивает сотрудника в системном окне;
+    // исполняемые файлы сохраняются с добавочным «.txt».
     if (!window.electronAPI?.rdSaveFile || typeof msg.data !== 'string') return;
+    let bytes;
     try {
       const binary = atob(msg.data);
-      const bytes = new Uint8Array(binary.length);
+      bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      window.electronAPI.rdSaveFile({ fileName: msg.fileName, data: bytes });
     } catch (err) {
       console.warn('RD: файл не сохранён:', err?.message || err);
+      return;
     }
+    Promise.resolve(window.electronAPI.rdSaveFile({ fileName: msg.fileName, data: bytes }))
+      .then((result) => {
+        if (!aliveRef.current || !result) return;
+        if (result.success && result.renamed) {
+          setNotice(`Исполняемый файл сохранён как «${result.name}» — запускать его не стоит, если вы его не ждали`);
+        } else if (!result.success && !result.declined && result.error) {
+          setNotice(`Файл не сохранён: ${result.error}`);
+        }
+      })
+      .catch((err) => console.warn('RD: файл не сохранён:', err?.message || err));
   };
 
   const sendClipboardMode = (s, enabled, extra = {}) =>
@@ -324,8 +355,22 @@ export default function RemoteDesktopHostModal(props) {
   const allowClipboard = async () => {
     const s = sessionRef.current;
     if (!s || s.ended || s.accessLevel !== 'full') return;
+    // Согласие фиксирует главный процесс — через системное окно. Без него
+    // чтение буфера возвращает пустоту, что бы ни решила страница.
+    const api = window.electronAPI;
+    if (api?.rdClipboardGrant) {
+      let granted = false;
+      try {
+        granted = await api.rdClipboardGrant({ role: 'host', sessionId: s.sessionId });
+      } catch {}
+      if (sessionRef.current !== s || s.ended) return;
+      if (!granted) {
+        declineClipboard();
+        return;
+      }
+    }
     const watcher = new ClipboardWatcher({
-      read: () => window.electronAPI?.rdClipboardRead?.(),
+      read: () => window.electronAPI?.rdClipboardRead?.({ role: 'host', sessionId: s.sessionId }),
       send: (text) => sendWs({ type: 'rd_clipboard', sessionId: s.sessionId, targetUserId: s.operatorId, text })
     });
     await watcher.prime();
@@ -345,6 +390,7 @@ export default function RemoteDesktopHostModal(props) {
 
   const disableClipboard = ({ notify }) => {
     const s = sessionRef.current;
+    if (s) window.electronAPI?.rdClipboardRevoke?.({ role: 'host', sessionId: s.sessionId });
     watcherRef.current = null;
     clipboardAllowedRef.current = false;
     setClipboardAllowed(false);
@@ -408,7 +454,7 @@ export default function RemoteDesktopHostModal(props) {
         // Оператор скопировал текст у себя — кладём его в буфер сотрудника.
         if (typeof msg.text !== 'string') return;
         watcherRef.current?.remember(msg.text);
-        await window.electronAPI?.rdClipboardWrite?.(msg.text);
+        await window.electronAPI?.rdClipboardWrite?.(msg.text, { role: 'host', sessionId: s.sessionId });
         return;
 
       case 'rd_clipboard_mode':
@@ -624,21 +670,6 @@ export default function RemoteDesktopHostModal(props) {
           ) : (
             <>
               <div className="rd-permission-box">
-                <label className={'rd-perm-option ' + (accessLevel === 'full' ? 'selected' : '')}>
-                  <input
-                    type="radio"
-                    name="accessLevel"
-                    value="full"
-                    checked={accessLevel === 'full'}
-                    disabled={accepting}
-                    onChange={() => setAccessLevel('full')}
-                  />
-                  <div className="rd-perm-text">
-                    <strong>Полный доступ (управление)</strong>
-                    <span>Разрешить просмотр экрана, управление курсором мыши и клавиатурой, передачу файлов.</span>
-                  </div>
-                </label>
-
                 <label className={'rd-perm-option ' + (accessLevel === 'view_only' ? 'selected' : '')}>
                   <input
                     type="radio"
@@ -653,10 +684,25 @@ export default function RemoteDesktopHostModal(props) {
                     <span>Коллега сможет только видеть экран: без управления, файлов и буфера обмена.</span>
                   </div>
                 </label>
+
+                <label className={'rd-perm-option ' + (accessLevel === 'full' ? 'selected' : '')}>
+                  <input
+                    type="radio"
+                    name="accessLevel"
+                    value="full"
+                    checked={accessLevel === 'full'}
+                    disabled={accepting}
+                    onChange={() => setAccessLevel('full')}
+                  />
+                  <div className="rd-perm-text">
+                    <strong>Полный доступ (управление)</strong>
+                    <span>Разрешить просмотр экрана, управление курсором мыши и клавиатурой, передачу файлов.</span>
+                  </div>
+                </label>
               </div>
 
               <div className="rd-security-notice">
-                <Icon name="lock" size={14} /> Вы можете в любой момент прервать сеанс нажатием кнопки «Завершить доступ».
+                <Icon name="lock" size={14} /> После «Разрешить доступ» Windows ещё раз спросит, какой доступ дать. Прервать сеанс можно в любой момент кнопкой «Завершить доступ».
               </div>
             </>
           )}
@@ -679,7 +725,7 @@ export default function RemoteDesktopHostModal(props) {
                 onClick={handleAccept}
                 disabled={accepting}
               >
-                {accepting ? 'Запускаем трансляцию…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="check" size={14} />Разрешить доступ</span>}
+                {accepting ? 'Подтвердите в системном окне…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="check" size={14} />Разрешить доступ</span>}
               </button>
             </>
           )}

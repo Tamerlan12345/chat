@@ -401,7 +401,7 @@ async function seedFreshInstall(target) {
   // Единственная учётная запись, которая нужна чистой установке. Реальных
   // сотрудников заводит администратор — сервер не придумывает людей.
   const adminRole = await target.get('SELECT id FROM roles WHERE name = $1', [ROLE_SUPERADMIN]);
-  const initialPassword = process.env.INITIAL_ADMIN_PASSWORD || '123456';
+  const initialPassword = resolveInitialAdminPassword();
   const encoded = await hashPassword(initialPassword);
 
   await target.run(
@@ -442,6 +442,40 @@ async function seedFreshInstall(target) {
   }
 
   console.log('[Identity] Чистая установка: созданы роли, структура и учётная запись admin.');
+}
+
+// Рабочая установка: Railway или явный NODE_ENV=production.
+function isProductionDeployment() {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID)
+  );
+}
+
+// Пароль первого администратора. Раньше без переменной им становился «123456»:
+// после потери диска учётная запись создавалась заново, и первым вошедшим мог
+// оказаться кто угодно. Теперь в рабочей установке без пароля сервер не
+// поднимается, а на машине разработчика пароль случайный и виден один раз.
+function resolveInitialAdminPassword() {
+  const given = process.env.INITIAL_ADMIN_PASSWORD;
+  if (given) {
+    const { assertPasswordPolicy } = require('../../services/user.service');
+    try {
+      assertPasswordPolicy(given);
+    } catch (err) {
+      throw new Error(`INITIAL_ADMIN_PASSWORD не подходит: ${err.message}`);
+    }
+    return given;
+  }
+  if (isProductionDeployment()) {
+    throw new Error(
+      'Задайте INITIAL_ADMIN_PASSWORD: база учётных записей пустая, и без него администратора ' +
+        'пришлось бы создать с общеизвестным паролем.'
+    );
+  }
+  const generated = crypto.randomBytes(12).toString('base64url');
+  console.warn(`[Identity] Разработка: пароль admin для первого входа — ${generated}`);
+  return generated;
 }
 
 // Роли и корень структуры должны существовать и в перенесённой базе — прежние
@@ -496,12 +530,24 @@ async function applyEmergencyAdminReset(target) {
   if (!requested) return;
 
   const username = process.env.ADMIN_PASSWORD_RESET_USER || 'admin';
-  const marker = crypto.createHash('sha256').update(`${username}:${requested}`).digest('hex');
+  // Отпечаток — HMAC на ключе сервера: простой SHA-256 от «логин:пароль»
+  // подбирался офлайн по словарю. Прежний формат тоже узнаётся, иначе после
+  // обновления забытая переменная откатила бы уже сменённый пароль.
+  const marker = crypto.createHmac('sha256', config.JWT_SECRET).update(`${username}:${requested}`).digest('hex');
+  const legacyMarker = crypto.createHash('sha256').update(`${username}:${requested}`).digest('hex');
 
   const previous = await target.get(
     `SELECT value FROM server_settings WHERE key = 'last_admin_password_reset'`
   );
-  if (previous?.value === marker) return;
+  if (previous?.value === marker || previous?.value === legacyMarker) return;
+
+  const { assertPasswordPolicy } = require('../../services/user.service');
+  try {
+    assertPasswordPolicy(requested);
+  } catch (err) {
+    console.warn(`[Recovery] ADMIN_PASSWORD_RESET не применён: ${err.message}`);
+    return;
+  }
 
   const user = await target.get('SELECT id FROM users WHERE username = $1', [username]);
   if (!user) {

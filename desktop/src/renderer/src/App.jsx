@@ -57,14 +57,32 @@ function playChimeSound() {
   } catch (e) {}
 }
 
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+function isAllowedServerUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:') return true;
+    const localPage = location.protocol === 'http:' && LOCAL_HOSTS.includes(location.hostname);
+    return u.protocol === 'http:' && LOCAL_HOSTS.includes(u.hostname) && (import.meta.env.DEV || localPage);
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('mychat_token') || '');
   const [currentUser, setCurrentUser] = useState(null);
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
   const [serverInfo, setServerInfo] = useState(null);
-  const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('mychat_server_url') || (window.location.origin.startsWith('http') ? window.location.origin : 'https://chat-production-0456.up.railway.app')
-  );
+  // Пароль и токен уходят только по HTTPS. Сохранённый когда-то адрес с http://
+  // (или подсказанный «настройте сервер так-то») молча отправлял бы их открытым
+  // текстом; http допустим лишь для localhost при разработке.
+  const [serverUrl, setServerUrl] = useState(() => {
+    const stored = localStorage.getItem('mychat_server_url');
+    if (stored && isAllowedServerUrl(stored)) return stored;
+    return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://chat-production-0456.up.railway.app';
+  });
   const [wsConnected, setWsConnected] = useState(false);
 
   // Обработчики WebSocket, таймеры и подписки создаются один раз и видят
@@ -329,13 +347,31 @@ export default function App() {
     return 'ok';
   };
 
+  // Номер устройства — открытый: его видят администраторы при привязке.
+  // Секрет — 256 случайных бит, которые знает только этот компьютер: без него
+  // сервер не пускает без пароля, как бы ни стал известен номер.
+  const deviceIdentity = () => {
+    const random = (bytes) => {
+      const buf = new Uint8Array(bytes);
+      crypto.getRandomValues(buf);
+      return btoa(String.fromCharCode(...buf)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    let deviceId = localStorage.getItem('mychat_device_id');
+    if (!deviceId) {
+      deviceId = 'dev-' + random(12);
+      localStorage.setItem('mychat_device_id', deviceId);
+    }
+    let deviceSecret = localStorage.getItem('mychat_device_secret');
+    if (!deviceSecret) {
+      deviceSecret = random(32);
+      localStorage.setItem('mychat_device_secret', deviceSecret);
+    }
+    return { deviceId, deviceSecret };
+  };
+
   const attemptSilentDeviceLogin = async () => {
     try {
-      let deviceId = localStorage.getItem('mychat_device_id');
-      if (!deviceId) {
-        deviceId = 'dev-' + Math.random().toString(36).substring(2, 12) + '-' + Date.now().toString(36);
-        localStorage.setItem('mychat_device_id', deviceId);
-      }
+      const { deviceId, deviceSecret } = deviceIdentity();
 
       let devInfo = null;
       if (window.electronAPI && window.electronAPI.getDeviceInfo) {
@@ -349,6 +385,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           device_id: deviceId,
+          device_secret: deviceSecret,
           device_name: (devInfo && devInfo.hostname) || 'ПК пользователя',
           platform: (devInfo && devInfo.platform) || 'Windows 11',
           client_version: '1.0.0'
@@ -410,6 +447,16 @@ export default function App() {
     setCurrentUser(user);
     setAuthState('authenticated');
     openSessionChannels(user, authToken);
+
+    // Вход по паролю подтверждает, что устройство принадлежит этому сотруднику:
+    // если администратор его привязал, следующие запуски пройдут без пароля.
+    // Отказ не мешает работе — просто в следующий раз снова спросят пароль.
+    const { deviceId, deviceSecret } = deviceIdentity();
+    fetch((cleanServerUrl || serverUrl) + '/api/auth/device/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ device_id: deviceId, device_secret: deviceSecret })
+    }).catch(() => {});
   };
 
   // The operator asks the SERVER for a session and waits: it checks the
@@ -589,6 +636,7 @@ export default function App() {
   };
 
   const handleApplyServer = (newUrl) => {
+    if (!isAllowedServerUrl(newUrl)) return;
     setServerUrl(newUrl);
     localStorage.setItem('mychat_server_url', newUrl);
     if (wsRef.current) {

@@ -85,7 +85,9 @@ const DDL = {
       ip_address TEXT,
       device_name TEXT,
       paired_at TEXT NOT NULL,
-      is_active INTEGER NOT NULL DEFAULT 1
+      is_active INTEGER NOT NULL DEFAULT 1,
+      secret_hash TEXT,
+      secret_token_version INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -178,7 +180,9 @@ const DDL = {
       ip_address TEXT,
       device_name TEXT,
       paired_at TEXT NOT NULL,
-      is_active INTEGER NOT NULL DEFAULT 1
+      is_active INTEGER NOT NULL DEFAULT 1,
+      secret_hash TEXT,
+      secret_token_version INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -205,8 +209,33 @@ const DDL = {
 // столкнётся с существующей.
 const SEQUENCED_TABLES = ['roles', 'departments', 'users', 'pending_devices', 'audit_logs'];
 
+// Колонки, появившиеся после первого выпуска. CREATE TABLE IF NOT EXISTS
+// существующую таблицу не трогает, поэтому их добавляет отдельный шаг.
+const ADDED_COLUMNS = [
+  // Секрет устройства: вход без пароля возможен, только если клиент его
+  // предъявил. Номер устройства сам по себе больше не пропуск.
+  ['device_pairings', 'secret_hash', 'TEXT'],
+  ['device_pairings', 'secret_token_version', 'INTEGER']
+];
+
+async function columnsOf(driver, table) {
+  if (driver.dialect === 'postgres') {
+    const rows = await driver.all(
+      'SELECT column_name AS name FROM information_schema.columns WHERE table_name = $1',
+      [table]
+    );
+    return new Set(rows.map((r) => r.name));
+  }
+  const rows = await driver.all(`PRAGMA table_info(${table})`);
+  return new Set(rows.map((r) => r.name));
+}
+
 async function createSchema(driver) {
   await driver.exec(DDL[driver.dialect]);
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const existing = await columnsOf(driver, table);
+    if (!existing.has(column)) await driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 async function resyncSequences(driver) {

@@ -3,6 +3,7 @@ const path = require('node:path');
 const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
 const config = require('../config');
+const { DatabaseSync, constants: SQLITE } = require('node:sqlite');
 
 // Студия базы данных работает ТОЛЬКО с базой переписки. Учётные записи
 // вынесены в отдельное хранилище и сюда не попадают намеренно: возможность
@@ -13,7 +14,40 @@ const config = require('../config');
 // ATTACH подключил бы к сессии посторонний файл базы — в том числе
 // identity.db, когда PostgreSQL не настроен. Это ровно тот обход, ради
 // закрытия которого учётные записи и разъезжались по разным базам.
-const FORBIDDEN_STATEMENTS = /^\s*(ATTACH|DETACH)\b/i;
+// Проверка «запрос начинается с ATTACH» обходилась комментарием в начале
+// (/**/ ATTACH …): из соседней базы читались хеши паролей, а VACUUM INTO писал
+// файлы куда угодно. Теперь запрещённое ищется после удаления комментариев и
+// строк, а подключение консоли дополнительно ограничено самим SQLite
+// (setAuthorizer): ATTACH, DETACH и загрузка расширений отклоняются движком.
+const FORBIDDEN_ANYWHERE = /\b(ATTACH|DETACH|VACUUM|load_extension)\b/i;
+const READ_PRAGMAS = new Set(['table_info', 'table_xinfo', 'index_list', 'index_info', 'index_xinfo', 'foreign_key_list']);
+const FORBIDDEN_FUNCTIONS = new Set(['load_extension', 'readfile', 'writefile', 'edit', 'fts3_tokenizer']);
+
+function stripSqlNoise(sql) {
+  return String(sql)
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\/\*[\s\S]*?(\*\/|$)/g, ' ')
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/"(?:[^"]|"")*"/g, '""')
+    .replace(/`[^`]*`/g, '``')
+    .replace(/\[[^\]]*\]/g, '[]');
+}
+
+function openStudioConnection({ readOnly }) {
+  const db = new DatabaseSync(config.DB_PATH, { readOnly });
+  db.setAuthorizer((action, arg1, arg2) => {
+    if (action === SQLITE.SQLITE_ATTACH || action === SQLITE.SQLITE_DETACH) return SQLITE.SQLITE_DENY;
+    if (action === SQLITE.SQLITE_FUNCTION && FORBIDDEN_FUNCTIONS.has(String(arg2 || '').toLowerCase())) {
+      return SQLITE.SQLITE_DENY;
+    }
+    // Запись PRAGMA (например, отключение журнала) — только через код сервера.
+    if (action === SQLITE.SQLITE_PRAGMA && arg2 !== null && arg2 !== undefined && !READ_PRAGMAS.has(String(arg1 || '').toLowerCase())) {
+      return SQLITE.SQLITE_DENY;
+    }
+    return SQLITE.SQLITE_OK;
+  });
+  return db;
+}
 
 class DbStudioService {
   static getDatabaseStats() {
@@ -124,18 +158,21 @@ class DbStudioService {
   }
 
   static executeCustomSql(sql) {
-    const db = getDatabase();
     const trimmed = String(sql || '').trim();
     if (!trimmed) throw new Error('Запрос пуст');
-    if (FORBIDDEN_STATEMENTS.test(trimmed)) {
-      throw new Error('ATTACH и DETACH запрещены: студия работает только с базой переписки');
+    const bare = stripSqlNoise(trimmed);
+    if (FORBIDDEN_ANYWHERE.test(bare)) {
+      throw new Error('ATTACH, DETACH, VACUUM и расширения запрещены: консоль работает только с базой переписки');
     }
 
     const start = process.hrtime.bigint();
 
-    // Distinguish SELECT queries vs mutating queries
-    const isSelect = /^\s*(SELECT|PRAGMA|EXPLAIN)\b/i.test(trimmed);
+    // Чтение — через подключение только для чтения: даже если что-то
+    // проскользнёт мимо проверок, изменить базу оно не сможет.
+    const isSelect = /^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b/i.test(bare) && !/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i.test(bare);
+    const db = openStudioConnection({ readOnly: isSelect });
 
+    try {
     if (isSelect) {
       const stmt = db.prepare(trimmed);
       const rows = stmt.all();
@@ -163,6 +200,14 @@ class DbStudioService {
         changes: result.changes,
         lastInsertRowid: result.lastInsertRowid
       };
+    }
+    } catch (err) {
+      if (/not authorized/i.test(err.message)) {
+        throw new Error('Операция запрещена в консоли: ATTACH, расширения и изменение PRAGMA недоступны');
+      }
+      throw err;
+    } finally {
+      db.close();
     }
   }
 

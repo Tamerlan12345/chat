@@ -116,6 +116,11 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('X-DNS-Prefetch-Control', 'off');
+  // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
+  // и не пойдут по http даже по подменённой ссылке.
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
 });
 

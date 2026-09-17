@@ -28,6 +28,14 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Отпечаток единственного сертификата, который этот скрипт соглашается
+# поставить в доверенные корни. Раньше ставился любой .cer, лежащий рядом:
+# подмени файл в папке раздачи — и сотрудник сам делает доверенным чужой
+# корень, которым потом подписано что угодно (и сайты, и программы).
+# Меняется только вместе с сертификатом подписи
+# (desktop/scripts/signing-common.ps1, разблокировать-запуск.ps1).
+$PinnedThumbprint = '0EB61614FC390FCD11BDF8DBFD40BE62EE10862A'
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CertPath = Join-Path $ScriptDir 'Centras-Corporate-Root.cer'
 
@@ -36,12 +44,27 @@ if (-not (Test-Path $CertPath)) {
     exit 1
 }
 
-$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
+try {
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath)
+} catch {
+    Write-Host "Файл сертификата повреждён: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 Write-Host ""
 Write-Host "Сертификат:  $($cert.Subject)" -ForegroundColor Cyan
 Write-Host "Отпечаток:   $($cert.Thumbprint)"
 Write-Host "Действителен до: $($cert.NotAfter.ToString('dd.MM.yyyy'))"
 Write-Host ""
+
+if ($cert.Thumbprint -ne $PinnedThumbprint) {
+    Write-Host "ОТКАЗ: это не корпоративный сертификат Centras." -ForegroundColor Red
+    Write-Host "  Ожидался отпечаток: $PinnedThumbprint" -ForegroundColor Red
+    Write-Host "  В файле:            $($cert.Thumbprint)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Файл мог быть подменён. Ничего не установлено." -ForegroundColor Yellow
+    Write-Host "Не запускайте программы из этой папки и сообщите в ИТ-отдел." -ForegroundColor Yellow
+    exit 2
+}
 
 # С правами администратора ставим на всю машину — тогда сертификат действует
 # для всех учётных записей и для служб. Без них — только для текущего

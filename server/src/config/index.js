@@ -65,7 +65,13 @@ function resolvePgSsl(url) {
 // before the rotation. See docs/designs/auth-access-control-remediation.md
 // item 4.
 function resolveJwtSecret() {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.JWT_SECRET) {
+    // Короткий ключ подписи подбирается офлайн по любому перехваченному токену.
+    if (Buffer.byteLength(process.env.JWT_SECRET, 'utf8') < 32) {
+      throw new Error('JWT_SECRET должен быть не короче 32 байт (например, openssl rand -base64 48)');
+    }
+    return process.env.JWT_SECRET;
+  }
 
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 

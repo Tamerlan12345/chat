@@ -12,7 +12,7 @@ const DbStudioService = require('../services/db-studio.service');
 const FileService = require('../services/file.service');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
-const { checkRateLimit } = require('../services/rate-limiter');
+const { checkRateLimit, isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp } = require('../services/ip-access.service');
 const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
@@ -21,7 +21,13 @@ const wsServer = require('../ws/server');
 const config = require('../config');
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } }); // = UPLOAD_LIMIT_BYTES ниже
+// Файл пишется во временную папку на диске, а не в память: двадцать
+// одновременных загрузок по 100 МБ держали в памяти около 2 ГБ.
+const UPLOAD_TMP_DIR = path.join(config.UPLOADS_DIR, '.incoming');
+fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+function uploaderFor(limitBytes) {
+  return multer({ dest: UPLOAD_TMP_DIR, limits: { fileSize: limitBytes, files: 1, fields: 10 } });
+}
 
 // Обработчики работают с двумя базами и почти все асинхронные. Обёртка ловит
 // отказ обещания и превращает его в обычный ответ об ошибке: необработанный
@@ -107,6 +113,12 @@ async function assertWithinAdminScope(actor, { targetUserId = null, payload = nu
     if (!allowed.has(Number(target.department_id))) {
       throw new Error('Этот сотрудник относится к другому подразделению');
     }
+    // Главный администратор может числиться в отделе администратора
+    // подразделения. Без этой проверки тот сбрасывал ему пароль или отключал
+    // его — и становился главным сам.
+    if (target.id !== actor.id && (target.permissions?.is_admin || target.permissions?.is_scoped_admin)) {
+      throw new Error('Управлять администраторами может только главный администратор');
+    }
   }
 
   if (payload) {
@@ -154,13 +166,31 @@ function safeParse(json) {
 router.post('/auth/knock', route(async (req, res) => {
   try {
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    const { device_id, device_name, platform, client_version } = req.body || {};
-    res.json(await DeviceService.knock({
-      device_id, device_name, ip_address: remoteIp, platform, client_version
-    }));
+    if (!checkRateLimit(`knock:${remoteIp}`, { maxAttempts: 30, windowMs: 60000 })) {
+      return res.status(429).json({ error: 'Слишком много запросов. Повторите через минуту.' });
+    }
+    const { device_id, device_secret, device_name, platform, client_version } = req.body || {};
+    const result = await DeviceService.knock({
+      device_id, device_secret, device_name, ip_address: remoteIp, platform, client_version
+    });
+    if (result.status === 'paired') {
+      AuditService.log({ userId: result.user.id, action: 'device_login', ip: remoteIp, details: { deviceId: String(device_id) } });
+    }
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+// Вход по паролю на привязанном устройстве выдаёт ему секрет для следующих
+// входов без пароля. Секрет придумывает клиент, сервер хранит только отпечаток.
+router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
+  const { device_id, device_secret } = req.body || {};
+  const result = await DeviceService.claimDeviceSecret({ userId: req.user.id, device_id, device_secret });
+  if (result.claimed) {
+    AuditService.log({ userId: req.user.id, action: 'device_secret_claimed', ip: getClientIp(req), details: { deviceId: String(device_id) } });
+  }
+  res.json(result);
 }));
 
 // ── 1. AUTH ──
@@ -175,7 +205,22 @@ router.post('/auth/login', route(async (req, res) => {
       return res.status(429).json({ error: 'Слишком много попыток входа. Повторите через минуту.' });
     }
 
-    const result = await AuthService.login(username, password, { ip: remoteIp });
+    // Перебор по многим логинам с одного адреса: предел на логин его не
+    // останавливал. Считаются только неудачи — офис за одним NAT входит утром
+    // весь сразу.
+    const failKey = `login-fail:${remoteIp}`;
+    if (isRateLimited(failKey, { maxAttempts: 30, windowMs: 600000 })) {
+      return res.status(429).json({ error: 'Слишком много неудачных попыток входа с этого адреса. Повторите позже.' });
+    }
+
+    let result;
+    try {
+      result = await AuthService.login(username, password, { ip: remoteIp });
+    } catch (err) {
+      registerFailure(failKey, { windowMs: 600000 });
+      AuditService.log({ action: 'login_failed', ip: remoteIp, details: { username: String(username).slice(0, 64) } });
+      throw err;
+    }
     AuditService.log({
       userId: result.user.id,
       action: 'login',
@@ -225,7 +270,11 @@ router.get('/users/:id', requireAuth, route(async (req, res) => {
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
   // Полная запись — себе и администратору. Коллеге — те же поля, что и в
   // общем справочнике, без адресов входа и устройства прав.
-  const privileged = user.id === req.user.id || isSuperAdmin(req.user) || isScopedAdmin(req.user);
+  let privileged = user.id === req.user.id || isSuperAdmin(req.user);
+  if (!privileged && isScopedAdmin(req.user) && req.user.admin_scope_dept_id) {
+    const allowed = new Set(await OrgService.getSubtreeDepartmentIds(req.user.admin_scope_dept_id));
+    privileged = allowed.has(Number(user.department_id));
+  }
   res.json(privileged ? user : UserService.toPublicUser(user));
 }));
 
@@ -245,6 +294,10 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     const { oldPassword, newPassword } = req.body || {};
     await UserService.changePassword(req.user.id, oldPassword, newPassword);
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
+    // Старый токен отозван, но открытые соединения авторизовались им раньше.
+    // Без разрыва тот, кто украл токен, продолжал бы писать от имени сотрудника.
+    // Клиент переподключится уже с новым токеном из этого ответа.
+    wsServer.disconnectUser(req.user.id, 'Пароль изменён — переподключение');
 
     // Прежний токен только что перестал действовать вместе со сменой пароля —
     // без нового клиенту пришлось бы входить заново прямо здесь.
@@ -288,8 +341,21 @@ router.post('/admin/users', requireAuth, requireAdminOrScopedAdmin, route(async 
 
 router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
   try {
-    await assertWithinAdminScope(req.user, { targetUserId: Number(req.params.id), payload: req.body });
-    const updated = await UserService.adminUpdateUser(Number(req.params.id), req.body);
+    const targetId = Number(req.params.id);
+    await assertWithinAdminScope(req.user, { targetUserId: targetId, payload: req.body });
+    const updated = await UserService.adminUpdateUser(targetId, req.body);
+    const body = req.body || {};
+    AuditService.log({
+      userId: req.user.id,
+      action: 'user_updated_by_admin',
+      ip: getClientIp(req),
+      details: { targetUserId: targetId, fields: Object.keys(body).filter((k) => k !== 'password') }
+    });
+    // Роль, зона или активность поменялись — права открытых соединений взяты из
+    // прежней записи. Их нужно закрыть, иначе пониженный сохраняет старые права.
+    if (body.role_id !== undefined || body.is_active !== undefined || body.admin_scope_dept_id !== undefined) {
+      wsServer.disconnectUser(targetId, 'Права учётной записи изменены — войдите заново');
+    }
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
   } catch (err) {
@@ -318,6 +384,7 @@ router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(
 router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, route(async (req, res) => {
   try {
     const updated = await UserService.toggleUserActive(Number(req.params.id));
+    AuditService.log({ userId: req.user.id, action: updated.is_active ? 'user_activated' : 'user_deactivated', ip: getClientIp(req), details: { targetUserId: Number(req.params.id) } });
     if (!updated.is_active) wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
@@ -550,6 +617,7 @@ router.delete('/admin/channels/:id', requireAuth, requireAdmin, (req, res) => {
       throw new Error('Запрещено удалять главный корпоративный канал');
     }
 
+    AuditService.log({ userId: req.user.id, action: 'channel_deleted', ip: getClientIp(req), details: { channelId, name: channel.name } });
     db.prepare("DELETE FROM messages WHERE conversation_type = 'channel' AND target_id = ?").run(channelId);
     db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
     db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
@@ -564,7 +632,17 @@ router.delete('/admin/channels/:id', requireAuth, requireAdmin, (req, res) => {
 // ── ИНСТРУМЕНТЫ ──
 router.get('/admin/audit/messages', requireAuth, requireAdmin, route(async (req, res) => {
   try {
-    res.json(await MessageService.searchAuditLogs(req.query.q || '', req.query.limit || 100));
+    const rows = await MessageService.searchAuditLogs(req.query.q || '', req.query.limit || 100);
+    // Чтение чужой переписки — самое чувствительное действие в системе. Оно
+    // разрешено только главному администратору и всегда оставляет след:
+    // без записи в журнал результат не отдаётся.
+    await AuditService.logNow({
+      userId: req.user.id,
+      action: 'messages_read_by_admin',
+      ip: getClientIp(req),
+      details: { query: String(req.query.q || '').slice(0, 200), rows: rows.length }
+    });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -626,11 +704,13 @@ router.post('/admin/filters', requireAuth, requireAdmin, route(async (req, res) 
 
 // ── НАСТРОЙКИ ──
 router.get('/admin/settings', requireAuth, requireAdmin, route(async (req, res) => {
-  res.json(await SettingsService.getAllSettings({ fresh: true }));
+  const { last_admin_password_reset, ...visible } = await SettingsService.getAllSettings({ fresh: true });
+  res.json(visible);
 }));
 
 router.put('/admin/settings', requireAuth, requireAdmin, route(async (req, res) => {
   try {
+    AuditService.log({ userId: req.user.id, action: 'settings_changed', ip: getClientIp(req), details: { keys: Object.keys(req.body || {}) } });
     res.json(await SettingsService.updateSettings(req.body));
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -860,7 +940,10 @@ router.post('/announcements', requireAuth, route(async (req, res) => {
     if (!req.user.permissions.can_broadcast && !req.user.permissions.is_admin) {
       return res.status(403).json({ error: 'Нет прав на отправку массовых оповещений' });
     }
-    const ann = await AnnouncementService.createAnnouncement({ author_id: req.user.id, ...req.body });
+    // Автор — всегда тот, кто отправил. Раньше author_id из тела запроса
+    // перекрывал настоящего, и распоряжение уходило «от директора».
+    const ann = await AnnouncementService.createAnnouncement({ ...(req.body || {}), author_id: req.user.id });
+    AuditService.log({ userId: req.user.id, action: 'announcement_created', ip: getClientIp(req), details: { announcementId: ann?.id } });
     wsServer.broadcast({ type: 'new_announcement', announcement: ann });
     res.status(201).json(ann);
   } catch (err) {
@@ -1033,35 +1116,64 @@ function requireUploadPermission(req, res, next) {
 // «файл слишком большой». Запас в 1 МБ — на служебные части формы.
 const UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const FORM_OVERHEAD_BYTES = 1024 * 1024;
+// Одновременных загрузок на сотрудника. Больше двух — это уже не работа.
+const MAX_PARALLEL_UPLOADS = 2;
+const activeUploads = new Map(); // userId -> число идущих загрузок
 
-function acceptUpload(req, res, next) {
+async function acceptUpload(req, res, next) {
+  // Настройка «максимальный размер» в консоли раньше ни на что не влияла.
+  const configuredMb = Number(await SettingsService.getSetting('max_upload_size_mb', '100'));
+  const limitBytes = Math.min(UPLOAD_LIMIT_BYTES, Number.isFinite(configuredMb) && configuredMb > 0 ? configuredMb * 1024 * 1024 : UPLOAD_LIMIT_BYTES);
+  const limitMb = Math.round(limitBytes / (1024 * 1024));
+
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > UPLOAD_LIMIT_BYTES + FORM_OVERHEAD_BYTES) {
+  if (Number.isFinite(declared) && declared > limitBytes + FORM_OVERHEAD_BYTES) {
     res.set('Connection', 'close');
-    return res.status(413).json({ error: 'Файл больше 100 МБ — такой файл загрузить нельзя' });
+    return res.status(413).json({ error: `Файл больше ${limitMb} МБ — такой файл загрузить нельзя` });
   }
-  upload.single('file')(req, res, (err) => {
+
+  const userId = req.user.id;
+  const running = activeUploads.get(userId) || 0;
+  if (running >= MAX_PARALLEL_UPLOADS) {
+    return res.status(429).json({ error: 'Дождитесь окончания текущих загрузок' });
+  }
+  activeUploads.set(userId, running + 1);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    const left = (activeUploads.get(userId) || 1) - 1;
+    if (left > 0) activeUploads.set(userId, left);
+    else activeUploads.delete(userId);
+    // Временный файл не должен пережить запрос, чем бы он ни кончился.
+    if (req.file?.path) fs.rm(req.file.path, { force: true }, () => {});
+  };
+  res.on('finish', release);
+  res.on('close', release);
+
+  uploaderFor(limitBytes).single('file')(req, res, (err) => {
     if (!err) return next();
     const tooLarge = err.code === 'LIMIT_FILE_SIZE';
     res.status(tooLarge ? 413 : 400).json({
-      error: tooLarge ? 'Файл больше 100 МБ — такой файл загрузить нельзя' : `Файл не принят: ${err.message}`
+      error: tooLarge ? `Файл больше ${limitMb} МБ — такой файл загрузить нельзя` : 'Файл не принят'
     });
   });
 }
 
-router.post('/files/upload', requireAuth, requireUploadPermission, acceptUpload, (req, res) => {
+router.post('/files/upload', requireAuth, requireUploadPermission, route(acceptUpload), route(async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не прикреплен' });
-    res.status(201).json(FileService.saveUploadedFile({
+    res.status(201).json(await FileService.saveUploadedFile({
       uploaderId: req.user.id,
       originalName: Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
-      buffer: req.file.buffer,
+      tempPath: req.file.path,
+      size: req.file.size,
       mimeType: req.file.mimetype
     }));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: 'Файл не сохранён' });
   }
-});
+}));
 
 router.get('/files/download/:id', requireAuth, (req, res) => {
   const file = FileService.getFileById(req.params.id);
@@ -1114,7 +1226,9 @@ router.get('/admin/db/tables/:name/data', requireAuth, requireAdmin, (req, res) 
   try {
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
     const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
-    res.json(DbStudioService.getTableData(req.params.name, limit, offset));
+    const data = DbStudioService.getTableData(req.params.name, limit, offset);
+    AuditService.log({ userId: req.user.id, action: 'db_table_viewed', ip: getClientIp(req), details: { table: String(req.params.name), limit, offset } });
+    res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1171,6 +1285,7 @@ router.get('/admin/devices/pending', requireAuth, requireAdminOrScopedAdmin, rou
 
 router.post('/admin/devices/bind', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
   try {
+    await assertWithinAdminScope(req.user, { targetUserId: Number(req.body?.user_id) });
     const result = await DeviceService.bindDevice({ ...req.body, adminUser: req.user });
     AuditService.log({
       userId: req.user.id,
@@ -1194,6 +1309,10 @@ router.post('/admin/devices/auto-match', requireAuth, requireAdminOrScopedAdmin,
 
 router.post('/admin/devices/unbind', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
   try {
+    const owner = await DeviceService.getPairingOwner(req.body?.device_id);
+    if (owner) await assertWithinAdminScope(req.user, { targetUserId: Number(owner.user_id) });
+    else if (!isSuperAdmin(req.user)) throw new Error('Устройство не найдено');
+    AuditService.log({ userId: req.user.id, action: 'device_unbound', ip: getClientIp(req), details: { deviceId: String(req.body?.device_id), targetUserId: owner?.user_id ?? null } });
     res.json(await DeviceService.unbindDevice(req.body?.device_id));
   } catch (err) {
     res.status(400).json({ error: err.message });
