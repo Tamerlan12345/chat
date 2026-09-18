@@ -41,3 +41,7 @@ Thumbs.db
 installer/win-unpacked/
 installer/app/
 *.zip
+
+# Сборка презентации
+desktop/presentation/dist-app/
+desktop/presentation/dist-deck/
