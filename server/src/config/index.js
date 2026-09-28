@@ -125,6 +125,20 @@ module.exports = {
   DEVICE_SECRET_TTL_DAYS: process.env.DEVICE_SECRET_TTL_DAYS
     ? parseInt(process.env.DEVICE_SECRET_TTL_DAYS, 10)
     : 30,
+  // Токены прежнего (миллисекундного) формата принимаются лишь до этой даты —
+  // после неё отклоняются, даже если их exp ещё не наступил, и владельцу
+  // придётся войти заново обычным способом. Без отсечки такой токен обходил
+  // бы проверки iss/aud/auth_time, которым подчиняются все новые токены
+  // (аудит, находка №17).
+  LEGACY_TOKEN_CUTOFF: process.env.LEGACY_TOKEN_CUTOFF || '2026-10-15T00:00:00Z',
+  // Автоимпорт учётных записей из резервных файлов (data/identity.db,
+  // data/pre-identity-split.db) в пустое хранилище — операция, которая
+  // подставляет чужие пароли и устройства поверх того, что сервер считает
+  // «новой установкой». Раньше он срабатывал сам по себе, как только рабочее
+  // хранилище оказывалось пустым — в том числе по ошибке (опечатка в
+  // DATABASE_URL, ещё не поднявшийся PostgreSQL). Явный флаг — осознанное
+  // решение оператора, а не побочный эффект пустой базы (аудит, находка №16).
+  IDENTITY_AUTO_IMPORT: process.env.IDENTITY_AUTO_IMPORT === 'true',
   // Automatic scheduled backups (in addition to the manual "Backup now"
   // button in the admin DB studio) — mychat.db is the only copy of the
   // company's data, so this is not optional in production.

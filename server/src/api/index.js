@@ -50,6 +50,29 @@ function publicSettings(all) {
   return Object.fromEntries(Object.entries(all || {}).filter(([key]) => !INTERNAL_SETTING.test(key)));
 }
 
+// Все ключи прав, которые где-либо проверяются в коде сервера
+// (`grep permissions\. server/src`) плюс те, что заводятся у ролей чистой
+// установки (server/src/db/identity/index.js, BASE_ROLES). PUT /admin/roles/:id
+// раньше сохранял JSON.stringify(permissions) как есть — опечатка в ключе
+// молча превращалась в бессмысленное право (аудит, находка №18).
+const KNOWN_PERMISSION_KEYS = new Set([
+  'is_admin', 'is_scoped_admin',
+  'can_manage_users', 'can_manage_structure', 'can_manage_db',
+  'can_broadcast', 'can_call', 'can_remote_control',
+  'can_create_channels', 'can_upload_files'
+]);
+
+function assertKnownPermissions(permissions) {
+  for (const [key, value] of Object.entries(permissions)) {
+    if (!KNOWN_PERMISSION_KEYS.has(key)) {
+      throw new Error(`Неизвестное право: ${key}`);
+    }
+    if (typeof value !== 'boolean') {
+      throw new Error(`Право ${key} должно быть true или false`);
+    }
+  }
+}
+
 const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_telegram', 'allow_registration']);
 function validateSettingsUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
@@ -641,6 +664,7 @@ router.put('/admin/roles/:id', requireAuth, requireAdmin, route(async (req, res)
     if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
       return res.status(400).json({ error: 'Не переданы права роли' });
     }
+    assertKnownPermissions(permissions);
 
     const db = identity();
     const roleId = Number(req.params.id);

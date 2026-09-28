@@ -12,6 +12,12 @@ const DIALOG_LIST_LIMIT = 50;
 
 const MESSAGE_TYPES = new Set(['text', 'file', 'image']);
 
+// Текст без верхней границы сохранялся целиком и рассылался каждому участнику
+// переписки — один авторизованный отправитель мог гонять по многомегабайтному
+// сообщению в канал с сотней участников (аудит, находка №7). Предел щедрый —
+// это не лимит на «длинное сообщение», а защита от злоупотребления.
+const MAX_TEXT_LENGTH = 16000;
+
 class MessageService {
   // У канала нет негласного правила «читать может каждый»: участие
   // проверяется явно, и в REST, и в WebSocket.
@@ -216,6 +222,9 @@ class MessageService {
     const body = typeof text === 'string' ? text : String(text ?? '');
     if (!body.trim() && type === 'text') {
       throw new Error('Пустое сообщение не отправляется');
+    }
+    if (body.length > MAX_TEXT_LENGTH) {
+      throw new Error(`Сообщение слишком длинное (не больше ${MAX_TEXT_LENGTH} символов)`);
     }
 
     // Ссылка на вложение и есть пропуск к файлу: доступ к скачиванию выдаётся
@@ -450,3 +459,4 @@ class MessageService {
 
 module.exports = MessageService;
 module.exports.DIALOG_LIST_LIMIT = DIALOG_LIST_LIMIT;
+module.exports.MAX_TEXT_LENGTH = MAX_TEXT_LENGTH;

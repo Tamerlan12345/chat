@@ -4,6 +4,7 @@ const { hashPassword, verifyPassword } = require('../db/identity/password');
 const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
+const { isRateLimited, registerFailure } = require('./rate-limiter');
 
 // Одно сообщение на все отказы, включая временную блокировку: отдельный
 // текст о блокировке выдавал, что такой логин существует.
@@ -39,6 +40,15 @@ function dummyHash() {
     dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
   }
   return dummyHashPromise;
+}
+
+// Ключ ограничителя входа — конкретный адрес и конкретный логин, не учётная
+// запись сама по себе (см. registerFailedAttempt/login).
+function loginLockKey(ip, username) {
+  return `login-lock:${ip || 'unknown'}:${String(username || '').trim().toLowerCase()}`;
+}
+function loginLockOptions() {
+  return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
 }
 
 class AuthService {
@@ -107,10 +117,15 @@ class AuthService {
 
       const nowMs = Date.now();
       // Токены прежнего формата хранили срок в миллисекундах и жили неделю.
-      // Принимаются до своего срока, чтобы обновление сервера не выбросило всех
-      // разом; новых таких не выдаётся.
+      // Принимались до своего срока, чтобы обновление сервера не выбросило всех
+      // разом — но они также обходят проверки iss/aud/auth_time ниже, которым
+      // подчиняются все новые токены. LEGACY_TOKEN_CUTOFF — жёсткая дата, после
+      // которой такой токен не принимается, даже если его exp ещё впереди:
+      // владельцу придётся войти заново (аудит, находка №17). Новых токенов
+      // этого формата не выдаётся уже давно.
       if (payload.exp > 1e11) {
         if (payload.exp < nowMs) return null;
+        if (nowMs >= new Date(config.LEGACY_TOKEN_CUTOFF).getTime()) return null;
         payload.legacy = true;
         return payload;
       }
@@ -204,7 +219,7 @@ class AuthService {
     const db = identity();
     const row = await db.get(
       `SELECT u.id, u.username, u.password_hash, u.salt, u.is_active, u.approval_status,
-              u.failed_login_count, u.locked_until, u.token_version
+              u.token_version
        FROM users u WHERE u.username = $1`,
       [String(username || '').trim()]
     );
@@ -218,15 +233,21 @@ class AuthService {
       throw new Error(INVALID_CREDENTIALS);
     }
 
-    const now = Date.now();
-    if (row.locked_until && new Date(row.locked_until).getTime() > now) {
+    // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
+    // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
+    // для всей компании, включая настоящего владельца с любого другого места
+    // (аудит, находка №12; план 1.7 — задержка по IP+имени вместо жёсткой
+    // блокировки). Ключ в памяти процесса, как и остальные ограничители —
+    // после перезапуска отсчёт начинается заново, что для временной задержки
+    // приемлемо.
+    if (isRateLimited(loginLockKey(ip, row.username), loginLockOptions())) {
       await verifyPassword(password, await dummyHash()).catch(() => {});
       throw new Error(INVALID_CREDENTIALS);
     }
 
     const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
     if (!ok) {
-      await this.registerFailedAttempt(row);
+      await this.registerFailedAttempt(row, ip);
       throw new Error(INVALID_CREDENTIALS);
     }
 
@@ -261,7 +282,6 @@ class AuthService {
     await db.run(
       `UPDATE users
        SET status = 'online', last_seen = $1, last_login_at = $1, last_login_ip = $2,
-           failed_login_count = 0, locked_until = NULL,
            must_change_password = CASE WHEN $4 = 1 THEN 1 ELSE must_change_password END
        WHERE id = $3`,
       [nowIso, ip, row.id, weak ? 1 : 0]
@@ -272,28 +292,36 @@ class AuthService {
   }
 
   /**
-   * Счётчик неудачных попыток живёт в базе, а не в памяти процесса: иначе
-   * перезапуск сервера или смена адреса возобновляют подбор с нуля. После
-   * порога учётная запись запирается на короткий срок — достаточный, чтобы
-   * подбор стал бессмысленным, и слишком короткий, чтобы им травить коллегу.
+   * Счётчик неудачных попыток живёт в памяти процесса, по паре адрес+логин, а
+   * не по учётной записи в базе (см. комментарий в login()). После порога эта
+   * пара временно не пускает ко входу — достаточно долго, чтобы подбор стал
+   * бессмысленным, и не трогая ни владельца с другого места, ни коллегу,
+   * которого атакующий этим же логином не запирает нигде, кроме своего адреса.
    */
-  static async registerFailedAttempt(row) {
-    const attempts = Number(row.failed_login_count || 0) + 1;
-    const reachedLimit = attempts >= config.LOGIN_MAX_FAILED_ATTEMPTS;
-    const lockedUntil = reachedLimit
-      ? new Date(Date.now() + config.LOGIN_LOCKOUT_MINUTES * 60000).toISOString()
-      : null;
+  static async registerFailedAttempt(row, ip) {
+    const key = loginLockKey(ip, row.username);
+    const opts = loginLockOptions();
+    const wasLocked = isRateLimited(key, opts);
+    registerFailure(key, opts);
+    if (wasLocked) return; // уже заблокирован этой парой — событие не повторяется
 
-    await identity().run(
-      `UPDATE users SET failed_login_count = $1, locked_until = COALESCE($2, locked_until) WHERE id = $3`,
-      [reachedLimit ? 0 : attempts, lockedUntil, row.id]
-    );
-
-    if (reachedLimit) {
-      require('./audit.service').log({ userId: row.id, action: 'account_locked', details: { minutes: config.LOGIN_LOCKOUT_MINUTES } });
+    if (isRateLimited(key, opts)) {
+      // Порог только что достигнут для этой пары адрес+логин.
+      // В центр безопасности событие уходит только для учётной записи
+      // администратора: рядовой сотрудник, несколько раз ошибившийся паролем,
+      // тревоги поднимать не должен (план 1.7, аудит, находка №12).
+      const account = await UserService.getUserById(row.id);
+      if (account?.permissions?.is_admin || account?.permissions?.is_scoped_admin) {
+        require('./audit.service').log({
+          userId: row.id,
+          action: 'account_locked',
+          ip,
+          details: { minutes: config.LOGIN_LOCKOUT_MINUTES, username: row.username }
+        });
+      }
       console.warn(
-        `[Auth] Учётная запись "${row.username}" заблокирована на ${config.LOGIN_LOCKOUT_MINUTES} мин. ` +
-          `после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток входа.`
+        `[Auth] Вход в учётную запись "${row.username}" с адреса ${ip || 'неизвестно'} заблокирован на ` +
+          `${config.LOGIN_LOCKOUT_MINUTES} мин. после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток.`
       );
     }
   }

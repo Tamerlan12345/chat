@@ -116,15 +116,23 @@ function legacyHasUsers(legacyDb) {
  */
 function findImportSource({ dialect, legacyDb = null }) {
   const candidates = [];
+  // fromStaleFile: кандидаты, читаемые с диска отдельным файлом, а не из уже
+  // открытой базы переписки этого же запуска. Именно они — тот риск из
+  // находки №16: если рабочее хранилище опустело по ошибке (опечатка в
+  // DATABASE_URL, ещё не поднявшийся PostgreSQL), сервер раньше молча
+  // подставлял вместо чистой установки чужие пароли и устройства из старой
+  // копии. legacyDb (прежняя общая база) в их число не входит — это не
+  // резервная копия, а прямой перенос при штатном первом разделении баз.
   if (dialect === 'postgres') {
-    candidates.push({ label: 'запасное хранилище data/identity.db', path: config.IDENTITY_DB_PATH });
+    candidates.push({ label: 'запасное хранилище data/identity.db', path: config.IDENTITY_DB_PATH, fromStaleFile: true });
   }
   if (legacyDb) {
     candidates.push({ label: 'прежняя общая база data/mychat.db', db: legacyDb });
   }
   candidates.push({
     label: 'снимок data/pre-identity-split.db',
-    path: path.join(config.DATA_DIR, 'pre-identity-split.db')
+    path: path.join(config.DATA_DIR, 'pre-identity-split.db'),
+    fromStaleFile: true
   });
 
   for (const candidate of candidates) {
@@ -132,6 +140,14 @@ function findImportSource({ dialect, legacyDb = null }) {
     let opened = false;
     if (!db) {
       if (!fs.existsSync(candidate.path)) continue;
+      if (candidate.fromStaleFile && !config.IDENTITY_AUTO_IMPORT) {
+        console.warn(
+          `[Identity] ${candidate.label} найден на диске, но автоимпорт из резервных файлов выключен ` +
+            '(IDENTITY_AUTO_IMPORT не задан) — источник пропущен. Если перенос нужен намеренно, ' +
+            'задайте IDENTITY_AUTO_IMPORT=true (аудит, находка №16).'
+        );
+        continue;
+      }
       try {
         db = new DatabaseSync(candidate.path);
         opened = true;

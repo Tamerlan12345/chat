@@ -230,26 +230,34 @@ test('отключение и включение сотрудника', async ()
   assert.ok((await AuthService.login('sidorov', 'ещёодинпароль')).token);
 });
 
-test('серия неудачных входов временно запирает учётную запись', async () => {
-  // Ограничитель по IP живёт в памяти процесса: перезапуск сервера или смена
-  // адреса возобновляют подбор с нуля. Счётчик в базе — нет.
+test('серия неудачных входов запирает пару адрес+логин, а не учётную запись целиком', async () => {
+  // Задача 3 (аудит, находка №12): блокировка держится в памяти процесса и
+  // ключом ей служит пара «адрес + логин», а не сама учётная запись — иначе
+  // подбор пароля к известному логину с одного адреса запирал бы вход этим
+  // логином для всей компании, включая настоящего владельца с любого другого
+  // места. Раньше здесь проверялся row.locked_until в базе — колонка больше
+  // не пишется этим путём именно потому, что блокировка больше не про запись
+  // в users, а про пару адрес+логин (см. AuthService.registerFailedAttempt).
   const config = require('../src/config');
-  const created = await UserService.createUser({
+  await UserService.createUser({
     username: 'lockme',
     full_name: 'Заблокируй Меня',
     password: 'нормальныйпароль'
   });
 
+  const attackerIp = '198.51.100.20';
   for (let i = 0; i < config.LOGIN_MAX_FAILED_ATTEMPTS; i++) {
-    await assert.rejects(() => AuthService.login('lockme', 'неверный пароль'));
+    await assert.rejects(() => AuthService.login('lockme', 'неверный пароль', { ip: attackerIp }));
   }
 
   await assert.rejects(
-    () => AuthService.login('lockme', 'нормальныйпароль'),
+    () => AuthService.login('lockme', 'нормальныйпароль', { ip: attackerIp }),
     /временно заблокирован/,
-    'после порога не пускает даже с верным паролем'
+    'после порога атакующий адрес не пускает даже с верным паролем'
   );
 
-  const row = await raw(created.id);
-  assert.ok(row.locked_until, 'срок блокировки должен быть записан');
+  // Другой адрес той же парой не связан — учётная запись доступна оттуда, как
+  // и должно быть при задержке по IP+имени, а не жёсткой блокировке аккаунта.
+  const fromElsewhere = await AuthService.login('lockme', 'нормальныйпароль', { ip: '203.0.113.55' });
+  assert.ok(fromElsewhere.token, 'с другого адреса верный пароль должен пройти');
 });
