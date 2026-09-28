@@ -55,5 +55,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Страница «Нет связи с сервером».
   retryServerConnection: () => ipcRenderer.invoke('offline-retry'),
-  onOfflineStatus: subscribe('offline-status')
+  onOfflineStatus: subscribe('offline-status'),
+
+  // Версия оболочки и автообновление (только главное окно).
+  // getAppInfo() -> { version, kind } | null;
+  // getUpdateState() -> { status, currentVersion, offeredVersion, progress,
+  //   mandatory, message, kind, error, downloadUrl };
+  // checkForUpdates() -> { ok, reason?, state? } — не чаще раза в минуту;
+  // installUpdate() -> { ok, reason? } — только когда status === 'downloaded';
+  // openUpdateDownload() -> boolean — ссылку главный процесс берёт у себя;
+  // onUpdateStatus(cb) -> отписка; cb получает то же состояние.
+  // Проверка по наличию: у старой оболочки (1.0.0) этих функций нет.
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  getUpdateState: () => ipcRenderer.invoke('update-get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('update-check'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+  openUpdateDownload: () => ipcRenderer.invoke('update-open-download'),
+  onUpdateStatus: subscribe('update-status')
 });

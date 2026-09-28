@@ -17,7 +17,10 @@ const {
 const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isAutostartSupported } = require('./autostart');
 
 const { decidePermissionRequest, decidePermissionCheck } = require('./permissions');
-const { resolveServerUrl, isInsecureRequestBlocked } = require('./server-url');
+const { isInsecureRequestBlocked } = require('./server-url');
+const { readClientConfig, resolveEffectiveServerUrl, programDataDir } = require('./client-config');
+const { detectInstallKind, updateCapability, isUpdaterRequestAllowed } = require('./update-policy');
+const { UpdateController } = require('./updater');
 const { planReceivedFileName, zoneIdentifierContent, formatFileSize } = require('./received-file');
 const { safeDownloadName, isDangerousExtension } = require('./download-guard');
 const {
@@ -74,12 +77,37 @@ log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 // просмотра брали его из разных переменных и могли смотреть на разные серверы.
 // От него же отсчитывается, какой странице доверять (см. security.js).
 // В рабочей сборке переменные окружения не читаются, а http не принимается
-// вовсе (см. server-url.js).
+// вовсе (см. server-url.js). Сервер в локальной сети задаёт ИТ файлом
+// %ProgramData%\OpenMyChat Enterprise\client.json (см. client-config.js);
+// без него — константа ниже.
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
-const serverChoice = resolveServerUrl({ isPackaged: app.isPackaged, env: process.env, defaultUrl: DEFAULT_SERVER_URL });
+const clientConfig = readClientConfig({
+  programData: programDataDir(process.env),
+  readFile: (file) => fs.readFileSync(file, 'utf8'),
+  isPackaged: app.isPackaged
+});
+for (const problem of clientConfig.problems) log(`client.json: ${problem}`);
+const serverChoice = resolveEffectiveServerUrl({
+  config: clientConfig,
+  hardDefault: DEFAULT_SERVER_URL,
+  isPackaged: app.isPackaged,
+  env: process.env
+});
 if (serverChoice.ignored) log(`server URL from environment rejected: ${redactUrl(serverChoice.ignored)}`);
 const SERVER_URL = serverChoice.url;
 const SERVER_ORIGIN = originOf(SERVER_URL);
+log(`server: ${SERVER_ORIGIN} (${serverChoice.source})`);
+
+// Как установлено приложение — от этого зависит, может ли оно обновить себя
+// само (см. update-policy.js).
+const INSTALL_KIND = detectInstallKind({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+  env: process.env,
+  exists: (file) => fs.existsSync(file),
+  programFiles: [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.ProgramW6432]
+});
+log(`install kind: ${INSTALL_KIND}`);
 
 const OFFLINE_PAGE = path.join(__dirname, 'offline.html');
 
@@ -605,6 +633,7 @@ function updateTrayMenu(status = 'online') {
       label: 'Открыть MyChat',
       click: () => showMainWindow()
     },
+    ...updateTrayItems(),
     ...(hostSession.active
       ? [{ type: 'separator' }, { label: 'Завершить удалённый доступ', click: () => stopFromIndicator('tray menu') }]
       : []),
@@ -673,6 +702,185 @@ function createTray() {
   // нему. Двойного клика ждал не каждый: одного достаточно, как у мессенджеров.
   tray.on('click', () => showMainWindow());
   tray.on('double-click', () => showMainWindow());
+}
+
+// ── Автообновление ─────────────────────────────────────────────────────────
+// Вся логика — в updater.js; здесь только Electron: сеть, окна, трей, IPC.
+
+let updateController = null;
+let updaterSession = null;
+
+// Источник обновлений — сервер приложения, и только по https.
+const UPDATE_ORIGIN = SERVER_ORIGIN && SERVER_ORIGIN.startsWith('https://') ? SERVER_ORIGIN : null;
+
+// electron-updater ходит в сеть через собственный раздел «electron-updater»
+// без кэша (electronHttpExecutor.getNetSession). Фильтр
+// defaultSession его не касается, поэтому здесь свой: только https и только
+// сервер обновлений — ни перенаправление, ни адрес из latest.yml не уведут
+// скачивание установщика на чужой сервер.
+function installUpdaterSessionGuard() {
+  const ses = session.fromPartition('electron-updater', { cache: false });
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    const allowed = isUpdaterRequestAllowed(details.url, UPDATE_ORIGIN);
+    if (!allowed) log(`updater request blocked: ${redactUrl(details.url)}`);
+    callback({ cancel: !allowed });
+  });
+  return ses;
+}
+
+const POLICY_MAX_BYTES = 64 * 1024;
+
+// policy.json — через тот же раздел и тот же фильтр, что и сам updater.
+async function fetchUpdateJson(url, { headers = {}, timeoutMs = 20000 } = {}) {
+  const ses = updaterSession;
+  if (!ses) throw new Error('updater session guard is missing');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await ses.fetch(url, { headers, signal: controller.signal });
+    if (res.status !== 200) return { status: res.status, body: null };
+    const text = await res.text();
+    if (text.length > POLICY_MAX_BYTES) return { status: res.status, body: null };
+    let body = null;
+    try { body = JSON.parse(text); } catch {}
+    return { status: res.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function showUpdateNotification({ title, body }) {
+  if (!Notification.isSupported()) return;
+  const notif = new Notification({ title: String(title).slice(0, 200), body: String(body).slice(0, 1000) });
+  notif.on('click', () => showMainWindow());
+  notif.show();
+}
+
+function blankUpdateState() {
+  return {
+    status: 'unsupported',
+    currentVersion: app.getVersion(),
+    offeredVersion: null,
+    progress: null,
+    mandatory: false,
+    message: null,
+    kind: INSTALL_KIND,
+    error: null,
+    downloadUrl: null
+  };
+}
+
+function currentUpdateState() {
+  return updateController ? updateController.getState() : blankUpdateState();
+}
+
+function installUpdateFromTray() {
+  if (!updateController) return;
+  const result = updateController.installNow();
+  if (!result.ok && result.reason === 'remote-session') {
+    showUpdateNotification({
+      title: 'Обновление отложено',
+      body: 'Во время удалённого доступа приложение не перезапускается. Завершите сеанс и повторите.'
+    });
+  }
+}
+
+function checkUpdatesFromTray() {
+  if (!updateController) return;
+  updateController
+    .checkNow({ userInitiated: true })
+    .then((result) => {
+      const s = result.state || currentUpdateState();
+      if (result.reason === 'rate-limited') {
+        showUpdateNotification({ title: 'Проверка обновлений', body: 'Проверка уже была меньше минуты назад.' });
+      } else if (s.status === 'idle') {
+        showUpdateNotification({ title: 'Проверка обновлений', body: `Установлена последняя доступная версия (${s.currentVersion}).` });
+      } else if (s.status === 'error') {
+        showUpdateNotification({ title: 'Проверка обновлений', body: 'Не удалось проверить обновления — повторим позже.' });
+      }
+    })
+    .catch((err) => log(`manual update check failed: ${err.message}`));
+}
+
+function updateTrayItems() {
+  if (!updateController) return [];
+  const s = updateController.getState();
+  const items = [];
+  if (s.status === 'downloaded') {
+    items.push({ label: `Перезапустить и обновить до ${s.offeredVersion}`, click: () => installUpdateFromTray() });
+  } else if (s.status === 'available' && s.downloadUrl) {
+    items.push({ label: `Скачать версию ${s.offeredVersion}`, click: () => updateController.openDownload() });
+  }
+  if (updateController.canCheck() && s.status !== 'downloaded') {
+    items.push({
+      label: 'Проверить обновления',
+      enabled: s.status !== 'checking' && s.status !== 'downloading',
+      click: () => checkUpdatesFromTray()
+    });
+  }
+  return items.length ? [{ type: 'separator' }, ...items] : [];
+}
+
+// Создаётся после главного окна: уведомления и вопрос об обязательном
+// обновлении должны быть к чему привязать.
+function startUpdater() {
+  if (updateController) return;
+  try {
+    const capability = updateCapability(INSTALL_KIND);
+    let lastTrayKey = null;
+    updateController = new UpdateController({
+      // electron-updater нужен только установке, которая умеет обновлять
+      // себя сама; остальным он лишь создал бы свой каталог и таймеры.
+      autoUpdater: capability === 'auto' && clientConfig.updates.enabled ? require('electron-updater').autoUpdater : null,
+      app,
+      config: clientConfig,
+      kind: INSTALL_KIND,
+      serverOrigin: UPDATE_ORIGIN,
+      log,
+      notify: showUpdateNotification,
+      sendToRenderer: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-status', state);
+      },
+      onStateChange: (state) => {
+        // Прогресс скачивания приходит часто — меню трея пересобирается
+        // только при смене состояния.
+        const key = `${state.status}|${state.offeredVersion}|${Boolean(state.downloadUrl)}`;
+        if (key === lastTrayKey) return;
+        lastTrayKey = key;
+        updateTrayMenu(currentTrayStatus);
+      },
+      hostSession,
+      fetchJson: fetchUpdateJson,
+      statePath: path.join(app.getPath('appData'), 'OpenMyChat Enterprise', 'update-state.json'),
+      readFile: (file) => fs.readFileSync(file, 'utf8'),
+      writeFile: (file, text) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+      },
+      readAppUpdateYml: () => fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'),
+      openExternal: (url) => {
+        shell.openExternal(url).catch((err) => log(`openExternal failed: ${err.message}`));
+      },
+      confirmMandatory: ({ version, signal }) =>
+        askUser(
+          {
+            type: 'warning',
+            title: 'Обязательное обновление',
+            message: `Обязательное обновление до версии ${version}. Перезапуск через 5 минут.`,
+            detail: 'Сохраните начатое сообщение. Приложение закроется, обновится и откроется снова.',
+            buttons: ['Перезапустить сейчас', 'Через 5 минут'],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            normalizeAccessKeys: false
+          },
+          { signal, bringToFront: true }
+        ).then((response) => (response === 0 ? 'now' : 'later'))
+    });
+    updateController.start();
+  } catch (err) {
+    log('updater start failed: ' + (err.stack || err.message));
+  }
 }
 
 // Сигнал системы меняет строку статуса в трее, но не снимает «Не беспокоить».
@@ -1397,6 +1605,38 @@ ipcMain.handle('get-device-info', (event) => {
   };
 });
 
+// Обновления. Только главное окно: страница сервера — удалённый код, и ни
+// окну просмотра, ни iframe незачем запускать установку. Адрес скачивания
+// страница не передаёт — он берётся из состояния главного процесса.
+ipcMain.handle('update-get-state', (event) => {
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return null;
+  return currentUpdateState();
+});
+
+ipcMain.handle('update-check', async (event) => {
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return { ok: false, reason: 'untrusted' };
+  if (!updateController) return { ok: false, reason: 'unsupported', state: currentUpdateState() };
+  return updateController.checkNow({ userInitiated: true });
+});
+
+ipcMain.handle('update-install', (event) => {
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return { ok: false, reason: 'untrusted' };
+  if (!updateController) return { ok: false, reason: 'unsupported' };
+  return updateController.installNow();
+});
+
+ipcMain.handle('update-open-download', (event) => {
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return false;
+  return updateController ? updateController.openDownload() : false;
+});
+
+// Настоящая версия оболочки — интерфейс сообщает её серверу (knock) и
+// показывает в подвале; раньше там была жёстко прописанная строка.
+ipcMain.handle('get-app-info', (event) => {
+  if (!isFromServerPage(event, { mainWindowOnly: true })) return null;
+  return { version: app.getVersion(), kind: INSTALL_KIND };
+});
+
 const TRAY_STATUSES = new Set(['online', 'away', 'offline', 'dnd']);
 
 ipcMain.on('sync-tray-status', (event, status) => {
@@ -1435,6 +1675,18 @@ app.whenReady().then(() => {
     if (cancel) log(`insecure request blocked: ${redactUrl(details.url)}`);
     callback({ cancel });
   });
+
+  // Раздел electron-updater — свой фильтр (только https и только сервер
+  // обновлений); ставится всегда, даже если обновления выключены.
+  try {
+    updaterSession = installUpdaterSessionGuard();
+  } catch (err) {
+    log('updater session guard failed: ' + err.message);
+  }
+
+  // Сервер видит, какая оболочка к нему пришла. Слово Electron в строке
+  // остаётся: по нему сервер отличает приложение от браузера.
+  app.userAgentFallback = `${app.userAgentFallback} OpenMyChatDesktop/${app.getVersion()} (${INSTALL_KIND})`;
 
   // Скачивание вложения обычной переписки (не файла удалённого стола —
   // у того свой путь, ipcMain.handle('rd-save-file', …) выше). Имя задаёт
@@ -1506,6 +1758,9 @@ app.whenReady().then(() => {
   } catch (err) {
     log('createMainWindow ERROR: ' + err.stack);
   }
+  // Без фильтра раздела updater обновления не запускаются вовсе.
+  if (updaterSession) startUpdater();
+  else log('updates: not started — updater session guard is missing');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
