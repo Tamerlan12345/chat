@@ -236,6 +236,9 @@ router.post('/auth/knock', route(async (req, res) => {
     const result = await DeviceService.knock({
       device_id, device_secret, device_name, ip_address: remoteIp, platform, client_version
     });
+    if (result.status === 'too_many_pending') {
+      return res.status(429).json({ error: result.message });
+    }
     if (result.status === 'paired') {
       AuditService.log({ userId: result.user.id, action: 'device_login', ip: remoteIp, details: { deviceId: String(device_id) } });
     }
@@ -243,6 +246,20 @@ router.post('/auth/knock', route(async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+// «Выход» на клиенте: устройство больше не должно входить без пароля этим
+// секретом. Снимает только секрет своей же привязки — ни существование, ни
+// принадлежность чужого device_id этот маршрут не подтверждает и не меняет
+// (аудит, находка №9: секрет переживал логаут, пока unbind не убирал его и
+// на сервере, а не только флагом в localStorage клиента).
+router.post('/auth/device/unbind', requireAuth, route(async (req, res) => {
+  const { device_id } = req.body || {};
+  const result = await DeviceService.unbindSecret(device_id, req.user.id);
+  if (result.unbound) {
+    AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
+  }
+  res.json({ ok: true });
 }));
 
 // Вход по паролю на привязанном устройстве выдаёт ему секрет для следующих

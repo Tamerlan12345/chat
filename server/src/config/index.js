@@ -118,6 +118,13 @@ module.exports = {
   LOGIN_LOCKOUT_MINUTES: process.env.LOGIN_LOCKOUT_MINUTES
     ? parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10)
     : 15,
+  // Секрет устройства (вход без пароля) не вечен: не подтверждённый повторным
+  // входом по паролю дольше этого срока перестаёт действовать сам. Без этого
+  // предела украденная копия localStorage работала бы бессрочно (аудит,
+  // находка №9).
+  DEVICE_SECRET_TTL_DAYS: process.env.DEVICE_SECRET_TTL_DAYS
+    ? parseInt(process.env.DEVICE_SECRET_TTL_DAYS, 10)
+    : 30,
   // Automatic scheduled backups (in addition to the manual "Backup now"
   // button in the admin DB studio) — mychat.db is the only copy of the
   // company's data, so this is not optional in production.

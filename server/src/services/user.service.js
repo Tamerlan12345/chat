@@ -18,6 +18,17 @@ const FULL_FIELDS = `
   u.approval_status, u.registered_at, u.token_version, u.last_login_at, u.last_login_ip
 `;
 
+// То же самое, но без token_version — для контурного администратора в
+// справочнике сотрудников. Номер поколения токена сам по себе не секрет, но
+// вместе с секретом устройства, который claim'ит один сотрудник, а видит
+// другой контурный администратор, он превращался в условие для получения
+// чужого токена без пароля (аудит, находка №1). Суперадминистратору поле
+// нужно для диагностики и оставлено.
+const SCOPED_ADMIN_FIELDS = `
+  ${PUBLIC_FIELDS}, u.bound_ip, u.admin_scope_dept_id, u.must_change_password,
+  u.approval_status, u.registered_at, u.last_login_at, u.last_login_ip
+`;
+
 const JOINS = `
   FROM users u
   LEFT JOIN roles r ON r.id = u.role_id
@@ -82,7 +93,8 @@ class UserService {
       allowedDeptIds = await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
     }
 
-    const fields = adminUser ? FULL_FIELDS : PUBLIC_FIELDS;
+    const isScopedAdminCaller = Boolean(adminUser?.permissions?.is_scoped_admin);
+    const fields = !adminUser ? PUBLIC_FIELDS : isScopedAdminCaller ? SCOPED_ADMIN_FIELDS : FULL_FIELDS;
     const pairing = adminUser
       ? `, dp.device_name AS paired_device_name, dp.device_id AS paired_device_id`
       : '';

@@ -87,7 +87,10 @@ const DDL = {
       paired_at TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       secret_hash TEXT,
-      secret_token_version INTEGER
+      secret_token_version INTEGER,
+      secret_user_id INTEGER,
+      secret_expires_at TEXT,
+      secret_auth_time TEXT
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -204,7 +207,10 @@ const DDL = {
       paired_at TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       secret_hash TEXT,
-      secret_token_version INTEGER
+      secret_token_version INTEGER,
+      secret_user_id INTEGER,
+      secret_expires_at TEXT,
+      secret_auth_time TEXT
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -260,6 +266,15 @@ const ADDED_COLUMNS = [
   // предъявил. Номер устройства сам по себе больше не пропуск.
   ['device_pairings', 'secret_hash', 'TEXT'],
   ['device_pairings', 'secret_token_version', 'INTEGER'],
+  // Секрет теперь привязан к тому, кто его claim'ил (secret_user_id), а не
+  // только к текущему владельцу устройства: перепривязка устройства другому
+  // сотруднику раньше молча наследовала чужой секрет (аудит, находка №1).
+  // secret_expires_at и secret_auth_time закрывают находку №9: секрет
+  // перестаёт быть вечным бессрочным ключом и не сбрасывает auth_time при
+  // каждом входе по устройству.
+  ['device_pairings', 'secret_user_id', 'INTEGER'],
+  ['device_pairings', 'secret_expires_at', 'TEXT'],
+  ['device_pairings', 'secret_auth_time', 'TEXT'],
   // Цепочка отпечатков журнала аудита: изменённая или удалённая запись
   // рвёт цепочку, и проверка это замечает.
   ['audit_logs', 'prev_hash', 'TEXT'],

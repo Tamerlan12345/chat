@@ -561,6 +561,12 @@ export default function App() {
     // выход всё равно должен случиться; keepalive даёт запросу пережить
     // перезагрузку окна.
     await revokeTokenOnServer();
+    // Секрет устройства отвязывается тоже: иначе вход без пароля продолжал
+    // бы работать после «выхода» — и с этого же компьютера, и с любой копии
+    // localStorage. Ошибка сети здесь не должна мешать выходу — оба запроса
+    // одинаково терпимы к недоступности сервера.
+    await unbindDeviceOnServer();
+    localStorage.removeItem('mychat_device_secret');
     // Раньше очищались только токен и пользователь: открытый чат, сообщения,
     // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
     // кто входил следующим за этим компьютером, видел чужую переписку.
@@ -598,6 +604,33 @@ export default function App() {
         fetch(`${serverUrlRef.current}/api/auth/logout`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${currentToken}` },
+          keepalive: true
+        }).catch(() => {}),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, LOGOUT_REQUEST_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // Раньше «выход» отзывал только сам токен: секрет устройства оставался на
+  // сервере действующим, и локальная копия localStorage (или тот же
+  // компьютер до следующего входа) снова впускала без пароля — секрет
+  // переживал логаут (аудит, находка №9). Отказ сети не должен блокировать
+  // выход — тем же способом, что и revokeTokenOnServer.
+  const unbindDeviceOnServer = async () => {
+    const currentToken = tokenRef.current;
+    const deviceId = localStorage.getItem('mychat_device_id');
+    if (!currentToken || !deviceId) return;
+    let timer = null;
+    try {
+      await Promise.race([
+        fetch(`${serverUrlRef.current}/api/auth/device/unbind`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentToken}` },
+          body: JSON.stringify({ device_id: deviceId }),
           keepalive: true
         }).catch(() => {}),
         new Promise((resolve) => {
