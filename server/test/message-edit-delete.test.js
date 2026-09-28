@@ -387,3 +387,133 @@ test('ответ на удалённое сообщение не показыв�
   const originalInHistory = history.find((m) => m.id === originalId);
   assert.strictEqual(originalInHistory.text, '', 'текст удалённого сообщения не должен отдаваться даже через ответ на него');
 });
+
+// ── Фикс раунд 1 (ревью Задачи 6): окно не должно «отказывать открыто» ────
+//
+// Раньше isWithinWindow(...) при мусорном значении (Number(...) === NaN или
+// 0) считала окно бесконечным — пустое поле в админ-панели или испорченная
+// настройка молча снимали ограничение вместо того, чтобы включить безопасное
+// значение по умолчанию (60 минут, как у остальных числовых настроек —
+// см. max_upload_size_mb в server/src/api/index.js).
+
+test('PUT /api/admin/settings: "abc" в окне правки отклоняется целиком, настройка не меняется', async () => {
+  const before = await SettingsService.getSetting('message_edit_window_minutes', '60');
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_edit_window_minutes: 'abc' }
+  });
+  assert.strictEqual(res.status, 400, res.text);
+  const after = await SettingsService.getSetting('message_edit_window_minutes', '60');
+  assert.strictEqual(after, before);
+});
+
+test('PUT /api/admin/settings: пустая строка в окне удаления отклоняется', async () => {
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_delete_window_minutes: '' }
+  });
+  assert.strictEqual(res.status, 400, res.text);
+});
+
+test('PUT /api/admin/settings: дробное значение "1.5" отклоняется', async () => {
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_edit_window_minutes: '1.5' }
+  });
+  assert.strictEqual(res.status, 400, res.text);
+});
+
+test('PUT /api/admin/settings: "-2" (меньше -1) отклоняется', async () => {
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_edit_window_minutes: '-2' }
+  });
+  assert.strictEqual(res.status, 400, res.text);
+});
+
+test('PUT /api/admin/settings: "0" принимается — правка старого сообщения разрешена (без ограничения)', async () => {
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_edit_window_minutes: '0' }
+  });
+  assert.strictEqual(res.status, 200, res.text);
+
+  // Отправитель — sidorov, а не ivanov: тот уже отправил в этом файле много
+  // сообщений тем же ключом ограничения (direct_message, 10/сек), и в общем
+  // прогоне (а не в одиночном запуске этого теста) успевал упереться в
+  // предел раньше, чем доходил до собственно проверки окна.
+  const sent = await sendAndWait(
+    'sidorov',
+    { type: 'direct_message', targetId: people.petrova.id, text: 'ОкноНольДопускает: старое сообщение' },
+    (m) => m.type === 'direct_message' && m.message?.text === 'ОкноНольДопускает: старое сообщение'
+  );
+  const messageId = sent.message.id;
+  const ancient = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(); // месяц назад
+  chat.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(ancient, messageId);
+
+  const updated = await sendAndWait(
+    'sidorov',
+    { type: 'edit_message', messageId, text: 'правка месяц спустя' },
+    (m) => m.type === 'message_updated' && m.message?.id === messageId
+  );
+  assert.strictEqual(updated.message.text, 'правка месяц спустя');
+});
+
+test('PUT /api/admin/settings: "-1" принимается — правка отклоняется даже сразу после отправки', async () => {
+  const res = await api('PUT', '/api/admin/settings', {
+    token: people.admin.token,
+    body: { message_edit_window_minutes: '-1' }
+  });
+  assert.strictEqual(res.status, 200, res.text);
+
+  const sent = await sendAndWait(
+    'sidorov',
+    { type: 'direct_message', targetId: people.petrova.id, text: 'ОкноМинусЕдиница: свежее сообщение' },
+    (m) => m.type === 'direct_message' && m.message?.text === 'ОкноМинусЕдиница: свежее сообщение'
+  );
+  const messageId = sent.message.id;
+  const err = await sendAndWait(
+    'sidorov',
+    { type: 'edit_message', messageId, text: 'правка сразу' },
+    (m) => m.type === 'error' && m.context === 'edit_message'
+  );
+  assert.ok(err.message);
+});
+
+test('испорченное значение окна в базе (в обход валидации) откатывается на 60 минут по умолчанию, а не снимает ограничение', async () => {
+  // Прямая запись в обход PUT /admin/settings — имитация повреждённой или
+  // унаследованной от старой версии настройки.
+  await SettingsService.setSetting('message_edit_window_minutes', 'испорчено-не-число');
+
+  const fresh = await sendAndWait(
+    'sidorov',
+    { type: 'direct_message', targetId: people.petrova.id, text: 'ИспорченнаяНастройкаСвежее: текст' },
+    (m) => m.type === 'direct_message' && m.message?.text === 'ИспорченнаяНастройкаСвежее: текст'
+  );
+  const freshId = fresh.message.id;
+  // 5 минут назад — в пределах отката по умолчанию (60 минут): правка должна пройти.
+  const recent = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  chat.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(recent, freshId);
+  const updated = await sendAndWait(
+    'sidorov',
+    { type: 'edit_message', messageId: freshId, text: 'правка в пределах отката' },
+    (m) => m.type === 'message_updated' && m.message?.id === freshId
+  );
+  assert.strictEqual(updated.message.text, 'правка в пределах отката');
+
+  const old = await sendAndWait(
+    'sidorov',
+    { type: 'direct_message', targetId: people.petrova.id, text: 'ИспорченнаяНастройкаСтарое: текст' },
+    (m) => m.type === 'direct_message' && m.message?.text === 'ИспорченнаяНастройкаСтарое: текст'
+  );
+  const oldId = old.message.id;
+  // 2 часа назад — за пределами отката по умолчанию (60 минут): правка отклоняется.
+  const past = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  chat.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(past, oldId);
+  const err = await sendAndWait(
+    'sidorov',
+    { type: 'edit_message', messageId: oldId, text: 'правка за пределами отката' },
+    (m) => m.type === 'error' && m.context === 'edit_message'
+  );
+  assert.ok(err.message, 'испорченная настройка не должна снимать ограничение молча');
+});

@@ -5,6 +5,17 @@ import Icon from './Icon';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
+import { isValidMessageWindowValue } from '../lib/message-actions.mjs';
+
+// Окна правки/удаления сообщений — единственные числовые настройки этого
+// раздела с содержательным «пусто»: пустое поле в PUT ушло бы как '' и
+// сервер (validateSettingsUpdate) отклонил бы весь набор настроек разом.
+// Здесь — своя, менее резкая реакция: конкретное поле в сохранение не
+// попадает, остальные настройки по-прежнему сохраняются.
+const MESSAGE_WINDOW_SETTING_LABELS = {
+  message_edit_window_minutes: 'Изменять сообщение можно',
+  message_delete_window_minutes: 'Удалять сообщение можно'
+};
 
 // Ключи настроек, которыми владеет раздел «Безопасность».
 const SECURITY_SETTING_KEYS = ['remote_desktop_enabled', 'rd_ice_servers', 'security_alerts_telegram'];
@@ -1032,6 +1043,20 @@ export default function AdminUserModal({
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
+      const body = withoutSecurityKeys(sysSettings);
+      // Пустое или нечисловое окно правки/удаления не отправляется вовсе:
+      // сервер всё равно отклонит его целиком (400 на весь PUT), а так
+      // одно недописанное поле не мешает сохранить остальные настройки —
+      // и не улетает в базу как '' (Number('') === 0 — «без ограничения»).
+      for (const key of Object.keys(MESSAGE_WINDOW_SETTING_LABELS)) {
+        if (!isValidMessageWindowValue(body[key])) {
+          delete body[key];
+          showToast(
+            `«${MESSAGE_WINDOW_SETTING_LABELS[key]}»: нужно целое число минут (−1 или больше) — значение не сохранено, прежнее осталось в силе`,
+            'error'
+          );
+        }
+      }
       const res = await fetch(`${serverUrl}/api/admin/settings`, {
         method: 'PUT',
         headers: {
@@ -1041,7 +1066,7 @@ export default function AdminUserModal({
         // Настройки удалённого стола и оповещений меняются в разделе
         // «Безопасность». Здесь они могли загрузиться раньше и затёрли бы
         // свежие значения при сохранении общих параметров.
-        body: JSON.stringify(withoutSecurityKeys(sysSettings))
+        body: JSON.stringify(body)
       });
       if (!res.ok) {
         showToast(await readError(res, 'Параметры сервера не сохранены'), 'error');

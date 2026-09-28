@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { canEdit, canDelete, applyUpdate, applyDelete } from '../src/renderer/src/lib/message-actions.mjs';
+import { canEdit, canDelete, applyUpdate, applyDelete, isValidMessageWindowValue } from '../src/renderer/src/lib/message-actions.mjs';
 
 // Правила «можно ли редактировать/удалить своё сообщение», по которым клиент
 // решает, показывать ли пункт меню. Сервер (MessageService.editMessage/
@@ -102,4 +102,61 @@ test('applyDelete: ставит is_deleted и очищает текст и вл�
   assert.strictEqual(updated[0].text, '');
   assert.strictEqual(updated[0].metadata_json, null);
   assert.strictEqual(updated[1].text, 'другое', 'соседнее сообщение не тронуто');
+});
+
+// ── Фикс раунд 1 (ревью Задачи 6): испорченное окно не «отказывает открыто» ─
+//
+// windowMin приходит с сервера (serverInfo.message_edit_window_minutes) как
+// строка. Раньше "abc" или "" превращались через Number(...) в NaN/0 и
+// withinWindow трактовала их как «без ограничения» — то есть недогруженная
+// или испорченная настройка молча открывала правку задним числом.
+
+test('canEdit: windowMin "abc" — тот же результат, что у окна по умолчанию (60 минут)', () => {
+  const recent = msg({ created_at: new Date(NOW - 5 * 60 * 1000).toISOString() }); // 5 минут назад
+  const old = msg({ created_at: new Date(NOW - 90 * 60 * 1000).toISOString() }); // 90 минут назад
+  assert.strictEqual(canEdit(recent, { me: ME, now: NOW, windowMin: 'abc' }), true, 'в пределах отката по умолчанию');
+  assert.strictEqual(canEdit(old, { me: ME, now: NOW, windowMin: 'abc' }), false, 'за пределами отката по умолчанию');
+});
+
+test('canEdit: windowMin "" (пустая строка) — тот же результат, что у окна по умолчанию', () => {
+  const recent = msg({ created_at: new Date(NOW - 5 * 60 * 1000).toISOString() });
+  const old = msg({ created_at: new Date(NOW - 90 * 60 * 1000).toISOString() });
+  assert.strictEqual(canEdit(recent, { me: ME, now: NOW, windowMin: '' }), true);
+  assert.strictEqual(canEdit(old, { me: ME, now: NOW, windowMin: '' }), false);
+});
+
+test('canEdit: дробное значение "1.5" отклоняется как формат — откат на 60 минут', () => {
+  const recent = msg({ created_at: new Date(NOW - 5 * 60 * 1000).toISOString() });
+  assert.strictEqual(canEdit(recent, { me: ME, now: NOW, windowMin: '1.5' }), true);
+});
+
+test('canDelete: windowMin "abc"/"" ведёт себя как окно по умолчанию (60 минут)', () => {
+  const recent = msg({ created_at: new Date(NOW - 5 * 60 * 1000).toISOString() });
+  const old = msg({ created_at: new Date(NOW - 90 * 60 * 1000).toISOString() });
+  assert.strictEqual(canDelete(recent, { me: ME, now: NOW, windowMin: 'abc' }), true);
+  assert.strictEqual(canDelete(old, { me: ME, now: NOW, windowMin: 'abc' }), false);
+  assert.strictEqual(canDelete(recent, { me: ME, now: NOW, windowMin: '' }), true);
+  assert.strictEqual(canDelete(old, { me: ME, now: NOW, windowMin: '' }), false);
+});
+
+test('canEdit: настоящие -1 и 0 не путаются с испорченным значением', () => {
+  const fresh = msg({ created_at: new Date(NOW - 1000).toISOString() });
+  const ancient = msg({ created_at: new Date(NOW - 365 * 24 * 3600 * 1000).toISOString() });
+  assert.strictEqual(canEdit(fresh, { me: ME, now: NOW, windowMin: '-1' }), false, '-1 по-прежнему выключает правку');
+  assert.strictEqual(canEdit(ancient, { me: ME, now: NOW, windowMin: '0' }), true, '0 по-прежнему означает «без ограничения»');
+});
+
+test('isValidMessageWindowValue: формат и границы', () => {
+  assert.strictEqual(isValidMessageWindowValue('-1'), true);
+  assert.strictEqual(isValidMessageWindowValue('0'), true);
+  assert.strictEqual(isValidMessageWindowValue('60'), true);
+  assert.strictEqual(isValidMessageWindowValue(60), true);
+  assert.strictEqual(isValidMessageWindowValue('abc'), false);
+  assert.strictEqual(isValidMessageWindowValue(''), false);
+  assert.strictEqual(isValidMessageWindowValue(null), false);
+  assert.strictEqual(isValidMessageWindowValue(undefined), false);
+  assert.strictEqual(isValidMessageWindowValue('1.5'), false);
+  assert.strictEqual(isValidMessageWindowValue('-2'), false);
+  assert.strictEqual(isValidMessageWindowValue('525601'), false, 'больше года в минутах');
+  assert.strictEqual(isValidMessageWindowValue('525600'), true, 'ровно год в минутах — ещё допустимо');
 });

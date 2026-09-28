@@ -26,12 +26,35 @@ const MAX_TEXT_LENGTH = 16000;
 // задним числом.
 const DEFAULT_EDIT_WINDOW_MINUTES = '60';
 const DEFAULT_DELETE_WINDOW_MINUTES = '60';
+const DEFAULT_WINDOW_MINUTES = 60;
+// Год в минутах — щедрый потолок для «сколько угодно, но не бесконечность
+// как повод не думать»; validateSettingsUpdate (server/src/api/index.js)
+// отклоняет всё, что вне -1..MAX_MESSAGE_WINDOW_MINUTES, ещё на записи.
+const MAX_WINDOW_MINUTES = 525600;
+
+// Только «-1», «0» или положительное целое — валидное значение окна. Раньше
+// любой мусор (пустая строка, "abc", дробь) проходил как Number(...) === NaN
+// или 0 и трактовался как «без ограничения» — испорченная или незаполненная
+// настройка молча снимала защиту, а не включала её (находка ревью раунда 1).
+function isValidWindowValue(raw) {
+  if (raw === null || raw === undefined) return false;
+  const str = String(raw).trim();
+  if (!/^-?\d+$/.test(str)) return false; // только целое число, без дробной части и текста
+  const n = Number(str);
+  return n >= -1 && n <= MAX_WINDOW_MINUTES;
+}
+
+// Испорченное или отсутствующее значение — это «настройка не задана», а не
+// «ограничения нет»: безопасный откат на DEFAULT_WINDOW_MINUTES, тот же
+// принцип, что у max_upload_size_mb (server/src/api/index.js, acceptUpload).
+function parseWindowMinutes(raw) {
+  return isValidWindowValue(raw) ? Number(raw) : DEFAULT_WINDOW_MINUTES;
+}
 
 function isWithinWindow(createdAt, windowMinutesRaw) {
-  const minutes = Number(windowMinutesRaw);
+  const minutes = parseWindowMinutes(windowMinutesRaw);
   if (minutes === -1) return false;
   if (minutes === 0) return true;
-  if (!Number.isFinite(minutes) || minutes < 0) return true; // настройка испорчена — не ограничиваем молча
   const ageMs = Date.now() - new Date(createdAt).getTime();
   return ageMs <= minutes * 60 * 1000;
 }
@@ -557,3 +580,8 @@ class MessageService {
 module.exports = MessageService;
 module.exports.DIALOG_LIST_LIMIT = DIALOG_LIST_LIMIT;
 module.exports.MAX_TEXT_LENGTH = MAX_TEXT_LENGTH;
+// Переиспользуются validateSettingsUpdate (server/src/api/index.js) — одна
+// проверка формата на запись (settings PUT) и на чтение (isWithinWindow),
+// а не две разные копии одной и той же регулярки.
+module.exports.isValidMessageWindowValue = isValidWindowValue;
+module.exports.MAX_MESSAGE_WINDOW_MINUTES = MAX_WINDOW_MINUTES;

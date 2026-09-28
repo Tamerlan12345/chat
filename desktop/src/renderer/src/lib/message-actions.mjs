@@ -3,13 +3,40 @@
 // только видимость пункта меню — сервер (MessageService.editMessage/
 // deleteMessage) проверяет то же самое ещё раз и не полагается на клиента.
 
+// Год в минутах — тот же потолок, что у MAX_MESSAGE_WINDOW_MINUTES на
+// сервере (server/src/services/message.service.js). Оба места держат
+// одинаковую проверку формата намеренно: сервер отклоняет мусор на записи,
+// клиент — на чтении (вдруг настройка испорчена в обход /admin/settings).
+const MAX_WINDOW_MINUTES = 525600;
+const DEFAULT_WINDOW_MINUTES = 60;
+
+// Только «-1», «0» или целое положительное число (как строка или как число)
+// — валидное значение окна. Раньше пустая строка или «abc» превращались
+// через Number(...) в NaN/0 и трактовались как «без ограничения» — то есть
+// испорченная или незаполненная настройка молча снимала защиту, а не
+// включала её (находка ревью раунда 1).
+// Экспортируется: AdminUserModal.jsx использует ту же проверку, чтобы не
+// отправлять пустое или нечисловое поле в PUT /admin/settings (сервер его
+// всё равно отклонит 400 — но тогда пропадали бы и остальные, исправные,
+// настройки того же сохранения).
+export function isValidMessageWindowValue(raw) {
+  if (raw === null || raw === undefined) return false;
+  const str = String(raw).trim();
+  if (!/^-?\d+$/.test(str)) return false;
+  const n = Number(str);
+  return n >= -1 && n <= MAX_WINDOW_MINUTES;
+}
+
+function parseWindowMinutes(raw) {
+  return isValidMessageWindowValue(raw) ? Number(raw) : DEFAULT_WINDOW_MINUTES;
+}
+
 // windowMin — минуты из настройки сервера: -1 — действие выключено,
 // 0 — без ограничения по времени, N>0 — разрешено N минут после отправки.
-function withinWindow(createdAt, now, windowMin) {
-  const minutes = Number(windowMin);
+function withinWindow(createdAt, now, windowMinRaw) {
+  const minutes = parseWindowMinutes(windowMinRaw);
   if (minutes === -1) return false;
   if (minutes === 0) return true;
-  if (!Number.isFinite(minutes) || minutes < 0) return true; // настройка не задана — не ограничиваем молча
   const ageMs = now - new Date(createdAt).getTime();
   return ageMs <= minutes * 60 * 1000;
 }
