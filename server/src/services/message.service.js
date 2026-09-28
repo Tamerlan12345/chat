@@ -286,16 +286,49 @@ class MessageService {
   static async attachSenders(rows) {
     if (!rows.length) return rows;
     const directory = await UserService.getDirectory(rows.map((r) => r.sender_id));
+    const originalNames = this.fileOriginalNames(rows);
     return rows.map((row) => {
       const sender = directory.get(Number(row.sender_id));
+      const fileId = this.metadataFileId(row);
       return {
         ...row,
         sender_username: sender?.username || null,
         sender_name: sender?.full_name || 'Удалённый сотрудник',
         sender_avatar: sender?.avatar_url || null,
-        sender_department: sender?.department_name || null
+        sender_department: sender?.department_name || null,
+        // Имя для скачивания вложения: только отсюда, никогда из текста
+        // сообщения. Текст задаёт отправитель и его можно подделать/спутать
+        // (см. аудит безопасности, находка №6) — original_name из таблицы
+        // files записывается один раз при загрузке и с тех пор неизменен.
+        file_original_name: fileId != null ? (originalNames.get(fileId) ?? null) : null
       };
     });
+  }
+
+  // Идентификатор вложения из metadata_json сообщения, если он там есть и
+  // выглядит как число. Сам metadata_json клиенту не доверяем — при отправке
+  // сообщения он уже проверен (sendMessage → FileService.canUserAccessFile),
+  // но здесь достаточно просто вытащить число для последующего JOIN.
+  static metadataFileId(row) {
+    if (!row.metadata_json) return null;
+    try {
+      const meta = JSON.parse(row.metadata_json);
+      const id = Number(meta?.file_id);
+      return Number.isInteger(id) ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Одним запросом на всю пачку сообщений — вместо запроса к files на
+  // каждую строку.
+  static fileOriginalNames(rows) {
+    const ids = [...new Set(rows.map((row) => this.metadataFileId(row)).filter((id) => id !== null))];
+    if (!ids.length) return new Map();
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const found = db.prepare(`SELECT id, original_name FROM files WHERE id IN (${placeholders})`).all(...ids);
+    return new Map(found.map((f) => [Number(f.id), f.original_name]));
   }
 
   static markAsRead(conversationType, targetId, currentUserId) {

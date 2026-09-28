@@ -19,6 +19,7 @@ const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isA
 const { decidePermissionRequest, decidePermissionCheck } = require('./permissions');
 const { resolveServerUrl, isInsecureRequestBlocked } = require('./server-url');
 const { planReceivedFileName, zoneIdentifierContent, formatFileSize } = require('./received-file');
+const { safeDownloadName, isDangerousExtension } = require('./download-guard');
 const {
   buildConsentDialog,
   resolveConsent,
@@ -206,6 +207,24 @@ function frameUrl(frame) {
 // новое окно Electron с доступом к API приложения, ни увести главное окно на
 // чужой сайт: оба сохранили бы preload со всеми его возможностями.
 function hardenWebContents(contents) {
+  // Собранная сборка показывает страницу сервера — чужой код. DevTools на
+  // ней облегчают снятие токена с общего компьютера, а меню — единственный
+  // способ их открыть с клавиатуры (F12 / Ctrl+Shift+I) без пункта меню
+  // вовсе. В разработке всё это не трогается: инструменты разработчика
+  // нужны.
+  if (app.isPackaged) {
+    contents.on('devtools-opened', () => {
+      log('DevTools closed: forbidden in a packaged build');
+      contents.closeDevTools();
+    });
+    contents.on('before-input-event', (event, input) => {
+      const key = String(input.key || '').toLowerCase();
+      const isF12 = key === 'f12';
+      const isCtrlShiftI = input.control && input.shift && key === 'i';
+      if (isF12 || isCtrlShiftI) event.preventDefault();
+    });
+  }
+
   contents.setWindowOpenHandler(({ url }) => {
     if (isExternalLink(url)) {
       shell.openExternal(url).catch((err) => log(`openExternal failed: ${err.message}`));
@@ -1096,6 +1115,20 @@ function writeZoneIdentifier(target) {
   }
 }
 
+// Явный item.setSavePath() (см. will-download ниже) отключает штатное
+// поведение Electron/Chrome, которое само добавляет « (1)», « (2)» к имени
+// уже существующего файла в «Загрузках» — так что делаем это сами.
+function uniqueDownloadPath(target) {
+  if (!fs.existsSync(target)) return target;
+  const ext = path.extname(target);
+  const base = target.slice(0, target.length - ext.length);
+  for (let n = 1; n < 1000; n++) {
+    const candidate = `${base} (${n})${ext}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return target;
+}
+
 ipcMain.handle('rd-save-file', async (event, { fileName, data } = {}) => {
   if (!isFromServerPage(event, { mainWindowOnly: true })) return { success: false, error: 'Недоверенный источник' };
   if (!hostSession.allowsInput) return { success: false, error: 'Нет активного сеанса с полным доступом' };
@@ -1388,6 +1421,12 @@ function setAutostart(enabled) {
 app.whenReady().then(() => {
   log('app.whenReady resolved! Calling createMainWindow...');
 
+  // Меню по умолчанию (Файл/Правка/Вид…) не несёт полезных команд, зато
+  // «Вид → Инструменты разработчика» и его сочетание клавиш открывали
+  // DevTools поверх страницы сервера. В разработке меню оставлено — им
+  // пользуются во время отладки.
+  if (app.isPackaged) Menu.setApplicationMenu(null);
+
   // Незащищённые запросы и WebSocket (http:, ws:) в рабочей сборке не уходят
   // вовсе — что бы ни указали в «Сетевом сервере» интерфейса. В разработке
   // разрешён только localhost.
@@ -1395,6 +1434,62 @@ app.whenReady().then(() => {
     const cancel = isInsecureRequestBlocked(details.url, { isPackaged: app.isPackaged });
     if (cancel) log(`insecure request blocked: ${redactUrl(details.url)}`);
     callback({ cancel });
+  });
+
+  // Скачивание вложения обычной переписки (не файла удалённого стола —
+  // у того свой путь, ipcMain.handle('rd-save-file', …) выше). Имя задаёт
+  // отправитель — тот же класс риска, что и у входящего файла удалённого
+  // стола, и та же защита: опасное расширение получает добавочный «.txt»
+  // (download-guard.js переиспользует правило received-file.js, второго
+  // списка нет), подтверждается системным окном, а по завершении на файл
+  // ставится пометка «из интернета» (Zone.Identifier) для SmartScreen.
+  session.defaultSession.on('will-download', (event, item) => {
+    const originalName = item.getFilename();
+    const dangerous = isDangerousExtension(originalName);
+    const finalName = safeDownloadName(originalName);
+    const targetPath = uniqueDownloadPath(path.join(app.getPath('downloads'), finalName));
+    item.setSavePath(targetPath);
+
+    const proceed = () => {
+      item.once('done', (doneEvent, state) => {
+        if (state === 'completed') writeZoneIdentifier(targetPath);
+        else log(`download ${state}: ${path.basename(targetPath)}`);
+      });
+    };
+
+    if (!dangerous) {
+      proceed();
+      return;
+    }
+
+    // Опасный тип не запускается сам по себе (добавочный «.txt»), но
+    // сотрудник должен знать, что он вообще что-то сохранил — как и при
+    // приёме файла по удалённому столу.
+    item.pause();
+    askUser({
+      type: 'warning',
+      title: 'Скачивание файла',
+      message: `Файл «${finalName}» — исполняемый или иной потенциально опасный тип. Сохранить его?`,
+      detail: `Исходное имя: ${originalName}\nФайл будет помечен как полученный из интернета.`,
+      buttons: ['Сохранить', 'Отклонить'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      normalizeAccessKeys: false
+    })
+      .then((response) => {
+        if (response !== 0) {
+          log(`download declined (dangerous type): ${finalName}`);
+          item.cancel();
+          return;
+        }
+        proceed();
+        item.resume();
+      })
+      .catch((err) => {
+        log(`download consent dialog failed: ${err.message}`);
+        item.cancel();
+      });
   });
 
   try {

@@ -21,13 +21,15 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: npm ci
+      # Сервер ничего не собирает — установочные скрипты зависимостей ему не
+      # нужны, а меньше кода, которому мы доверяем на этапе установки, лучше.
+      - run: npm ci --ignore-scripts
       - name: Тесты сервера, включая тесты атак
         run: npm test
       - name: Уязвимости зависимостей (high и выше)
@@ -40,12 +42,14 @@ jobs:
       run:
         working-directory: desktop
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+      # Здесь, наоборот, дальше идёт сборка интерфейса (vite/esbuild) — их
+      # собственные установочные скрипты нужны, --ignore-scripts её сломает.
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -53,16 +57,19 @@ jobs:
         run: npm test
       - name: Сборка интерфейса
         run: npx vite build
-      - name: Уязвимости зависимостей (high и выше)
-        run: npm audit --omit=dev --audit-level=high
+      # Electron и весь инструментарий сборки числятся в devDependencies, но
+      # именно Electron (Chromium/Node) — то, что реально уезжает к сотрудникам
+      # в собранном .exe. --omit=dev проверял бы пустой список зависимостей.
+      - name: Уязвимости зависимостей (high и выше, включая Electron)
+        run: npm audit --audit-level=high
 
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Поиск секретов в истории
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
