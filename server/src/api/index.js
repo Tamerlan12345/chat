@@ -45,7 +45,7 @@ function sanitizeIceServers(list) {
 
 // Проверка значений, от которых зависит безопасность: мусор в них ломал бы
 // либо защиту, либо саму функцию.
-const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_)/;
+const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_|update_policy)/;
 function publicSettings(all) {
   return Object.fromEntries(Object.entries(all || {}).filter(([key]) => !INTERNAL_SETTING.test(key)));
 }
@@ -885,6 +885,9 @@ router.put('/admin/settings', requireAuth, requireAdmin, route(async (req, res) 
     res.status(400).json({ error: err.message });
   }
 }));
+
+// ── ОБНОВЛЕНИЯ КЛИЕНТА ── только главный администратор (см. updates/admin-router.js)
+router.use('/admin/updates', requireAuth, requireAdmin, require('../updates/admin-router'));
 
 // ── ЦЕНТР БЕЗОПАСНОСТИ ──
 // Только главный администратор: состояние защиты, оповещения, журнал.

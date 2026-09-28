@@ -131,6 +131,21 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_security_alerts_created ON security_alerts(created_at);
+
+    -- Установленные клиенты (учёт раздачи обновлений). installId случаен и с
+    -- сотрудником не связан; строки старше 90 дней удаляются при запуске.
+    CREATE TABLE IF NOT EXISTS client_installs (
+      install_id TEXT PRIMARY KEY,
+      client_version TEXT,
+      install_kind TEXT,
+      channel TEXT,
+      ip_address TEXT,
+      last_error TEXT,
+      first_seen_at TEXT NOT NULL,
+      last_check_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_client_installs_version ON client_installs(client_version);
   `,
 
   sqlite: `
@@ -251,6 +266,21 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_security_alerts_created ON security_alerts(created_at);
+
+    -- Установленные клиенты (учёт раздачи обновлений). installId случаен и с
+    -- сотрудником не связан; строки старше 90 дней удаляются при запуске.
+    CREATE TABLE IF NOT EXISTS client_installs (
+      install_id TEXT PRIMARY KEY,
+      client_version TEXT,
+      install_kind TEXT,
+      channel TEXT,
+      ip_address TEXT,
+      last_error TEXT,
+      first_seen_at TEXT NOT NULL,
+      last_check_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_client_installs_version ON client_installs(client_version);
   `
 };
 
