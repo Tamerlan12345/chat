@@ -32,13 +32,16 @@ const MAX_PER_USER_ENTRIES = 50;
 // пройдёт этот шаблон и не попадёт ни в путь, ни в сравнение.
 const EXT_RE = /^[a-z0-9]{1,10}$/;
 
-// U+202E (Right-to-Left Override) и изолирующие управляющие символы
-// U+2066–U+2069 переворачивают отображение имени файла — «tool.exe»
-// показывается как «elif.exe» или наоборот, пряча настоящее расширение от
-// глаза. Обычные управляющие символы (включая C0/C1) в имени файла тоже не
-// нужны ни для чего легитимного.
+// Вся группа управляющих символов двунаправленного текста (bidi control):
+// U+202A–U+202E (LRE/RLE/PDF/LRO/RLO) и изолирующие U+2066–U+2069
+// переворачивают отображение имени файла — «tool.exe» показывается как
+// «elif.exe» или наоборот, пряча настоящее расширение от глаза. Обычные
+// управляющие символы (включая C0/C1) в имени файла тоже не нужны ни для
+// чего легитимного. Символы заданы кодами \uXXXX, а не вставлены в исходник
+// буквально, — иначе сам файл с исходным кодом становится носителем той же
+// подмены направления письма, которую он проверяет.
 // eslint-disable-next-line no-control-regex
-const NAME_RISK_RE = /[‮⁦-⁩\u0000-\u001F\u007F-\u009F]/;
+const NAME_RISK_RE = /[\u202A-\u202E\u2066-\u2069\u0000-\u001F\u007F-\u009F]/;
 
 // Расширения, для которых заголовок «MZ» (исполняемый DOS/PE) не считается
 // подделкой имени — это их законный формат.
@@ -184,13 +187,23 @@ class FilePolicyService {
     }
   }
 
+  // Черновик мержится поверх текущей сохранённой политики, а не заменяет её
+  // целиком: администратор, который правит консоль через «Добавить
+  // исключение сотруднику», отправляет только perUser — без этого allowed
+  // (умышленно сужённый ранее) молча откатывался бы к DEFAULT_ALLOWED, а
+  // добавление одного сотрудника стирало бы все остальные исключения.
+  // Ключ отсутствует в draft — сохраняется прежнее значение; ключ передан
+  // (в том числе null) — валидируется и заменяет прежнее.
   static async setPolicy(draft, actor) {
     if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
       throw new Error('Не передана политика файлов');
     }
-    const enabled = draft.enabled !== false;
-    const allowed = validateAllowedList(draft.allowed);
-    const perUser = await validatePerUser(draft.perUser);
+    const current = await this.getPolicy();
+
+    const enabled = 'enabled' in draft ? draft.enabled !== false : current.enabled;
+    const allowed = 'allowed' in draft ? validateAllowedList(draft.allowed) : current.allowed;
+    const perUser = 'perUser' in draft ? await validatePerUser(draft.perUser) : current.perUser;
+
     const next = { enabled, allowed, perUser, maxPerUserEntries: MAX_PER_USER_ENTRIES };
     void actor; // сохранён в сигнатуре по интерфейсу задачи; запись в аудит — в маршруте (там есть IP запроса).
     await SettingsService.setSetting(SETTING_KEY, JSON.stringify(next));

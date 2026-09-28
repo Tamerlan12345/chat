@@ -116,7 +116,14 @@ test('картинка с исполняемым содержимым внутр
 });
 
 test('имя файла с подменой направления письма (U+202E) отклонено', async () => {
-  const trickyName = 'a‮fdp.exe'; // отображается как «a exe.pdf»
+  const trickyName = 'a' + '\u202E' + 'fdp.exe'; // отображается как «a exe.pdf»
+  const res = await upload(people.fp_alice.token, trickyName, '%PDF-1.4');
+  assert.strictEqual(res.status, 415, res.text);
+  assert.strictEqual(res.json.code, 'name-invalid');
+});
+
+test('имя файла с LRO (U+202D) тоже отклонено — вся группа bidi-control, не только RLO', async () => {
+  const trickyName = 'a' + '\u202D' + 'fdp.exe';
   const res = await upload(people.fp_alice.token, trickyName, '%PDF-1.4');
   assert.strictEqual(res.status, 415, res.text);
   assert.strictEqual(res.json.code, 'name-invalid');
@@ -146,6 +153,17 @@ test('администратор разрешает .exe только одном
   const rejectedForBob = await upload(people.fp_bob.token, 'tool.exe', Buffer.from([0x4d, 0x5a, 0, 0]));
   assert.strictEqual(rejectedForBob.status, 415, rejectedForBob.text);
   assert.strictEqual(rejectedForBob.json.code, 'ext-not-allowed');
+});
+
+test('точка или пробел в конце имени не превращают чужое разрешение в обход фильтра', async () => {
+  // У Алисы уже разрешён .exe (предыдущий тест) — но эти имена не должны пройти.
+  const trailingDot = await upload(people.fp_alice.token, 'tool.exe.', Buffer.from([0x4d, 0x5a, 0, 0]));
+  assert.strictEqual(trailingDot.status, 415, trailingDot.text);
+  assert.strictEqual(trailingDot.json.code, 'ext-missing');
+
+  const trailingSpace = await upload(people.fp_alice.token, 'tool.exe ', Buffer.from([0x4d, 0x5a, 0, 0]));
+  assert.strictEqual(trailingSpace.status, 415, trailingSpace.text);
+  assert.strictEqual(trailingSpace.json.code, 'ext-not-allowed');
 });
 
 test('GET /api/files/policy отдаёт личный список только тому, кому он назначен', async () => {
@@ -218,4 +236,77 @@ test('исключение для несуществующего сотрудн�
     body: { perUser: { '999999': ['exe'] } }
   });
   assert.strictEqual(res.status, 400, res.text);
+});
+
+// ── 5. Черновик мержится, а не заменяет политику целиком (ревью раунд 1) ──
+// Администратор, который отправляет только один из трёх ключей (например,
+// «добавить исключение сотруднику»), не должен молча откатывать остальные
+// два к их прежним значениям — иначе умышленно суженный общий список или
+// действующие исключения терялись бы при любой точечной правке.
+
+test('PUT только с perUser не сбрасывает намеренно суженный allowed', async () => {
+  const narrow = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { allowed: ['pdf', 'txt'] }
+  });
+  assert.strictEqual(narrow.status, 200, narrow.text);
+  assert.deepStrictEqual(narrow.json.allowed, ['pdf', 'txt']);
+
+  const onlyPerUser = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { [String(people.fp_bob.id)]: ['csv'] } }
+  });
+  assert.strictEqual(onlyPerUser.status, 200, onlyPerUser.text);
+  assert.deepStrictEqual(
+    onlyPerUser.json.allowed,
+    ['pdf', 'txt'],
+    'allowed не должен откатиться к значению по умолчанию только из-за того, что PUT его не упомянул'
+  );
+  assert.deepStrictEqual(onlyPerUser.json.perUser[String(people.fp_bob.id)], ['csv']);
+});
+
+test('PUT только с allowed не стирает существующие исключения сотрудников', async () => {
+  const withException = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { [String(people.fp_bob.id)]: ['csv', 'zip'] } }
+  });
+  assert.strictEqual(withException.status, 200, withException.text);
+  assert.deepStrictEqual(withException.json.perUser[String(people.fp_bob.id)], ['csv', 'zip']);
+
+  const onlyAllowed = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { allowed: ['pdf'] }
+  });
+  assert.strictEqual(onlyAllowed.status, 200, onlyAllowed.text);
+  assert.deepStrictEqual(onlyAllowed.json.allowed, ['pdf']);
+  assert.deepStrictEqual(
+    onlyAllowed.json.perUser[String(people.fp_bob.id)],
+    ['csv', 'zip'],
+    'исключения сотрудника не должны исчезнуть из-за PUT, который их не упоминал'
+  );
+});
+
+test('PUT только с enabled сохраняет оба списка нетронутыми', async () => {
+  const before = await api('GET', '/api/admin/file-policy', { token: people.admin.token });
+  assert.strictEqual(before.status, 200, before.text);
+
+  const toggled = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { enabled: false }
+  });
+  assert.strictEqual(toggled.status, 200, toggled.text);
+  assert.strictEqual(toggled.json.enabled, false);
+  assert.deepStrictEqual(toggled.json.allowed, before.json.allowed);
+  assert.deepStrictEqual(toggled.json.perUser, before.json.perUser);
+
+  // Возвращаем как было — на случай, если порядок тестов в файле изменится.
+  const restored = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: {
+      enabled: true,
+      allowed: [...require('../src/services/file-policy.service').DEFAULT_ALLOWED],
+      perUser: {}
+    }
+  });
+  assert.strictEqual(restored.status, 200, restored.text);
 });

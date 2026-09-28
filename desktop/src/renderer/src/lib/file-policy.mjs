@@ -12,11 +12,13 @@ export function extensionOf(name) {
   return s.slice(idx + 1).toLowerCase();
 }
 
-// U+202E (Right-to-Left Override) и изолирующие управляющие символы
-// U+2066–U+2069 переворачивают отображаемое имя файла — расширение
-// подделывается визуально, само имя остаётся прежним.
+// Вся группа управляющих символов двунаправленного текста (bidi control):
+// U+202A–U+202E (LRE/RLE/PDF/LRO/RLO) и изолирующие U+2066–U+2069
+// переворачивают отображаемое имя файла — расширение подделывается
+// визуально, само имя остаётся прежним. Символы заданы кодами \uXXXX, а не
+// вставлены в исходник буквально (см. server/src/services/file-policy.service.js).
 // eslint-disable-next-line no-control-regex
-const NAME_RISK_RE = /[‮⁦-⁩\u0000-\u001F\u007F-\u009F]/;
+const NAME_RISK_RE = /[\u202A-\u202E\u2066-\u2069\u0000-\u001F\u007F-\u009F]/;
 
 export function checkName(name) {
   if (NAME_RISK_RE.test(String(name || ''))) {

@@ -17,9 +17,14 @@ test('расширение — по последней точке, в нижне
 });
 
 test('checkName ловит подмену направления письма (U+202E)', () => {
-  assert.match(checkName('a‮fdp.exe'), /символ/i);
+  assert.match(checkName('a' + '\u202E' + 'fdp.exe'), /символ/i);
   assert.strictEqual(checkName('report.pdf'), null);
-  assert.match(checkName('a⁦b.txt'), /символ/i);
+  assert.match(checkName('a' + '\u2066' + 'b.txt'), /символ/i);
+});
+
+test('checkName ловит всю группу bidi-control (LRO/LRE и т.п.), не только RLO', () => {
+  assert.match(checkName('a' + '\u202D' + 'fdp.exe'), /символ/i); // LRO
+  assert.match(checkName('a' + '\u202A' + 'fdp.exe'), /символ/i); // LRE
 });
 
 test('рискованные расширения помечены для предупреждения администратору', () => {
@@ -43,7 +48,7 @@ test('checkFileAgainstPolicy: расширение вне списка откл�
 test('checkFileAgainstPolicy: выключенный фильтр пропускает любое расширение, но не подмену имени', () => {
   const policy = { enabled: false, allowed: ['pdf'] };
   assert.strictEqual(checkFileAgainstPolicy({ name: 'data.bin' }, policy), null);
-  assert.match(checkFileAgainstPolicy({ name: 'a‮fdp.exe' }, policy), /символ/i);
+  assert.match(checkFileAgainstPolicy({ name: 'a' + '\u202E' + 'fdp.exe' }, policy), /символ/i);
 });
 
 test('checkFileAgainstPolicy: без политики (сервер недоступен) не блокирует по расширению', () => {
