@@ -4,6 +4,7 @@ import { useInlineToast } from './InlineToast';
 import Icon from './Icon';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
+import FilePolicyAdmin from './FilePolicyAdmin';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
 
 // Ключи настроек, которыми владеет раздел «Безопасность».
@@ -1172,6 +1173,13 @@ export default function AdminUserModal({
                     onClick={() => setActiveTab('filters')}
                   >
                     <Icon name="ban" size={16} /> <span>Фильтры</span>
+                  </button>
+
+                  <button
+                    className={`admin-nav-item ${activeTab === 'files' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('files')}
+                  >
+                    <Icon name="file" size={16} /> <span>Файлы</span>
                   </button>
 
                   <button
@@ -2749,6 +2757,12 @@ export default function AdminUserModal({
                     Применить параметры сервера
                   </button>
                 </form>
+              </div>
+            )}
+
+            {activeTab === 'files' && superAdmin && (
+              <div className="admin-tab-pane">
+                <FilePolicyAdmin serverUrl={serverUrl} showToast={showToast} />
               </div>
             )}
 
