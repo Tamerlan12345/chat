@@ -556,16 +556,19 @@ export default function App() {
       return;
     }
     localStorage.setItem('mychat_logged_out', '1');
+    // Секрет устройства отвязывается ДО отзыва токена, а не после: /auth/logout
+    // отзывает jti немедленно, и запрос на отвязку с уже отозванным токеном
+    // получал бы 401, который молча проглатывался (аудит, круг 3, находка
+    // №9б — секрет переживал обычный выход). revokeTokenOnServer ниже всё
+    // равно передаёт device_id ещё раз и на сервере отвязывает секрет тем же
+    // запросом, что отзывает токен, — это работает независимо от порядка
+    // вызовов и не зависит от того, что этот запрос успел выполниться первым.
+    await unbindDeviceOnServer();
     // Токен отзывается и на сервере: иначе скопированный токен оставался бы
     // действующим до двенадцати часов после выхода. Ждём недолго — без связи
     // выход всё равно должен случиться; keepalive даёт запросу пережить
     // перезагрузку окна.
     await revokeTokenOnServer();
-    // Секрет устройства отвязывается тоже: иначе вход без пароля продолжал
-    // бы работать после «выхода» — и с этого же компьютера, и с любой копии
-    // localStorage. Ошибка сети здесь не должна мешать выходу — оба запроса
-    // одинаково терпимы к недоступности сервера.
-    await unbindDeviceOnServer();
     localStorage.removeItem('mychat_device_secret');
     // Раньше очищались только токен и пользователь: открытый чат, сообщения,
     // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
@@ -596,6 +599,12 @@ export default function App() {
   const revokeTokenOnServer = async () => {
     const currentToken = tokenRef.current;
     if (!currentToken) return;
+    // device_id едет вместе с /auth/logout: сервер отвязывает секрет устройства
+    // тем же запросом, что отзывает токен (см. комментарий на маршруте в
+    // server/src/api/index.js). Это работает независимо от того, успел ли
+    // unbindDeviceOnServer выполниться раньше, — второй, избыточный путь к
+    // тому же результату, а не замена ему.
+    const deviceId = localStorage.getItem('mychat_device_id');
     let timer = null;
     try {
       // По таймауту запрос не отменяется: keepalive доводит его до сервера
@@ -603,7 +612,8 @@ export default function App() {
       await Promise.race([
         fetch(`${serverUrlRef.current}/api/auth/logout`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${currentToken}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentToken}` },
+          body: JSON.stringify(deviceId ? { device_id: deviceId } : {}),
           keepalive: true
         }).catch(() => {}),
         new Promise((resolve) => {
@@ -619,24 +629,34 @@ export default function App() {
   // сервере действующим, и локальная копия localStorage (или тот же
   // компьютер до следующего входа) снова впускала без пароля — секрет
   // переживал логаут (аудит, находка №9). Отказ сети не должен блокировать
-  // выход — тем же способом, что и revokeTokenOnServer.
+  // выход — тем же способом, что и revokeTokenOnServer. Вызывается ДО
+  // revokeTokenOnServer, пока токен ещё не отозван: тем же токеном после
+  // отзыва сервер ответил бы 401, который раньше молча проглатывался (круг 3,
+  // находка №9б) — тогда секрет оставался действующим до истечения TTL.
   const unbindDeviceOnServer = async () => {
     const currentToken = tokenRef.current;
     const deviceId = localStorage.getItem('mychat_device_id');
     if (!currentToken || !deviceId) return;
     let timer = null;
     try {
-      await Promise.race([
+      const res = await Promise.race([
         fetch(`${serverUrlRef.current}/api/auth/device/unbind`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentToken}` },
           body: JSON.stringify({ device_id: deviceId }),
           keepalive: true
-        }).catch(() => {}),
+        }).catch(() => null),
         new Promise((resolve) => {
-          timer = setTimeout(resolve, LOGOUT_REQUEST_TIMEOUT_MS);
+          timer = setTimeout(() => resolve(null), LOGOUT_REQUEST_TIMEOUT_MS);
         })
       ]);
+      // Неуспешный ответ (401/403/5xx) выход не блокирует — /auth/logout ниже
+      // всё равно отвяжет секрет тем же запросом, что отзывает токен. Но
+      // молчать о нём не стоит: раньше именно такое молчание маскировало
+      // находку №9б.
+      if (res && !res.ok) {
+        console.warn(`[Logout] Не удалось отвязать секрет устройства на сервере: HTTP ${res.status}`);
+      }
     } finally {
       clearTimeout(timer);
     }

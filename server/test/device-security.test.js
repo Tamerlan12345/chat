@@ -238,6 +238,69 @@ test('unbind чужого устройства не стирает секрет 
   assert.strictEqual(knock.user.id, people.ivanov.id);
 });
 
+// ── Исправление №1 (раунд ревью): реальный порядок клиента ────────────────
+//
+// Клиент раньше звал /auth/logout (отзывает токен), а ПОТОМ отдельным
+// запросом /api/auth/device/unbind тем же, уже отозванным токеном — второй
+// запрос получал 401 ещё до DeviceService, и он молча проглатывался. Секрет
+// оставался действующим после обычного выхода (находка №9б). Исправление:
+// /auth/logout сам отвязывает секрет, если ему передан device_id, — одним
+// запросом, порядок вызовов клиента больше не имеет значения.
+
+test('/auth/logout с device_id в теле (как реально шлёт клиент) отвязывает секрет тем же запросом, что отзывает токен', async () => {
+  const deviceId = 'dev-logout-order';
+  const secret = randomSecret();
+  // Отдельный токен: этот тест его отзовёт, остальные тесты файла своими
+  // токенами людей из people не должны от этого пострадать.
+  const freshToken = AuthService.generateToken(await UserService.getUserById(people.ivanov.id));
+
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: people.ivanov.id, adminUser: people.admin });
+  await DeviceService.claimDeviceSecret({ userId: people.ivanov.id, device_id: deviceId, device_secret: secret });
+
+  // Именно так, как отправляет desktop/App.jsx: один запрос на /auth/logout,
+  // device_id — в теле, без отдельного похода на /api/auth/device/unbind.
+  const logout = await api('POST', '/api/auth/logout', { token: freshToken, body: { device_id: deviceId } });
+  assert.strictEqual(logout.status, 200, logout.text);
+
+  // Токен действительно отозван — это не подмена проверки.
+  const me = await api('GET', '/api/auth/me', { token: freshToken });
+  assert.strictEqual(me.status, 401, 'токен обязан быть отозван, как и раньше');
+
+  const row = await pairingRow(deviceId);
+  assert.strictEqual(row.secret_hash, null, 'логаут обязан был отвязать секрет тем же запросом');
+  assert.strictEqual(row.secret_user_id, null);
+
+  const knock = await DeviceService.knock({ device_id: deviceId, device_secret: secret, ip_address: '127.0.0.1' });
+  assert.strictEqual(knock.status, 'login_required', 'старый секрет не должен впускать после выхода');
+});
+
+test('сотрудник с обязательной сменой пароля тоже может отвязать секрет устройства (не 403)', async () => {
+  // Новая учётная запись по умолчанию создаётся с must_change_password = 1 —
+  // тем самым режимом, в котором PASSWORD_CHANGE_ALLOWLIST раньше не пускал
+  // /api/auth/device/unbind, и запрос отвечал 403, который клиент молча
+  // проглатывал (второй корень находки №9б).
+  const created = await UserService.createUser({
+    username: 'mustchange-unbind',
+    full_name: 'Обязан Сменить Пароль',
+    password: 'Рабочий-пароль-1'
+  });
+  const forcedUser = await UserService.getUserById(created.id);
+  assert.strictEqual(Number(forcedUser.must_change_password), 1, 'предпосылка теста: пароль ещё не менялся');
+  const token = AuthService.generateToken(forcedUser);
+
+  const deviceId = 'dev-mustchange-unbind';
+  const secret = randomSecret();
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: created.id, adminUser: people.admin });
+  await DeviceService.claimDeviceSecret({ userId: created.id, device_id: deviceId, device_secret: secret });
+
+  const res = await api('POST', '/api/auth/device/unbind', { token, body: { device_id: deviceId } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.json.ok, true);
+
+  const row = await pairingRow(deviceId);
+  assert.strictEqual(row.secret_hash, null, 'обязательная смена пароля не должна мешать отвязке секрета');
+});
+
 // ── Находка №8: knock ограничен ────────────────────────────────────────────
 
 test('21-й knock с новым device_id с одного IP получает 429, в pending_devices остаётся 20 строк', async () => {

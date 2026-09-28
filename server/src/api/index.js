@@ -98,7 +98,11 @@ const route = (handler) => (req, res, next) =>
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
-const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password', '/auth/logout', '/auth/refresh']);
+// /auth/device/unbind: сотрудник с обязательной сменой пароля тоже должен
+// выйти начисто. Без него секрет устройства такому сотруднику отвязать было
+// нечем — запрос молча получал 403, а не ошибку сети, и оставался незамечен
+// клиентом (см. handleLogout / unbindDeviceOnServer в desktop/App.jsx).
+const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password', '/auth/logout', '/auth/refresh', '/auth/device/unbind']);
 
 const requireAuth = route(async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -359,8 +363,25 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
 
 // Выход отзывает именно этот токен: раньше «выйти» значило только забыть токен
 // на своём компьютере, а скопированный продолжал работать неделю.
+//
+// Отвязка секрета устройства сделана ЧАСТЬЮ этого же запроса, а не отдельным
+// вызовом клиента после него: если бы клиент сперва звал /auth/logout (токен
+// отзывается — jti в чёрном списке), а потом отдельно /api/auth/device/unbind
+// с тем же токеном, второй запрос отвечал бы 401 ещё до того, как дошёл бы до
+// DeviceService, и секрет остался бы действующим — ровно то, что находка №9
+// должна была закрыть. Здесь порядок внутри одного обработчика не важен:
+// req.user уже разрешён requireAuth до какой-либо отзыва.
 router.post('/auth/logout', requireAuth, route(async (req, res) => {
   await AuthService.revokeToken(req.tokenPayload);
+
+  const { device_id } = req.body || {};
+  if (device_id) {
+    const unbound = await DeviceService.unbindSecret(device_id, req.user.id);
+    if (unbound.unbound) {
+      AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
+    }
+  }
+
   AuditService.log({ userId: req.user.id, action: 'logout', ip: getClientIp(req) });
   wsServer.disconnectSocketsWithToken(req.rawToken, 'Выход из системы');
   res.json({ success: true });
