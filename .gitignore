@@ -48,3 +48,6 @@ desktop/presentation/dist-deck/
 
 # SDD workspaces
 .superpowers/
+
+# Рабочие копии агентов
+.claude/worktrees/
