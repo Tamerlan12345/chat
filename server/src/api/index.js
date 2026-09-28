@@ -1330,28 +1330,12 @@ router.put('/settings', requireAuth, requireAdmin, route(async (req, res) => {
 
 router.post('/channels', requireAuth, (req, res) => {
   try {
-    const { name, topic, type = 'public', member_ids } = req.body || {};
+    const { name, topic, type = 'public' } = req.body || {};
     if (!name) return res.status(400).json({ error: 'Укажите название канала' });
     if (!req.user.permissions?.can_create_channels && !req.user.permissions?.is_admin) {
       return res.status(403).json({ error: 'Создание каналов не разрешено для вашей роли' });
     }
     const channel = MessageService.createChannel(name, topic, type, req.user.id);
-
-    if (channel.type === 'private' && Array.isArray(member_ids) && member_ids.length) {
-      // Создатель приватного канала сразу указывает участников — иначе
-      // приватный канал был бы бессмысленным: пригласить туда было бы некого.
-      const db = getDatabase();
-      const now = new Date().toISOString();
-      const addMember = db.prepare(
-        'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
-      );
-      for (const rawId of member_ids.slice(0, 200)) {
-        const memberId = Number(rawId);
-        if (Number.isInteger(memberId) && memberId > 0 && memberId !== req.user.id) {
-          addMember.run(channel.id, memberId, 'member', now);
-        }
-      }
-    }
 
     if (channel.type === 'private') {
       // Находка №11: приватный канал рассылался всем сокетам целиком (имя,

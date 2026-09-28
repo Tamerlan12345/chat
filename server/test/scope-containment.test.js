@@ -434,7 +434,7 @@ test('подтверждение реального адресата рассы�
 
 // ── Находка №11: приватный канал не объявляется всем ────────────────────────
 
-test('приватный канал с участниками не объявляется постороннему сокету, но приходит участнику', async () => {
+test('приватный канал с участниками [A,B] не объявляется постороннему C, но приходит создателю A', async () => {
   await connect('ivanov');
   await connect('petrova');
   await connect('sidorov');
@@ -444,17 +444,36 @@ test('приватный канал с участниками не объявл�
 
   const res = await api('POST', '/api/channels', {
     token: people.ivanov.token,
-    body: { name: 'Приватный канал', topic: 'Секретная тема', type: 'private', member_ids: [people.petrova.id] }
+    body: { name: 'Приватный канал', topic: 'Секретная тема', type: 'private' }
   });
   assert.strictEqual(res.status, 201, res.text);
 
-  const seenByMember = await waitFor(sockets.petrova, (m) => m.type === 'channel_created' && m.channel.id === res.json.id);
-  assert.strictEqual(seenByMember.channel.topic, 'Секретная тема');
+  // POST /channels больше не принимает список участников (раунд ревью №1:
+  // это была незапрошенная и непроверенная возможность — любой сотрудник с
+  // can_create_channels мог принудительно добавить произвольные id без
+  // проверки, что это реальные/активные учётные записи, и без согласия
+  // добавляемого). Второй участник канала [A,B] заводится напрямую в базе
+  // переписки — так же, как это делает административный маршрут
+  // /admin/channels (см. api/index.js) и другие тесты этого набора.
+  const { getDatabase } = require('../src/db');
+  getDatabase()
+    .prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
+    .run(res.json.id, people.petrova.id, 'member', new Date().toISOString());
+
+  // Петрову добавили УЖЕ ПОСЛЕ создания — событие channel_created рассылается
+  // ровно в момент POST, поэтому её сокет его не получит (это ожидаемо и не
+  // проверяется здесь). Проверяется главное по находке №11: создатель канал
+  // видит, посторонний (не участник ни на момент создания, ни после) — нет.
+  const seenByCreator = await waitFor(sockets.ivanov, (m) => m.type === 'channel_created' && m.channel.id === res.json.id);
+  assert.strictEqual(seenByCreator.channel.topic, 'Секретная тема');
 
   assert.ok(
     await nothingArrives(sockets.sidorov, (m) => m.type === 'channel_created' && m.channel.id === res.json.id),
     'посторонний сокет не должен был узнать о приватном канале вовсе'
   );
+
+  const members = await require('../src/services/message.service').getChannelMemberIds(res.json.id);
+  assert.ok(members.includes(people.ivanov.id) && members.includes(people.petrova.id), 'в канале должны состоять оба участника — A и B');
 });
 
 test('публичный канал по-прежнему объявляется всем (без изменений в поведении)', async () => {
