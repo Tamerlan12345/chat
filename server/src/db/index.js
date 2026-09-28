@@ -94,13 +94,28 @@ const TABLES = {
       sha256 TEXT,
       path TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )`,
+  // История правок и удалений: единственное место, где остаётся исходный
+  // текст и метаданные после того, как сообщение в messages уже заменено
+  // (правка) или обнулено (удаление). Без неё «кто и что написал на самом
+  // деле» было бы невозможно объяснить постфактум.
+  message_history: `
+    CREATE TABLE IF NOT EXISTS message_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      action TEXT NOT NULL, -- 'edit', 'delete'
+      old_text TEXT,
+      old_metadata_json TEXT,
+      actor_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL
     )`
 };
 
 const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_messages_direct ON messages(conversation_type, sender_id, target_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(conversation_type, target_id, id)`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`
+  `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_message_history_message ON message_history(message_id)`
 ];
 
 let dbInstance = null;

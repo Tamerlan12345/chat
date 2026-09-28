@@ -24,6 +24,7 @@ import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
+import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
 import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
 
@@ -1123,7 +1124,23 @@ export default function App() {
             type: 'system',
             isUrgent: true
           });
+        } else if (event.context === 'edit_message') {
+          addToast({ title: 'Сообщение не изменено', body: event.message, type: 'system', isUrgent: true });
+        } else if (event.context === 'delete_message') {
+          addToast({ title: 'Сообщение не удалено', body: event.message, type: 'system', isUrgent: true });
         }
+        break;
+
+      // ── Правка и удаление своих сообщений ──────────────────────────────
+      case 'message_updated':
+        setMessages((prev) => applyUpdate(prev, event.message));
+        break;
+
+      case 'message_deleted':
+        setMessages((prev) => applyDelete(prev, event.messageId));
+        // Последнее сообщение диалога могло быть тем самым удалённым —
+        // список бесед должен перестать показывать его текст в превью.
+        refreshConversations();
         break;
 
       case 'rd_end': {
@@ -1605,6 +1622,26 @@ export default function App() {
       avatarText: senderName ? senderName.substring(0, 2).toUpperCase() : 'АС',
       data: { user: otherUser }
     });
+  };
+
+  // Правка и удаление своих сообщений — только через сокет: без него нет
+  // смысла давать команду, которую некому подтвердить событием
+  // message_updated/message_deleted (REST-путь для send_message существует
+  // как запасной на случай обрыва сокета, здесь — не заведён).
+  const handleEditMessage = (messageId, text) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'edit_message', messageId, text }));
+    } else {
+      addToast({ title: 'Нет связи с сервером', body: 'Сообщение не изменено — переподключитесь и повторите', type: 'system', isUrgent: true });
+    }
+  };
+
+  const handleDeleteMessage = (messageId) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'delete_message', messageId }));
+    } else {
+      addToast({ title: 'Нет связи с сервером', body: 'Сообщение не удалено — переподключитесь и повторите', type: 'system', isUrgent: true });
+    }
   };
 
   // Send Message
@@ -2473,6 +2510,10 @@ export default function App() {
                 onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
                 onSendMessage={handleSendMessage}
                 onSendFile={handleSendFile}
+                onEditMessage={handleEditMessage}
+                onDeleteMessage={handleDeleteMessage}
+                editWindowMinutes={Number(serverInfo?.message_edit_window_minutes ?? 60)}
+                deleteWindowMinutes={Number(serverInfo?.message_delete_window_minutes ?? 60)}
                 onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
                 onMarkRead={(conversationType, targetId) =>

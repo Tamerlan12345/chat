@@ -78,6 +78,12 @@ function assertKnownPermissions(permissions) {
 }
 
 const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_telegram', 'allow_registration']);
+// Окна правки/удаления сообщений (MessageService.editMessage/deleteMessage):
+// только целое число минут -1..MAX_MESSAGE_WINDOW_MINUTES. Раньше любая
+// строка проходила как есть — пустое поле в админ-панели сохранялось как ''
+// и на чтении Number('') === 0 означало «без ограничения», то есть пустое
+// значение молча снимало защиту (находка ревью раунда 1).
+const MESSAGE_WINDOW_SETTINGS = new Set(['message_edit_window_minutes', 'message_delete_window_minutes']);
 function validateSettingsUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
   const clean = {};
@@ -88,6 +94,14 @@ function validateSettingsUpdate(body) {
       const normalized = String(value);
       if (normalized !== 'true' && normalized !== 'false') throw new Error(`Настройка ${key} принимает true или false`);
       clean[key] = normalized;
+    } else if (MESSAGE_WINDOW_SETTINGS.has(key)) {
+      if (!MessageService.isValidMessageWindowValue(value)) {
+        throw new Error(
+          `Настройка ${key} принимает целое число минут от -1 до ${MessageService.MAX_MESSAGE_WINDOW_MINUTES} ` +
+          '(−1 — действие выключено, 0 — без ограничения)'
+        );
+      }
+      clean[key] = String(Number(String(value).trim()));
     } else if (key === 'rd_ice_servers') {
       if (value === '' || value === null) {
         clean[key] = '[]';
@@ -1254,6 +1268,12 @@ router.get('/settings/info', route(async (req, res) => {
     server_name: settings.server_name || 'OpenMyChat Enterprise Server',
     company_name: settings.company_name || 'Корпоративная сеть',
     allow_registration: settings.allow_registration === 'true',
+    // Окна правки/удаления сообщений: клиенту нужно знать их, чтобы не
+    // показывать «Изменить»/«Удалить» там, где сервер их всё равно отклонит.
+    // Сама проверка остаётся на сервере (MessageService.editMessage/deleteMessage) —
+    // здесь только то, что нужно для скрытия пункта меню.
+    message_edit_window_minutes: settings.message_edit_window_minutes || '60',
+    message_delete_window_minutes: settings.message_delete_window_minutes || '60',
     version: config.SERVER_VERSION
   });
 }));

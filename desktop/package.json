@@ -11,7 +11,7 @@
     "dist": "npm run build && electron-builder --win --publish never",
     "dist:portable": "npm run build && electron-builder --win portable --publish never",
     "dist:nsis": "npm run build && electron-builder --win nsis --publish never",
-    "test": "node --test --test-concurrency=1 test/remote-input.test.js test/rd-file-name.test.js test/audio-relay.test.mjs test/remote-pointer.test.mjs test/person-name.test.mjs test/avatar.test.mjs test/wake.test.mjs test/theme.test.mjs test/attachments.test.mjs test/admin-access.test.mjs test/key-codes.test.js test/display-map.test.js test/main-guards.test.js test/autostart.test.js test/rd-session.test.mjs test/call-lifecycle.test.mjs test/client-hardening.test.js test/security-labels.test.mjs test/build-config.test.js test/sha512-powershell.test.js test/download-guard.test.js test/file-policy.test.mjs",
+    "test": "node --test --test-concurrency=1 test/remote-input.test.js test/rd-file-name.test.js test/audio-relay.test.mjs test/remote-pointer.test.mjs test/person-name.test.mjs test/avatar.test.mjs test/wake.test.mjs test/theme.test.mjs test/attachments.test.mjs test/admin-access.test.mjs test/key-codes.test.js test/display-map.test.js test/main-guards.test.js test/autostart.test.js test/rd-session.test.mjs test/call-lifecycle.test.mjs test/client-hardening.test.js test/security-labels.test.mjs test/build-config.test.js test/sha512-powershell.test.js test/download-guard.test.js test/file-policy.test.mjs test/message-actions.test.mjs",
     "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-and-publish.ps1",
     "release": "npm run dist && npm run sign",
     "publish:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-update.ps1"
