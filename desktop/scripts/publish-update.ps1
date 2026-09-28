@@ -1,4 +1,4 @@
-# Готовит выпуск автообновления из уже собранных и подписанных дистрибутивов
+﻿# Готовит выпуск автообновления из уже собранных и подписанных дистрибутивов
 # и, при желании, публикует его на сервер компании.
 #
 # Почему отдельным шагом, а не частью npm run sign
@@ -87,9 +87,8 @@ Write-Host "  подпись Setup: закреплённый отпечаток 
 # sha512 в latest.yml должен совпадать с реальным файлом — это то, что
 # electron-updater сверяет перед установкой; расхождение здесь означает, что
 # release\ собран не полностью (например, Setup пересобрали без updater-файлов).
-$actualHash = (Get-FileHash -LiteralPath $SetupPath -Algorithm SHA512).Hash
-$actualBytes = [byte[]] -split ($actualHash -replace '..', '$0 ') | ForEach-Object { [Convert]::ToByte($_, 16) }
-$actualSha512 = [Convert]::ToBase64String($actualBytes)
+# Get-MyChatSha512Base64 — из signing-common.ps1 (дот-подключён выше).
+$actualSha512 = Get-MyChatSha512Base64 -Path $SetupPath
 if ($actualSha512 -ne $expectedSha512) {
     Write-Host "sha512 файла $setupName не совпадает со значением в latest.yml." -ForegroundColor Red
     Write-Host "  latest.yml: $expectedSha512" -ForegroundColor Red

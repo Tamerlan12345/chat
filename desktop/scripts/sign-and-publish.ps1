@@ -113,13 +113,19 @@ foreach ($target in $Targets) {
     }
 
     $name = $source.Name
+    # Проверяется ДО копирования: source — то, что реально вышло из-под
+    # electron-builder на этом прогоне; dest в installer/ всегда перезаписывается
+    # Copy-Item -Force ниже, так что проверка dest ПОСЛЕ копии видела бы уже
+    # скопированный source и никогда не находила прежнюю подпись установщика
+    # из installer/ — переподписывался бы каждый раз, даже когда source уже
+    # подписан закреплённым сертификатом (например, повторный запуск после
+    # сбоя на шаге контрольных сумм).
+    $alreadySigned = Test-MyChatSignature $source.FullName
     $dest = Join-Path $InstallerDir $name
     Copy-Item $source.FullName $dest -Force
 
-    if (Test-MyChatSignature $dest) {
-        # Уже подписан закреплённым сертификатом (например, повторный запуск
-        # после сбоя на шаге контрольных сумм) — переподписывать незачем.
-        Write-Host "  $name: уже подписан закреплённым сертификатом, пропускаю" -ForegroundColor Green
+    if ($alreadySigned) {
+        Write-Host "  $($name): уже подписан закреплённым сертификатом, пропускаю" -ForegroundColor Green
         $copiedNames += $name
         $signed++
         continue
@@ -127,12 +133,12 @@ foreach ($target in $Targets) {
 
     $check = Invoke-MyChatSign $dest $cert
     if (-not $check.Signed) {
-        Write-Host "  $name: ПОДПИСЬ НЕ ПОСТАВЛЕНА" -ForegroundColor Red
+        Write-Host "  $($name): ПОДПИСЬ НЕ ПОСТАВЛЕНА" -ForegroundColor Red
         continue
     }
 
     $stamp = if ($check.Timestamp) { 'с меткой времени' } else { 'БЕЗ метки времени' }
-    Write-Host "  $name: подписан, $stamp" -ForegroundColor Green
+    Write-Host "  $($name): подписан, $stamp" -ForegroundColor Green
     $copiedNames += $name
     $signed++
 }
