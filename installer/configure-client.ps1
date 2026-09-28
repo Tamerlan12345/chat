@@ -40,6 +40,11 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Get-MyChatDangerousAcl — отдельным файлом, а не функцией здесь же, чтобы
+# её можно было прогнать напрямую в тесте (реальный Get-Acl на реальном
+# файле), а не только проверить текстом.
+. (Join-Path $PSScriptRoot 'acl-guard.ps1')
+
 # Явная проверка https - та же, что и в isAllowedServerUrl на клиенте
 # (desktop/src/main/server-url.js): адрес без TLS означает, что и сам чат, и
 # обновления ходят открытым текстом, а мы полагаемся на https для того,
@@ -67,39 +72,6 @@ function Invoke-MyChatIcacls {
         exit 1
     }
     return $output
-}
-
-# Проверяет ACL файла: возвращает список записей, где право на запись
-# (Write/Modify/FullControl/удаление/создание файлов) есть у кого-то, кроме
-# администраторов и SYSTEM. Сверка по SID, а не по имени - имена
-# встроенных групп локализованы, SID нет.
-function Get-MyChatDangerousAcl {
-    param([Parameter(Mandatory)][string]$Path)
-
-    $allowedSids = @('S-1-5-32-544', 'S-1-5-18')
-    $riskyRights = [System.Security.AccessControl.FileSystemRights]::Write -bor
-        [System.Security.AccessControl.FileSystemRights]::Modify -bor
-        [System.Security.AccessControl.FileSystemRights]::FullControl -bor
-        [System.Security.AccessControl.FileSystemRights]::Delete -bor
-        [System.Security.AccessControl.FileSystemRights]::WriteData -bor
-        [System.Security.AccessControl.FileSystemRights]::CreateFiles
-
-    $acl = Get-Acl -LiteralPath $Path
-    $dangerous = @()
-    foreach ($rule in $acl.Access) {
-        if ($rule.AccessControlType -ne 'Allow') { continue }
-        $sid = $null
-        try {
-            $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-        } catch {
-            $sid = $rule.IdentityReference.Value
-        }
-        if ($allowedSids -contains $sid) { continue }
-        if (([int]$rule.FileSystemRights -band [int]$riskyRights) -ne 0) {
-            $dangerous += "$($rule.IdentityReference) ($sid): $($rule.FileSystemRights)"
-        }
-    }
-    return $dangerous
 }
 
 $ConfigDir = Join-Path $env:ProgramData 'OpenMyChat Enterprise'
