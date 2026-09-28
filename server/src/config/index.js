@@ -85,6 +85,11 @@ function resolveJwtSecret() {
   return generated;
 }
 
+function positiveInt(raw, fallback) {
+  const n = parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 module.exports = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 2004,
   HOST: process.env.HOST || '0.0.0.0',
@@ -170,6 +175,18 @@ module.exports = {
   // User-Agent check in index.js). Default false keeps the server's address
   // from serving a branded corporate login page to anyone who types it in.
   ALLOW_BROWSER_ACCESS: process.env.ALLOW_BROWSER_ACCESS === 'true',
+
+  // ── Автообновление настольного клиента ────────────────────────────────
+  // Релизы лежат рядом с остальными данными: в docker-compose корень только
+  // для чтения, писать можно лишь в data/.
+  UPDATES_DIR: process.env.UPDATES_DIR ? path.resolve(process.env.UPDATES_DIR) : path.join(DATA_DIR, 'updates'),
+  // Жёсткий выключатель на уровне развёртывания: консоль администратора его
+  // не переопределяет — угнанная учётная запись не включит раздачу обратно.
+  UPDATES_DISABLED: process.env.UPDATES_DISABLED === 'true',
+  // Сверх этого числа скачивание получает 503 и Retry-After: утренний запуск
+  // всего офиса не должен забить канал и диск сервера.
+  UPDATES_MAX_CONCURRENT_DOWNLOADS: positiveInt(process.env.UPDATES_MAX_CONCURRENT_DOWNLOADS, 20),
+  UPDATES_MAX_FILE_MB: positiveInt(process.env.UPDATES_MAX_FILE_MB, 600),
 
   SERVER_VERSION: '2026.1.0-pro'
 };

@@ -158,6 +158,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// Автообновление настольного клиента: после IP-фильтра и проверки готовности,
+// но раньше статики с её фильтром по User-Agent — electron-updater ходит своим
+// сеансом, и его запрос не должен получить index.html или отказ фильтра.
+app.use('/updates', require('./updates/router'));
+
 // API Routes
 app.use('/api', apiRouter);
 

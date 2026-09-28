@@ -84,3 +84,33 @@ test('matchesAny: /32 — ровно один адрес, /0 — любой', ()
   assert.ok(!matchesAny('203.0.113.10', ['203.0.113.9/32']));
   assert.ok(matchesAny('203.0.113.10', ['0.0.0.0/0']));
 });
+
+// Маршруты автообновления открыты без входа пользователя — тем важнее, что
+// они стоят за тем же сетевым фильтром и за проверкой готовности, что и всё
+// остальное. Приложение поднимается без хранилища учётных записей: ответ 503
+// от проверки готовности и доказывает, что /updates смонтирован после неё.
+test('маршруты /updates/* закрыты ALLOWED_CLIENT_IPS и стоят за проверкой готовности', async () => {
+  const http = require('node:http');
+  loadService({ ALLOWED_CLIENT_IPS: '10.9.9.9' });
+  const config = require('../src/config');
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const p of ['/updates/policy.json', '/updates/stable/latest.yml', '/updates/stable/OpenMyChat-Enterprise-Setup-1.0.0.exe']) {
+      const denied = await fetch(base + p, { headers: { 'User-Agent': 'Electron' } });
+      await denied.arrayBuffer();
+      assert.strictEqual(denied.status, 403, `${p}: чужой адрес не проходит`);
+    }
+
+    // Тот же процесс, тот же объект настроек — адрес теста добавляется в список.
+    config.ALLOWED_CLIENT_IPS.push('127.0.0.1');
+    const gated = await fetch(base + '/updates/policy.json');
+    await gated.arrayBuffer();
+    assert.strictEqual(gated.status, 503, 'разрешённый адрес упирается в проверку готовности');
+  } finally {
+    server.close();
+    delete process.env.ALLOWED_CLIENT_IPS;
+  }
+});

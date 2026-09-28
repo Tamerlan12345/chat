@@ -58,6 +58,7 @@ async function bootstrap() {
     seedChatDefaults(chatDb, admin ? admin.id : null);
     await syncDefaultChannelMembers();
     await pruneStaleDevices();
+    await require('./updates/client-installs').pruneClientInstalls();
 
     finalizeIdentitySplit(chatDb);
 
