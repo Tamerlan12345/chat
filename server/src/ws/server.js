@@ -23,12 +23,18 @@ const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 // desktop/src/renderer/src/components/RemoteDesktop*.jsx. Для них верхней
 // границей остаётся MAX_MESSAGE_BYTES, проверенный библиотекой ws.
 const MAX_TEXT_FRAME_BYTES = 256 * 1024;
-// Тип смотрится по началу кадра — дешёвой подстрокой, а не полным JSON.parse:
-// если кадр всё равно будет отклонён по размеру, тратить процессор на разбор
-// многомегабайтного объекта незачем (аудит, находка №7). Работает потому, что
-// клиент всегда пишет type первым полем литерала — см. RemoteDesktop*.jsx и
-// VoiceCallPanel.jsx.
-const LARGE_FRAME_ALLOWED_RE = /^\{\s*"type"\s*:\s*"(rd_[a-zA-Z0-9_]+|ice_candidate|call_[a-zA-Z0-9_]+)"/;
+// Разрешённый тип проверяется дважды и по-разному, и оба раза — не по сырым
+// байтам от клиента. Раньше исключение решалось подстрокой в начале кадра
+// («клиент всегда пишет type первым полем») — но JSON допускает повторяющийся
+// ключ, и JSON.parse оставляет ПОСЛЕДНЕЕ значение, а не первое, которое видела
+// подстрока (тот же ключ можно ещё и записать через экранирование \uXXXX, так
+// что даже поиск подстроки "type" по всему кадру, а не только в начале, не
+// спасал бы). Клиент мог показать в начале кадра type":"rd_file",
+// а на деле передать send_message на 300 КБ текста — предел обходился целиком
+// (найдено на ревью). Теперь решение до разбора зависит только от того, что
+// сервер сам знает про это соединение (isOversizedFrameAllowedFor), а после
+// разбора — от разобранного (не подстрокой) значения data.type.
+const LARGE_FRAME_ALLOWED_TYPE_RE = /^(rd_[a-zA-Z0-9_]+|ice_candidate|call_[a-zA-Z0-9_]+)$/;
 
 // Статус выставляет система: «в сети» и «отошёл» приходят от клиента, когда
 // компьютер активен или простаивает, «не в сети» — только от разрыва
@@ -309,10 +315,18 @@ class WsServer {
           if (allowRate(ws, 'audio')) this.relayAudioFrame(ws, raw);
           return;
         }
-        // 256 КБ проверяются ДО разбора JSON — см. константы выше.
-        if (raw.length > MAX_TEXT_FRAME_BYTES && !LARGE_FRAME_ALLOWED_RE.test(raw.toString('utf8', 0, 64))) {
-          try { ws.close(1009, 'Message too large'); } catch {}
-          return;
+        // 256 КБ проверяются ДО разбора JSON — но решение, разбирать ли кадр
+        // вообще, зависит не от того, что написано в кадре (это как раз то,
+        // что клиент подделывает), а от того, что сервер сам знает об этом
+        // соединении: открытый сеанс удалённого стола или разговор — см.
+        // isOversizedFrameAllowedFor ниже.
+        const oversized = raw.length > MAX_TEXT_FRAME_BYTES;
+        if (oversized) {
+          const sender = this.socketUser.get(ws);
+          if (!sender || !this.isOversizedFrameAllowedFor(sender.id)) {
+            try { ws.close(1009, 'Message too large'); } catch {}
+            return;
+          }
         }
         let data;
         try {
@@ -322,6 +336,17 @@ class WsServer {
           return;
         }
         if (!data || typeof data !== 'object') return;
+        // Кадр прошёл проверку размера только потому, что у отправителя есть
+        // открытый сеанс/разговор — это не значит, что этому конкретному
+        // кадру законно быть большим. Разобранный (не подстрокой из сырых
+        // байт — её обходит дублирующийся или экранированный ключ "type")
+        // тип обязан входить в перечень тех, что действительно бывают
+        // крупными; иначе это подмена — сообщение сверх лимита, которое
+        // притворилось rd_*/call_*/ice_candidate, пока его не разобрали.
+        if (oversized && !LARGE_FRAME_ALLOWED_TYPE_RE.test(String(data.type))) {
+          try { ws.close(1008, 'Policy violation'); } catch {}
+          return;
+        }
         if (!authenticated && data.type !== 'auth') {
           try { ws.close(1008, 'Authentication required'); } catch {}
           return;
@@ -420,6 +445,20 @@ class WsServer {
   hasPendingOffer(callerId, targetId) {
     const offer = this.pendingOffers.get(callerId);
     return Boolean(offer && offer.targetId === targetId && Date.now() - offer.at < CALL_OFFER_TTL_MS);
+  }
+
+  // Единственное законное основание разобрать кадр крупнее MAX_TEXT_FRAME_BYTES:
+  // у отправителя уже есть открытый сеанс удалённого стола (файл, список
+  // экранов, буфер обмена) или разговор/вызов (ICE-кандидаты). Это состояние
+  // сервер вёл сам — не то, что написал клиент в этом же кадре.
+  isOversizedFrameAllowedFor(userId) {
+    if (RemoteDesktopService.findOpenSessionsForUser(userId).length) return true;
+    if (this.activeCalls.has(userId)) return true;
+    if (this.pendingOffers.has(userId)) return true;
+    for (const offer of this.pendingOffers.values()) {
+      if (offer.targetId === userId) return true;
+    }
+    return false;
   }
 
   async handleMessage(ws, msg) {

@@ -4,6 +4,7 @@ const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
 const config = require('../config');
 const { DatabaseSync, constants: SQLITE } = require('node:sqlite');
+const AuthService = require('./auth.service');
 
 // Студия базы данных работает ТОЛЬКО с базой переписки. Учётные записи
 // вынесены в отдельное хранилище и сюда не попадают намеренно: возможность
@@ -265,9 +266,13 @@ class DbStudioService {
 
     const active = await db.get('SELECT COUNT(*) AS n FROM users WHERE is_active = 1');
     const pending = await db.get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`);
-    const locked = await db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until IS NOT NULL AND locked_until > $1', [
-      new Date().toISOString()
-    ]);
+    // Блокировка входа больше не пишется в users.locked_until — задача 3
+    // (аудит, находка №12) заменила её задержкой по паре адрес+логин, которая
+    // живёт в памяти процесса, а не в базе (см. AuthService.registerFailedAttempt).
+    // Столбец locked_until в схеме остался, но больше ничем не заполняется —
+    // читать его здесь означало бы показывать администратору вечно нулевую
+    // (или, на старой базе, безнадёжно устаревшую) цифру.
+    const lockedAccounts = AuthService.countLockedAccounts();
 
     return {
       engine: config.IDENTITY_DRIVER === 'postgres' ? 'PostgreSQL' : 'SQLite (PostgreSQL не настроен)',
@@ -275,7 +280,7 @@ class DbStudioService {
       counts,
       activeUsers: Number(active?.n || 0),
       pendingRegistrations: Number(pending?.n || 0),
-      lockedAccounts: Number(locked?.n || 0)
+      lockedAccounts
     };
   }
 

@@ -122,6 +122,22 @@ async function waitClosed(client, timeoutMs = 3000) {
   throw new Error('соединение не закрылось за отведённое время');
 }
 
+// Настоящий принятый сеанс удалённого стола между operatorName (нужно право
+// can_remote_control — в чистой установке оно есть только у суперадминистратора)
+// и targetName. Нужен, чтобы у отправителя было то самое серверное состояние
+// (findOpenSessionsForUser), от которого теперь зависит разбор крупного кадра
+// — а не для проверки самого RD-протокола (это покрыто в ws-security.test.js).
+async function openRdSession(operatorName, targetName, accessLevel = 'full') {
+  const operator = await connect(operatorName);
+  const target = await connect(targetName);
+  operator.sock.send(JSON.stringify({ type: 'rd_request', targetUserId: people[targetName].id }));
+  const requested = await waitFor(operator, (m) => m.type === 'rd_requested');
+  await waitFor(target, (m) => m.type === 'rd_prompt');
+  target.sock.send(JSON.stringify({ type: 'rd_response', sessionId: requested.sessionId, accepted: true, accessLevel }));
+  await waitFor(operator, (m) => m.type === 'rd_response' && m.accepted);
+  return { operator, target, sessionId: requested.sessionId };
+}
+
 // ── Находка №5: профиль ─────────────────────────────────────────────────
 
 test('PUT /api/users/profile игнорирует full_name — меняет только администратор', async () => {
@@ -241,23 +257,67 @@ test('WS-кадр 300 КБ типа send_message закрывает соедин
   assert.strictEqual(after, before, 'сообщение не должно было сохраниться');
 });
 
-test('крупный кадр rd_file не отклоняется предельным размером обычных кадров', async () => {
-  // Прямой сеанс удалённого стола здесь не поднимается — важно только то, что
-  // кадр за 256 КБ с типом rd_file не закрывает соединение сразу же, как это
-  // происходит для send_message. Сервер довалидирует его дальше по смыслу
-  // (нет такого сеанса) и просто промолчит, а не закроет по размеру.
-  const client = await connect('petrova');
-  const big = JSON.stringify({
-    type: 'rd_file',
-    sessionId: 'нет-такого-сеанса',
-    fileName: 'test.bin',
-    data: 'г'.repeat(300 * 1024)
-  });
-  assert.ok(Buffer.byteLength(big) > 256 * 1024);
-  client.sock.send(big);
-  await sleep(300);
-  assert.strictEqual(client.closeCode, undefined, 'большой кадр разрешённого типа не должен закрывать соединение');
-  client.sock.close();
+// Раунд 1 ревью (критическая находка): исключение по размеру раньше решалось
+// подстрокой в НАЧАЛЕ сырых байт кадра — а JSON допускает повторяющийся ключ
+// "type" (JSON.parse оставляет ПОСЛЕДНЕЕ значение, не первое, которое видела
+// подстрока) и экранированные ключи. Кадр вида
+// {"type":"rd_file","targetId":X,"type":"send_message","text":"<300 КБ>"}
+// показывал в начале "rd_file", а на деле был обычным send_message сверх
+// лимита — предел обходился целиком. Три сценария ниже — ровно то, что
+// проверяет исправленную логику: решение «разбирать ли кадр» зависит от
+// серверного состояния (открытый сеанс/разговор), а не от кадра, и
+// разобранный тип (а не подстрока) проверяется отдельно уже после разбора.
+
+test('кадр с двумя "type" (без активного сеанса) отклоняется по размеру до разбора JSON', async () => {
+  const client = await connect('ivanov');
+  const before = (await MessageService.getMessages('direct', people.petrova.id, people.ivanov.id, 500)).length;
+
+  const filler = 'д'.repeat(300 * 1024);
+  const poison = `{"type":"rd_file","targetId":${people.petrova.id},"type":"send_message","text":"${filler}"}`;
+  assert.ok(Buffer.byteLength(poison) > 256 * 1024);
+  client.sock.send(poison);
+
+  const code = await waitClosed(client);
+  assert.strictEqual(code, 1009, 'у ivanov нет ни сеанса, ни разговора — крупный кадр отклоняется, не дожидаясь разбора');
+
+  const after = (await MessageService.getMessages('direct', people.petrova.id, people.ivanov.id, 500)).length;
+  assert.strictEqual(after, before, 'подложенный send_message не должен был сохраниться');
+});
+
+test('кадр с двумя "type" при активном сеансе удалённого стола всё равно отклоняется — по разобранному типу', async () => {
+  const { operator, target, sessionId } = await openRdSession('admin', 'ivanov');
+  try {
+    const before = (await MessageService.getMessages('direct', people.petrova.id, people.ivanov.id, 500)).length;
+    const filler = 'е'.repeat(300 * 1024);
+    const poison = `{"type":"rd_file","sessionId":"${sessionId}","type":"send_message","text":"${filler}"}`;
+    assert.ok(Buffer.byteLength(poison) > 256 * 1024);
+    operator.sock.send(poison);
+
+    const code = await waitClosed(operator);
+    assert.strictEqual(code, 1008, 'активный сеанс разрешает РАЗБОР, но не отменяет проверку итогового типа');
+
+    const after = (await MessageService.getMessages('direct', people.petrova.id, people.ivanov.id, 500)).length;
+    assert.strictEqual(after, before, 'подложенный send_message не должен был сохраниться и здесь');
+  } finally {
+    try { target.sock.close(); } catch {}
+  }
+});
+
+test('настоящий крупный кадр rd_file при активном сеансе по-прежнему доходит до второго участника', async () => {
+  const { operator, target, sessionId } = await openRdSession('admin', 'petrova');
+  try {
+    const filler = 'ж'.repeat(300 * 1024);
+    const big = JSON.stringify({ type: 'rd_file', sessionId, fileName: 'test.bin', data: filler });
+    assert.ok(Buffer.byteLength(big) > 256 * 1024);
+    operator.sock.send(big);
+
+    const relayed = await waitFor(target, (m) => m.type === 'rd_file');
+    assert.strictEqual(relayed.fileName, 'test.bin');
+    assert.strictEqual(operator.closeCode, undefined, 'легитимный крупный кадр не должен закрывать соединение отправителя');
+  } finally {
+    try { operator.sock.close(); } catch {}
+    try { target.sock.close(); } catch {}
+  }
 });
 
 // ── Находка №17: старые токены отклоняются после отсечки ───────────────────
@@ -318,6 +378,33 @@ test('11 неудачных входов с одного адреса для adm
   }
   const fromElsewhere = await AuthService.login('admin', 'парольдлятеста', { ip: '203.0.113.44' });
   assert.ok(fromElsewhere.token, 'с другого адреса верный пароль администратора должен пройти');
+});
+
+// Раунд 1 ревью (важная находка): панель администратора (DbStudioService.
+// getIdentityStats → lockedAccounts) раньше читала users.locked_until,
+// которую блокировка по IP+логину больше не пишет — счётчик был бы всегда
+// нулевым либо, на старой базе, безнадёжно устаревшим.
+test('lockedAccounts в панели администратора считается по новому состоянию блокировки, не по users.locked_until', async () => {
+  const DbStudioService = require('../src/services/db-studio.service');
+  const identityDb = require('../src/db/identity').identity();
+
+  const created = await UserService.createUser({
+    username: 'lockstat', full_name: 'Статистика Блокировки', password: 'Рабочий-пароль-1'
+  });
+  await UserService.setMustChangePassword(created.id, false);
+
+  const before = await DbStudioService.getIdentityStats();
+
+  const attackerIp = '198.51.100.201';
+  for (let i = 0; i < config.LOGIN_MAX_FAILED_ATTEMPTS; i++) {
+    await assert.rejects(() => AuthService.login('lockstat', 'неверный', { ip: attackerIp }));
+  }
+
+  const after = await DbStudioService.getIdentityStats();
+  assert.strictEqual(after.lockedAccounts, before.lockedAccounts + 1, 'заблокированный логин должен попасть в счётчик');
+
+  const row = await identityDb.get('SELECT locked_until FROM users WHERE id = $1', [created.id]);
+  assert.strictEqual(row.locked_until, null, 'locked_until в базе этим путём больше не заполняется — счётчик не мог прийти оттуда');
 });
 
 // ── Находка №18 (/health): анонимному запросу — только status ──────────────

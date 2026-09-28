@@ -51,6 +51,30 @@ function loginLockOptions() {
   return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
 }
 
+// «Сколько учётных записей сейчас заблокировано» для панели администратора
+// (DbStudioService.getIdentityStats) — по логину, а не по паре адрес+логин: с
+// точки зрения администратора важно «этим логином сейчас нельзя войти хотя бы
+// с одного места», а не сколько разных адресов его атакуют. Отдельная карта,
+// а не разбор ключей ограничителя (loginLockKey): логин панель администратора
+// не проверяет на двоеточия при создании (UserService.createUser их не
+// запрещает), а адрес бывает IPv6 с двоеточиями внутри — по одной строке их
+// было бы не различить.
+const lockedUsernamesUntil = new Map(); // логин в нижнем регистре -> когда снимется
+
+function markUsernameLocked(username, windowMs) {
+  lockedUsernamesUntil.set(String(username || '').trim().toLowerCase(), Date.now() + windowMs);
+}
+
+// Живой снимок, не кэш: устаревшие записи вычищаются здесь же, при каждом
+// обращении — отдельного таймера ради нечастой статистики заводить незачем.
+function countLockedUsernames() {
+  const now = Date.now();
+  for (const [name, until] of lockedUsernamesUntil) {
+    if (until <= now) lockedUsernamesUntil.delete(name);
+  }
+  return lockedUsernamesUntil.size;
+}
+
 class AuthService {
   /**
    * Токен подписывается HMAC-SHA256 на серверном секрете. Внутри:
@@ -307,6 +331,8 @@ class AuthService {
 
     if (isRateLimited(key, opts)) {
       // Порог только что достигнут для этой пары адрес+логин.
+      markUsernameLocked(row.username, opts.windowMs);
+
       // В центр безопасности событие уходит только для учётной записи
       // администратора: рядовой сотрудник, несколько раз ошибившийся паролем,
       // тревоги поднимать не должен (план 1.7, аудит, находка №12).
@@ -410,6 +436,12 @@ class AuthService {
 
   static getUserById(id) {
     return UserService.getUserById(id);
+  }
+
+  // Для панели администратора (DbStudioService.getIdentityStats) — см.
+  // countLockedUsernames выше.
+  static countLockedAccounts() {
+    return countLockedUsernames();
   }
 }
 
