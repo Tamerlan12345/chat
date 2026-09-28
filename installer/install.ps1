@@ -9,6 +9,26 @@
 # строгом режиме, он теоретически может проверить и его тоже. Этот скрипт
 # решает именно ту проблему, которая уже наблюдалась (плагин установщика),
 # а не гарантирует обход проверки для любого будущего сценария.
+#
+# Установка "копией" и автообновление
+# ------------------------------------
+# У этой установки нет NSIS и нет службы автообновления electron-updater -
+# см. docs/superpowers/specs/2026-09-28-autoupdate-design.md, "Portable-сборка
+# не обновляется electron-updater". Приложение, поставленное этим скриптом,
+# может только уведомить о новой версии ссылкой на скачивание - само оно
+# не обновится. Для автообновления сотрудникам нужен собранный установщик
+# OpenMyChat-Enterprise-Setup-<version>.exe (см. docs/автообновление.md).
+#
+# -ServerUrl/-Channel - необязательные параметры этого скрипта: если заданы,
+# он настраивает автообновление машины (client.json в ProgramData) через
+# configure-client.ps1 - но это требует прав администратора, которых у
+# установки "для себя" может не быть.
+
+param(
+    [string]$ServerUrl,
+    [ValidateSet('stable', 'beta')]
+    [string]$Channel
+)
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -71,6 +91,53 @@ Set-ItemProperty -Path $UninstallKey -Name 'NoRepair' -Value 1 -Type DWord
 Copy-Item -Path (Join-Path $ScriptDir 'uninstall.ps1') -Destination $InstallDir -Force -ErrorAction SilentlyContinue
 
 Write-Host "`nГотово! Ярлык создан на рабочем столе и в меню Пуск." -ForegroundColor Green
+
+Write-Host ""
+Write-Host "Внимание: это установка «копией», не через NSIS-установщик." -ForegroundColor Yellow
+Write-Host "Приложение НЕ будет обновляться автоматически - оно лишь покажет" -ForegroundColor Yellow
+Write-Host "уведомление о новой версии со ссылкой на скачивание. Для" -ForegroundColor Yellow
+Write-Host "автообновления раздайте сотрудникам OpenMyChat-Enterprise-Setup-*.exe" -ForegroundColor Yellow
+Write-Host "(см. docs/автообновление.md)." -ForegroundColor Yellow
+
+# Настройка client.json (адрес сервера/канал обновлений) требует прав
+# администратора, потому что каталог в ProgramData доступен на запись
+# только им - см. configure-client.ps1. Установка "для себя" (эта - без
+# UAC) их может не иметь, поэтому просто печатаем готовую команду для ИТ,
+# а не молча пропускаем настройку.
+$ConfigureScript = Join-Path $ScriptDir 'configure-client.ps1'
+if (($ServerUrl -or $Channel) -and -not (Test-Path -LiteralPath $ConfigureScript)) {
+    Write-Host ""
+    Write-Host "Не найден $ConfigureScript - настройка автообновления пропущена." -ForegroundColor Yellow
+    Write-Host "Положите configure-client.ps1 рядом с install.ps1 и запустите его отдельно." -ForegroundColor Yellow
+} elseif ($ServerUrl -or $Channel) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+               ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    $configArgs = @()
+    if ($ServerUrl) { $configArgs += @('-ServerUrl', $ServerUrl) }
+    if ($Channel) { $configArgs += @('-Channel', $Channel) }
+
+    if ($isAdmin) {
+        Write-Host ""
+        Write-Host "Права администратора есть - настраиваю автообновление (client.json)..." -ForegroundColor Cyan
+        try {
+            & $ConfigureScript @configArgs
+        } catch {
+            # Установка приложения уже прошла успешно - сбой настройки
+            # client.json (например, отказ в диалоге UAC для Root-хранилища
+            # сертификата на другом шаге) не должен превращаться в общий
+            # провал install.ps1.
+            Write-Host "Настройка автообновления не удалась: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    } else {
+        $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$ConfigureScript`""
+        foreach ($a in $configArgs) { $cmd += " `"$a`"" }
+        Write-Host ""
+        Write-Host "Прав администратора нет - настройку автообновления (client.json) должен" -ForegroundColor Yellow
+        Write-Host "выполнить ИТ-отдел от имени администратора:" -ForegroundColor Yellow
+        Write-Host "  $cmd" -ForegroundColor Cyan
+    }
+}
 
 try {
     $launch = Read-Host "Запустить сейчас? (y/n)"
