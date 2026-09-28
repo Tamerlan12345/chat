@@ -73,6 +73,11 @@ function classifyUpdaterError(err, verifyCode = null) {
   return 'update-failed';
 }
 
+// Пути Windows сравниваются без учёта регистра.
+function fileKey(file) {
+  return String(file).replace(/\//g, '\\').toLowerCase();
+}
+
 function normalizePolicy(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const offered = isValidVersion(body.offeredVersion) ? body.offeredVersion : null;
@@ -148,6 +153,9 @@ class UpdateController {
     this.mandatoryAsked = false;
     this.mandatoryAbort = null;
     this.installing = false;
+    this.verifiedFiles = new Set();
+    this.downloadedFile = null;
+    this.downloadedCheck = null;
     this.started = false;
     this.stopped = false;
   }
@@ -278,10 +286,10 @@ class UpdateController {
     u.on('error', (err) => this.onUpdaterError(err));
   }
 
-  async verifyDownloaded(file) {
+  async verifyDownloaded(file, expectedVersion = this.downloadVersion) {
     let code;
     try {
-      code = await this.deps.verify(file, { expectedVersion: this.downloadVersion, currentVersion: this.currentVersion });
+      code = await this.deps.verify(file, { expectedVersion, currentVersion: this.currentVersion });
       if (code !== null && typeof code !== 'string') code = 'signature-check-failed';
     } catch (err) {
       this.deps.log(`update signature check crashed: ${err.message}`);
@@ -444,10 +452,36 @@ class UpdateController {
     this.setState({ status: 'downloading', offeredVersion: version || this.state.offeredVersion, progress: 0, error: null });
   }
 
+  // electron-updater 6.8.9 посылает это событие дважды подряд — второе
+  // приходит, пока первое ещё проверяет файл.
   onDownloaded(info) {
-    // electron-updater 6.8.9 посылает это событие дважды подряд.
-    if (this.state.status === 'downloaded') return;
+    if (this.state.status === 'downloaded' || this.downloadedCheck) return this.downloadedCheck || undefined;
     const version = isValidVersion(info?.version) ? info.version : this.downloadVersion || this.state.offeredVersion;
+    const file = typeof info?.downloadedFile === 'string' && info.downloadedFile ? info.downloadedFile : null;
+    this.downloadedCheck = this.confirmDownloaded(version, file)
+      .catch((err) => this.deps.log(`updates: downloaded file check failed: ${err?.message || err}`))
+      .finally(() => { this.downloadedCheck = null; });
+    return this.downloadedCheck;
+  }
+
+  // Подпись, проверенная во время скачивания, относилась к временному файлу.
+  // Готовый установщик лежит уже в другом месте (кэш pending), а файл из
+  // кэша прошлого запуска electron-updater берёт повторно, сверив лишь sha512
+  // и не вызывая проверку подписи вовсе. Поэтому здесь — своя проверка
+  // именно того файла, который будет запущен, если в этом запуске он ещё не
+  // проверялся.
+  async confirmDownloaded(version, file) {
+    let code = null;
+    if (!file) code = 'signature-check-failed';
+    else if (!this.verifiedFiles.has(fileKey(file))) code = await this.verifyDownloaded(file, version);
+    if (this.stopped) return;
+    if (code) {
+      this.rejectDownloaded(code, file);
+      return;
+    }
+    this.verifiedFiles.add(fileKey(file));
+    this.downloadedFile = file;
+    if (this.autoUpdater) this.autoUpdater.autoInstallOnAppQuit = true;
     this.clearCheckTimer();
     this.failures = 0;
     this.savePersisted({ lastError: null });
@@ -482,20 +516,71 @@ class UpdateController {
 
   // ── Установка ────────────────────────────────────────────────────────────
 
-  installNow() {
-    if (this.state.status !== 'downloaded' || this.installing) return { ok: false, reason: 'not-downloaded' };
+  // Файл не прошёл проверку: electron-updater не должен поставить его и при
+  // выходе из приложения (autoInstallOnAppQuit).
+  rejectDownloaded(code, file) {
+    if (this.autoUpdater) this.autoUpdater.autoInstallOnAppQuit = false;
+    if (file) this.verifiedFiles.delete(fileKey(file));
+    this.downloadedFile = null;
+    this.fail(code, `downloaded installer rejected: ${file || 'no file path'}`);
+  }
+
+  async installNow() {
+    if (this.installing) return { ok: false, reason: 'busy' };
+    if (this.state.status !== 'downloaded') return { ok: false, reason: 'not-downloaded' };
     // Перезапуск посреди сеанса удалённого стола оборвал бы работу оператора
     // и сотрудника — ставим только после его конца.
     if (this.hostSession && this.hostSession.active) return { ok: false, reason: 'remote-session' };
     this.installing = true;
-    this.clearCheckTimer();
-    this.clearMandatoryTimer();
-    this.deps.log(`updates: installing ${this.state.offeredVersion} now`);
-    // Иначе обработчик close главного окна спрятал бы его в трей и выход не
-    // состоялся бы.
-    this.app.isQuitting = true;
-    this.autoUpdater.quitAndInstall(true, true);
-    return { ok: true };
+    try {
+      // Последняя проверка — прямо перед запуском: между скачиванием и
+      // установкой могли пройти часы, а папка кэша доступна на запись
+      // любой программе сотрудника.
+      const file = (this.autoUpdater && this.autoUpdater.installerPath) || this.downloadedFile;
+      const code = file ? await this.verifyDownloaded(file, this.state.offeredVersion) : 'signature-check-failed';
+      if (code) {
+        this.rejectDownloaded(code, file);
+        return { ok: false, reason: code };
+      }
+      // Пока шла проверка, мог начаться сеанс или всё остановиться.
+      if (this.stopped || this.state.status !== 'downloaded') return { ok: false, reason: 'not-downloaded' };
+      if (this.hostSession && this.hostSession.active) return { ok: false, reason: 'remote-session' };
+
+      this.clearCheckTimer();
+      this.clearMandatoryTimer();
+      this.deps.log(`updates: installing ${this.state.offeredVersion} now`);
+      // Иначе обработчик close главного окна спрятал бы его в трей и выход
+      // не состоялся бы.
+      this.app.isQuitting = true;
+      let started = false;
+      try {
+        this.autoUpdater.quitAndInstall(true, true);
+        // BaseUpdater сбрасывает флаг, если установщик не запустился
+        // (нет installerPath, ошибка запуска).
+        started = this.autoUpdater.quitAndInstallCalled !== false;
+      } catch (err) {
+        this.deps.log(`updates: quitAndInstall threw: ${err?.message || err}`);
+      }
+      if (!started) {
+        this.app.isQuitting = false;
+        this.fail('install-failed', 'installer did not start — the app keeps running');
+        return { ok: false, reason: 'install-failed' };
+      }
+      return { ok: true };
+    } finally {
+      // После успешного запуска приложение выходит; флаг остаётся, чтобы
+      // второй щелчок не запустил установщик ещё раз.
+      if (!this.app.isQuitting) this.installing = false;
+    }
+  }
+
+  installFromMandatory() {
+    this.installNow()
+      .then((result) => {
+        // Сеанс удалённого стола начался, пока шла последняя проверка.
+        if (!result.ok && result.reason === 'remote-session') this.handleMandatory();
+      })
+      .catch((err) => this.deps.log(`mandatory install failed: ${err?.message || err}`));
   }
 
   handleMandatory() {
@@ -511,7 +596,7 @@ class UpdateController {
     }
     // Отсрочка одна: второй раз не спрашиваем, а ставим.
     if (this.mandatoryAsked) {
-      this.installNow();
+      this.installFromMandatory();
       return;
     }
     this.mandatoryAsked = true;
@@ -543,7 +628,7 @@ class UpdateController {
       this.handleMandatory();
       return;
     }
-    this.installNow();
+    this.installFromMandatory();
   }
 
   // Ссылка на скачивание берётся только из состояния главного процесса,

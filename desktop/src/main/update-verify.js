@@ -12,6 +12,7 @@
 
 const { execFile } = require('node:child_process');
 const { compareVersions } = require('./update-policy');
+const { trustedSystemRoot, DEFAULT_SYSTEM_ROOT } = require('./client-config');
 
 // Меняется только вместе с сертификатом подписи: тот же отпечаток в
 // desktop/scripts/signing-common.ps1, installer/установить-сертификат.ps1 и
@@ -22,11 +23,14 @@ const MAX_OUTPUT_BYTES = 64 * 1024;
 
 // PowerShell — по абсолютному пути: поиск по PATH нашёл бы первым
 // powershell.exe из любой папки, куда сотрудник (или программа от его имени)
-// может писать.
-function powershellPath(env = process.env) {
-  const root = typeof env.SystemRoot === 'string' && /^[A-Za-z]:\\[^"*?<>|]+$/.test(env.SystemRoot)
-    ? env.SystemRoot.replace(/\\+$/, '')
-    : 'C:\\Windows';
+// может писать. Корень системы — не из переменной SystemRoot: её сотрудник
+// задаёт сам (HKCU\Environment), и поддельный powershell.exe напечатал бы
+// «Valid» на что угодно. Его передаёт main.js из resolveSystemDirs (ядро,
+// \SystemRoot); без него — то же ядро здесь, затем C:\Windows.
+function powershellPath(systemRoot) {
+  const root = typeof systemRoot === 'string' && /^[A-Za-z]:\\[^"*?<>|%\r\n]+$/.test(systemRoot) && !systemRoot.includes('..')
+    ? systemRoot.replace(/\\+$/, '')
+    : DEFAULT_SYSTEM_ROOT;
   return `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
@@ -103,14 +107,14 @@ function defaultRun(exe, args, { timeout }) {
  * Сверх кодов evaluateSignature: signature-check-failed (PowerShell не
  * запустился или упал) и signature-check-timeout.
  */
-async function verifyInstaller(file, { expectedVersion, currentVersion, run = defaultRun, env = process.env, timeoutMs = VERIFY_TIMEOUT_MS, pinned = PINNED_THUMBPRINTS } = {}) {
+async function verifyInstaller(file, { expectedVersion, currentVersion, run = defaultRun, systemRoot, timeoutMs = VERIFY_TIMEOUT_MS, pinned = PINNED_THUMBPRINTS } = {}) {
   if (typeof file !== 'string' || !file) return 'signature-check-failed';
   let timer = null;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
   });
   try {
-    const running = Promise.resolve().then(() => run(powershellPath(env), psArgs(buildPsCommand(file)), { timeout: timeoutMs }));
+    const running = Promise.resolve().then(() => run(powershellPath(systemRoot || trustedSystemRoot()), psArgs(buildPsCommand(file)), { timeout: timeoutMs }));
     const outcome = await Promise.race([running.then((r) => ({ r }), (error) => ({ error })), timeout]);
     if (outcome.timedOut) return 'signature-check-timeout';
     if (outcome.error) {

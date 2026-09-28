@@ -18,7 +18,8 @@ const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isA
 
 const { decidePermissionRequest, decidePermissionCheck } = require('./permissions');
 const { isInsecureRequestBlocked } = require('./server-url');
-const { readClientConfig, resolveEffectiveServerUrl, programDataDir } = require('./client-config');
+const { readClientConfig, resolveEffectiveServerUrl, resolveSystemDirs } = require('./client-config');
+const { verifyInstaller } = require('./update-verify');
 const { detectInstallKind, updateCapability, isUpdaterRequestAllowed } = require('./update-policy');
 const { UpdateController } = require('./updater');
 const { planReceivedFileName, zoneIdentifierContent, formatFileSize } = require('./received-file');
@@ -81,8 +82,12 @@ log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 // %ProgramData%\OpenMyChat Enterprise\client.json (см. client-config.js);
 // без него — константа ниже.
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
+// ProgramData и корень Windows в собранной сборке — из ядра и HKLM, а не из
+// переменных окружения, которые сотрудник задаёт себе сам (см. client-config.js).
+const SYSTEM_DIRS = resolveSystemDirs({ isPackaged: app.isPackaged, env: process.env });
+for (const problem of SYSTEM_DIRS.problems) log(`system dirs: ${problem}`);
 const clientConfig = readClientConfig({
-  programData: programDataDir(process.env),
+  programData: SYSTEM_DIRS.programData,
   readFile: (file) => fs.readFileSync(file, 'utf8'),
   isPackaged: app.isPackaged
 });
@@ -163,7 +168,9 @@ async function askUser(options, { signal, bringToFront = false } = {}) {
 function readRdPolicyHere() {
   return readRdPolicy({
     env: process.env,
-    paths: policyPaths({ programData: process.env.ProgramData, userData: app.getPath('userData') }),
+    // Та же доверенная ProgramData, что и для client.json: подменой переменной
+    // запрет удалённого доступа от ИТ снимался бы.
+    paths: policyPaths({ programData: SYSTEM_DIRS.programData, userData: app.getPath('userData') }),
     readFile: (file) => fs.readFileSync(file, 'utf8')
   });
 }
@@ -776,13 +783,20 @@ function currentUpdateState() {
 
 function installUpdateFromTray() {
   if (!updateController) return;
-  const result = updateController.installNow();
-  if (!result.ok && result.reason === 'remote-session') {
-    showUpdateNotification({
-      title: 'Обновление отложено',
-      body: 'Во время удалённого доступа приложение не перезапускается. Завершите сеанс и повторите.'
-    });
-  }
+  updateController
+    .installNow()
+    .then((result) => {
+      if (result.ok) return;
+      if (result.reason === 'remote-session') {
+        showUpdateNotification({
+          title: 'Обновление отложено',
+          body: 'Во время удалённого доступа приложение не перезапускается. Завершите сеанс и повторите.'
+        });
+      } else if (result.reason !== 'busy') {
+        showUpdateNotification({ title: 'Обновление не установлено', body: 'Установщик не прошёл проверку или не запустился — сообщите в ИТ.' });
+      }
+    })
+    .catch((err) => log(`install from tray failed: ${err.message}`));
 }
 
 function checkUpdatesFromTray() {
@@ -858,6 +872,7 @@ function startUpdater() {
         fs.writeFileSync(file, text);
       },
       readAppUpdateYml: () => fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'),
+      verify: (file, options) => verifyInstaller(file, { ...options, systemRoot: SYSTEM_DIRS.systemRoot }),
       openExternal: (url) => {
         shell.openExternal(url).catch((err) => log(`openExternal failed: ${err.message}`));
       },

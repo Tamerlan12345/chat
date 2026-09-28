@@ -14,27 +14,127 @@
 // игнорируется, причина уходит в журнал: приложение, которое не запускается
 // из-за опечатки в конфигурации, хуже приложения со старым адресом.
 
+const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { isAllowedServerUrl, resolveServerUrl } = require('./server-url');
 
 const CONFIG_DIR_NAME = 'OpenMyChat Enterprise';
 const CONFIG_FILE_NAME = 'client.json';
 const CHANNELS = Object.freeze(['stable', 'beta']);
+const DEFAULT_SYSTEM_ROOT = 'C:\\Windows';
 const DEFAULT_PROGRAM_DATA = 'C:\\ProgramData';
+
+// Символическая ссылка \SystemRoot в корне пространства имён объектов ядра:
+// создаёт её система при загрузке, пользователь не может ни создать, ни
+// подменить её (в отличие от переменной окружения или буквы диска через
+// subst — те живут в его собственном пространстве \??).
+const KERNEL_SYSTEM_ROOT = '\\\\?\\GLOBALROOT\\SystemRoot';
+const PROFILE_LIST_KEY = 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList';
+
+// Обычный локальный путь «X:\…» без «..», подстановок и запрещённых символов.
+function isLocalDirPath(value) {
+  return typeof value === 'string'
+    && /^[A-Za-z]:\\[^\\/:*?"<>|%\r\n]+(\\[^\\/:*?"<>|%\r\n]+)*\\?$/.test(value)
+    && !value.split('\\').some((part) => part === '..' || part === '.');
+}
 
 function clientConfigPath(programData) {
   if (typeof programData !== 'string' || !programData) return null;
   return path.win32.join(programData, CONFIG_DIR_NAME, CONFIG_FILE_NAME);
 }
 
-// %ProgramData% — переменная окружения, её можно подменить при запуске.
-// Принимается только корень диска вида «C:\ProgramData»: папку с таким именем
-// в корне системного диска обычный пользователь не создаёт, а увести чтение в
-// свой профиль или на сетевую папку подменой переменной не выйдет.
-function programDataDir(env = {}) {
-  const value = typeof env.ProgramData === 'string' ? env.ProgramData.trim() : '';
-  if (/^[A-Za-z]:\\ProgramData\\?$/i.test(value)) return value.replace(/\\$/, '');
-  return DEFAULT_PROGRAM_DATA;
+function trustedSystemRoot({ realpath = (p) => fs.realpathSync.native(p) } = {}) {
+  try {
+    const resolved = String(realpath(KERNEL_SYSTEM_ROOT)).replace(/^\\\\\?\\/, '').replace(/\\+$/, '');
+    return isLocalDirPath(resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+// Вывод «reg.exe query <ключ> /v <имя>»: строка «    имя    REG_SZ    значение».
+function parseRegValue(stdout, name) {
+  const lines = String(stdout || '').split(/\r?\n/);
+  for (const line of lines) {
+    const m = line.match(/^\s+(\S.*?)\s{2,}(REG_SZ|REG_EXPAND_SZ)\s{2,}(.*?)\s*$/);
+    if (m && m[1].toLowerCase() === String(name).toLowerCase()) return m[3];
+  }
+  return null;
+}
+
+// «%SystemDrive%\ProgramData» из реестра → «C:\ProgramData». Раскрываются
+// только %SystemDrive% и %SystemRoot% — из доверенного корня системы, а не
+// из переменных окружения.
+function expandSystemPath(raw, systemRoot) {
+  if (typeof raw !== 'string' || !isLocalDirPath(systemRoot)) return null;
+  const drive = systemRoot.slice(0, 2);
+  const expanded = raw
+    .trim()
+    .replace(/%SystemDrive%/gi, drive)
+    .replace(/%SystemRoot%/gi, systemRoot.replace(/\\+$/, ''));
+  return isLocalDirPath(expanded) ? expanded.replace(/\\+$/, '') : null;
+}
+
+function defaultRegQuery(exe, key, name) {
+  return execFileSync(exe, ['query', key, '/v', name], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+}
+
+function sameDir(a, b) {
+  return typeof a === 'string' && typeof b === 'string'
+    && a.replace(/\\+$/, '').toLowerCase() === b.replace(/\\+$/, '').toLowerCase();
+}
+
+/**
+ * Папки Windows, от которых зависит доверие: где лежит client.json
+ * (ProgramData) и откуда запускать PowerShell (корень системы).
+ *
+ * В собранной сборке переменные окружения здесь не читаются: пользовательская
+ * переменная (HKCU\Environment) перекрывает системную, и
+ * «ProgramData=Q:\ProgramData» вместе с subst Q: на папку профиля увела бы
+ * приложение на любой https-сервер, а «SystemRoot» подсунула бы поддельный
+ * powershell.exe, печатающий «Valid». Корень системы берётся из ядра
+ * (\SystemRoot), ProgramData — из HKLM\…\ProfileList (пишет только
+ * администратор) через reg.exe из того же корня. Не вышло — C:\Windows и
+ * C:\ProgramData. В разработке — как раньше, из окружения.
+ * → { systemRoot, programData, problems: [строки для журнала] }
+ */
+function resolveSystemDirs({ isPackaged, env = {}, realpath, regQuery = defaultRegQuery } = {}) {
+  const problems = [];
+  const envRoot = typeof env.SystemRoot === 'string' ? env.SystemRoot.trim() : '';
+  const envProgramData = typeof env.ProgramData === 'string' ? env.ProgramData.trim() : '';
+
+  if (!isPackaged) {
+    return {
+      systemRoot: isLocalDirPath(envRoot) ? envRoot.replace(/\\+$/, '') : trustedSystemRoot({ realpath }) || DEFAULT_SYSTEM_ROOT,
+      programData: isLocalDirPath(envProgramData) ? envProgramData.replace(/\\+$/, '') : DEFAULT_PROGRAM_DATA,
+      problems
+    };
+  }
+
+  let systemRoot = trustedSystemRoot({ realpath });
+  if (!systemRoot) {
+    problems.push(`корень Windows не определён через ядро — ${DEFAULT_SYSTEM_ROOT}`);
+    systemRoot = DEFAULT_SYSTEM_ROOT;
+  }
+
+  let programData = null;
+  try {
+    const raw = parseRegValue(regQuery(`${systemRoot}\\System32\\reg.exe`, PROFILE_LIST_KEY, 'ProgramData'), 'ProgramData');
+    programData = expandSystemPath(raw, systemRoot);
+    if (!programData) problems.push(`ProgramData в HKLM не разобран (${JSON.stringify(String(raw)).slice(0, 80)}) — ${DEFAULT_PROGRAM_DATA}`);
+  } catch (err) {
+    problems.push(`ProgramData из HKLM не прочитан (${err && (err.code || err.message)}) — ${DEFAULT_PROGRAM_DATA}`);
+  }
+  if (!programData) programData = DEFAULT_PROGRAM_DATA;
+
+  if (envProgramData && !sameDir(envProgramData, programData)) {
+    problems.push(`переменная ProgramData (${envProgramData.slice(0, 80)}) не совпадает с HKLM — не используется`);
+  }
+  if (envRoot && !sameDir(envRoot, systemRoot)) {
+    problems.push(`переменная SystemRoot (${envRoot.slice(0, 80)}) не совпадает с корнем системы — не используется`);
+  }
+  return { systemRoot, programData, problems };
 }
 
 function isPlainObject(value) {
@@ -150,8 +250,13 @@ module.exports = {
   CONFIG_DIR_NAME,
   CONFIG_FILE_NAME,
   CHANNELS,
+  DEFAULT_SYSTEM_ROOT,
+  DEFAULT_PROGRAM_DATA,
   clientConfigPath,
-  programDataDir,
+  trustedSystemRoot,
+  parseRegValue,
+  expandSystemPath,
+  resolveSystemDirs,
   readClientConfig,
   resolveEffectiveServerUrl
 };

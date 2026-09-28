@@ -3,7 +3,10 @@ const assert = require('node:assert');
 const path = require('node:path');
 const {
   clientConfigPath,
-  programDataDir,
+  trustedSystemRoot,
+  parseRegValue,
+  expandSystemPath,
+  resolveSystemDirs,
   readClientConfig,
   resolveEffectiveServerUrl
 } = require('../src/main/client-config');
@@ -30,13 +33,89 @@ test('путь к client.json — %ProgramData%\\OpenMyChat Enterprise\\client.j
   assert.strictEqual(clientConfigPath(undefined), null);
 });
 
-test('ProgramData берётся только в виде <диск>:\\ProgramData', () => {
-  assert.strictEqual(programDataDir({ ProgramData: 'C:\\ProgramData' }), 'C:\\ProgramData');
-  assert.strictEqual(programDataDir({ ProgramData: 'D:\\ProgramData\\' }), 'D:\\ProgramData');
-  // Подмена переменной на папку пользователя не уводит чтение конфигурации.
-  assert.strictEqual(programDataDir({ ProgramData: 'C:\\Users\\u\\fake' }), 'C:\\ProgramData');
-  assert.strictEqual(programDataDir({ ProgramData: '\\\\evil\\share\\ProgramData' }), 'C:\\ProgramData');
-  assert.strictEqual(programDataDir({}), 'C:\\ProgramData');
+// ── Папки Windows: в собранной сборке — не из окружения ────────────────────
+
+const REG_PROFILE_LIST = '\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\r\n    ProgramData    REG_EXPAND_SZ    %SystemDrive%\\ProgramData\r\n\r\n';
+const kernelRoot = (root) => (p) => {
+  assert.strictEqual(p, '\\\\?\\GLOBALROOT\\SystemRoot');
+  return root;
+};
+
+test('собранная сборка: ProgramData из HKLM, корень системы из ядра, окружение не читается', () => {
+  const regCalls = [];
+  const dirs = resolveSystemDirs({
+    isPackaged: true,
+    // subst Q: на папку профиля + ProgramData=Q:\ProgramData в HKCU\Environment
+    env: { ProgramData: 'Q:\\ProgramData', SystemRoot: 'Q:\\Windows' },
+    realpath: kernelRoot('D:\\Windows'),
+    regQuery: (exe, key, name) => {
+      regCalls.push({ exe, key, name });
+      return REG_PROFILE_LIST;
+    }
+  });
+  assert.strictEqual(dirs.systemRoot, 'D:\\Windows');
+  assert.strictEqual(dirs.programData, 'D:\\ProgramData', '%SystemDrive% — диск доверенного корня системы');
+  assert.deepStrictEqual(regCalls, [{
+    exe: 'D:\\Windows\\System32\\reg.exe',
+    key: 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList',
+    name: 'ProgramData'
+  }]);
+  assert.strictEqual(dirs.problems.length, 2, 'расхождение с окружением видно в журнале');
+});
+
+test('собранная сборка: реестр и ядро недоступны — C:\\Windows и C:\\ProgramData, не окружение', () => {
+  const dirs = resolveSystemDirs({
+    isPackaged: true,
+    env: { ProgramData: 'D:\\ProgramData', SystemRoot: 'D:\\Windows' },
+    realpath: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+    regQuery: () => { throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }); }
+  });
+  assert.strictEqual(dirs.systemRoot, 'C:\\Windows');
+  assert.strictEqual(dirs.programData, 'C:\\ProgramData');
+  assert.ok(dirs.problems.length >= 2);
+});
+
+test('собранная сборка: мусор в реестре или от ядра не принимается', () => {
+  for (const raw of ['%USERPROFILE%\\ProgramData', '\\\\evil\\share', 'C:\\x\\..\\..\\Users\\u', '']) {
+    const dirs = resolveSystemDirs({
+      isPackaged: true,
+      env: {},
+      realpath: kernelRoot('C:\\Windows'),
+      regQuery: () => `\r\n    ProgramData    REG_EXPAND_SZ    ${raw}\r\n`
+    });
+    assert.strictEqual(dirs.programData, 'C:\\ProgramData', raw);
+  }
+  const weirdRoot = resolveSystemDirs({ isPackaged: true, env: {}, realpath: kernelRoot('\\Device\\HarddiskVolume3\\Windows'), regQuery: () => REG_PROFILE_LIST });
+  assert.strictEqual(weirdRoot.systemRoot, 'C:\\Windows');
+  assert.strictEqual(trustedSystemRoot({ realpath: kernelRoot('\\\\?\\C:\\Windows') }), 'C:\\Windows');
+});
+
+test('разработка: папки из окружения, как раньше', () => {
+  const dirs = resolveSystemDirs({
+    isPackaged: false,
+    env: { ProgramData: 'D:\\ProgramData', SystemRoot: 'D:\\Windows' },
+    realpath: kernelRoot('C:\\Windows'),
+    regQuery: () => { throw new Error('не должен вызываться'); }
+  });
+  assert.deepStrictEqual(dirs, { systemRoot: 'D:\\Windows', programData: 'D:\\ProgramData', problems: [] });
+});
+
+test('разбор вывода reg.exe и раскрытие %SystemDrive%', () => {
+  assert.strictEqual(parseRegValue(REG_PROFILE_LIST, 'ProgramData'), '%SystemDrive%\\ProgramData');
+  assert.strictEqual(parseRegValue('\r\n    SystemRoot    REG_SZ    C:\\WINDOWS\r\n', 'systemroot'), 'C:\\WINDOWS');
+  assert.strictEqual(parseRegValue('ERROR: not found', 'ProgramData'), null);
+  assert.strictEqual(expandSystemPath('%SystemDrive%\\ProgramData', 'E:\\Windows'), 'E:\\ProgramData');
+  assert.strictEqual(expandSystemPath('%SYSTEMROOT%\\Temp', 'C:\\Windows'), 'C:\\Windows\\Temp');
+  assert.strictEqual(expandSystemPath('%ALLUSERSPROFILE%', 'C:\\Windows'), null, 'прочие переменные не раскрываются');
+});
+
+test('на этой машине корень системы определяется через ядро', { skip: process.platform !== 'win32' }, () => {
+  const root = trustedSystemRoot();
+  assert.match(root, /^[A-Za-z]:\\/);
+  const dirs = resolveSystemDirs({ isPackaged: true, env: {} });
+  assert.strictEqual(dirs.systemRoot, root);
+  assert.match(dirs.programData, /^[A-Za-z]:\\ProgramData$/i, 'настоящий reg.exe и настоящий HKLM');
+  assert.deepStrictEqual(dirs.problems, []);
 });
 
 test('файл ProgramData побеждает константу', () => {

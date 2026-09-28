@@ -21,6 +21,10 @@ const APP_UPDATE_YML = [
   'updaterCacheDirName: mychat-desktop-updater',
   ''
 ].join('\n');
+const DOWNLOADED = {
+  version: '1.2.0',
+  downloadedFile: 'C:\\Users\\u\\AppData\\Local\\mychat-desktop-updater\\pending\\OpenMyChat-Enterprise-Setup-1.2.0.exe'
+};
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function fakeTimers(clock) {
@@ -79,7 +83,14 @@ function harness(opts = {}) {
     return opts.checkResult ? opts.checkResult() : new Promise(() => {});
   };
   autoUpdater.setFeedURL = (o) => calls.setFeed.push(o);
-  autoUpdater.quitAndInstall = (...args) => calls.quit.push({ args, isQuitting: app.isQuitting });
+  autoUpdater.installerPath = opts.installerPath === undefined ? DOWNLOADED.downloadedFile : opts.installerPath;
+  autoUpdater.quitAndInstallCalled = false;
+  autoUpdater.quitAndInstall = (...args) => {
+    calls.quit.push({ args, isQuitting: app.isQuitting });
+    if (opts.quitThrows) throw new Error('spawn failed');
+    // BaseUpdater: при неудаче install() флаг сбрасывается в false.
+    autoUpdater.quitAndInstallCalled = !opts.installFails;
+  };
 
   const app = { isQuitting: false, getVersion: () => opts.version || '1.1.0' };
   const hostSession = { active: false };
@@ -111,7 +122,10 @@ function harness(opts = {}) {
     now: () => clock.now,
     timers,
     readAppUpdateYml: opts.readAppUpdateYml || (() => APP_UPDATE_YML),
-    verify: opts.verify || (async () => null),
+    verify: (file, o) => {
+      calls.verify.push({ file, ...o });
+      return (opts.verify || (async () => null))(file, o);
+    },
     rand: () => 0.5,
     openExternal: (url) => calls.opened.push(url),
     confirmMandatory: (info) => {
@@ -315,8 +329,9 @@ test('события electron-updater → состояние, интерфейс
   u.emit('download-progress', { percent: 42.6, transferred: 1, total: 2 });
   assert.strictEqual(h.controller.getState().progress, 43);
 
-  u.emit('update-downloaded', { version: '1.2.0' });
-  u.emit('update-downloaded', { version: '1.2.0' }); // electron-updater шлёт дважды
+  u.emit('update-downloaded', DOWNLOADED);
+  u.emit('update-downloaded', DOWNLOADED); // electron-updater шлёт дважды
+  await tick();
   s = h.controller.getState();
   assert.strictEqual(s.status, 'downloaded');
   assert.strictEqual(s.progress, 100);
@@ -529,18 +544,19 @@ async function downloaded(opts = {}) {
   h.autoUpdater.emit('update-available', { version: '1.2.0' });
   // electron-updater 6.8.9 посылает update-downloaded дважды подряд
   // (AppUpdater.dispatchUpdateDownloaded) — обработчик обязан это выдержать.
-  h.autoUpdater.emit('update-downloaded', { version: '1.2.0' });
-  h.autoUpdater.emit('update-downloaded', { version: '1.2.0' });
+  h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+  h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+  await tick();
   return h;
 }
 
 test('installNow отклоняется не из downloaded', async () => {
   const h = harness();
   h.controller.start();
-  assert.strictEqual(h.controller.installNow().ok, false);
+  assert.strictEqual((await h.controller.installNow()).ok, false);
   await h.timers.fire();
   h.autoUpdater.emit('update-available', { version: '1.2.0' });
-  const r = h.controller.installNow();
+  const r = (await h.controller.installNow());
   assert.deepStrictEqual(r, { ok: false, reason: 'not-downloaded' });
   assert.strictEqual(h.calls.quit.length, 0);
   assert.strictEqual(h.app.isQuitting, false);
@@ -549,20 +565,20 @@ test('installNow отклоняется не из downloaded', async () => {
 test('installNow во время сеанса удалённого стола откладывается', async () => {
   const h = await downloaded();
   h.hostSession.active = true;
-  assert.deepStrictEqual(h.controller.installNow(), { ok: false, reason: 'remote-session' });
+  assert.deepStrictEqual((await h.controller.installNow()), { ok: false, reason: 'remote-session' });
   assert.strictEqual(h.calls.quit.length, 0);
   assert.strictEqual(h.app.isQuitting, false);
   h.hostSession.active = false;
-  assert.deepStrictEqual(h.controller.installNow(), { ok: true });
+  assert.deepStrictEqual((await h.controller.installNow()), { ok: true });
 });
 
 test('installNow ставит isQuitting до quitAndInstall(true, true)', async () => {
   const h = await downloaded();
-  assert.deepStrictEqual(h.controller.installNow(), { ok: true });
+  assert.deepStrictEqual((await h.controller.installNow()), { ok: true });
   assert.strictEqual(h.calls.quit.length, 1);
   assert.deepStrictEqual(h.calls.quit[0].args, [true, true]);
   assert.strictEqual(h.calls.quit[0].isQuitting, true, 'окно не прячется в трей вместо выхода');
-  assert.strictEqual(h.controller.installNow().ok, false, 'повторный вызов ничего не делает');
+  assert.strictEqual((await h.controller.installNow()).ok, false, 'повторный вызов ничего не делает');
   assert.strictEqual(h.calls.quit.length, 1);
 });
 
@@ -577,8 +593,8 @@ test('обязательное обновление: ждёт конца сеа�
   h.autoUpdater.emit('update-available', { version: '1.2.0' });
   // Скачано во время сеанса — окно не показывается.
   h.hostSession.active = true;
-  h.autoUpdater.emit('update-downloaded', { version: '1.2.0' });
-  h.autoUpdater.emit('update-downloaded', { version: '1.2.0' });
+  h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+  h.autoUpdater.emit('update-downloaded', DOWNLOADED);
   assert.strictEqual(h.controller.getState().mandatory, true);
   await tick();
   assert.strictEqual(h.calls.confirm.length, 0);
@@ -606,6 +622,7 @@ test('обязательное обновление: ждёт конца сеа�
   await tick();
   assert.strictEqual(h.calls.quit.length, 0, '«Через 5 минут» — не сейчас');
   await h.timers.fire();
+  await tick();
   assert.strictEqual(h.calls.quit.length, 1, 'через 5 минут — установка без второго вопроса');
   assert.strictEqual(h.calls.confirm.length, 1);
   assert.deepStrictEqual(h.calls.quit[0].args, [true, true]);
@@ -634,8 +651,95 @@ test('обязательное обновление: к концу отсчёт�
   assert.strictEqual(h.timers.next().ms, RD_RECHECK_MS);
   h.hostSession.active = false;
   await h.timers.fire();
+  await tick();
   assert.strictEqual(h.calls.quit.length, 1);
   assert.strictEqual(h.calls.confirm.length, 1, 'отсрочка одна — второй раз не спрашиваем');
+});
+
+// ── Скачанный файл проверяется ещё раз (кэш pending) ───────────────────────
+
+test('скачано: проверяется именно готовый файл, один раз за запуск', async () => {
+  const h = await downloaded();
+  assert.strictEqual(h.controller.getState().status, 'downloaded');
+  const onDownload = h.calls.verify.filter((v) => v.file === DOWNLOADED.downloadedFile);
+  assert.strictEqual(onDownload.length, 1, 'двойное событие — одна проверка');
+  assert.deepStrictEqual(onDownload[0], { file: DOWNLOADED.downloadedFile, expectedVersion: '1.2.0', currentVersion: '1.1.0' });
+  assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, true);
+});
+
+test('файл из кэша не прошёл проверку → ошибка, не ставится ни сейчас, ни при выходе', async () => {
+  const h = await downloaded({ verify: async () => 'signature-foreign' });
+  const s = h.controller.getState();
+  assert.strictEqual(s.status, 'error');
+  assert.strictEqual(s.error, 'signature-foreign');
+  assert.strictEqual(h.savedState().lastError, 'signature-foreign');
+  assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, false, 'electron-updater не поставит его при выходе');
+  assert.strictEqual(h.calls.notify.length, 0, '«обновление готово» не показывается');
+  assert.deepStrictEqual(await h.controller.installNow(), { ok: false, reason: 'not-downloaded' });
+  assert.strictEqual(h.calls.quit.length, 0);
+  assert.ok(h.timers.next(), 'повторная попытка по расписанию с задержкой');
+});
+
+test('событие без пути к файлу — отказ, а не «проверено»', async () => {
+  const h = harness();
+  h.controller.start();
+  await h.timers.fire();
+  h.autoUpdater.emit('update-available', { version: '1.2.0' });
+  h.autoUpdater.emit('update-downloaded', { version: '1.2.0' });
+  await tick();
+  assert.strictEqual(h.controller.getState().status, 'error');
+  assert.strictEqual(h.controller.getState().error, 'signature-check-failed');
+  assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, false);
+});
+
+test('installNow перепроверяет installerPath прямо перед установкой', async () => {
+  let answer = null;
+  const installer = 'C:\\Users\\u\\AppData\\Local\\mychat-desktop-updater\\pending\\installer.exe';
+  const h = await downloaded({ installerPath: installer, verify: async () => answer });
+  h.calls.verify.length = 0;
+  assert.deepStrictEqual(await h.controller.installNow(), { ok: true });
+  assert.deepStrictEqual(h.calls.verify.map((v) => v.file), [installer]);
+  assert.strictEqual(h.calls.verify[0].expectedVersion, '1.2.0');
+  assert.strictEqual(h.calls.quit.length, 1);
+
+  // Файл подменили после скачивания.
+  const t = await downloaded({ installerPath: installer, verify: async (file) => (file === installer ? 'signature-untrusted' : null) });
+  assert.strictEqual(t.controller.getState().status, 'downloaded');
+  const r = await t.controller.installNow();
+  assert.deepStrictEqual(r, { ok: false, reason: 'signature-untrusted' });
+  assert.strictEqual(t.calls.quit.length, 0);
+  assert.strictEqual(t.app.isQuitting, false);
+  assert.strictEqual(t.controller.getState().status, 'error');
+  assert.strictEqual(t.autoUpdater.autoInstallOnAppQuit, false);
+});
+
+test('installNow: без installerPath берётся файл из события update-downloaded', async () => {
+  const h = await downloaded({ installerPath: null });
+  h.calls.verify.length = 0;
+  assert.deepStrictEqual(await h.controller.installNow(), { ok: true });
+  assert.deepStrictEqual(h.calls.verify.map((v) => v.file), [DOWNLOADED.downloadedFile]);
+});
+
+test('установщик не запустился → isQuitting и installing сброшены, ошибка видна', async () => {
+  for (const opts of [{ installFails: true }, { quitThrows: true }]) {
+    const h = await downloaded(opts);
+    const r = await h.controller.installNow();
+    assert.deepStrictEqual(r, { ok: false, reason: 'install-failed' }, JSON.stringify(opts));
+    assert.strictEqual(h.app.isQuitting, false, 'окно снова прячется в трей, приложение живо');
+    assert.strictEqual(h.controller.installing, false);
+    const s = h.controller.getState();
+    assert.strictEqual(s.status, 'error');
+    assert.strictEqual(s.error, 'install-failed');
+    assert.strictEqual(h.savedState().lastError, 'install-failed');
+  }
+});
+
+test('два щелчка «Перезапустить» подряд — одна установка', async () => {
+  const h = await downloaded();
+  const [a, b] = await Promise.all([h.controller.installNow(), h.controller.installNow()]);
+  assert.deepStrictEqual(a, { ok: true });
+  assert.deepStrictEqual(b, { ok: false, reason: 'busy' });
+  assert.strictEqual(h.calls.quit.length, 1);
 });
 
 // ── Ручная проверка ────────────────────────────────────────────────────────

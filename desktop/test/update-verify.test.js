@@ -104,11 +104,11 @@ test('кавычки-«ёлочки» Юникода тоже экранирую
 });
 
 test('PowerShell запускается по абсолютному пути, без профиля, команда в base64', () => {
-  assert.strictEqual(
-    powershellPath({ SystemRoot: 'C:\\Windows' }),
-    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-  );
-  assert.strictEqual(powershellPath({}), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.strictEqual(powershellPath('D:\\Windows'), 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.strictEqual(powershellPath(undefined), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  for (const junk of ['\\\\evil\\share', 'C:\\x\\..\\Users\\u', '%TEMP%', 'relative\\Windows']) {
+    assert.strictEqual(powershellPath(junk), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', junk);
+  }
   const args = psArgs('Write-Output 1');
   assert.deepStrictEqual(args.slice(0, 2), ['-NoProfile', '-NonInteractive']);
   const encoded = args[args.indexOf('-EncodedCommand') + 1];
@@ -124,11 +124,29 @@ test('verifyInstaller: успешная проверка → null, команд�
     calls.push({ exe, args, options });
     return { stdout: report() + '\r\n' };
   };
-  const result = await verifyInstaller('C:\\t\\setup.exe', { expectedVersion: '1.2.0', currentVersion: '1.1.0', run, env: { SystemRoot: 'D:\\Win' } });
+  const result = await verifyInstaller('C:\\t\\setup.exe', { expectedVersion: '1.2.0', currentVersion: '1.1.0', run, systemRoot: 'D:\\Win' });
   assert.strictEqual(result, null);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].exe, 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.ok(calls[0].options.timeout <= 30_000);
+});
+
+test('verifyInstaller: переменная SystemRoot не выбирает, какой PowerShell запустить', async () => {
+  const saved = process.env.SystemRoot;
+  process.env.SystemRoot = 'Q:\\FakeWindows';
+  try {
+    let exe = null;
+    await verifyInstaller('C:\\t\\setup.exe', {
+      expectedVersion: '1.2.0',
+      currentVersion: '1.1.0',
+      run: async (e) => { exe = e; return { stdout: report() }; }
+    });
+    assert.ok(!exe.startsWith('Q:'), exe);
+    assert.match(exe, /^[A-Za-z]:\\.+\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+  } finally {
+    if (saved === undefined) delete process.env.SystemRoot;
+    else process.env.SystemRoot = saved;
+  }
 });
 
 test('verifyInstaller: ошибки подписи отклоняются своим кодом', async () => {
