@@ -272,6 +272,13 @@ export default function ChatView({
       return null;
     }
   };
+  // Имя для скачивания — только исходное имя файла из хранилища
+  // (file_original_name с сервера или metadata.original_name), НЕ текст
+  // сообщения: его задаёт отправитель, и полагаться на него для имени
+  // сохраняемого на диск файла нельзя (аудит безопасности, находка №6).
+  // m.text остаётся резервом только для очень старых сообщений, у которых
+  // этого поля ещё нет.
+  const downloadNameOf = (m, meta) => m.file_original_name || meta?.original_name || m.text;
   const isImageMessage = (m, meta) => m.type === 'image' || Boolean(meta?.mimeType?.startsWith('image/'));
   // Картинки чата по порядку — чтобы в просмотре листать стрелками.
   const chatImages = messages
@@ -280,7 +287,7 @@ export default function ChatView({
     .map(({ m, meta }) => ({
       messageId: m.id,
       fileId: meta.file_id,
-      name: m.text || 'Изображение',
+      name: downloadNameOf(m, meta) || 'Изображение',
       sender: m.sender_id === currentUser.id ? 'Вы' : m.sender_name || activeChat.name,
       time: new Date(m.created_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     }));
@@ -433,7 +440,7 @@ export default function ChatView({
                   type="button"
                   className="chat-file-download"
                   disabled={!metadata?.file_id}
-                  onClick={() => downloadAttachment(metadata?.file_id, m.text)}
+                  onClick={() => downloadAttachment(metadata?.file_id, downloadNameOf(m, metadata))}
                   title={metadata?.file_id ? 'Скачать' : 'Файл недоступен'}
                   aria-label={metadata?.file_id ? `Скачать «${m.text}»` : 'Файл недоступен'}
                 >
