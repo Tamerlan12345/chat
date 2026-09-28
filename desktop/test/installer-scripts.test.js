@@ -29,6 +29,30 @@ test('configure-client.ps1 — требует прав администрато�
   assert.match(text, /https:\/\//, 'должен проверять, что адрес сервера начинается с https://');
 });
 
+test('configure-client.ps1 — переносит владение и распространяет ACL на уже существующие файлы (/setowner, /T), проверяет итоговый ACL файла', () => {
+  const text = readText(path.join(INSTALLER_DIR, 'configure-client.ps1'));
+  assert.match(
+    text,
+    /\/setowner/,
+    'должен переносить владение каталогом на администраторов (/setowner) — иначе прежний владелец-непривилегированный пользователь может переписать ACL обратно'
+  );
+  assert.match(
+    text,
+    /\/T/,
+    'ACL должен распространяться на уже существующие в каталоге файлы (/T), а не только на новые'
+  );
+  assert.match(
+    text,
+    /Get-Acl/,
+    'после записи client.json ACL файла должен быть проверен (Get-Acl), а не только выставлен вслепую'
+  );
+  assert.match(
+    text,
+    /LASTEXITCODE/,
+    'каждый вызов icacls должен проверяться на успех через $LASTEXITCODE'
+  );
+});
+
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {
   const batPath = path.join(INSTALLER_DIR, 'настроить-клиент.bat');
   assert.ok(fs.existsSync(batPath), 'должен существовать installer/настроить-клиент.bat');
