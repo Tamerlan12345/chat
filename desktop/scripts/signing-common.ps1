@@ -46,6 +46,27 @@ function Test-ThirdPartySigned([string]$Path) {
         $sig.SignerCertificate.Thumbprint -ne (Get-MyChatExpectedThumbprint))
 }
 
+# sha512 в формате base64 — том же, что electron-builder пишет в latest.yml и
+# app-update.yml. Get-FileHash отдаёт hex; пересчитывать hex-строку в байты
+# через `-split`/`[byte[]]` — ломкий путь: в Windows PowerShell 5.1 `[byte[]]`
+# слева от `-split` разбирается как часть самого оператора, а не как приведение
+# типа результата, и «A1» затем пытается привести к byte по основанию 10, а не
+# 16 — падает на первой же паре с буквой. Здесь читаем файл потоково и считаем
+# хеш через System.Security.Cryptography напрямую — без этой ловушки.
+function Get-MyChatSha512Base64([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA512]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            return [Convert]::ToBase64String($sha.ComputeHash($stream))
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Invoke-MyChatSign([string]$Path, $Cert) {
     $result = $null
     foreach ($server in $MyChatTimestampServers) {
