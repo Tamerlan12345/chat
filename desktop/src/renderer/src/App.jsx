@@ -1700,7 +1700,7 @@ export default function App() {
         try { data = JSON.parse(xhr.responseText); } catch {}
         if (xhr.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
         if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data });
-        else resolve({ ok: false, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
+        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
       };
       xhr.onerror = () => resolve({ ok: false, error: 'Нет связи с сервером' });
       xhr.onabort = () => resolve({ ok: false, cancelled: true });

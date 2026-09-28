@@ -6,6 +6,36 @@ import WakeControl from './WakeControl';
 import ImageViewer from './ImageViewer';
 import { formatBytes, uploadProblem, imageFrame } from '../lib/attachments.mjs';
 import { loadImage } from '../lib/image-cache';
+import { acceptAttr, checkFileAgainstPolicy } from '../lib/file-policy.mjs';
+
+// Действующий список разрешённых расширений — на время сеанса приложения, не
+// на чат: спрашивать сервер заново при каждом открытии окна незачем. Сброс —
+// только когда сервер уже отклонил файл по фильтру (415): значит список мог
+// измениться, и следующая попытка должна спросить заново, а не верить кэшу.
+let filePolicyCache = null;
+let filePolicyPromise = null;
+
+function loadFilePolicy(serverUrl, token) {
+  if (filePolicyCache) return Promise.resolve(filePolicyCache);
+  if (!filePolicyPromise) {
+    filePolicyPromise = fetch(`${serverUrl}/api/files/policy`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        filePolicyCache = data;
+        return data;
+      })
+      .catch(() => null)
+      .finally(() => { filePolicyPromise = null; });
+  }
+  return filePolicyPromise;
+}
+
+function resetFilePolicyCache() {
+  filePolicyCache = null;
+  filePolicyPromise = null;
+}
 
 export default function ChatView({
   activeChat,
@@ -40,6 +70,10 @@ export default function ChatView({
   // Отправляемые файлы этого окна: { id, chatKey, name, size, progress, error, controller }.
   const [uploads, setUploads] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(null);
+  // { enabled, allowed } с сервера — только для accept у поля выбора файла;
+  // сама предпроверка (handleFileUpload) читает кэш напрямую, ей не нужен
+  // перерендер при каждом обновлении.
+  const [filePolicy, setFilePolicy] = useState(null);
 
   const messagesEndRef = useRef(null);
   const streamRef = useRef(null);
@@ -168,6 +202,16 @@ export default function ChatView({
 
   useEffect(() => () => clearTimeout(typingStopRef.current), []);
 
+  // Действующий для сотрудника список расширений — на accept у <input
+  // type="file"> и на предпроверку при выборе (см. handleFileUpload).
+  useEffect(() => {
+    let cancelled = false;
+    loadFilePolicy(serverUrl, token).then((policy) => {
+      if (!cancelled) setFilePolicy(policy);
+    });
+    return () => { cancelled = true; };
+  }, [serverUrl, token]);
+
   const handleTextareaInput = (e) => {
     setInputText(e.target.value);
     notifyTyping();
@@ -192,6 +236,14 @@ export default function ChatView({
       setUploads((list) => [...list, { ...base, error: problem }]);
       return;
     }
+    // Фильтр типов файлов (задача 5): понятная ошибка сразу, без отправки
+    // файла на сервер и обратно ради того же отказа.
+    const policy = await loadFilePolicy(serverUrl, token);
+    const policyProblem = checkFileAgainstPolicy(file, policy);
+    if (policyProblem) {
+      setUploads((list) => [...list, { ...base, error: policyProblem }]);
+      return;
+    }
     const controller = new AbortController();
     setUploads((list) => [...list, { ...base, controller }]);
     const result = await onSendFile(file, activeChat.type, activeChat.id, {
@@ -199,7 +251,12 @@ export default function ChatView({
       onProgress: (p) => patchUpload(id, { progress: p })
     });
     if (result?.ok || result?.cancelled) dropUpload(id);
-    else patchUpload(id, { error: result?.error || 'Файл не отправлен', controller: null });
+    else {
+      // Список мог измениться на сервере уже после того, как клиент его
+      // закэшировал — следующая попытка должна спросить заново.
+      if (result?.status === 415) resetFilePolicyCache();
+      patchUpload(id, { error: result?.error || 'Файл не отправлен', controller: null });
+    }
   };
 
   // Ошибка гаснет сама через несколько секунд — её успевают прочитать.
@@ -685,6 +742,7 @@ export default function ChatView({
         <input
           type="file"
           ref={fileInputRef}
+          accept={filePolicy?.enabled ? acceptAttr(filePolicy.allowed) : undefined}
           style={{ display: 'none' }}
           onChange={handleFileUpload}
         />

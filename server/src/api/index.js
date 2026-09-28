@@ -10,6 +10,8 @@ const AnnouncementService = require('../services/announcement.service');
 const SettingsService = require('../services/settings.service');
 const DbStudioService = require('../services/db-studio.service');
 const FileService = require('../services/file.service');
+const FilePolicyService = require('../services/file-policy.service');
+const createFilePolicyRouter = require('../files/policy-router');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, registerFailure } = require('../services/rate-limiter');
@@ -44,8 +46,10 @@ function sanitizeIceServers(list) {
 }
 
 // Проверка значений, от которых зависит безопасность: мусор в них ломал бы
-// либо защиту, либо саму функцию.
-const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_)/;
+// либо защиту, либо саму функцию. file_policy сюда же — у него отдельный,
+// проверяемый маршрут (GET/PUT /api/admin/file-policy), а не общий
+// PUT /api/admin/settings, где список расширений никак не валидируется.
+const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_|file_policy)/;
 function publicSettings(all) {
   return Object.fromEntries(Object.entries(all || {}).filter(([key]) => !INTERNAL_SETTING.test(key)));
 }
@@ -1447,8 +1451,23 @@ router.post('/files/upload', requireAuth, requireUploadPermission, route(acceptU
       mimeType: req.file.mimetype
     }));
   } catch (err) {
+    // Фильтр типов файлов (FileService.saveUploadedFile → FilePolicyService)
+    // отмечает свой отказ полем statusCode — остальные ошибки сохранения
+    // остаются обычным 400 без подробностей о причине.
+    if (err.statusCode === 415) {
+      return res.status(415).json({ error: err.message, code: err.code });
+    }
     res.status(400).json({ error: 'Файл не сохранён' });
   }
+}));
+
+// Действующий для вызывающего список разрешённых расширений — клиент
+// использует его для предпроверки при выборе файла (accept у <input> и
+// понятная ошибка до отправки), не дожидаясь отказа сервера постфактум.
+router.get('/files/policy', requireAuth, route(async (req, res) => {
+  const policy = await FilePolicyService.getPolicy();
+  const allowed = await FilePolicyService.effectiveAllowed(req.user.id);
+  res.json({ enabled: policy.enabled, allowed });
 }));
 
 router.get('/files/download/:id', requireAuth, (req, res) => {
@@ -1470,6 +1489,10 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
 router.get('/files/recent', requireAuth, route(async (req, res) => {
   res.json(await FileService.getRecentFiles(req.user.id));
 }));
+
+// Администрирование фильтра типов файлов — отдельный подроутер
+// (server/src/files/policy-router.js), чтобы не разрастать этот файл.
+router.use('/admin/file-policy', createFilePolicyRouter({ requireAuth, requireAdmin, getClientIp }));
 
 // ── 9. СТУДИЯ БАЗЫ ДАННЫХ ──
 // Работает только с базой переписки: учётные записи лежат в другом хранилище и
