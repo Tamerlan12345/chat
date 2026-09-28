@@ -222,13 +222,19 @@ test('администратор подразделения по-прежнем�
 // ── Подмена данных ─────────────────────────────────────────────────────────
 
 test('автора распоряжения нельзя подставить', async () => {
+  // Задача 2 плана «безопасность раунд 3» (находка №4) закрыла отправку
+  // оповещений контурным администратором без can_broadcast — этим тестом
+  // раньше как раз и был people.scoped, у которого can_broadcast:false, так
+  // что теперь он получал бы 403 ещё до проверки подмены автора. Автора
+  // отправляет тот, у кого право есть по-настоящему, а в теле подставлено
+  // чужое (для этого теста — тоже реальное) id.
   const res = await api('POST', '/api/announcements', {
-    token: people.scoped.token,
-    body: { title: 'Приказ', content: 'Всем сдать пароли', priority: 'normal', author_id: people.admin.id }
+    token: people.admin.token,
+    body: { title: 'Приказ', content: 'Всем сдать пароли', priority: 'normal', author_id: people.scoped.id }
   });
   assert.strictEqual(res.status, 201, res.text);
   const row = await require('../src/db').getDatabase().prepare('SELECT author_id FROM announcements WHERE id = ?').get(res.json.id);
-  assert.strictEqual(Number(row.author_id), people.scoped.id);
+  assert.strictEqual(Number(row.author_id), people.admin.id);
 });
 
 test('сообщение неизвестного типа или несуществующему адресату не сохраняется', async () => {

@@ -203,7 +203,12 @@ async function assertWithinAdminScope(actor, { targetUserId = null, payload = nu
         throw new Error('Выбранное подразделение вне вашей зоны ответственности');
       }
     }
-    if (payload.admin_scope_dept_id) {
+    // Находка №2 (дефект A): раньше проверялось только truthy-значение, и
+    // {admin_scope_dept_id: null} на собственной записи проходило — так
+    // администратор подразделения сам снимал с себя ограничение области, и
+    // следующий его токен уже был без неё. Теперь отказывает сам факт
+    // присутствия ключа в теле, при любом значении, включая null.
+    if ('admin_scope_dept_id' in payload) {
       throw new Error('Назначать администраторов подразделений может только суперадминистратор');
     }
     if (payload.role_id !== undefined && payload.role_id !== null) {
@@ -1123,43 +1128,87 @@ router.get('/announcements', requireAuth, route(async (req, res) => {
 
 router.post('/announcements', requireAuth, route(async (req, res) => {
   try {
-    if (!req.user.permissions.can_broadcast && !req.user.permissions.is_admin) {
+    // Находка №4: раньше проверялся is_admin, а его несёт и администратор
+    // подразделения — с can_broadcast:false он всё равно рассылал
+    // распоряжения «от компании» кому угодно. isSuperAdmin() исключает
+    // контурных администраторов, как и везде в этом файле.
+    if (!isSuperAdmin(req.user) && !req.user.permissions.can_broadcast) {
       return res.status(403).json({ error: 'Нет прав на отправку массовых оповещений' });
     }
     // Автор — всегда тот, кто отправил. Раньше author_id из тела запроса
     // перекрывал настоящего, и распоряжение уходило «от директора».
     const ann = await AnnouncementService.createAnnouncement({ ...(req.body || {}), author_id: req.user.id });
     AuditService.log({ userId: req.user.id, action: 'announcement_created', ip: getClientIp(req), details: { announcementId: ann?.id } });
-    wsServer.broadcast({ type: 'new_announcement', announcement: ann });
+    if (ann.target_type === 'all') {
+      wsServer.broadcast({ type: 'new_announcement', announcement: ann });
+    } else {
+      // Находка №3: адресное оповещение раньше уходило полным текстом всем —
+      // видимость по цели проверялась только при чтении REST-списком, а не
+      // при живой рассылке. Теперь текст получают только получатели и автор.
+      const recipientIds = new Set(await AnnouncementService.getRecipientIds(ann));
+      recipientIds.add(Number(ann.author_id));
+      for (const userId of recipientIds) {
+        wsServer.sendToUser(userId, { type: 'new_announcement', announcement: ann });
+      }
+    }
     res.status(201).json(ann);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }));
 
-router.post('/announcements/:id/acknowledge', requireAuth, (req, res) => {
+router.post('/announcements/:id/acknowledge', requireAuth, route(async (req, res) => {
   try {
     const ip = getClientIp(req) || '127.0.0.1';
+    // Находка №10: раньше принимался ack на любой id, даже несуществующий
+    // или не адресованный этому сотруднику — журнал ознакомления переставал
+    // быть надёжным. Теперь оба условия проверяются до записи.
+    const announcement = await AnnouncementService.getAnnouncementById(req.params.id);
+    if (!announcement) {
+      return res.status(404).json({ error: 'Оповещение не найдено' });
+    }
+    if (!(await AnnouncementService.isVisibleTo(announcement.id, req.user.id, announcement))) {
+      return res.status(403).json({ error: 'Оповещение не адресовано вам' });
+    }
     const result = AnnouncementService.acknowledgeAnnouncement(req.params.id, req.user.id, ip);
-    wsServer.broadcast({
-      type: 'announcement_acknowledged',
-      announcementId: req.params.id,
-      userId: req.user.id,
-      userName: req.user.full_name
-    });
+    // Только реальным получателям и автору — не всей компании (та же логика
+    // видимости, что и при создании).
+    const recipientIds = new Set(await AnnouncementService.getRecipientIds(announcement));
+    recipientIds.add(Number(announcement.author_id));
+    for (const userId of recipientIds) {
+      wsServer.sendToUser(userId, {
+        type: 'announcement_acknowledged',
+        announcementId: req.params.id,
+        userId: req.user.id,
+        userName: req.user.full_name
+      });
+    }
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 router.get('/announcements/:id/audit', requireAuth, route(async (req, res) => {
   try {
     // Кто и когда ознакомился — сведения для тех, кто рассылает распоряжения,
     // а не для всех сотрудников.
     const permissions = req.user.permissions || {};
-    if (!permissions.is_admin && !permissions.can_broadcast) {
+    // Находка №4: то же самое смешение is_admin/can_broadcast, что и в
+    // создании оповещения — контурный администратор без can_broadcast не
+    // должен читать журнал (IP и адреса всех сотрудников компании).
+    if (!isSuperAdmin(req.user) && !permissions.can_broadcast) {
       return res.status(403).json({ error: 'Журнал ознакомления доступен только администраторам' });
+    }
+    // Контурный администратор с правом на рассылку видит журнал только
+    // собственных оповещений — иначе он читает адреса и IP всех сотрудников
+    // компании по чужому распоряжению.
+    if (isScopedAdmin(req.user)) {
+      const owned = await AnnouncementService.getAnnouncementById(req.params.id);
+      if (!owned) return res.status(404).json({ error: 'Оповещение не найдено' });
+      if (Number(owned.author_id) !== Number(req.user.id)) {
+        return res.status(403).json({ error: 'Журнал доступен только для оповещений, отправленных вами' });
+      }
     }
     res.json(await AnnouncementService.getAnnouncementAudit(req.params.id));
   } catch (err) {
@@ -1281,13 +1330,39 @@ router.put('/settings', requireAuth, requireAdmin, route(async (req, res) => {
 
 router.post('/channels', requireAuth, (req, res) => {
   try {
-    const { name, topic, type = 'public' } = req.body || {};
+    const { name, topic, type = 'public', member_ids } = req.body || {};
     if (!name) return res.status(400).json({ error: 'Укажите название канала' });
     if (!req.user.permissions?.can_create_channels && !req.user.permissions?.is_admin) {
       return res.status(403).json({ error: 'Создание каналов не разрешено для вашей роли' });
     }
     const channel = MessageService.createChannel(name, topic, type, req.user.id);
-    wsServer.broadcast({ type: 'channel_created', channel });
+
+    if (channel.type === 'private' && Array.isArray(member_ids) && member_ids.length) {
+      // Создатель приватного канала сразу указывает участников — иначе
+      // приватный канал был бы бессмысленным: пригласить туда было бы некого.
+      const db = getDatabase();
+      const now = new Date().toISOString();
+      const addMember = db.prepare(
+        'INSERT OR IGNORE INTO channel_members (channel_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
+      );
+      for (const rawId of member_ids.slice(0, 200)) {
+        const memberId = Number(rawId);
+        if (Number.isInteger(memberId) && memberId > 0 && memberId !== req.user.id) {
+          addMember.run(channel.id, memberId, 'member', now);
+        }
+      }
+    }
+
+    if (channel.type === 'private') {
+      // Находка №11: приватный канал рассылался всем сокетам целиком (имя,
+      // тема) — посторонние узнавали о его существовании. Теперь только
+      // тем, кто уже состоит в нём с момента создания.
+      for (const memberId of MessageService.getChannelMemberIds(channel.id)) {
+        wsServer.sendToUser(memberId, { type: 'channel_created', channel });
+      }
+    } else {
+      wsServer.broadcast({ type: 'channel_created', channel });
+    }
     res.status(201).json(channel);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1536,7 +1611,8 @@ router.post('/admin/org/batch-import', requireAuth, requireAdminOrScopedAdmin, r
     const result = await OrgParserService.applyImport({
       parsedData: parsed,
       defaultPassword: defaultPassword || UserService.generateTempPassword(),
-      adminScopeDeptId: req.user.admin_scope_dept_id
+      adminScopeDeptId: req.user.admin_scope_dept_id,
+      actorIsScopedAdmin: isScopedAdmin(req.user)
     });
     AuditService.log({
       userId: req.user.id,
