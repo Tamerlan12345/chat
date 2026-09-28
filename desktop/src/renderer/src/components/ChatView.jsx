@@ -4,7 +4,9 @@ import Avatar from './Avatar';
 import Icon from './Icon';
 import WakeControl from './WakeControl';
 import ImageViewer from './ImageViewer';
+import { useConfirm } from './ConfirmDialog';
 import { formatBytes, uploadProblem, imageFrame } from '../lib/attachments.mjs';
+import { canEdit, canDelete } from '../lib/message-actions.mjs';
 import { loadImage } from '../lib/image-cache';
 
 export default function ChatView({
@@ -17,6 +19,10 @@ export default function ChatView({
   onTogglePersonPanel,
   onSendMessage,
   onSendFile,
+  onEditMessage,
+  onDeleteMessage,
+  editWindowMinutes = 60,
+  deleteWindowMinutes = 60,
   onStartCall,
   onRequestRemoteDesktop,
   onMarkRead,
@@ -34,12 +40,17 @@ export default function ChatView({
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showPhrasesMenu, setShowPhrasesMenu] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
+  // Правка своего сообщения переиспользует то же поле ввода: id правящегося
+  // сообщения задаёт, отправит ли Enter новое сообщение или обновит старое.
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   // Отправляемые файлы этого окна: { id, chatKey, name, size, progress, error, controller }.
   const [uploads, setUploads] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   const messagesEndRef = useRef(null);
   const streamRef = useRef(null);
@@ -107,29 +118,64 @@ export default function ChatView({
       if (showAttachMenu) setShowAttachMenu(false);
       if (showPhrasesMenu) setShowPhrasesMenu(false);
       if (showMoreMenu) setShowMoreMenu(false);
+      if (editingMessageId) { cancelEditing(); return; }
       if (replyingTo) setReplyingTo(null);
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [showEmojiPicker, showAttachMenu, showPhrasesMenu, showMoreMenu, replyingTo]);
+  }, [showEmojiPicker, showAttachMenu, showPhrasesMenu, showMoreMenu, replyingTo, editingMessageId]);
 
   const handleSend = (e) => {
     e?.preventDefault();
     if (!inputText.trim()) return;
 
-    onSendMessage({
-      conversationType: activeChat.type,
-      targetId: activeChat.id,
-      text: inputText.trim(),
-      msgType: 'text',
-      replyToId: replyingTo?.id || null
-    });
+    if (editingMessageId) {
+      onEditMessage && onEditMessage(editingMessageId, inputText.trim());
+      setEditingMessageId(null);
+    } else {
+      onSendMessage({
+        conversationType: activeChat.type,
+        targetId: activeChat.id,
+        text: inputText.trim(),
+        msgType: 'text',
+        replyToId: replyingTo?.id || null
+      });
+      setReplyingTo(null);
+    }
 
     setInputText('');
-    setReplyingTo(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+  };
+
+  const startEditing = (message) => {
+    setReplyingTo(null);
+    setEditingMessageId(message.id);
+    setInputText(message.text || '');
+    // Курсор — сразу в конец текста, а не в начало, где его пришлось бы
+    // отодвигать перед первой же правкой.
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.selectionStart = el.selectionEnd = el.value.length;
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingMessageId(null);
+    setInputText('');
+  };
+
+  const handleDeleteClick = async (messageId) => {
+    if (!(await confirm({
+      title: 'Удаление сообщения',
+      message: 'Удалить сообщение? Это действие нельзя отменить.',
+      confirmText: 'Удалить',
+      danger: true
+    }))) return;
+    onDeleteMessage && onDeleteMessage(messageId);
   };
 
   const handleKeyDown = (e) => {
@@ -360,6 +406,15 @@ export default function ChatView({
 
       const metadata = parseMeta(m);
 
+      // Пункты меню скрыты, когда сервер их всё равно отклонит: чужое,
+      // удалённое, вне окна времени или окно выключено администратором
+      // (-1). Сервер (MessageService.editMessage/deleteMessage) проверяет
+      // то же самое ещё раз — это только для того, чтобы не предлагать
+      // действие, которое заведомо отклонят.
+      const editAllowed = isMine && canEdit(m, { me: currentUser.id, windowMin: editWindowMinutes });
+      const deleteAllowed = isMine && canDelete(m, { me: currentUser.id, windowMin: deleteWindowMinutes });
+      const showHoverActions = hoveredMessageId === m.id && (editAllowed || deleteAllowed);
+
       elements.push(
         <div
           key={m.id || idx}
@@ -369,6 +424,8 @@ export default function ChatView({
           className={`classic-chat-message-row${isMine ? ' is-mine' : ''}${startsGroup ? ' starts-group' : ' continues-group'}${
             Date.now() - msgDate.getTime() < 8000 ? ' is-fresh' : ''
           }`}
+          onMouseEnter={() => setHoveredMessageId(m.id)}
+          onMouseLeave={() => setHoveredMessageId((id) => (id === m.id ? null : id))}
         >
           <div className="classic-msg-avatar-slot">
             {startsGroup ? (
@@ -380,7 +437,40 @@ export default function ChatView({
             )}
           </div>
 
-          <div className="classic-msg-main">
+          <div className="classic-msg-main" style={{ position: 'relative' }}>
+            {showHoverActions && (
+              <div
+                className="classic-msg-hover-actions"
+                style={{
+                  position: 'absolute', top: 0, right: 0, display: 'flex', gap: 2,
+                  background: 'var(--bg-panel, light-dark(#fff, #2a2d31))', borderRadius: 6,
+                  border: '1px solid var(--border-color, light-dark(#e2e8f0, #3a3f44))', zIndex: 2
+                }}
+              >
+                {editAllowed && (
+                  <button
+                    type="button"
+                    className="classic-action-icon-btn"
+                    title="Изменить"
+                    aria-label="Изменить сообщение"
+                    onClick={() => startEditing(m)}
+                  >
+                    <Icon name="edit" size={14} />
+                  </button>
+                )}
+                {deleteAllowed && (
+                  <button
+                    type="button"
+                    className="classic-action-icon-btn"
+                    title="Удалить"
+                    aria-label="Удалить сообщение"
+                    onClick={() => handleDeleteClick(m.id)}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                )}
+              </div>
+            )}
             {startsGroup && (
               <div className="classic-msg-header">
                 <span className="classic-sender-name">
@@ -408,50 +498,73 @@ export default function ChatView({
             )}
 
             <div className="classic-msg-body">
-            {/* Reply Quote Banner */}
-            {m.reply_to_id && (
-              <div className="chat-reply-quote">
-                <span className="chat-reply-quote-sender">В ответ на сообщение:</span>
-                <div className="chat-reply-quote-text">
-                  {messages.find((x) => x.id === m.reply_to_id)?.text || 'Сообщение...'}
-                </div>
+            {m.is_deleted ? (
+              // Текста и вложения у удалённого сообщения на сервере уже нет
+              // (see MessageService.deleteMessage) — курсивная строка вместо
+              // содержимого, а не просто пустое место.
+              <div className="classic-msg-text classic-msg-deleted" style={{ fontStyle: 'italic', opacity: 0.65 }}>
+                Сообщение удалено
               </div>
-            )}
-
-            {/* Attachments */}
-            {m.type === 'file' ? (
-              <div className="chat-file-attachment">
-                <span className="chat-file-icon" aria-hidden="true">
-                  <Icon name="file" size={20} />
-                  {fileExtension(m.text) && <span className="chat-file-ext">{fileExtension(m.text)}</span>}
-                </span>
-                <div className="chat-file-info">
-                  <div className="chat-file-name" title={m.text}>{m.text}</div>
-                  <div className="chat-file-meta">{metadata?.size ? formatBytes(metadata.size) : 'Файл'}</div>
-                </div>
-                <button
-                  type="button"
-                  className="chat-file-download"
-                  disabled={!metadata?.file_id}
-                  onClick={() => downloadAttachment(metadata?.file_id, m.text)}
-                  title={metadata?.file_id ? 'Скачать' : 'Файл недоступен'}
-                  aria-label={metadata?.file_id ? `Скачать «${m.text}»` : 'Файл недоступен'}
-                >
-                  <Icon name="download" size={16} />
-                </button>
-              </div>
-            ) : isImageMessage(m, metadata) ? (
-              <ChatImage
-                fileId={metadata?.file_id}
-                width={metadata?.width}
-                height={metadata?.height}
-                alt={m.text || 'Изображение'}
-                token={token}
-                serverUrl={serverUrl}
-                onOpen={() => openViewer(m.id)}
-              />
             ) : (
-              <div className="classic-msg-text">{m.text}</div>
+              <>
+                {/* Reply Quote Banner */}
+                {m.reply_to_id && (() => {
+                  const original = messages.find((x) => x.id === m.reply_to_id);
+                  const quoteText = original?.is_deleted ? 'Сообщение удалено' : (original?.text || 'Сообщение...');
+                  return (
+                    <div className="chat-reply-quote">
+                      <span className="chat-reply-quote-sender">В ответ на сообщение:</span>
+                      <div className="chat-reply-quote-text">{quoteText}</div>
+                    </div>
+                  );
+                })()}
+
+                {/* Attachments */}
+                {m.type === 'file' ? (
+                  <div className="chat-file-attachment">
+                    <span className="chat-file-icon" aria-hidden="true">
+                      <Icon name="file" size={20} />
+                      {fileExtension(m.text) && <span className="chat-file-ext">{fileExtension(m.text)}</span>}
+                    </span>
+                    <div className="chat-file-info">
+                      <div className="chat-file-name" title={m.text}>{m.text}</div>
+                      <div className="chat-file-meta">{metadata?.size ? formatBytes(metadata.size) : 'Файл'}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="chat-file-download"
+                      disabled={!metadata?.file_id}
+                      onClick={() => downloadAttachment(metadata?.file_id, m.text)}
+                      title={metadata?.file_id ? 'Скачать' : 'Файл недоступен'}
+                      aria-label={metadata?.file_id ? `Скачать «${m.text}»` : 'Файл недоступен'}
+                    >
+                      <Icon name="download" size={16} />
+                    </button>
+                  </div>
+                ) : isImageMessage(m, metadata) ? (
+                  <ChatImage
+                    fileId={metadata?.file_id}
+                    width={metadata?.width}
+                    height={metadata?.height}
+                    alt={m.text || 'Изображение'}
+                    token={token}
+                    serverUrl={serverUrl}
+                    onOpen={() => openViewer(m.id)}
+                  />
+                ) : (
+                  <div className="classic-msg-text">{m.text}</div>
+                )}
+
+                {m.updated_at && (
+                  <span
+                    className="classic-msg-edited-mark"
+                    style={{ fontSize: 11, opacity: 0.6, marginLeft: 6 }}
+                    title={`Изменено ${new Date(m.updated_at).toLocaleString('ru-RU')}`}
+                  >
+                    (изменено)
+                  </span>
+                )}
+              </>
             )}
             </div>
           </div>
@@ -628,8 +741,22 @@ export default function ChatView({
         </button>
       )}
 
+      {/* Editing Bar — то же место, что у ответа: одновременно правят и
+          отвечают на одно и то же поле ввода, поэтому и баннеры не показываются
+          вместе (startEditing сбрасывает replyingTo). */}
+      {editingMessageId && (
+        <div className="chat-reply-banner">
+          <div className="chat-reply-banner-content">
+            <span className="chat-reply-banner-title">Изменение сообщения</span>
+          </div>
+          <button className="chat-reply-banner-close" onClick={cancelEditing} aria-label="Отменить изменение">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      )}
+
       {/* 3. Reply Quote Bar */}
-      {replyingTo && (
+      {!editingMessageId && replyingTo && (
         <div className="chat-reply-banner">
           <div className="chat-reply-banner-content">
             <span className="chat-reply-banner-title">
@@ -808,12 +935,12 @@ export default function ChatView({
 
           <button
             className="classic-send-btn"
-            title="Отправить (Enter)"
-            aria-label="Отправить"
+            title={editingMessageId ? 'Сохранить (Enter)' : 'Отправить (Enter)'}
+            aria-label={editingMessageId ? 'Сохранить изменение' : 'Отправить'}
             disabled={!inputText.trim()}
             onClick={handleSend}
           >
-            <Icon name="send" size={18} strokeWidth={2} />
+            <Icon name={editingMessageId ? 'check' : 'send'} size={18} strokeWidth={2} />
           </button>
         </div>
       </div>
@@ -829,6 +956,7 @@ export default function ChatView({
           onDownload={(img) => downloadAttachment(img.fileId, img.name)}
         />
       )}
+      {confirmDialog}
     </div>
   );
 }

@@ -151,6 +151,8 @@ export default function AdminUserModal({
     allow_registration: 'false',
     max_upload_size_mb: '100',
     idle_timeout_seconds: '300',
+    message_edit_window_minutes: '60',
+    message_delete_window_minutes: '60',
     telegram_enabled: 'false',
     telegram_bot_token: '',
     telegram_channel_id: '',
@@ -2643,6 +2645,37 @@ export default function AdminUserModal({
                       className="admin-filter-input"
                       value={sysSettings.max_upload_size_mb}
                       onChange={(e) => setSysSettings({ ...sysSettings, max_upload_size_mb: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Rocket.Chat: Allow Message Editing/Deleting, Block Editing/Deleting
+                      After N Minutes. Сервер проверяет окно ещё раз при каждой правке и
+                      удалении — здесь только то, что видит сотрудник в меню сообщения. */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      Изменять сообщение можно (минут, 0 — всегда, −1 — нельзя)
+                    </label>
+                    <input
+                      type="number"
+                      min={-1}
+                      max={100000}
+                      className="admin-filter-input"
+                      value={sysSettings.message_edit_window_minutes}
+                      onChange={(e) => setSysSettings({ ...sysSettings, message_edit_window_minutes: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      Удалять сообщение можно (минут, 0 — всегда, −1 — нельзя)
+                    </label>
+                    <input
+                      type="number"
+                      min={-1}
+                      max={100000}
+                      className="admin-filter-input"
+                      value={sysSettings.message_delete_window_minutes}
+                      onChange={(e) => setSysSettings({ ...sysSettings, message_delete_window_minutes: e.target.value })}
                     />
                   </div>
 

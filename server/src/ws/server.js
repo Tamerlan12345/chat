@@ -76,6 +76,8 @@ const RATE_LIMITS = {
   send_message: [10, 1000],
   direct_message: [10, 1000],
   channel_message: [10, 1000],
+  edit_message: [10, 1000],
+  delete_message: [10, 1000],
   mark_read: [20, 1000],
   call_offer: [3, 10000],
   rd_request: [3, 30000],
@@ -104,6 +106,15 @@ const RD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
 function isRemoteDesktopEnabled() {
   const SettingsService = require('../services/settings.service');
   return SettingsService.getSettingSync('remote_desktop_enabled', 'true') !== 'false';
+}
+
+// Те же адресаты, что при отправке (send_message): все члены канала или обе
+// стороны личной переписки. edit_message/delete_message рассылаются по той
+// же логике — иначе правка ушла бы не всем, кто уже видел исходное сообщение.
+function conversationRecipients(message) {
+  return message.conversation_type === 'channel'
+    ? MessageService.getChannelMemberIds(message.target_id)
+    : [Number(message.target_id), Number(message.sender_id)];
 }
 
 function allowRate(ws, key) {
@@ -589,6 +600,60 @@ class WsServer {
             timestamp: now
           });
         }
+      }
+      return;
+    }
+
+    // 2b. Правка своего сообщения (Rocket.Chat: Allow Message Editing).
+    if (type === 'edit_message') {
+      try {
+        const updated = await MessageService.editMessage({
+          messageId: Number(msg.messageId),
+          actorId: currentUser.id,
+          text: msg.text
+        });
+        for (const userId of conversationRecipients(updated)) {
+          this.sendToUser(userId, { type: 'message_updated', message: updated });
+        }
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', context: 'edit_message', message: err.message }));
+      }
+      return;
+    }
+
+    // 2c. Удаление своего сообщения; супер-администратор — чужого, в целях
+    // модерации, без окна времени, со следом в аудите.
+    if (type === 'delete_message') {
+      const isSuperAdminUser = Boolean(currentUser.permissions?.is_admin) && !currentUser.permissions?.is_scoped_admin;
+      try {
+        const deleted = await MessageService.deleteMessage({
+          messageId: Number(msg.messageId),
+          actorId: currentUser.id,
+          isSuperAdmin: isSuperAdminUser
+        });
+        if (isSuperAdminUser && deleted.sender_id !== currentUser.id) {
+          AuditService.log({
+            userId: currentUser.id,
+            action: 'message_deleted_by_admin',
+            ip: ws.remoteIp,
+            details: {
+              messageId: deleted.id,
+              authorId: deleted.sender_id,
+              conversationType: deleted.conversation_type,
+              targetId: deleted.target_id
+            }
+          });
+        }
+        for (const userId of conversationRecipients(deleted)) {
+          this.sendToUser(userId, {
+            type: 'message_deleted',
+            messageId: deleted.id,
+            conversationType: deleted.conversation_type,
+            targetId: deleted.target_id
+          });
+        }
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', context: 'delete_message', message: err.message }));
       }
       return;
     }

@@ -60,10 +60,14 @@ class FileService {
     if (!file) return false;
     if (Number(file.uploader_id) === Number(userId)) return true;
 
+    // Удалённое сообщение обнуляет metadata_json (см. MessageService.deleteMessage),
+    // так что ссылка на файл там уже и так пропадает сама собой — is_deleted
+    // проверяется явно вторым слоем, а не полагается только на это совпадение.
     const refs = db.prepare(`
       SELECT conversation_type, target_id, sender_id
       FROM messages
-      WHERE json_valid(metadata_json)
+      WHERE is_deleted = 0
+        AND json_valid(metadata_json)
         AND CAST(json_extract(metadata_json, '$.file_id') AS INTEGER) = ?
     `).all(Number(fileId));
 
@@ -94,7 +98,8 @@ class FileService {
       WHERE f.uploader_id = ?
         OR EXISTS (
           SELECT 1 FROM messages m
-          WHERE json_valid(m.metadata_json)
+          WHERE m.is_deleted = 0
+            AND json_valid(m.metadata_json)
             AND CAST(json_extract(m.metadata_json, '$.file_id') AS INTEGER) = f.id
             AND (
               (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))

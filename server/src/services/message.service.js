@@ -1,5 +1,6 @@
 const { getDatabase } = require('../db');
 const UserService = require('./user.service');
+const SettingsService = require('./settings.service');
 
 // Переписка лежит в SQLite, сотрудники — в отдельном хранилище. Поэтому имя и
 // должность отправителя больше не приклеиваются к сообщению соединением
@@ -17,6 +18,23 @@ const MESSAGE_TYPES = new Set(['text', 'file', 'image']);
 // сообщению в канал с сотней участников (аудит, находка №7). Предел щедрый —
 // это не лимит на «длинное сообщение», а защита от злоупотребления.
 const MAX_TEXT_LENGTH = 16000;
+
+// Rocket.Chat: Block Message Editing/Deleting After N Minutes. Значения
+// настроек — минуты: 0 — без ограничения, -1 — действие выключено совсем.
+// Администратор не задавал их раньше — час, чтобы опечатку можно было
+// поправить сразу после отправки, но не превратить чат в редактируемый
+// задним числом.
+const DEFAULT_EDIT_WINDOW_MINUTES = '60';
+const DEFAULT_DELETE_WINDOW_MINUTES = '60';
+
+function isWithinWindow(createdAt, windowMinutesRaw) {
+  const minutes = Number(windowMinutesRaw);
+  if (minutes === -1) return false;
+  if (minutes === 0) return true;
+  if (!Number.isFinite(minutes) || minutes < 0) return true; // настройка испорчена — не ограничиваем молча
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  return ageMs <= minutes * 60 * 1000;
+}
 
 class MessageService {
   // У канала нет негласного правила «читать может каждый»: участие
@@ -272,6 +290,85 @@ class MessageService {
     return this.getMessageById(messageId);
   }
 
+  /**
+   * Правка своего текстового сообщения (Rocket.Chat: Allow Message Editing).
+   * Старый текст уходит в message_history до того, как строка в messages
+   * перезаписывается, — иначе первая же правка стирала бы след безвозвратно.
+   */
+  static async editMessage({ messageId, actorId, text }) {
+    const db = getDatabase();
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
+    if (!message) throw new Error('Сообщение не найдено');
+    if (Number(message.sender_id) !== Number(actorId)) {
+      throw new Error('Нельзя редактировать чужое сообщение');
+    }
+    if (message.is_deleted) throw new Error('Сообщение удалено');
+    if (message.type !== 'text') throw new Error('Редактировать можно только текстовые сообщения');
+
+    const windowMinutes = await SettingsService.getSetting('message_edit_window_minutes', DEFAULT_EDIT_WINDOW_MINUTES);
+    if (!isWithinWindow(message.created_at, windowMinutes)) {
+      throw new Error('Время на изменение сообщения истекло');
+    }
+
+    const body = typeof text === 'string' ? text : String(text ?? '');
+    if (!body.trim()) throw new Error('Пустое сообщение не отправляется');
+    if (body.length > MAX_TEXT_LENGTH) {
+      throw new Error(`Сообщение слишком длинное (не больше ${MAX_TEXT_LENGTH} символов)`);
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
+      VALUES (?, 'edit', ?, ?, ?, ?)
+    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+
+    db.prepare('UPDATE messages SET text = ?, updated_at = ? WHERE id = ?').run(body, now, message.id);
+
+    return this.getMessageById(message.id);
+  }
+
+  /**
+   * Удаление своего сообщения (Rocket.Chat: Allow Message Deleting). Супер-
+   * администратор удаляет чужое в целях модерации — без временного окна, но
+   * с последующей записью в аудит (внешним кодом: здесь известно только то,
+   * что удаление разрешено, а не кто его выполняет с точки зрения журнала).
+   * Текст и вложение обнуляются в самой строке — reply-превью и поиск не
+   * видят их ни при каком запросе; старые значения остаются только в
+   * message_history.
+   */
+  static async deleteMessage({ messageId, actorId, isSuperAdmin = false }) {
+    const db = getDatabase();
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
+    if (!message) throw new Error('Сообщение не найдено');
+    if (message.is_deleted) throw new Error('Сообщение уже удалено');
+
+    if (!isSuperAdmin) {
+      if (Number(message.sender_id) !== Number(actorId)) {
+        throw new Error('Нельзя удалить чужое сообщение');
+      }
+      const windowMinutes = await SettingsService.getSetting('message_delete_window_minutes', DEFAULT_DELETE_WINDOW_MINUTES);
+      if (!isWithinWindow(message.created_at, windowMinutes)) {
+        throw new Error('Время на удаление сообщения истекло');
+      }
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
+      VALUES (?, 'delete', ?, ?, ?, ?)
+    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+
+    db.prepare("UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ? WHERE id = ?")
+      .run(now, message.id);
+
+    return {
+      id: message.id,
+      conversation_type: message.conversation_type,
+      target_id: Number(message.target_id),
+      sender_id: Number(message.sender_id)
+    };
+  }
+
   static async getMessageById(messageId) {
     const row = getDatabase().prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
     if (!row) return null;
@@ -347,7 +444,7 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.text LIKE ? AND (
+        WHERE m.is_deleted = 0 AND m.text LIKE ? AND (
           (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
           (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
         )

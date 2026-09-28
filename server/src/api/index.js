@@ -1247,6 +1247,12 @@ router.get('/settings/info', route(async (req, res) => {
     server_name: settings.server_name || 'OpenMyChat Enterprise Server',
     company_name: settings.company_name || 'Корпоративная сеть',
     allow_registration: settings.allow_registration === 'true',
+    // Окна правки/удаления сообщений: клиенту нужно знать их, чтобы не
+    // показывать «Изменить»/«Удалить» там, где сервер их всё равно отклонит.
+    // Сама проверка остаётся на сервере (MessageService.editMessage/deleteMessage) —
+    // здесь только то, что нужно для скрытия пункта меню.
+    message_edit_window_minutes: settings.message_edit_window_minutes || '60',
+    message_delete_window_minutes: settings.message_delete_window_minutes || '60',
     version: config.SERVER_VERSION
   });
 }));
