@@ -16,6 +16,7 @@ import AdminUserModal from './components/AdminUserModal';
 import ServerConnectModal from './components/ServerConnectModal';
 import CommandPalette from './components/CommandPalette';
 import ToastNotificationStack, { playNotificationSound } from './components/ToastNotificationStack';
+import UpdateBanner from './components/UpdateBanner';
 import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
 import Avatar from './components/Avatar';
@@ -401,6 +402,18 @@ export default function App() {
         } catch (e) {}
       }
 
+      // Реальная версия оболочки (Задача 9, есть начиная с 1.1.0) — и то
+      // только у главного окна. Старая оболочка (1.0.0, ещё без getAppInfo) и
+      // любое другое окно (getAppInfo() -> null) остаются с версией по
+      // умолчанию — сервер и так подставит её сам, если поле не пришло.
+      let clientVersion = '1.0.0';
+      if (window.electronAPI && window.electronAPI.getAppInfo) {
+        try {
+          const appInfo = await window.electronAPI.getAppInfo();
+          if (appInfo && typeof appInfo.version === 'string') clientVersion = appInfo.version;
+        } catch (e) {}
+      }
+
       const knockRes = await fetch(serverUrl + '/api/auth/knock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -409,7 +422,7 @@ export default function App() {
           device_secret: deviceSecret,
           device_name: (devInfo && devInfo.hostname) || 'ПК пользователя',
           platform: (devInfo && devInfo.platform) || 'Windows 11',
-          client_version: '1.0.0'
+          client_version: clientVersion
         })
       });
 
@@ -2621,6 +2634,8 @@ export default function App() {
           }}
         />
       )}
+
+      <UpdateBanner serverUrl={serverUrl} />
 
       <ToastNotificationStack
         toasts={toasts}
