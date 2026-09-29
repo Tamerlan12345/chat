@@ -270,7 +270,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                       Очистить фото
                     </button>
                     {photoError && (
-                      <div role="alert" style={{ color: 'light-dark(#b91c1c, #ec8383)', fontSize: '12px', lineHeight: 1.4 }}>
+                      <div role="alert" style={{ color: 'var(--danger-text)', fontSize: '12px', lineHeight: 1.4 }}>
                         {photoError}
                       </div>
                     )}
@@ -282,7 +282,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
                   {showPwForm && (
                     <form className="login-form" style={{ marginTop: '10px', width: '100%' }} onSubmit={handleChangePassword}>
                       {pwError && <div className="login-error-box">{pwError}</div>}
-                      {pwSuccess && <div className="login-error-box" style={{ background: 'light-dark(#f0fdf4, rgba(66, 230, 116, 0.16))', borderColor: 'light-dark(#bbf7d0, rgba(72, 234, 129, 0.38))', color: 'light-dark(#15803d, #84ebab)' }}>{pwSuccess}</div>}
+                      {pwSuccess && <div className="login-error-box" style={{ background: 'var(--success-soft)', borderColor: 'var(--success-line)', color: 'var(--success-text)' }}>{pwSuccess}</div>}
                       <div className="form-group">
                         <label className="form-label">Текущий пароль</label>
                         <input type="password" className="form-input" value={pwOld} onChange={(e) => setPwOld(e.target.value)} disabled={pwSubmitting} required />

@@ -304,7 +304,7 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
               {unassignedNode && renderDepartment(unassignedNode, 0)}
             </>
           ) : (
-            <div style={{ padding: '24px', textAlign: 'center', color: 'light-dark(#64748b, #a9aeb5)', fontSize: '13px' }}>
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
               По запросу «{search.trim()}» никого не найдено.{' '}
               <button type="button" className="conf-link-btn" onClick={() => setSearch('')}>
                 Очистить поиск
@@ -316,8 +316,8 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
           // она не сменялась никогда, и понять, что произошло, было нельзя.
           <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px' }}>
             <div className="tree-state-icon is-error"><Icon name="alert" size={22} /></div>
-            <div style={{ color: 'light-dark(#b91c1c, #ec8383)', fontWeight: 600, marginBottom: '6px' }}>{error}</div>
-            <div style={{ color: 'light-dark(#64748b, #a9aeb5)', marginBottom: '14px', lineHeight: 1.6 }}>
+            <div style={{ color: 'var(--danger-text)', fontWeight: 600, marginBottom: '6px' }}>{error}</div>
+            <div style={{ color: 'var(--text-muted)', marginBottom: '14px', lineHeight: 1.6 }}>
               Структура компании не загрузилась. Переписка и уже открытые
               диалоги при этом работают.
             </div>
@@ -328,11 +328,11 @@ export default function OrgTree({ treeData, onSelectUser, activeUserId, unreadMa
             )}
           </div>
         ) : treeData ? (
-          <div style={{ padding: '24px', textAlign: 'center', color: 'light-dark(#64748b, #a9aeb5)', fontSize: '13px' }}>
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
             В компании пока нет ни подразделений, ни сотрудников.
           </div>
         ) : (
-          <div style={{ padding: '24px', textAlign: 'center', color: 'light-dark(#64748b, #a9aeb5)', fontSize: '13px' }}>
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
             Загрузка оргструктуры...
           </div>
         )}

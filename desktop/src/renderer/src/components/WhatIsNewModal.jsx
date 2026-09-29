@@ -9,10 +9,10 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Icon name="message" size={24} />
             <div>
-              <div style={{ fontWeight: 700, fontSize: '16px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
+              <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-main)' }}>
                 CentyChat
               </div>
-              <div style={{ fontSize: '11px', color: 'light-dark(#64748b, #a9aeb5)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                 {serverInfo?.company_name || 'Корпоративная сеть'} • Версия 2026.3.1 (LTS)
               </div>
             </div>
@@ -82,7 +82,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
         </div>
 
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38))' }}>
+        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid var(--border-color)' }}>
           <button className="btn btn-primary" onClick={onClose}>
             Закрыть
           </button>

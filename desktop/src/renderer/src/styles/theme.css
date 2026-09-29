@@ -1,66 +1,171 @@
-/* Единый набор значений оформления.
- *
- * Раньше здесь были объявлены переменные, которыми почти не пользовались:
- * на 909 записанных вручную цветов приходилось 27 обращений к переменным, а
- * --primary не использовался ни разу. В итоге по интерфейсу разошлись два
- * разных синих, четыре почти одинаковых серых для рамок, 20 размеров шрифта
- * и 17 радиусов скругления.
- *
- * --primary приведён к #2563eb: именно он преобладает в интерфейсе
- * (52 использования против 9 у прежнего значения), поэтому менять пришлось
- * меньшее число мест.
- */
+/* ==========================================================================
+   CENTYCHAT — ЗНАЧЕНИЯ ОФОРМЛЕНИЯ
+   Единственное место, где объявлены цвета, шрифты, отступы, скругления,
+   тени и движение. Правила ниже ссылаются только на эти переменные; ниже по
+   файлу они лишь переопределяются для зон (рамка, всплывающие окна), а не
+   объявляются заново.
+
+   Тема. Две смены одного графита: с 6:00 до 15:00 — день, с 15:00 до 6:00 —
+   вечер. lib/theme.mjs ставит data-theme на <html>, а каждое значение ниже
+   записано как light-dark(день, вечер) — переключается один color-scheme.
+
+   Фирменный цвет. Значок приложения — переход «Сентрас» от орхидеи через
+   фиолетовый и лазурь к бирюзе. Весь переход живёт только в знаке
+   (BrandMark). В интерфейсе работает одна его ступень — индиго между
+   фиолетовым #7c44ea и лазурью #2a72ee: заливка главных кнопок, выбранное,
+   фокус, ссылки. Больше нигде.
+
+   Нейтральные — графит с едва заметной холодной примесью того же индиго,
+   чтобы серые не спорили со знаком. Текст — нейтральный, без синевы.
+   Контраст (WCAG AA) проверен для каждой пары «текст — поверхность» в обеих
+   темах: основной текст ≥ 9:1, вспомогательный и подписи ≥ 4,5:1.
+   ========================================================================== */
+
+:root { color-scheme: dark; }
+:root[data-theme='light'] { color-scheme: light; }
+
 :root {
-  /* Поверхности */
-  --bg-main: light-dark(#ffffff, #2c2e33);
-  --bg-sidebar: light-dark(#ffffff, #2c2e33);
-  --bg-card: light-dark(#ffffff, #2c2e33);
-  --bg-rail: light-dark(#2d3542, #252525);
-  --bg-rail-active: light-dark(#3c4556, #282828);
-  --bg-panel: light-dark(#f8fafc, #313338);
-  --bg-hover: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  --bg-active: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  --bg-active-chat: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
+  /* ── Бренд: знак и его переход ─────────────────────────────────────────── */
+  --brand-orchid: #ec8ee0;
+  --brand-lilac: #c078ee;
+  --brand-violet: #7c44ea;
+  --brand-azure: #2a72ee;
+  --brand-cyan: #00daff;
+  --brand-gradient: linear-gradient(135deg, #ec8ee0 0%, #c078ee 20%, #7c44ea 45%, #2a72ee 75%, #00daff 100%);
 
-  /* Рамки */
-  --border-color: light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  --border-strong: light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
-  --border-subtle: light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  /* ── Поверхности ───────────────────────────────────────────────────────── */
+  --bg-main: light-dark(#fcfcfd, #24242a);        /* холст: переписка, рабочие окна */
+  --bg-sidebar: light-dark(#f4f4f7, #1e1e24);     /* рамка: списки, меню, строка состояния */
+  --bg-rail: light-dark(#ececf1, #19191e);        /* полоса разделов — самый глубокий слой */
+  --bg-card: light-dark(#ffffff, #2b2b32);
+  --bg-panel: light-dark(#f7f7fa, #28282f);
+  --bg-elevated: light-dark(#ffffff, #303038);    /* меню, окна, уведомления */
+  --bg-elevated-panel: light-dark(#f6f6f9, #2b2b33);
+  --bg-hover: light-dark(rgba(24, 24, 56, 0.045), rgba(255, 255, 255, 0.055));
+  --bg-active: light-dark(rgba(24, 24, 56, 0.08), rgba(255, 255, 255, 0.09));
+  --bg-rail-active: light-dark(rgba(24, 24, 56, 0.07), rgba(255, 255, 255, 0.08));
+  --bg-sunken: light-dark(rgba(24, 24, 56, 0.035), rgba(0, 0, 0, 0.16));
+  --scrim: light-dark(rgba(20, 20, 40, 0.34), rgba(8, 8, 12, 0.64));
 
-  /* Текст */
-  --text-main: light-dark(#1e293b, #a0b2cf);
-  --text-strong: light-dark(#0f172a, #96aad9);
-  --text-muted: light-dark(#64748b, #a9aeb5);
-  --text-dim: #94a3b8;
+  /* ── Рамки и разделители ───────────────────────────────────────────────── */
+  --border-subtle: light-dark(rgba(24, 24, 56, 0.06), rgba(255, 255, 255, 0.05));
+  --border-color: light-dark(rgba(24, 24, 56, 0.1), rgba(255, 255, 255, 0.085));
+  --border-strong: light-dark(rgba(24, 24, 56, 0.17), rgba(255, 255, 255, 0.15));
+  --border-control: light-dark(rgba(24, 24, 56, 0.2), rgba(255, 255, 255, 0.17));
+  --border-control-hover: light-dark(rgba(24, 24, 56, 0.3), rgba(255, 255, 255, 0.26));
 
-  /* Смысловые цвета */
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-soft: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
-  --danger: #dc2626;
-  --danger-soft: light-dark(#fef2f2, #313338);
-  --success: #16a34a;
-  --warning: #d97706;
+  /* ── Текст ─────────────────────────────────────────────────────────────── */
+  --text-strong: light-dark(#16161d, #f4f4f7);     /* заголовки, имена */
+  --text-main: light-dark(#2b2b34, #dfdfe5);       /* основной текст */
+  --text-secondary: light-dark(#4a4a55, #bdbdc7);  /* второй план */
+  --text-muted: light-dark(#5f5f6b, #a6a6b1);      /* подписи */
+  --text-dim: light-dark(#686874, #9898a4);        /* время, счётчики, подсказки */
+  --text-on-accent: #ffffff;
 
-  /* Присутствие */
-  --sender-incoming: #1d4ed8;
-  --sender-outgoing: #b91c1c;
-  --online: #16a34a;
-  --away: #ea580c;
-  --offline: #94a3b8;
+  /* ── Действие, выбор, фокус ────────────────────────────────────────────── */
+  --primary: light-dark(#5b4ee6, #6457ee);
+  --primary-hover: light-dark(#4d40d6, #6b5ff0);
+  --primary-pressed: light-dark(#4336c2, #5549de);
+  --primary-soft: light-dark(rgba(91, 78, 230, 0.1), rgba(150, 140, 255, 0.16));
+  --primary-line: light-dark(rgba(91, 78, 230, 0.3), rgba(150, 140, 255, 0.4));
+  --primary-ring: light-dark(rgba(91, 78, 230, 0.28), rgba(150, 140, 255, 0.42));
+  --accent-text: light-dark(#4a3dd2, #b0a9ff);     /* ссылки и отметки */
+  --focus-color: light-dark(#5b4ee6, #b0a9ff);
+  --on-selected: light-dark(#17133d, #ffffff);
 
-  /* Скругления: четыре ступени вместо семнадцати произвольных значений */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  /* ── Состояния ─────────────────────────────────────────────────────────── */
+  --danger: light-dark(#d9363b, #e5484d);
+  --danger-text: light-dark(#b4232a, #ff8f8f);
+  --danger-soft: light-dark(rgba(217, 54, 59, 0.08), rgba(229, 72, 77, 0.14));
+  --danger-line: light-dark(rgba(217, 54, 59, 0.3), rgba(229, 72, 77, 0.4));
+  --success: light-dark(#1f9d61, #3fb97a);
+  --success-text: light-dark(#137446, #6fd9a2);
+  --success-soft: light-dark(rgba(31, 157, 97, 0.1), rgba(63, 185, 122, 0.14));
+  --success-line: light-dark(rgba(31, 157, 97, 0.3), rgba(63, 185, 122, 0.4));
+  --warning: light-dark(#c98212, #e5a13a);
+  --warning-text: light-dark(#8a5700, #f3c26f);
+  --warning-soft: light-dark(rgba(201, 130, 18, 0.1), rgba(229, 161, 58, 0.14));
+  --warning-line: light-dark(rgba(201, 130, 18, 0.32), rgba(229, 161, 58, 0.4));
+
+  /* ── Присутствие ───────────────────────────────────────────────────────── */
+  --online: light-dark(#2da44e, #3fb950);
+  --away: light-dark(#d4951c, #e5a13a);
+  --dnd: light-dark(#d9363b, #e5484d);
+  --offline: light-dark(#9a9aa6, #7d7d89);
+  --sender-incoming: var(--accent-text);
+  --sender-outgoing: var(--danger-text);
+
+  /* ── Рамка: меню, полоса разделов, списки, строка состояния ────────────── */
+  --frame-0: var(--bg-rail);
+  --frame-1: var(--bg-sidebar);
+  --frame-2: light-dark(rgba(24, 24, 56, 0.055), rgba(255, 255, 255, 0.06));
+  --frame-3: light-dark(rgba(24, 24, 56, 0.09), rgba(255, 255, 255, 0.1));
+  --frame-line: light-dark(rgba(24, 24, 56, 0.08), rgba(255, 255, 255, 0.07));
+  --frame-line-strong: light-dark(rgba(24, 24, 56, 0.15), rgba(255, 255, 255, 0.13));
+  --frame-selected: light-dark(rgba(91, 78, 230, 0.11), rgba(150, 140, 255, 0.17));
+  --frame-accent: light-dark(#5b4ee6, #a9a2ff);
+  --bg-active-chat: var(--frame-selected);
+  --rail-accent: var(--frame-accent);
+
+  /* ── Шрифт и шкала размеров (шаг ≈ 1,125) ─────────────────────────────── */
+  --font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 15.5px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+  --fs-3xl: 26px;
+  --lh-tight: 1.25;
+  --lh-base: 1.45;
+  --lh-text: 1.55;
+
+  /* ── Отступы: сетка 4 px ───────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --control-height: 32px;
+  --hit: 32px;
+
+  /* ── Скругления ────────────────────────────────────────────────────────── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* Тени */
-  --shadow-sm: 0 1px 3px light-dark(rgba(15, 23, 42, 0.08), rgba(0, 0, 0, 0.23));
-  --shadow-md: 0 4px 14px light-dark(rgba(15, 23, 42, 0.12), rgba(0, 0, 0, 0.27));
-  --shadow-lg: 0 12px 40px light-dark(rgba(15, 23, 42, 0.18), rgba(0, 0, 0, 0.33));
+  /* ── Тени: смещение и мягкое размытие, в тон графиту ──────────────────── */
+  --shadow-sm: 0 1px 2px light-dark(rgba(22, 22, 48, 0.07), rgba(0, 0, 0, 0.32));
+  --shadow-md:
+    0 1px 2px light-dark(rgba(22, 22, 48, 0.05), rgba(0, 0, 0, 0.24)),
+    0 8px 24px light-dark(rgba(22, 22, 48, 0.1), rgba(0, 0, 0, 0.36)),
+    0 0 0 1px light-dark(rgba(22, 22, 48, 0.06), rgba(255, 255, 255, 0.06));
+  --shadow-lg:
+    0 2px 6px light-dark(rgba(22, 22, 48, 0.06), rgba(0, 0, 0, 0.3)),
+    0 24px 56px light-dark(rgba(22, 22, 48, 0.16), rgba(0, 0, 0, 0.5)),
+    0 0 0 1px light-dark(rgba(22, 22, 48, 0.06), rgba(255, 255, 255, 0.07));
 
-  --font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  /* ── Фокус с клавиатуры ────────────────────────────────────────────────── */
+  --focus-outline: 2px solid var(--focus-color);
+  --focus-ring: 0 0 0 3px var(--primary-ring);
+
+  /* ── Движение ──────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-press: cubic-bezier(0.2, 0, 0, 1);
+  --press-scale: 0.965;
+  --dur-fast: 0.12s;
+  --dur-base: 0.18s;
+  --dur-slow: 0.28s;
 }
 
 * {
@@ -96,7 +201,7 @@ input, textarea, button, select {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -118,12 +223,12 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   height: 30px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-bottom: 1px solid light-dark(#e5e7eb, rgba(255, 255, 255, 0.11));
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
   padding: 0 10px;
   -webkit-app-region: drag;
   font-size: 12px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .window-title-text {
@@ -140,8 +245,8 @@ input, textarea, button, select {
 }
 
 .win-btn:hover {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background-color: var(--bg-active);
+  color: var(--text-strong);
 }
 .win-btn.close:hover {
   background-color: #ef4444;
@@ -153,8 +258,8 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   height: 26px;
-  background-color: light-dark(#f8fafc, #313338);
-  border-bottom: 1px solid light-dark(#e2e5e9, rgba(255, 255, 255, 0.11));
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
   padding: 0 6px;
   position: relative;
   z-index: 1000;
@@ -162,16 +267,16 @@ input, textarea, button, select {
 
 
 .menu-bar-btn:hover, .menu-bar-btn.active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background-color: var(--bg-active);
+  color: var(--text-strong);
 }
 
 .menu-dropdown {
   position: absolute;
   top: 100%;
   left: 0;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   border-radius: 4px;
   min-width: 240px;
@@ -185,11 +290,11 @@ input, textarea, button, select {
   gap: 8px;
   padding: 6px 14px;
   font-size: 12px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
 }
 .menu-dropdown-item:hover {
-  background-color: #1e70bf;
+  background-color: var(--primary);
   color: #ffffff;
 }
 .menu-dropdown-item:hover .menu-icon {
@@ -197,7 +302,7 @@ input, textarea, button, select {
 }
 .menu-dropdown-divider {
   height: 1px;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
   margin: 4px 0;
 }
 .menu-icon {
@@ -233,7 +338,7 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #cbd5e1;
+  color: var(--text-dim);
   font-size: 20px;
   cursor: pointer;
   border-radius: 6px;
@@ -252,7 +357,7 @@ input, textarea, button, select {
   width: 48px;
   height: 48px;
   border-radius: 6px;
-  color: #94a3b8;
+  color: var(--text-dim);
   cursor: pointer;
   position: relative;
   transition: all 0.15s ease;
@@ -265,7 +370,7 @@ input, textarea, button, select {
   color: #ffffff;
 }
 .nav-item.active {
-  background-color: light-dark(#3b4455, #282828);
+  background-color: var(--frame-2);
   color: #ffffff;
 }
 .nav-item.active::before {
@@ -275,7 +380,7 @@ input, textarea, button, select {
   top: 10px;
   bottom: 10px;
   width: 3px;
-  background-color: #60a5fa;
+  background-color: var(--frame-accent);
   border-radius: 0 2px 2px 0;
 }
 .nav-item-icon {
@@ -287,7 +392,7 @@ input, textarea, button, select {
   position: absolute;
   top: 4px;
   right: 4px;
-  background-color: #ef4444;
+  background-color: var(--danger);
   color: #ffffff;
   font-size: 10px;
   font-weight: 700;
@@ -299,7 +404,7 @@ input, textarea, button, select {
 /* 2. Dialogs Sidebar (Screenshot 2) */
 .dialogs-sidebar {
   width: 275px;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -312,7 +417,7 @@ input, textarea, button, select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 
 .dialogs-dropdown-row {
@@ -326,7 +431,7 @@ input, textarea, button, select {
   border: none;
   font-size: 13px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -341,20 +446,20 @@ input, textarea, button, select {
 .dialogs-search-input {
   width: 100%;
   padding: 5px 28px 5px 8px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 12px;
   outline: none;
-  background-color: light-dark(#ffffff, #2c2e33);
-  color: light-dark(#1e293b, #a0b2cf);
+  background-color: var(--bg-card);
+  color: var(--text-main);
 }
 .dialogs-search-input:focus {
-  border-color: #1e70bf;
+  border-color: var(--primary);
 }
 .dialogs-search-icon {
   position: absolute;
   right: 8px;
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 13px;
   pointer-events: none;
 }
@@ -370,9 +475,9 @@ input, textarea, button, select {
   height: 54px;
   padding: 0 10px;
   cursor: pointer;
-  border-bottom: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  border-bottom: 1px solid var(--border-subtle);
   position: relative;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 .dialog-item:hover {
   background-color: var(--bg-hover);
@@ -398,7 +503,7 @@ input, textarea, button, select {
   width: 38px;
   height: 38px;
   border-radius: 4px;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -407,7 +512,7 @@ input, textarea, button, select {
   overflow: hidden;
 }
 .dialog-avatar-camera {
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 18px;
 }
 
@@ -422,7 +527,7 @@ input, textarea, button, select {
 .dialog-name {
   font-size: 12.5px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -435,7 +540,7 @@ input, textarea, button, select {
 }
 
 .dialog-checkmarks {
-  color: #3b82f6;
+  color: var(--accent-text);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: -2px;
@@ -451,7 +556,7 @@ input, textarea, button, select {
 }
 
 .greeting-action-link {
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -459,11 +564,11 @@ input, textarea, button, select {
   margin-bottom: 24px;
 }
 .greeting-action-link:hover {
-  color: light-dark(#15528e, #83b8ed);
+  color: var(--accent-text);
 }
 
 .greeting-instructions {
-  color: light-dark(#4b5563, #d3d6db);
+  color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.6;
   margin-bottom: 48px;
@@ -475,19 +580,19 @@ input, textarea, button, select {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 .greeting-footer-link {
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
   cursor: pointer;
   text-decoration: underline;
 }
 .greeting-footer-link:hover {
-  color: light-dark(#15528e, #83b8ed);
+  color: var(--accent-text);
 }
 .greeting-username {
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 /* 4. Active Chat View (Screenshot 3) */
@@ -499,7 +604,7 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   flex-shrink: 0;
 }
 
@@ -510,7 +615,7 @@ input, textarea, button, select {
 .chat-header-name {
   font-size: 14px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
 }
 .chat-header-status {
   font-size: 11px;
@@ -534,16 +639,16 @@ input, textarea, button, select {
   border-radius: 4px;
   font-size: 16px;
   cursor: pointer;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 .chat-tool-btn:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-color: light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-hover);
+  border-color: var(--border-color);
 }
 .chat-tool-btn.active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#1e70bf, #84b9ec);
-  border-color: light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-active);
+  color: var(--accent-text);
+  border-color: var(--border-strong);
 }
 
 .chat-messages-stream {
@@ -553,7 +658,7 @@ input, textarea, button, select {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 
 .chat-date-divider::before {
@@ -563,7 +668,7 @@ input, textarea, button, select {
   right: 0;
   top: 50%;
   height: 1px;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
   z-index: 1;
 }
 
@@ -592,23 +697,23 @@ input, textarea, button, select {
   gap: 4px;
   flex-shrink: 0;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 .chat-edited-tag {
   font-style: italic;
   font-size: 10.5px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 .chat-inline-time {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 /* Security Auth Card Container (Screenshot 3) */
 .security-auth-card {
   max-width: 480px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   margin: 6px 0;
@@ -618,20 +723,20 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: light-dark(#f8fafc, #313338);
+  background-color: var(--bg-panel);
   padding: 8px 12px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
 }
 .security-card-logo {
   font-size: 12px;
   font-weight: 700;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 .security-card-tag {
   font-size: 10px;
   font-weight: 600;
-  color: light-dark(#1e70bf, #84b9ec);
-  background-color: light-dark(#e0f2fe, rgba(62, 165, 234, 0.16));
+  color: var(--accent-text);
+  background-color: var(--primary-soft);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -644,14 +749,14 @@ input, textarea, button, select {
 .security-card-title {
   font-size: 12.5px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 .security-code-box {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px dashed #94a3b8;
+  background-color: var(--bg-hover);
+  border: 1px dashed var(--border-control-hover);
   padding: 8px 12px;
   border-radius: 6px;
 }
@@ -659,11 +764,11 @@ input, textarea, button, select {
   font-family: monospace;
   font-size: 18px;
   font-weight: 700;
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
   letter-spacing: 2px;
 }
 .btn-copy-code {
-  background-color: #1e70bf;
+  background-color: var(--primary);
   color: #ffffff;
   border: none;
   padding: 4px 10px;
@@ -673,21 +778,21 @@ input, textarea, button, select {
   cursor: pointer;
 }
 .btn-copy-code:hover {
-  background-color: #15528e;
+  background-color: var(--primary-hover);
 }
 .btn-copy-code.copied {
-  background-color: #16a34a;
+  background-color: var(--online);
 }
 .security-card-notice {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.35;
 }
 
 /* Bottom Chat Input Bar */
 .chat-input-container {
   border-top: 1px solid var(--border-color);
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   padding: 6px 14px 10px;
   display: flex;
   flex-direction: column;
@@ -704,16 +809,16 @@ input, textarea, button, select {
 }
 .chat-sub-btn {
   background: none;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   padding: 2px 8px;
   font-size: 11.5px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
 }
 .chat-sub-btn:hover, .chat-sub-btn.active {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-color: #94a3b8;
+  background-color: var(--bg-hover);
+  border-color: var(--border-control-hover);
 }
 
 .chat-popup-menu {
@@ -721,8 +826,8 @@ input, textarea, button, select {
   bottom: 100%;
   left: 0;
   margin-bottom: 4px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   border-radius: 6px;
   padding: 4px 0;
@@ -746,17 +851,17 @@ input, textarea, button, select {
   border-radius: 4px;
 }
 .emoji-item:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 
 .popup-menu-item {
   padding: 6px 12px;
   font-size: 12px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
 }
 .popup-menu-item:hover {
-  background-color: #1e70bf;
+  background-color: var(--primary);
   color: #ffffff;
 }
 
@@ -767,17 +872,17 @@ input, textarea, button, select {
 }
 
 .chat-textarea:focus {
-  border-color: #1e70bf;
+  border-color: var(--primary);
 }
 .chat-textarea::placeholder {
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .chat-send-circle-btn {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background-color: #1e70bf;
+  background-color: var(--primary);
   color: #ffffff;
   border: none;
   display: flex;
@@ -788,17 +893,17 @@ input, textarea, button, select {
   transition: background-color 0.15s ease;
 }
 .chat-send-circle-btn:hover:not(:disabled) {
-  background-color: #15528e;
+  background-color: var(--primary-hover);
 }
 .chat-send-circle-btn:disabled {
-  background-color: #cbd5e1;
+  background-color: var(--border-strong);
   cursor: default;
 }
 
 /* 5. Right Person Info Panel (Screenshot 3) */
 .person-info-panel {
   width: 260px;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -816,20 +921,20 @@ input, textarea, button, select {
 .person-info-title {
   font-size: 13px;
   font-weight: 700;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 .person-info-close-btn {
   background: none;
   border: none;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   font-size: 14px;
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
 }
 .person-info-close-btn:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background-color: var(--bg-hover);
+  color: var(--text-strong);
 }
 
 .person-info-body {
@@ -843,12 +948,12 @@ input, textarea, button, select {
 .person-info-avatar-box {
   width: 100%;
   height: 140px;
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border: 1px solid var(--border-color);
 }
 .person-info-img {
   width: 100%;
@@ -872,7 +977,7 @@ input, textarea, button, select {
 .person-info-icon {
   font-size: 14px;
   line-height: 1;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 .person-info-text-group {
   display: flex;
@@ -881,25 +986,25 @@ input, textarea, button, select {
 .person-info-fullname {
   font-weight: 700;
   font-size: 13px;
-  color: light-dark(#1d4ed8, #819eee);
+  color: var(--accent-text);
 }
 .person-info-status-text {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   gap: 4px;
   margin-top: 2px;
 }
 .person-info-link {
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
   text-decoration: none;
 }
 .person-info-link:hover {
   text-decoration: underline;
 }
 .person-info-value {
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   font-size: 12px;
 }
 
@@ -910,26 +1015,26 @@ input, textarea, button, select {
   margin-top: 8px;
 }
 .person-action-btn {
-  background-color: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   padding: 8px 10px;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
   text-align: left;
 }
 .person-action-btn:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 .person-action-btn.primary {
-  background-color: #1e70bf;
+  background-color: var(--primary);
   color: #ffffff;
-  border-color: #1e70bf;
+  border-color: var(--primary);
 }
 .person-action-btn.primary:hover {
-  background-color: #15528e;
+  background-color: var(--primary-hover);
 }
 
 /* Modals */
@@ -943,7 +1048,7 @@ input, textarea, button, select {
   z-index: 5000;
 }
 .modal-dialog {
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   border-radius: 8px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
   width: 90%;
@@ -957,13 +1062,13 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
 }
 .btn-close-modal {
   background: none;
   border: none;
   font-size: 16px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .feature-card {
@@ -978,12 +1083,12 @@ input, textarea, button, select {
 .feature-title {
   font-size: 13px;
   font-weight: 700;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   margin-bottom: 2px;
 }
 .feature-desc {
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
@@ -1008,48 +1113,48 @@ input, textarea, button, select {
   cursor: pointer;
 }
 .btn-primary {
-  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-hover) 100%);
   color: #ffffff;
-  border: 1px solid #1e40af;
+  border: 1px solid var(--primary-hover);
   border-radius: 5px;
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.25), rgba(0, 0, 0, 0.4)), 0 1px 2px rgba(0, 0, 0, 0.1);
   transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
 }
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary) 100%);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.35), rgba(0, 0, 0, 0.5)), 0 2px 6px light-dark(rgba(37, 99, 235, 0.3), rgba(0, 0, 0, 0.45));
 }
 .btn-primary:active:not(:disabled) {
-  background: linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%);
+  background: linear-gradient(180deg, var(--primary-hover) 0%, var(--primary-hover) 100%);
   transform: scale(0.97) translateY(1px);
   box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.25);
 }
 .btn-primary:disabled {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
-  color: #94a3b8;
+  background: var(--bg-active);
+  border-color: var(--border-strong);
+  color: var(--text-dim);
   cursor: not-allowed;
   box-shadow: none;
 }
 .btn-secondary {
-  background: linear-gradient(180deg, light-dark(#ffffff, #2c2e33) 0%, light-dark(#f8fafc, #313338) 100%);
-  color: light-dark(#334155, #a6b4c9);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-panel) 100%);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.9), rgba(0, 0, 0, 0.5)), 0 1px 2px rgba(0, 0, 0, 0.05);
   transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
 }
 .btn-secondary:hover:not(:disabled) {
-  background: light-dark(#ffffff, #2c2e33);
-  border-color: #94a3b8;
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-card);
+  border-color: var(--border-control-hover);
+  color: var(--text-strong);
   box-shadow: inset 0 1px 0 light-dark(#ffffff, rgba(0, 0, 0, 0.5)), 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 .btn-secondary:active:not(:disabled) {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#64748b, rgba(255, 255, 255, 0.08));
+  background: var(--bg-active);
+  border-color: var(--border-control-hover);
   transform: scale(0.97) translateY(1px);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
@@ -1071,7 +1176,7 @@ input, textarea, button, select {
 }
 
 .login-card {
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   width: 100%;
   max-width: 440px;
   border-radius: 12px;
@@ -1089,7 +1194,7 @@ input, textarea, button, select {
 .login-logo-circle {
   width: 56px;
   height: 56px;
-  background: #1e70bf;
+  background: var(--primary);
   color: #ffffff;
   border-radius: 14px;
   display: inline-flex;
@@ -1102,13 +1207,13 @@ input, textarea, button, select {
 .login-title {
   font-size: 20px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   margin-bottom: 4px;
 }
 
 .login-subtitle {
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .login-server-badge {
@@ -1116,12 +1221,12 @@ input, textarea, button, select {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 11px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   margin-bottom: 16px;
 }
 
@@ -1130,12 +1235,12 @@ input, textarea, button, select {
   height: 8px;
   border-radius: 50%;
 }
-.server-status-dot.online { background: #16a34a; box-shadow: 0 0 6px light-dark(#16a34a, rgba(0, 0, 0, 0.5)); }
-.server-status-dot.offline { background: #ef4444; }
+.server-status-dot.online { background: var(--online); box-shadow: 0 0 6px light-dark(#16a34a, rgba(0, 0, 0, 0.5)); }
+.server-status-dot.offline { background: var(--danger); }
 
 .login-tabs {
   display: flex;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
   padding: 3px;
   border-radius: 8px;
   margin-bottom: 18px;
@@ -1148,22 +1253,22 @@ input, textarea, button, select {
   padding: 7px 12px;
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .login-tab-btn.active {
-  background: light-dark(#ffffff, #2c2e33);
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-card);
+  color: var(--text-strong);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 .login-error-box {
-  background: light-dark(#fef2f2, #313338);
-  border: 1px solid light-dark(#fecaca, rgba(235, 71, 71, 0.38));
-  color: light-dark(#dc2626, #eb8484);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-text);
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -1178,7 +1283,7 @@ input, textarea, button, select {
   display: block;
   font-size: 11px;
   font-weight: 600;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1187,16 +1292,16 @@ input, textarea, button, select {
 .form-input {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   font-size: 13px;
-  color: light-dark(#0f172a, #96aad9);
-  background: light-dark(#ffffff, #2c2e33);
+  color: var(--text-strong);
+  background: var(--bg-card);
   transition: border-color 0.15s ease;
 }
 
 .form-input:focus {
-  border-color: #1e70bf;
+  border-color: var(--primary);
   outline: none;
   box-shadow: 0 0 0 3px light-dark(rgba(30, 112, 191, 0.15), rgba(0, 0, 0, 0.3));
 }
@@ -1218,7 +1323,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
@@ -1234,24 +1339,24 @@ input, textarea, button, select {
   justify-content: space-between;
   align-items: center;
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  border-top: 1px solid var(--border-subtle);
 }
 
 .login-hint code {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
 }
 
 .login-footer-text {
   text-align: center;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   margin-top: 16px;
 }
 
@@ -1264,7 +1369,7 @@ input, textarea, button, select {
   justify-content: center;
   height: 100%;
   width: 100%;
-  background-color: light-dark(#f8fafc, #313338);
+  background-color: var(--bg-panel);
   padding: 40px 20px;
   overflow-y: auto;
   /* перенесено из более раннего объявления того же селектора */
@@ -1282,8 +1387,8 @@ input, textarea, button, select {
 
 .greeting-badge {
   display: inline-block;
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#334155, #a6b4c9);
+  background: var(--bg-active);
+  color: var(--text-main);
   font-size: 12px;
   font-weight: 600;
   padding: 4px 14px;
@@ -1294,13 +1399,13 @@ input, textarea, button, select {
 .greeting-title {
   font-size: 26px;
   font-weight: 800;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   margin-bottom: 6px;
 }
 
 .greeting-subtitle {
   font-size: 13px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   margin-bottom: 24px;
 }
 
@@ -1308,8 +1413,8 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   padding: 8px 16px;
   border-radius: 30px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
@@ -1319,7 +1424,7 @@ input, textarea, button, select {
 .greeting-status-label {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .greeting-status-pills {
@@ -1337,20 +1442,20 @@ input, textarea, button, select {
   border-radius: 14px;
   font-size: 11px;
   font-weight: 500;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .status-pill:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-hover);
+  color: var(--text-strong);
 }
 
 .status-pill.active {
-  background: light-dark(#e0f2fe, rgba(62, 165, 234, 0.16));
-  color: light-dark(#0369a1, #7bc9f4);
-  border-color: light-dark(#bae6fd, rgba(71, 179, 235, 0.38));
+  background: var(--primary-soft);
+  color: var(--accent-text);
+  border-color: var(--primary-line);
 }
 
 .greeting-action-grid {
@@ -1362,8 +1467,8 @@ input, textarea, button, select {
 }
 
 .greeting-tile {
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 20px 16px;
   display: flex;
@@ -1377,7 +1482,7 @@ input, textarea, button, select {
 
 .greeting-tile:hover {
   transform: translateY(-2px);
-  border-color: #1e70bf;
+  border-color: var(--primary);
   box-shadow: 0 8px 16px light-dark(rgba(30, 112, 191, 0.12), rgba(0, 0, 0, 0.27));
 }
 
@@ -1389,13 +1494,13 @@ input, textarea, button, select {
 .greeting-tile-title {
   font-size: 14px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   margin-bottom: 4px;
 }
 
 .greeting-tile-desc {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.35;
 }
 
@@ -1407,13 +1512,13 @@ input, textarea, button, select {
   background: none;
   border: none;
   font-size: 12px;
-  color: light-dark(#dc2626, #eb8484);
+  color: var(--danger-text);
   cursor: pointer;
   padding: 6px 12px;
   border-radius: 4px;
 }
 .greeting-logout-btn:hover {
-  background: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
+  background: var(--danger-soft);
 }
 
 /* ==========================================================================
@@ -1424,20 +1529,20 @@ input, textarea, button, select {
   flex-direction: column;
   height: 100%;
   width: 100%;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   /* перенесено из более раннего объявления того же селектора */
   flex: 1;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 
 .chat-header {
   height: 58px;
-  border-bottom: 1px solid light-dark(#e2e5e9, rgba(255, 255, 255, 0.11));
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   flex-shrink: 0;
 }
 
@@ -1472,7 +1577,7 @@ input, textarea, button, select {
   font-weight: 700;
   color: #ffffff;
 }
-.avatar-initials.user { background: #1e70bf; }
+.avatar-initials.user { background: var(--primary); }
 .avatar-initials.channel { background: light-dark(#475569, #2b2b2b); }
 
 .status-indicator-badge {
@@ -1484,15 +1589,15 @@ input, textarea, button, select {
   border-radius: 50%;
   border: 2px solid light-dark(#ffffff, rgba(255, 255, 255, 0.07));
 }
-.status-indicator-badge.online { background: #16a34a; }
+.status-indicator-badge.online { background: var(--online); }
 .status-indicator-badge.away { background: #ea580c; }
-.status-indicator-badge.dnd { background: #dc2626; }
+.status-indicator-badge.dnd { background: var(--danger); }
 .status-indicator-badge.offline { background: #94a3b8; }
 
 .chat-header-title {
   font-size: 14px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1500,7 +1605,7 @@ input, textarea, button, select {
 
 .chat-header-subtitle {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1513,34 +1618,34 @@ input, textarea, button, select {
 }
 
 .header-action-btn {
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   padding: 6px 10px;
   border-radius: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .header-action-btn:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-active);
+  color: var(--text-strong);
 }
 
 .header-action-btn.highlight {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  border-color: light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  border-color: var(--primary-line);
+  color: var(--accent-text);
 }
 .header-action-btn.highlight:hover {
-  background: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
+  background: var(--primary-soft);
 }
 
 .header-action-btn.active {
-  background: #1e70bf;
-  border-color: #1e70bf;
+  background: var(--primary);
+  border-color: var(--primary);
   color: #ffffff;
 }
 
@@ -1551,7 +1656,7 @@ input, textarea, button, select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: light-dark(#fafbfc, #313338);
+  background: var(--bg-panel);
 }
 
 .chat-date-divider {
@@ -1564,14 +1669,14 @@ input, textarea, button, select {
 }
 
 .chat-date-text {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#475569, #d3d6db);
+  background: var(--bg-active);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   padding: 3px 12px;
   border-radius: 12px;
   /* перенесено из более раннего объявления того же селектора */
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   position: relative;
   z-index: 2;
 }
@@ -1609,12 +1714,12 @@ input, textarea, button, select {
   font-size: 12px;
   font-weight: 700;
 }
-.chat-sender-name.self { color: light-dark(#1e70bf, #84b9ec); }
-.chat-sender-name.other { color: light-dark(#0284c7, #7bcbf4); }
+.chat-sender-name.self { color: var(--accent-text); }
+.chat-sender-name.other { color: var(--accent-text); }
 
 .chat-sender-time {
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .chat-message-bubble {
@@ -1626,20 +1731,20 @@ input, textarea, button, select {
   position: relative;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   /* перенесено из более раннего объявления того же селектора */
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .chat-message-row.outgoing .chat-message-bubble {
-  background: light-dark(#e0f2fe, rgba(62, 165, 234, 0.16));
-  border: 1px solid light-dark(#bae6fd, rgba(71, 179, 235, 0.38));
-  color: light-dark(#0369a1, #7bc9f4);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-line);
+  color: var(--accent-text);
   border-top-right-radius: 2px;
 }
 
 .chat-message-row.incoming .chat-message-bubble {
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  color: light-dark(#1e293b, #a0b2cf);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
   border-top-left-radius: 2px;
 }
 
@@ -1650,13 +1755,13 @@ input, textarea, button, select {
   gap: 6px;
   margin-top: 4px;
   font-size: 10px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .chat-action-reply-btn {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 12px;
   opacity: 0;
@@ -1668,11 +1773,11 @@ input, textarea, button, select {
 }
 
 .chat-action-reply-btn:hover {
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
 }
 
 .chat-read-status {
-  color: light-dark(#0284c7, #7bcbf4);
+  color: var(--accent-text);
   font-weight: 700;
   /* перенесено из более раннего объявления того же селектора */
   font-size: 11px;
@@ -1685,7 +1790,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 10px;
   background: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.096));
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   padding: 8px 12px;
   border-radius: 6px;
   margin-top: 2px;
@@ -1701,7 +1806,7 @@ input, textarea, button, select {
 }
 
 .chat-file-download-link {
-  color: light-dark(#1e70bf, #84b9ec);
+  color: var(--accent-text);
   text-decoration: none;
   font-weight: 600;
   font-size: 11px;
@@ -1737,7 +1842,7 @@ input, textarea, button, select {
 
 .chat-reply-banner-text {
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1747,7 +1852,7 @@ input, textarea, button, select {
 .chat-reply-banner-close {
   background: none;
   border: none;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
 }
@@ -1757,8 +1862,8 @@ input, textarea, button, select {
   position: absolute;
   bottom: 60px;
   left: 20px;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   border-radius: 8px;
   padding: 8px;
@@ -1777,17 +1882,17 @@ input, textarea, button, select {
   border-radius: 4px;
 }
 .chat-emoji-item:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
 }
 
 /* Input Bar */
 .chat-input-bar {
-  border-top: 1px solid light-dark(#e2e5e9, rgba(255, 255, 255, 0.11));
+  border-top: 1px solid var(--border-color);
   padding: 10px 16px;
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   position: relative;
 }
 
@@ -1795,20 +1900,20 @@ input, textarea, button, select {
   background: none;
   border: none;
   font-size: 18px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 6px;
   border-radius: 6px;
 }
 .chat-toolbar-btn:hover, .chat-toolbar-btn.active {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-hover);
+  color: var(--text-strong);
 }
 
 .chat-textarea-wrapper {
   flex: 1;
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 6px 12px;
 }
@@ -1827,12 +1932,12 @@ input, textarea, button, select {
   border-radius: 6px;
   padding: 8px 12px;
   min-height: 38px;
-  color: light-dark(#1e293b, #a0b2cf);
-  background-color: light-dark(#ffffff, #2c2e33);
+  color: var(--text-main);
+  background-color: var(--bg-card);
 }
 
 .chat-send-btn {
-  background: #1e70bf;
+  background: var(--primary);
   color: #ffffff;
   border: none;
   width: 36px;
@@ -1845,10 +1950,10 @@ input, textarea, button, select {
   transition: all 0.15s ease;
 }
 .chat-send-btn:hover {
-  background: #15528e;
+  background: var(--primary-hover);
 }
 .chat-send-btn:disabled {
-  background: #cbd5e1;
+  background: var(--border-strong);
   cursor: default;
 }
 
@@ -1867,8 +1972,8 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   height: 28px;
-  background-color: light-dark(#f3f4f6, #313338);
-  border-bottom: 1px solid light-dark(#d1d5db, rgba(255, 255, 255, 0.18));
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-strong);
   padding: 0 4px;
   font-size: 12px;
   user-select: none;
@@ -1883,7 +1988,7 @@ input, textarea, button, select {
   border: none;
   padding: 3px 8px;
   font-size: 12px;
-  color: light-dark(#1f2937, #a4b4cc);
+  color: var(--text-main);
   cursor: pointer;
   border-radius: 3px;
 }
@@ -1895,8 +2000,8 @@ input, textarea, button, select {
   position: absolute;
   top: 100%;
   left: 0;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   min-width: 210px;
   z-index: 1000;
@@ -1907,14 +2012,14 @@ input, textarea, button, select {
 .menu-drop-item {
   padding: 6px 12px;
   font-size: 12px;
-  color: light-dark(#1f2937, #a4b4cc);
+  color: var(--text-main);
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .menu-drop-item:hover {
-  background-color: #2563eb;
+  background-color: var(--primary);
   color: #ffffff;
 }
 
@@ -1926,7 +2031,7 @@ input, textarea, button, select {
 
 .vertical-nav-rail {
   width: 54px;
-  background-color: light-dark(#2e3642, #252525);
+  background-color: var(--bg-rail);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1949,7 +2054,7 @@ input, textarea, button, select {
   margin-bottom: 8px;
 }
 .rail-hamburger-item:hover {
-  background-color: light-dark(#3b4455, #282828);
+  background-color: var(--frame-2);
   color: #ffffff;
 }
 
@@ -1963,11 +2068,11 @@ input, textarea, button, select {
 
 .rail-tab-btn:hover {
   color: #ffffff;
-  background-color: light-dark(#3b4455, #282828);
+  background-color: var(--frame-2);
 }
 .rail-tab-btn.active {
   color: #ffffff;
-  background-color: light-dark(#374151, #272727);
+  background-color: var(--frame-3);
 }
 
 .rail-tab-label {
@@ -1979,7 +2084,7 @@ input, textarea, button, select {
   position: absolute;
   top: -3px;
   right: -6px;
-  background-color: #ef4444;
+  background-color: var(--danger);
   color: #ffffff;
   border-radius: 9px;
   font-size: 10px;
@@ -1989,8 +2094,8 @@ input, textarea, button, select {
 
 .sub-panel-dialogs {
   width: 260px;
-  background-color: light-dark(#f8fafc, #313338);
-  border-right: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-panel);
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -2001,15 +2106,15 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-bottom: 1px solid light-dark(#e5e7eb, rgba(255, 255, 255, 0.11));
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
   gap: 6px;
 }
 
 .sub-panel-dropdown-trigger {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2026,30 +2131,30 @@ input, textarea, button, select {
 
 .sub-panel-search-input {
   width: 100%;
-  border: 1px solid light-dark(#d1d5db, rgba(255, 255, 255, 0.18));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 3px 22px 3px 6px;
   font-size: 11px;
   outline: none;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
 }
 
 .sub-panel-search-box .search-icon {
   position: absolute;
   right: 6px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   pointer-events: none;
 }
 
 .dialogs-scrollable-list {
   flex: 1;
   overflow-y: auto;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 
 .dialog-list-item:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 /* The list is scoped here to outrank .has-unread-item, which is declared far
    below with the same specificity and otherwise wins by order — leaving an
@@ -2057,11 +2162,11 @@ input, textarea, button, select {
 /* The left edge already carries the online/offline stripe, so selection is
    signalled by the background tint and the name instead. */
 .dialogs-scrollable-list .dialog-list-item.active {
-  background-color: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
+  background-color: var(--primary-soft);
 }
 .dialogs-scrollable-list .dialog-list-item.active .dialog-peer-name {
   font-weight: 700;
-  color: light-dark(#1e3a8a, #8aa2e5);
+  color: var(--accent-text);
 }
 .dialog-list-item.online-bar::before {
   content: '';
@@ -2070,7 +2175,7 @@ input, textarea, button, select {
   top: 0;
   bottom: 0;
   width: 3px;
-  background-color: #22c55e;
+  background-color: var(--online);
 }
 .dialog-list-item.offline-bar::before {
   content: '';
@@ -2079,7 +2184,7 @@ input, textarea, button, select {
   top: 0;
   bottom: 0;
   width: 3px;
-  background-color: #cbd5e1;
+  background-color: var(--border-strong);
 }
 
 .dialog-avatar-container {
@@ -2088,7 +2193,7 @@ input, textarea, button, select {
   border-radius: 4px;
   overflow: hidden;
   flex-shrink: 0;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2106,13 +2211,13 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#64748b, #a9aeb5);
+  background-color: var(--bg-active);
+  color: var(--text-muted);
   font-size: 14px;
   font-weight: bold;
 }
 .dialog-avatar-placeholder.channel {
-  background-color: #3b82f6;
+  background-color: var(--primary);
   color: #ffffff;
 }
 
@@ -2133,7 +2238,7 @@ input, textarea, button, select {
 .dialog-peer-name {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2141,7 +2246,7 @@ input, textarea, button, select {
 
 .dialog-timestamp {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   flex-shrink: 0;
 }
 
@@ -2155,7 +2260,7 @@ input, textarea, button, select {
 
 .dialog-snippet {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2165,7 +2270,7 @@ input, textarea, button, select {
 
 .dialog-read-ticks {
   font-size: 11px;
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-weight: bold;
   margin-left: 4px;
 }
@@ -2174,7 +2279,7 @@ input, textarea, button, select {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   overflow: hidden;
   min-width: 0;
 }
@@ -2184,7 +2289,7 @@ input, textarea, button, select {
   flex: 1;
   align-items: center;
   justify-content: center;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   padding: 20px;
 }
 
@@ -2199,7 +2304,7 @@ input, textarea, button, select {
 .greeting-heading {
   font-size: 26px;
   font-weight: 400;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   margin-bottom: 12px;
 }
 
@@ -2217,7 +2322,7 @@ input, textarea, button, select {
 .greeting-text-link {
   background: none;
   border: none;
-  color: light-dark(#1d4ed8, #819eee);
+  color: var(--accent-text);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -2229,19 +2334,19 @@ input, textarea, button, select {
 
 .greeting-instruction {
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   line-height: 1.5;
   margin: 4px 0 8px;
 }
 
 .greeting-user-info {
   font-size: 12px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
 }
 
 .greeting-switch-desc {
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .classic-chat-container {
@@ -2258,20 +2363,20 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   padding: 8px 14px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
   height: 50px;
 }
 
 .classic-header-title {
   font-size: 14px;
   font-weight: 700;
-  color: light-dark(#1d4ed8, #819eee);
+  color: var(--accent-text);
 }
 
 .classic-header-status {
   font-size: 11px;
-  color: light-dark(#16a34a, #81eea9);
+  color: var(--success-text);
 }
 
 .classic-header-actions {
@@ -2281,13 +2386,13 @@ input, textarea, button, select {
 }
 
 .classic-action-icon-btn:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-color: light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
-  color: light-dark(#0f172a, #96aad9);
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
 }
 .classic-action-icon-btn.active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: #94a3b8;
+  background-color: var(--bg-active);
+  border-color: var(--border-control-hover);
 }
 
 .classic-chat-stream {
@@ -2297,7 +2402,7 @@ input, textarea, button, select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
 }
 
 .chat-unread-separator {
@@ -2305,7 +2410,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 10px;
   margin: 14px 0 10px;
-  color: light-dark(#dc2626, #eb8484);
+  color: var(--danger-text);
   font-size: 11px;
   font-weight: 600;
 }
@@ -2314,7 +2419,7 @@ input, textarea, button, select {
   content: '';
   flex: 1;
   height: 1px;
-  background: light-dark(#fecaca, rgba(234, 62, 62, 0.16));
+  background: var(--danger-soft);
 }
 .chat-unread-separator span {
   white-space: nowrap;
@@ -2328,10 +2433,10 @@ input, textarea, button, select {
 .login-pending-box {
   margin: 0 0 14px;
   padding: 11px 14px;
-  background: light-dark(#f0fdf4, rgba(66, 230, 116, 0.16));
-  border: 1px solid light-dark(#bbf7d0, rgba(72, 234, 129, 0.38));
+  background: var(--success-soft);
+  border: 1px solid var(--success-line);
   border-radius: 6px;
-  color: light-dark(#15803d, #84ebab);
+  color: var(--success-text);
   font-size: 12.5px;
   line-height: 1.5;
 }
@@ -2343,12 +2448,12 @@ input, textarea, button, select {
 .dialogs-empty-title {
   font-size: 13.5px;
   font-weight: 700;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   margin-bottom: 6px;
 }
 .dialogs-empty-text {
   font-size: 12.5px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.5;
   margin-bottom: 14px;
 }
@@ -2395,12 +2500,12 @@ input, textarea, button, select {
   font-size: 12px;
   line-height: 1.4;
 }
-.admin-right-item.editable:hover { color: light-dark(#1e293b, #a0b2cf); }
+.admin-right-item.editable:hover { color: var(--text-main); }
 .admin-right-item.editable input { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
 
 .right-note {
   display: block;
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 10.5px;
   margin-top: 1px;
 }
@@ -2408,8 +2513,8 @@ input, textarea, button, select {
 .rights-changed {
   font-size: 10px;
   font-weight: 600;
-  color: light-dark(#b45309, #f4af7b);
-  background: light-dark(#fef3c7, rgba(234, 199, 62, 0.16));
+  color: var(--warning-text);
+  background: var(--warning-soft);
   border-radius: 4px;
   padding: 2px 7px;
   text-transform: uppercase;
@@ -2421,7 +2526,7 @@ input, textarea, button, select {
   gap: 8px;
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-top: 1px solid var(--border-color);
 }
 .rights-card-actions .btn { padding: 5px 12px; font-size: 12px; }
 
@@ -2442,7 +2547,7 @@ input, textarea, button, select {
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   font-size: 11.5px;
   line-height: 1.45;
 }
@@ -2451,16 +2556,16 @@ input, textarea, button, select {
   padding: 3px 9px;
   margin-right: 5px;
   font-size: 11.5px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
-  background: light-dark(#fff, #2c2e33);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
   border-radius: 4px;
   cursor: pointer;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
 }
-.btn-mini:hover { background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16)); }
+.btn-mini:hover { background: var(--bg-hover); }
 .btn-mini:active { transform: translateY(1px); }
-.btn-mini.danger { color: light-dark(#b91c1c, #ec8383); border-color: light-dark(#fecaca, rgba(235, 71, 71, 0.38)); }
-.btn-mini.danger:hover { background: light-dark(#fef2f2, #313338); }
+.btn-mini.danger { color: var(--danger-text); border-color: var(--danger-line); }
+.btn-mini.danger:hover { background: var(--danger-soft); }
 
 .rd-screen-select {
   background: #1e293b;
@@ -2562,10 +2667,10 @@ input, textarea, button, select {
 }
 .call-btn:hover { filter: brightness(1.12); }
 .call-btn:active { transform: translateY(1px); }
-.call-btn.accept { background: #16a34a; color: #fff; }
-.call-btn.decline { background: #dc2626; color: #fff; }
+.call-btn.accept { background: var(--online); color: #fff; }
+.call-btn.decline { background: var(--danger); color: #fff; }
 .call-btn.mute { background: #334155; color: #e2e8f0; }
-.call-btn.mute.on { background: #f59e0b; color: light-dark(#1e293b, #a0b2cf); }
+.call-btn.mute.on { background: var(--away); color: var(--text-main); }
 
 .announcements-error-banner {
   position: absolute;
@@ -2578,24 +2683,24 @@ input, textarea, button, select {
   gap: 12px;
   max-width: 620px;
   padding: 10px 14px;
-  background: light-dark(#fef2f2, #313338);
-  border: 1px solid light-dark(#fecaca, rgba(235, 71, 71, 0.38));
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
   border-radius: 6px;
-  color: light-dark(#b91c1c, #ec8383);
+  color: var(--danger-text);
   font-size: 12.5px;
   box-shadow: 0 4px 14px light-dark(rgba(15, 23, 42, 0.12), rgba(0, 0, 0, 0.27));
 }
 .announcements-error-banner button {
   border: none;
   background: none;
-  color: light-dark(#b91c1c, #ec8383);
+  color: var(--danger-text);
   cursor: pointer;
   font-size: 13px;
   padding: 0 2px;
 }
 
 .rd-waiting-card {
-  background: light-dark(#fff, #2c2e33);
+  background: var(--bg-card);
   border-radius: 10px;
   padding: 28px 32px;
   max-width: 420px;
@@ -2605,12 +2710,12 @@ input, textarea, button, select {
 .rd-waiting-title {
   font-size: 16px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   margin-bottom: 8px;
 }
 .rd-waiting-text {
   font-size: 13px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   line-height: 1.5;
   margin-bottom: 18px;
 }
@@ -2621,7 +2726,7 @@ input, textarea, button, select {
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   font-size: 11.5px;
   line-height: 1.45;
 }
@@ -2629,8 +2734,8 @@ input, textarea, button, select {
 .chat-loading-spinner {
   width: 26px;
   height: 26px;
-  border: 2.5px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  border-top-color: #2563eb;
+  border: 2.5px solid var(--border-color);
+  border-top-color: var(--primary);
   border-radius: 50%;
   animation: chat-spin 0.7s linear infinite;
   margin: 0 auto 10px;
@@ -2644,7 +2749,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 10px;
   margin: 14px 0 10px;
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
 }
@@ -2653,11 +2758,11 @@ input, textarea, button, select {
   content: '';
   flex: 1;
   height: 1px;
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background: var(--bg-active);
 }
 .chat-day-separator span {
   padding: 2px 10px;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
   border-radius: 10px;
   white-space: nowrap;
 }
@@ -2678,7 +2783,7 @@ input, textarea, button, select {
 /* No tint for own messages: rows are separate grid items, so any background
    breaks a group into stripes with gaps. The "вы" badge marks them instead. */
 .classic-chat-message-row:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
 }
 
 .classic-msg-avatar-slot {
@@ -2706,7 +2811,7 @@ input, textarea, button, select {
    but any single line can still be dated without opening anything. */
 .classic-msg-hover-time {
   font-size: 10px;
-  color: #cbd5e1;
+  color: var(--text-dim);
   opacity: 0;
   transition: opacity 0.12s ease;
   padding-top: 3px;
@@ -2738,8 +2843,8 @@ input, textarea, button, select {
   margin-left: 6px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#64748b, #a9aeb5);
+  background: var(--bg-active);
+  color: var(--text-muted);
   font-size: 9.5px;
   font-weight: 600;
   text-transform: uppercase;
@@ -2752,30 +2857,30 @@ input, textarea, button, select {
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   flex-shrink: 0;
   margin-left: auto;
 }
 
 .classic-msg-ticks {
-  color: #cbd5e1;
+  color: var(--text-dim);
   font-weight: bold;
 }
 .classic-msg-ticks.read {
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
 }
 
 .classic-msg-text {
   font-size: 13.5px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .classic-input-container {
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  background-color: light-dark(#f8fafc, #313338);
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-panel);
   padding: 6px 12px 10px;
   display: flex;
   flex-direction: column;
@@ -2790,7 +2895,7 @@ input, textarea, button, select {
 }
 
 .classic-tool-item:hover, .classic-tool-item.active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .classic-dropdown-wrapper {
@@ -2798,15 +2903,15 @@ input, textarea, button, select {
 }
 
 .classic-tool-item-with-arrow:hover {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .classic-popup-menu {
   position: absolute;
   bottom: 100%;
   left: 0;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   border-radius: 4px;
   min-width: 180px;
@@ -2817,11 +2922,11 @@ input, textarea, button, select {
 .classic-popup-menu-item {
   padding: 6px 12px;
   font-size: 12px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
 }
 .classic-popup-menu-item:hover {
-  background-color: #2563eb;
+  background-color: var(--primary);
   color: #ffffff;
 }
 
@@ -2829,8 +2934,8 @@ input, textarea, button, select {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 4px 8px;
 }
@@ -2847,13 +2952,13 @@ input, textarea, button, select {
 }
 
 .classic-send-btn:hover {
-  background-color: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
+  background-color: var(--primary-soft);
 }
 
 .person-info-sidebar {
   width: 220px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-left: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-card);
+  border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -2865,10 +2970,10 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .person-info-close {
@@ -2876,7 +2981,7 @@ input, textarea, button, select {
   border: none;
   font-size: 14px;
   cursor: pointer;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .person-info-photo-container {
@@ -2889,14 +2994,14 @@ input, textarea, button, select {
   width: 130px;
   height: 160px;
   object-fit: cover;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
 }
 
 .person-info-photo-placeholder {
   width: 130px;
   height: 160px;
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-hover);
+  border: 1px solid var(--border-strong);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2917,23 +3022,23 @@ input, textarea, button, select {
 }
 
 .person-info-icon-blue {
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-size: 13px;
 }
 
 .person-info-value-bold {
   font-weight: 700;
-  color: light-dark(#dc2626, #eb8484);
+  color: var(--danger-text);
 }
 
 .person-info-email-link {
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   text-decoration: none;
   word-break: break-all;
 }
 
 .person-info-dept-text {
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   word-break: break-word;
 }
 
@@ -2942,17 +3047,17 @@ input, textarea, button, select {
   flex-direction: column;
   gap: 6px;
   padding: 12px;
-  border-top: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  border-top: 1px solid var(--border-subtle);
 }
 
 .person-tool-btn:hover {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .profile-modal-dialog {
   width: 620px;
   max-width: 95vw;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 10px 25px rgba(0,0,0,0.25);
@@ -2965,8 +3070,8 @@ input, textarea, button, select {
   align-items: center;
   justify-content: space-between;
   padding: 8px 14px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
   font-size: 13px;
   font-weight: 600;
 }
@@ -2975,7 +3080,7 @@ input, textarea, button, select {
   background: none;
   border: none;
   font-size: 14px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
@@ -2986,8 +3091,8 @@ input, textarea, button, select {
 
 .profile-tabs-sidebar {
   width: 150px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border-right: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background-color: var(--bg-card);
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   padding: 8px 0;
@@ -2999,15 +3104,15 @@ input, textarea, button, select {
   gap: 8px;
   padding: 7px 14px;
   font-size: 12px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
 }
 .profile-tab-item:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 .profile-tab-item.active {
-  background-color: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
-  color: light-dark(#1e40af, #859dea);
+  background-color: var(--primary-soft);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -3019,7 +3124,7 @@ input, textarea, button, select {
 }
 
 .profile-tab-header-banner {
-  background-color: #60a5fa;
+  background-color: var(--frame-accent);
   color: #ffffff;
   font-size: 13px;
   font-weight: 700;
@@ -3049,14 +3154,14 @@ input, textarea, button, select {
 .profile-label {
   width: 120px;
   font-size: 12px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   text-align: right;
   flex-shrink: 0;
 }
 
 .profile-input, .profile-select {
   flex: 1;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   padding: 4px 8px;
   font-size: 12px;
@@ -3066,7 +3171,7 @@ input, textarea, button, select {
 .profile-uin-text {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .profile-photo-col {
@@ -3079,7 +3184,7 @@ input, textarea, button, select {
 
 .profile-photo-box {
   width: 120px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
 }
 
 .profile-photo-header {
@@ -3095,7 +3200,7 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: light-dark(#f8fafc, #313338);
+  background-color: var(--bg-panel);
 }
 
 .profile-photo-img {
@@ -3114,7 +3219,7 @@ input, textarea, button, select {
 .profile-link-btn {
   background: none;
   border: none;
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-size: 11px;
   cursor: pointer;
   text-align: left;
@@ -3128,31 +3233,31 @@ input, textarea, button, select {
   display: flex;
   justify-content: flex-end;
   padding: 10px 18px;
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  background-color: light-dark(#f8fafc, #313338);
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-panel);
 }
 
 .profile-ok-btn {
   display: flex;
   align-items: center;
   padding: 5px 20px;
-  background-color: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 .profile-ok-btn:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-color: #94a3b8;
+  background-color: var(--bg-hover);
+  border-color: var(--border-control-hover);
 }
 
 .account-switcher-dialog {
   width: 480px;
   max-width: 95vw;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 10px 25px rgba(0,0,0,0.25);
@@ -3163,25 +3268,25 @@ input, textarea, button, select {
   justify-content: space-between;
   align-items: flex-start;
   padding: 14px 18px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
 }
 
 .account-switcher-title {
   font-size: 15px;
   font-weight: 700;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .account-switcher-subtitle {
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 
 .account-switcher-search {
   padding: 10px 18px;
-  border-bottom: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
-  background-color: light-dark(#f8fafc, #313338);
+  border-bottom: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel);
 }
 
 .account-switcher-list {
@@ -3199,10 +3304,10 @@ input, textarea, button, select {
   border-bottom: 1px solid light-dark(#f8fafc, rgba(255, 255, 255, 0.07));
 }
 .account-switcher-item:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 .account-switcher-item.current {
-  background-color: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
+  background-color: var(--primary-soft);
 }
 
 .account-switcher-avatar-wrapper {
@@ -3212,7 +3317,7 @@ input, textarea, button, select {
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .account-switcher-avatar {
@@ -3226,7 +3331,7 @@ input, textarea, button, select {
   justify-content: center;
   font-size: 12px;
   font-weight: bold;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .account-switcher-info {
@@ -3243,12 +3348,12 @@ input, textarea, button, select {
 .account-switcher-name {
   font-size: 13px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .current-badge {
   font-size: 10px;
-  background-color: #22c55e;
+  background-color: var(--online);
   color: #ffffff;
   padding: 1px 6px;
   border-radius: 10px;
@@ -3257,38 +3362,38 @@ input, textarea, button, select {
 
 .account-switcher-dept {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 
 .btn-switch-action {
   background: none;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 3px 8px;
   font-size: 11px;
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   cursor: pointer;
 }
 .btn-switch-action:hover {
-  background-color: #2563eb;
+  background-color: var(--primary);
   color: #ffffff;
-  border-color: #2563eb;
+  border-color: var(--primary);
 }
 
 .account-switcher-footer {
   display: flex;
   justify-content: flex-end;
   padding: 10px 18px;
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  background-color: light-dark(#f8fafc, #313338);
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-panel);
 }
 
 .org-tree-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: light-dark(#ffffff, #2c2e33);
+  background-color: var(--bg-card);
   overflow: hidden;
   min-width: 0;
 }
@@ -3300,12 +3405,12 @@ input, textarea, button, select {
 }
 
 .tree-action-btn {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 2px 6px;
   font-size: 11px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3314,20 +3419,20 @@ input, textarea, button, select {
   transition: all 0.1s ease;
 }
 .tree-action-btn:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: #94a3b8;
+  background: var(--bg-active);
+  border-color: var(--border-control-hover);
 }
 .tree-action-btn.active {
-  background: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
-  border-color: #3b82f6;
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
 .tree-search-wrapper {
   padding: 6px 8px;
-  background: light-dark(#f8fafc, #313338);
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -3337,12 +3442,12 @@ input, textarea, button, select {
   position: absolute;
   right: 6px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   cursor: pointer;
   padding: 2px;
 }
 .search-clear-btn:hover {
-  color: light-dark(#dc2626, #eb8484);
+  color: var(--danger-text);
 }
 
 .tree-meta-stats {
@@ -3350,14 +3455,14 @@ input, textarea, button, select {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   padding: 0 2px;
 }
 .meta-sep {
-  color: #cbd5e1;
+  color: var(--text-dim);
 }
 .meta-filter-active {
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -3382,7 +3487,7 @@ input, textarea, button, select {
   gap: 6px;
   padding: 4px 6px;
   cursor: pointer;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   border-radius: 4px;
   transition: background-color 0.1s;
   user-select: none;
@@ -3392,19 +3497,19 @@ input, textarea, button, select {
 
 .tree-root-row {
   font-weight: 700;
-  color: light-dark(#1e293b, #a0b2cf);
-  background: light-dark(rgba(241, 245, 249, 0.5), rgba(105, 148, 191, 0.08));
+  color: var(--text-main);
+  background: var(--bg-hover);
   margin-bottom: 2px;
 }
 
 .tree-root-row:hover,
 .tree-dept-row:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 
 .tree-dept-row.active-selection {
-  background-color: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  outline: 1px solid light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
+  background-color: var(--primary-soft);
+  outline: 1px solid var(--primary-line);
 }
 
 .tree-toggle-icon {
@@ -3414,7 +3519,7 @@ input, textarea, button, select {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   font-size: 8px;
 }
 
@@ -3438,7 +3543,7 @@ input, textarea, button, select {
   white-space: nowrap;
   font-size: 12px;
   font-weight: 500;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .tree-count-pill {
@@ -3453,12 +3558,12 @@ input, textarea, button, select {
   gap: 1px;
 }
 .tree-count-pill.all-offline {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  color: #94a3b8;
+  background: var(--bg-hover);
+  color: var(--text-dim);
 }
 .tree-count-pill.has-online {
-  background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#15803d, #84ebab);
+  background: var(--success-soft);
+  color: var(--success-text);
 }
 .cnt-online {
   font-weight: 700;
@@ -3485,7 +3590,7 @@ input, textarea, button, select {
   gap: 6px;
   padding: 3px 6px;
   cursor: pointer;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   border-radius: 4px;
   transition: background-color 0.1s;
   user-select: none;
@@ -3493,11 +3598,11 @@ input, textarea, button, select {
   box-sizing: border-box;
 }
 .tree-employee-node:hover {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background-color: var(--bg-hover);
 }
 .tree-employee-node.selected {
-  background-color: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
-  color: light-dark(#1e40af, #859dea);
+  background-color: var(--primary-soft);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -3515,7 +3620,7 @@ input, textarea, button, select {
 
 .tree-emp-job {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3555,27 +3660,27 @@ input, textarea, button, select {
 .no-conferences-box {
   padding: 20px 16px;
   text-align: center;
-  border-top: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
-  background: light-dark(#fafafa, #313338);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
 }
 
 .no-conf-title {
   font-size: 13px;
   font-weight: 600;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .no-conf-desc {
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.5;
 }
 
 .conf-link-btn {
   background: none;
   border: none;
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -3592,10 +3697,10 @@ input, textarea, button, select {
   justify-content: space-between;
   height: 26px;
   background: light-dark(#f1f3f5, #383b40);
-  border-top: 1px solid light-dark(#d1d5db, rgba(255, 255, 255, 0.18));
+  border-top: 1px solid var(--border-strong);
   padding: 0 10px;
   font-size: 11px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
   z-index: 50;
   user-select: none;
   flex-shrink: 0;
@@ -3617,15 +3722,15 @@ input, textarea, button, select {
   flex-shrink: 0;
 }
 .status-net-dot.online {
-  background-color: #16a34a;
+  background-color: var(--online);
   box-shadow: 0 0 4px light-dark(rgba(22, 163, 74, 0.6), rgba(0, 0, 0, 0.5));
 }
 .status-net-dot.offline {
-  background-color: #ef4444;
+  background-color: var(--danger);
 }
 
 .status-bar-divider {
-  color: #cbd5e1;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -3637,22 +3742,22 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   padding: 2px 8px;
   font-size: 11px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 .status-bar-presence-btn:hover {
-  background: light-dark(#f8fafc, #313338);
-  border-color: #94a3b8;
+  background: var(--bg-panel);
+  border-color: var(--border-control-hover);
 }
 .status-bar-presence-btn:active {
   transform: translateY(1px);
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background: var(--bg-active);
 }
 
 .status-pill-dot {
@@ -3663,15 +3768,15 @@ input, textarea, button, select {
   flex-shrink: 0;
 }
 .status-pill-dot.online {
-  background-color: #16a34a;
+  background-color: var(--online);
   box-shadow: 0 0 3px light-dark(rgba(22, 163, 74, 0.5), rgba(0, 0, 0, 0.5));
 }
 .status-pill-dot.away {
-  background-color: #f59e0b;
+  background-color: var(--away);
   box-shadow: 0 0 3px light-dark(rgba(245, 158, 11, 0.5), rgba(0, 0, 0, 0.5));
 }
 .status-pill-dot.dnd {
-  background-color: #ef4444;
+  background-color: var(--danger);
 }
 .status-pill-dot.offline {
   background-color: #94a3b8;
@@ -3681,8 +3786,8 @@ input, textarea, button, select {
   position: absolute;
   bottom: 28px;
   right: 0;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   padding: 4px 0;
@@ -3696,12 +3801,12 @@ input, textarea, button, select {
   gap: 8px;
   padding: 6px 12px;
   font-size: 11px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
   transition: background 0.1s ease;
 }
 .status-bar-menu-item:hover {
-  background-color: #2563eb;
+  background-color: var(--primary);
   color: #ffffff;
 }
 
@@ -3714,21 +3819,21 @@ input, textarea, button, select {
   border-radius: 3px;
   padding: 2px 6px;
   font-size: 11px;
-  color: light-dark(#1e40af, #859dea);
+  color: var(--accent-text);
   font-weight: 500;
   cursor: pointer;
 }
 .status-bar-persona-btn:hover {
-  background: light-dark(#e0e7ff, rgba(62, 101, 234, 0.16));
-  border-color: light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
+  background: var(--primary-soft);
+  border-color: var(--primary-line);
 }
 .status-bar-persona-btn:active {
   transform: translateY(1px);
 }
 
 .persona-switch-badge {
-  background: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  color: var(--accent-text);
   border-radius: 3px;
   padding: 0 4px;
   font-size: 10px;
@@ -3741,8 +3846,8 @@ input, textarea, button, select {
 
 /* 1. Chat Action Buttons (Call, Video, Screen Assist, Toggle Panel, Menu) */
 .classic-action-icon-btn {
-  background: linear-gradient(180deg, light-dark(#ffffff, #2c2e33) 0%, light-dark(#f8fafc, #313338) 100%);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-panel) 100%);
+  border: 1px solid var(--border-strong);
   width: 32px;
   height: 32px;
   border-radius: 5px;
@@ -3751,27 +3856,27 @@ input, textarea, button, select {
   justify-content: center;
   font-size: 14px;
   cursor: pointer;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.9), rgba(0, 0, 0, 0.5)), 0 1px 2px rgba(0, 0, 0, 0.05);
   transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
   outline: none;
 }
 .classic-action-icon-btn:hover {
-  background: light-dark(#ffffff, #2c2e33);
-  border-color: #94a3b8;
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-card);
+  border-color: var(--border-control-hover);
+  color: var(--text-strong);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 1), rgba(0, 0, 0, 0.5)), 0 2px 5px rgba(0, 0, 0, 0.08);
 }
 .classic-action-icon-btn:active {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#64748b, rgba(255, 255, 255, 0.08));
+  background: var(--bg-active);
+  border-color: var(--border-control-hover);
   transform: scale(0.96) translateY(1px);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 .classic-action-icon-btn.active {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  border-color: #3b82f6;
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--accent-text);
   box-shadow: inset 0 1px 2px light-dark(rgba(59, 130, 246, 0.2), rgba(0, 0, 0, 0.35));
 }
 .classic-action-icon-btn svg {
@@ -3791,15 +3896,15 @@ input, textarea, button, select {
   flex-shrink: 0;
 }
 .chat-header-status-dot.online {
-  background-color: #16a34a;
+  background-color: var(--online);
   box-shadow: 0 0 4px light-dark(rgba(22, 163, 74, 0.6), rgba(0, 0, 0, 0.5));
 }
 .chat-header-status-dot.away {
-  background-color: #f59e0b;
+  background-color: var(--away);
   box-shadow: 0 0 4px light-dark(rgba(245, 158, 11, 0.6), rgba(0, 0, 0, 0.5));
 }
 .chat-header-status-dot.dnd {
-  background-color: #ef4444;
+  background-color: var(--danger);
   box-shadow: 0 0 4px light-dark(rgba(239, 68, 68, 0.6), rgba(0, 0, 0, 0.5));
 }
 .chat-header-status-dot.offline {
@@ -3808,11 +3913,11 @@ input, textarea, button, select {
 
 /* 3. Input Toolbar Buttons (Emoji, Attach, Quick Snippets) */
 .classic-tool-item {
-  background: linear-gradient(180deg, light-dark(#ffffff, #2c2e33) 0%, light-dark(#f8fafc, #313338) 100%);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-panel) 100%);
+  border: 1px solid var(--border-strong);
   font-size: 14px;
   cursor: pointer;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   padding: 4px 8px;
   border-radius: 5px;
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.8), rgba(0, 0, 0, 0.5)), 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -3823,25 +3928,25 @@ input, textarea, button, select {
   outline: none;
 }
 .classic-tool-item:hover {
-  background: light-dark(#ffffff, #2c2e33);
-  border-color: #94a3b8;
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-card);
+  border-color: var(--border-control-hover);
+  color: var(--text-strong);
   box-shadow: inset 0 1px 0 light-dark(#ffffff, rgba(0, 0, 0, 0.5)), 0 2px 4px rgba(0, 0, 0, 0.07);
 }
 .classic-tool-item:active,
 .classic-tool-item.active {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#64748b, rgba(255, 255, 255, 0.08));
+  background: var(--bg-active);
+  border-color: var(--border-control-hover);
   transform: scale(0.96) translateY(1px);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .classic-tool-item-with-arrow {
-  background: linear-gradient(180deg, light-dark(#ffffff, #2c2e33) 0%, light-dark(#f8fafc, #313338) 100%);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-panel) 100%);
+  border: 1px solid var(--border-strong);
   font-size: 12px;
   font-weight: 500;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   display: flex;
   align-items: center;
   gap: 5px;
@@ -3853,22 +3958,22 @@ input, textarea, button, select {
   outline: none;
 }
 .classic-tool-item-with-arrow:hover {
-  background: light-dark(#ffffff, #2c2e33);
-  border-color: #94a3b8;
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-card);
+  border-color: var(--border-control-hover);
+  color: var(--text-strong);
   box-shadow: inset 0 1px 0 light-dark(#ffffff, rgba(0, 0, 0, 0.5)), 0 2px 4px rgba(0, 0, 0, 0.07);
 }
 .classic-tool-item-with-arrow:active {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#64748b, rgba(255, 255, 255, 0.08));
+  background: var(--bg-active);
+  border-color: var(--border-control-hover);
   transform: scale(0.96) translateY(1px);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 /* 4. Send Message Button (Tactile 3D Action) */
 .classic-send-btn {
-  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
-  border: 1px solid #1e40af;
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-hover) 100%);
+  border: 1px solid var(--primary-hover);
   border-radius: 5px;
   width: 36px;
   height: 36px;
@@ -3888,7 +3993,7 @@ input, textarea, button, select {
   transition: transform 0.14s ease;
 }
 .classic-send-btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary) 100%);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.35), rgba(0, 0, 0, 0.5)), 0 3px 8px light-dark(rgba(37, 99, 235, 0.4), rgba(0, 0, 0, 0.5));
   transform: translateY(-0.5px);
 }
@@ -3896,19 +4001,19 @@ input, textarea, button, select {
   transform: translateX(1px);
 }
 .classic-send-btn:active:not(:disabled) {
-  background: linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%);
+  background: linear-gradient(180deg, var(--primary-hover) 0%, var(--primary-hover) 100%);
   transform: scale(0.96) translateY(1px);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 .classic-send-btn:disabled {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-active);
+  border-color: var(--border-strong);
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
 }
 .classic-send-btn:disabled svg {
-  stroke: #94a3b8 !important;
+  stroke: var(--text-dim) !important;
 }
 
 /* 5. Org Tree Presence Dots */
@@ -3921,27 +4026,27 @@ input, textarea, button, select {
   flex-shrink: 0;
 }
 .tree-presence-dot.online {
-  background-color: #16a34a;
+  background-color: var(--online);
   box-shadow: 0 0 3px light-dark(rgba(22, 163, 74, 0.6), rgba(0, 0, 0, 0.5));
 }
 .tree-presence-dot.away {
-  background-color: #f59e0b;
+  background-color: var(--away);
   box-shadow: 0 0 3px light-dark(rgba(245, 158, 11, 0.6), rgba(0, 0, 0, 0.5));
 }
 .tree-presence-dot.dnd {
-  background-color: #ef4444;
+  background-color: var(--danger);
 }
 .tree-presence-dot.offline {
   background-color: transparent;
-  border: 1.5px solid #94a3b8;
+  border: 1.5px solid var(--border-control-hover);
 }
 
 .tree-emp-ext {
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 11px;
   margin-left: 4px;
   /* перенесено из более раннего объявления того же селектора */
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
   padding: 1px 4px;
   border-radius: 3px;
   flex-shrink: 0;
@@ -3958,20 +4063,20 @@ input, textarea, button, select {
   font-weight: 500;
 }
 .person-status-badge.online {
-  background-color: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#15803d, #84ebab);
+  background-color: var(--success-soft);
+  color: var(--success-text);
 }
 .person-status-badge.away {
-  background-color: light-dark(#fef3c7, rgba(234, 199, 62, 0.16));
-  color: light-dark(#b45309, #f4af7b);
+  background-color: var(--warning-soft);
+  color: var(--warning-text);
 }
 .person-status-badge.dnd {
-  background-color: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
-  color: light-dark(#b91c1c, #ec8383);
+  background-color: var(--danger-soft);
+  color: var(--danger-text);
 }
 .person-status-badge.offline {
-  background-color: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  color: light-dark(#64748b, #a9aeb5);
+  background-color: var(--bg-hover);
+  color: var(--text-muted);
 }
 
 .person-status-dot {
@@ -3980,19 +4085,19 @@ input, textarea, button, select {
   border-radius: 50%;
   display: inline-block;
 }
-.person-status-dot.online { background-color: #16a34a; }
-.person-status-dot.away { background-color: #f59e0b; }
-.person-status-dot.dnd { background-color: #ef4444; }
+.person-status-dot.online { background-color: var(--online); }
+.person-status-dot.away { background-color: var(--away); }
+.person-status-dot.dnd { background-color: var(--danger); }
 .person-status-dot.offline { background-color: #94a3b8; }
 
 .person-tool-btn {
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 6px 10px;
   font-size: 11px;
   font-weight: 500;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   transition: all 0.12s ease;
@@ -4000,17 +4105,17 @@ input, textarea, button, select {
   align-items: center;
   gap: 4px;
   /* перенесено из более раннего объявления того же селектора */
-  background-color: light-dark(#f8fafc, #313338);
+  background-color: var(--bg-panel);
 }
 .person-tool-btn:hover {
-  background-color: light-dark(#f8fafc, #313338);
-  border-color: #94a3b8;
-  color: light-dark(#0f172a, #96aad9);
+  background-color: var(--bg-panel);
+  border-color: var(--border-control-hover);
+  color: var(--text-strong);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 .person-tool-btn:active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  border-color: light-dark(#64748b, rgba(255, 255, 255, 0.08));
+  background-color: var(--bg-active);
+  border-color: var(--border-control-hover);
   transform: translateY(1px);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
 }
@@ -4024,8 +4129,8 @@ input, textarea, button, select {
   bottom: 58px;
   left: 16px;
   width: 340px;
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   display: flex;
@@ -4037,8 +4142,8 @@ input, textarea, button, select {
 
 .emoji-picker-header {
   padding: 8px;
-  background: light-dark(#f8fafc, #313338);
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .emoji-search-wrapper {
@@ -4050,7 +4155,7 @@ input, textarea, button, select {
 .emoji-search-icon {
   position: absolute;
   left: 8px;
-  color: #94a3b8;
+  color: var(--text-dim);
   pointer-events: none;
 }
 
@@ -4058,16 +4163,16 @@ input, textarea, button, select {
   width: 100%;
   padding: 6px 26px 6px 28px;
   font-size: 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   outline: none;
-  background: light-dark(#ffffff, #2c2e33);
-  color: light-dark(#1e293b, #a0b2cf);
+  background: var(--bg-card);
+  color: var(--text-main);
   transition: border-color 0.15s;
 }
 
 .emoji-search-input:focus {
-  border-color: #2563eb;
+  border-color: var(--primary);
   box-shadow: 0 0 0 2px light-dark(rgba(37, 99, 235, 0.15), rgba(0, 0, 0, 0.3));
 }
 
@@ -4076,19 +4181,19 @@ input, textarea, button, select {
   right: 6px;
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 11px;
   padding: 2px 4px;
 }
 .emoji-search-clear:hover {
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .emoji-category-tabs {
   display: flex;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-color);
   padding: 2px 4px;
   gap: 2px;
 }
@@ -4105,19 +4210,19 @@ input, textarea, button, select {
   border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.12s;
 }
 
 .emoji-cat-btn:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#1e293b, #a0b2cf);
+  background: var(--bg-active);
+  color: var(--text-main);
 }
 
 .emoji-cat-btn.active {
-  background: light-dark(#ffffff, #2c2e33);
-  color: light-dark(#2563eb, #7ca1f3);
+  background: var(--bg-card);
+  color: var(--accent-text);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
@@ -4134,7 +4239,7 @@ input, textarea, button, select {
   height: 220px;
   overflow-y: auto;
   padding: 8px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
 }
 
 .emoji-grid {
@@ -4157,7 +4262,7 @@ input, textarea, button, select {
 }
 
 .emoji-cell-btn:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
   transform: scale(1.18);
 }
 
@@ -4169,15 +4274,15 @@ input, textarea, button, select {
   padding: 30px 10px;
   text-align: center;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .emoji-picker-footer {
   padding: 4px 8px;
-  background: light-dark(#f8fafc, #313338);
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-dim);
   text-align: center;
 }
 
@@ -4248,8 +4353,8 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   gap: 14px;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 12px;
 }
@@ -4258,7 +4363,7 @@ input, textarea, button, select {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: light-dark(#dbeafe, rgba(62, 136, 234, 0.16));
+  background: var(--primary-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4274,18 +4379,18 @@ input, textarea, button, select {
 .rd-operator-name {
   font-size: 14px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
 }
 
 .rd-operator-role {
   font-size: 12px;
-  color: light-dark(#2563eb, #7ca1f3);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
 .rd-operator-dept {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .rd-permission-box {
@@ -4299,22 +4404,22 @@ input, textarea, button, select {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 10px 12px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   cursor: pointer;
   transition: all 0.12s;
 }
 
 .rd-perm-option:hover {
   border-color: #94a3b8;
-  background: light-dark(#f8fafc, #313338);
+  background: var(--bg-panel);
 }
 
 .rd-perm-option.selected {
   border-color: #2563eb;
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
+  background: var(--primary-soft);
 }
 
 .rd-perm-option input[type="radio"] {
@@ -4330,21 +4435,21 @@ input, textarea, button, select {
 
 .rd-perm-text strong {
   font-size: 13px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .rd-perm-text span {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
 .rd-security-notice {
   margin-top: 14px;
   font-size: 11px;
-  color: light-dark(#475569, #d3d6db);
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  border: 1px solid light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
+  color: var(--text-secondary);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-line);
   padding: 8px 10px;
   border-radius: var(--radius-md);
 }
@@ -4513,13 +4618,13 @@ input, textarea, button, select {
   max-width: 1150px;
   height: 85vh;
   max-height: 750px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   border-radius: 6px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #94a3b8;
+  border: 1px solid var(--border-control-hover);
 }
 
 .admin-console-header {
@@ -4529,7 +4634,7 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 2px solid #2563eb;
+  border-bottom: 2px solid var(--primary);
 }
 
 .admin-console-title {
@@ -4548,8 +4653,8 @@ input, textarea, button, select {
 
 .admin-sidebar {
   width: 230px;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-right: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-hover);
+  border-right: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -4572,7 +4677,7 @@ input, textarea, button, select {
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   text-align: left;
   cursor: pointer;
   transition: all 0.12s;
@@ -4580,12 +4685,12 @@ input, textarea, button, select {
 }
 
 .admin-nav-item:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-active);
+  color: var(--text-strong);
 }
 
 .admin-nav-item.active {
-  background: #2563eb;
+  background: var(--primary);
   color: #ffffff;
   font-weight: 600;
 }
@@ -4593,9 +4698,9 @@ input, textarea, button, select {
 .admin-sidebar-footer {
   margin-top: auto;
   padding: 12px;
-  border-top: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border-top: 1px solid var(--border-strong);
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -4604,7 +4709,7 @@ input, textarea, button, select {
 .admin-content-area {
   flex: 1;
   overflow-y: auto;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   display: flex;
   flex-direction: column;
 }
@@ -4626,27 +4731,27 @@ input, textarea, button, select {
 .admin-filter-input {
   padding: 6px 10px;
   font-size: 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   outline: none;
   width: 220px;
 }
 
 .admin-filter-input:focus {
-  border-color: #2563eb;
+  border-color: var(--primary);
 }
 
 .admin-filter-select {
   padding: 6px 10px;
   font-size: 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   outline: none;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
 }
 
 .admin-table-container {
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   overflow-x: auto;
 }
@@ -4659,29 +4764,29 @@ input, textarea, button, select {
 }
 
 .admin-data-table th {
-  background: light-dark(#f8fafc, #313338);
-  color: light-dark(#475569, #d3d6db);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
   font-weight: 600;
   padding: 8px 12px;
-  border-bottom: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
-  border-right: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-color);
   white-space: nowrap;
 }
 
 .admin-data-table td {
   padding: 8px 12px;
-  border-bottom: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
-  border-right: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
-  color: light-dark(#1e293b, #a0b2cf);
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-main);
 }
 
 .admin-data-table tr:hover td {
-  background: light-dark(#f8fafc, #313338);
+  background: var(--bg-panel);
 }
 
 .admin-badge-ok {
-  background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#15803d, #84ebab);
+  background: var(--success-soft);
+  color: var(--success-text);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;
@@ -4689,8 +4794,8 @@ input, textarea, button, select {
 }
 
 .admin-badge-off {
-  background: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
-  color: light-dark(#b91c1c, #ec8383);
+  background: var(--danger-soft);
+  color: var(--danger-text);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;
@@ -4698,19 +4803,19 @@ input, textarea, button, select {
 }
 
 .admin-btn-action {
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   transition: all 0.1s;
 }
 
 .admin-btn-action:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-active);
+  color: var(--text-strong);
 }
 
 .admin-server-cards-grid {
@@ -4721,8 +4826,8 @@ input, textarea, button, select {
 }
 
 .admin-stat-card {
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 14px;
   display: flex;
@@ -4732,7 +4837,7 @@ input, textarea, button, select {
 
 .admin-stat-label {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   text-transform: uppercase;
   font-weight: 600;
 }
@@ -4740,7 +4845,7 @@ input, textarea, button, select {
 .admin-stat-value {
   font-size: 18px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
 }
 
 .admin-rights-grid {
@@ -4750,16 +4855,16 @@ input, textarea, button, select {
 }
 
 .admin-rights-card {
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 14px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
 }
 
 .admin-rights-card h4 {
   margin: 0 0 10px 0;
   font-size: 13px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4776,7 +4881,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .admin-channels-list {
@@ -4789,26 +4894,26 @@ input, textarea, button, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 12px 16px;
-  background: light-dark(#f8fafc, #313338);
+  background: var(--bg-panel);
 }
 
 .admin-channel-card strong {
   font-size: 13px;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .admin-channel-card p {
   margin: 2px 0 0 0;
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .highlight-admin {
-  background-color: light-dark(#eff6ff, rgba(62, 137, 234, 0.16)) !important;
-  color: light-dark(#1d4ed8, #819eee) !important;
+  background-color: var(--primary-soft) !important;
+  color: var(--accent-text) !important;
 }
 
 /* ==========================================================================
@@ -4823,10 +4928,10 @@ input, textarea, button, select {
   user-select: none;
 }
 .status-bar-left.interactive:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background: var(--bg-active);
 }
 .status-bar-left.interactive:active {
-  background: #cbd5e1;
+  background: var(--border-strong);
 }
 
 .server-connect-overlay {
@@ -4841,12 +4946,12 @@ input, textarea, button, select {
 }
 
 .server-connect-dialog {
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   width: 520px;
   max-width: 95vw;
   border-radius: 8px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4865,8 +4970,8 @@ input, textarea, button, select {
 }
 
 .server-connect-header {
-  background: linear-gradient(180deg, light-dark(#f8fafc, #313338) 0%, light-dark(#f1f5f9, rgba(105, 148, 191, 0.16)) 100%);
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-hover) 100%);
+  border-bottom: 1px solid var(--border-color);
   padding: 14px 20px;
   display: flex;
   align-items: center;
@@ -4877,7 +4982,7 @@ input, textarea, button, select {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4888,7 +4993,7 @@ input, textarea, button, select {
   border: none;
   font-size: 18px;
   cursor: pointer;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   border-radius: 4px;
   width: 28px;
   height: 28px;
@@ -4898,8 +5003,8 @@ input, textarea, button, select {
   transition: all 0.12s ease;
 }
 .server-connect-close-btn:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-active);
+  color: var(--text-strong);
 }
 
 .server-connect-body {
@@ -4916,13 +5021,13 @@ input, textarea, button, select {
 }
 
 .server-preset-btn {
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 500;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -4931,13 +5036,13 @@ input, textarea, button, select {
   transition: all 0.12s ease;
 }
 .server-preset-btn:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border-color: #94a3b8;
+  background: var(--bg-hover);
+  border-color: var(--border-control-hover);
 }
 .server-preset-btn.active {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  border-color: #3b82f6;
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--accent-text);
   box-shadow: inset 0 0 0 1px light-dark(#3b82f6, rgba(0, 0, 0, 0.5));
 }
 .server-preset-btn span.preset-title {
@@ -4946,7 +5051,7 @@ input, textarea, button, select {
 }
 .server-preset-btn span.preset-addr {
   font-size: 10px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   word-break: break-all;
 }
 
@@ -4959,7 +5064,7 @@ input, textarea, button, select {
 .server-input-group label {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 
 .server-input-row {
@@ -4970,37 +5075,37 @@ input, textarea, button, select {
 .server-input-field {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   font-size: 13px;
   font-family: inherit;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .server-input-field:focus {
-  border-color: #3b82f6;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px light-dark(rgba(59, 130, 246, 0.15), rgba(0, 0, 0, 0.3));
 }
 
 .server-port-field {
   width: 90px;
   padding: 8px 12px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   font-size: 13px;
   font-family: inherit;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   outline: none;
 }
 .server-port-field:focus {
-  border-color: #3b82f6;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px light-dark(rgba(59, 130, 246, 0.15), rgba(0, 0, 0, 0.3));
 }
 
 .server-ping-card {
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  background: light-dark(#f8fafc, #313338);
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
   border-radius: 6px;
   padding: 12px 14px;
   display: flex;
@@ -5017,12 +5122,12 @@ input, textarea, button, select {
 .server-ping-title {
   font-size: 12px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
 }
 
 .server-ping-detail {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .server-ping-badge {
@@ -5032,25 +5137,25 @@ input, textarea, button, select {
   font-weight: 600;
 }
 .server-ping-badge.good {
-  background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#15803d, #84ebab);
+  background: var(--success-soft);
+  color: var(--success-text);
 }
 .server-ping-badge.warning {
-  background: light-dark(#fef3c7, rgba(234, 199, 62, 0.16));
-  color: light-dark(#b45309, #f4af7b);
+  background: var(--warning-soft);
+  color: var(--warning-text);
 }
 .server-ping-badge.bad {
-  background: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
-  color: light-dark(#b91c1c, #ec8383);
+  background: var(--danger-soft);
+  color: var(--danger-text);
 }
 .server-ping-badge.testing {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#475569, #d3d6db);
+  background: var(--bg-active);
+  color: var(--text-secondary);
 }
 
 .server-connect-footer {
-  background: light-dark(#f8fafc, #313338);
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
   padding: 12px 20px;
   display: flex;
   align-items: center;
@@ -5065,7 +5170,7 @@ input, textarea, button, select {
   display: flex;
   width: 100%;
   height: 100%;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   overflow: hidden;
 }
 
@@ -5073,8 +5178,8 @@ input, textarea, button, select {
   width: 320px;
   min-width: 280px;
   max-width: 360px;
-  background: light-dark(#f8fafc, #313338);
-  border-right: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5082,11 +5187,11 @@ input, textarea, button, select {
 
 .announcements-sidebar-header {
   padding: 12px 16px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(180deg, light-dark(#ffffff, #2c2e33) 0%, light-dark(#f8fafc, #313338) 100%);
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-panel) 100%);
 }
 
 .announcements-sidebar-title {
@@ -5095,16 +5200,16 @@ input, textarea, button, select {
   gap: 8px;
   font-size: 13px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
 }
 
 .announcements-sidebar-title span.count-badge {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  color: light-dark(#1d4ed8, #819eee);
+  background: var(--primary-soft);
+  color: var(--accent-text);
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 10px;
-  border: 1px solid light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
+  border: 1px solid var(--primary-line);
 }
 
 .announcements-list {
@@ -5116,23 +5221,23 @@ input, textarea, button, select {
 
 .announcement-card-item {
   padding: 12px 14px;
-  border-bottom: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   transition: all 0.12s ease;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   border-left: 3px solid transparent;
 }
 
 .announcement-card-item:hover {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
+  background: var(--bg-hover);
 }
 
 .announcement-card-item.active {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
-  border-left-color: #2563eb;
+  background: var(--primary-soft);
+  border-left-color: var(--primary);
 }
 
 .announcement-card-top {
@@ -5149,25 +5254,25 @@ input, textarea, button, select {
   text-transform: uppercase;
 }
 .announcement-priority-badge.urgent {
-  background: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
-  color: light-dark(#b91c1c, #ec8383);
+  background: var(--danger-soft);
+  color: var(--danger-text);
 }
 .announcement-priority-badge.normal {
-  background: light-dark(#e0f2fe, rgba(62, 165, 234, 0.16));
-  color: light-dark(#0369a1, #7bc9f4);
+  background: var(--primary-soft);
+  color: var(--accent-text);
 }
 
 .announcement-card-title {
   font-size: 13px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   margin-top: 2px;
   line-height: 1.3;
 }
 
 .announcement-card-author {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .announcement-card-status {
@@ -5176,17 +5281,17 @@ input, textarea, button, select {
   margin-top: 4px;
 }
 .announcement-card-status.confirmed {
-  color: light-dark(#15803d, #84ebab);
+  color: var(--success-text);
 }
 .announcement-card-status.pending {
-  color: light-dark(#b45309, #f4af7b);
+  color: var(--warning-text);
 }
 
 .announcements-detail-pane {
   flex: 1;
   overflow-y: auto;
   padding: 28px 36px;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   display: flex;
   flex-direction: column;
 }
@@ -5199,14 +5304,14 @@ input, textarea, button, select {
 }
 
 .announcement-doc-header {
-  border-bottom: 2px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 2px solid var(--border-color);
   padding-bottom: 16px;
 }
 
 .announcement-doc-title {
   font-size: 20px;
   font-weight: 700;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   margin: 6px 0 10px 0;
 }
 
@@ -5215,15 +5320,15 @@ input, textarea, button, select {
   align-items: center;
   gap: 16px;
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .announcement-doc-body {
   font-size: 14px;
   line-height: 1.65;
-  color: light-dark(#1e293b, #a0b2cf);
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  color: var(--text-main);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 20px 24px;
   white-space: pre-wrap;
@@ -5238,11 +5343,11 @@ input, textarea, button, select {
   gap: 16px;
 }
 .announcement-confirm-box.confirmed {
-  background: light-dark(#f0fdf4, rgba(66, 230, 116, 0.16));
-  border: 1px solid light-dark(#bbf7d0, rgba(72, 234, 129, 0.38));
+  background: var(--success-soft);
+  border: 1px solid var(--success-line);
 }
 .announcement-confirm-box.pending {
-  background: light-dark(#fffbeb, rgba(234, 199, 62, 0.16));
+  background: var(--warning-soft);
   border: 1px solid #fde68a;
 }
 
@@ -5252,7 +5357,7 @@ input, textarea, button, select {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #94a3b8;
+  color: var(--text-dim);
   gap: 12px;
   text-align: center;
   padding: 40px;
@@ -5261,7 +5366,7 @@ input, textarea, button, select {
 .announcement-empty-state h3 {
   margin: 0;
   font-size: 16px;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 .announcement-empty-state p {
   margin: 0;
@@ -5274,7 +5379,7 @@ input, textarea, button, select {
 
 /* ── UNREAD BADGES & HIGHLIGHTS ── */
 .dialog-unread-badge {
-  background: #ef4444 !important;
+  background: var(--danger) !important;
   color: #ffffff !important;
   font-size: 11px !important;
   font-weight: 700 !important;
@@ -5289,7 +5394,7 @@ input, textarea, button, select {
   box-shadow: 0 2px 4px light-dark(rgba(239, 68, 68, 0.4), rgba(0, 0, 0, 0.5)) !important;
   animation: pulse-unread 2s infinite ease-in-out;
   /* перенесено из более раннего объявления того же селектора */
-  background-color: #2563eb;
+  background-color: var(--primary);
 }
 
 @keyframes pulse-unread {
@@ -5299,7 +5404,7 @@ input, textarea, button, select {
 }
 
 .tree-unread-badge {
-  background: #ef4444;
+  background: var(--danger);
   color: #ffffff;
   font-size: 10px;
   font-weight: 700;
@@ -5315,22 +5420,22 @@ input, textarea, button, select {
 }
 
 .tree-employee-node.has-unread {
-  background-color: light-dark(#fef2f2, #313338) !important;
+  background-color: var(--danger-soft) !important;
   border-left: 2px solid #ef4444;
 }
 
 .dialog-list-item.has-unread-item {
-  background-color: light-dark(#f8fafc, #313338);
+  background-color: var(--bg-panel);
 }
 .dialog-list-item.has-unread-item .dialog-peer-name {
   font-weight: 700 !important;
-  color: light-dark(#0f172a, #96aad9) !important;
+  color: var(--text-strong) !important;
 }
 
 /* ── DEVICE QUEUE & PAIRING UI ── */
 .device-queue-card {
-  background: light-dark(#ffffff, #2c2e33);
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 14px;
   margin-bottom: 12px;
@@ -5338,8 +5443,8 @@ input, textarea, button, select {
 }
 
 .device-badge-pending {
-  background: light-dark(#fef3c7, rgba(234, 199, 62, 0.16));
-  color: light-dark(#92400e, #f3a97d);
+  background: var(--warning-soft);
+  color: var(--warning-text);
   border: 1px solid #fde68a;
   padding: 2px 8px;
   border-radius: 4px;
@@ -5348,9 +5453,9 @@ input, textarea, button, select {
 }
 
 .device-badge-paired {
-  background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#166534, #8ae5ad);
-  border: 1px solid light-dark(#bbf7d0, rgba(72, 234, 129, 0.38));
+  background: var(--success-soft);
+  color: var(--success-text);
+  border: 1px solid var(--success-line);
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -5371,22 +5476,22 @@ input, textarea, button, select {
   font-size: 12px;
   line-height: 1.5;
   padding: 10px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: light-dark(#f8fafc, #313338);
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-panel);
+  color: var(--text-strong);
   resize: vertical;
 }
 
 .parser-textarea:focus {
   outline: none;
-  border-color: #2563eb;
-  background: light-dark(#ffffff, #2c2e33);
+  border-color: var(--primary);
+  background: var(--bg-card);
 }
 
 .parser-preview-box {
-  background: light-dark(#f8fafc, #313338);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 14px;
   max-height: 260px;
@@ -5399,8 +5504,8 @@ input, textarea, button, select {
 }
 
 .scoped-admin-banner {
-  background: linear-gradient(90deg, light-dark(#eff6ff, rgba(62, 137, 234, 0.16)) 0%, light-dark(#f0fdf4, rgba(66, 230, 116, 0.16)) 100%);
-  border: 1px solid light-dark(#bfdbfe, rgba(71, 144, 235, 0.38));
+  background: linear-gradient(90deg, var(--primary-soft) 0%, var(--success-soft) 100%);
+  border: 1px solid var(--primary-line);
   border-radius: 6px;
   padding: 8px 14px;
   margin-bottom: 14px;
@@ -5408,7 +5513,7 @@ input, textarea, button, select {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: light-dark(#1e3a8a, #8aa2e5);
+  color: var(--accent-text);
 }
 
 /* ==========================================================================
@@ -5427,7 +5532,7 @@ input, textarea, button, select {
 }
 .sidebar-resizer:hover,
 .sidebar-resizer.is-dragging {
-  background-color: #3b82f6;
+  background-color: var(--primary);
   box-shadow: 0 0 6px light-dark(rgba(59, 130, 246, 0.4), rgba(0, 0, 0, 0.5));
 }
 
@@ -5444,7 +5549,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -5469,11 +5574,11 @@ select:focus-visible {
   gap: 2px;
 }
 .rail-hamburger-item:active {
-  background-color: light-dark(#2f3746, #252525);
+  background-color: var(--bg-rail);
   transform: scale(0.94);
 }
 .rail-tab-btn:active {
-  background-color: light-dark(#2f3746, #252525);
+  background-color: var(--bg-rail);
   transform: scale(0.96);
 }
 
@@ -5483,13 +5588,13 @@ select:focus-visible {
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38));
+  border-bottom: 1px solid var(--border-subtle);
   position: relative;
   transition: background-color 0.1s;
   gap: 8px;
 }
 .dialog-list-item:active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .win-btn {
@@ -5503,7 +5608,7 @@ select:focus-visible {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .win-btn:active {
@@ -5518,7 +5623,7 @@ select:focus-visible {
   border: none;
   padding: 3px 8px;
   font-size: 12px;
-  color: light-dark(#334155, #a6b4c9);
+  color: var(--text-main);
   cursor: pointer;
   border-radius: 3px;
 }
@@ -5529,7 +5634,7 @@ select:focus-visible {
 
 .tree-dept-row:active,
 .tree-employee-node:active {
-  background-color: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
+  background-color: var(--bg-active);
 }
 
 .greeting-tile:active {
@@ -5565,7 +5670,7 @@ select:focus-visible {
   background: #0f172a;
 }
 .chat-jump-to-latest .jump-badge {
-  background: #ef4444;
+  background: var(--danger);
   border-radius: 9px;
   padding: 0 5px;
   font-size: 10px;
@@ -5581,25 +5686,25 @@ select:focus-visible {
    COMMAND PALETTE (Ctrl+K) — quick switcher to people/channels/messages
    ========================================================================== */
 .command-palette-trigger-btn {
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 3px 7px;
   font-size: 10px;
   font-weight: 600;
   font-family: 'Consolas', monospace;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
   transition: all 0.12s ease;
 }
 .command-palette-trigger-btn:hover {
-  background: light-dark(#e2e8f0, rgba(114, 143, 182, 0.16));
-  color: light-dark(#1e293b, #a0b2cf);
-  border-color: #94a3b8;
+  background: var(--bg-active);
+  color: var(--text-main);
+  border-color: var(--border-control-hover);
 }
 .command-palette-trigger-btn:active {
-  background: #cbd5e1;
+  background: var(--border-strong);
   transform: scale(0.96);
 }
 
@@ -5612,10 +5717,10 @@ select:focus-visible {
   width: 560px;
   max-width: 92vw;
   max-height: 60vh;
-  background: light-dark(#ffffff, #2c2e33);
+  background: var(--bg-card);
   border-radius: 10px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5627,13 +5732,13 @@ select:focus-visible {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
 .command-palette-icon {
   font-size: 16px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .command-palette-input {
@@ -5641,19 +5746,19 @@ select:focus-visible {
   border: none;
   outline: none;
   font-size: 15px;
-  color: light-dark(#0f172a, #96aad9);
+  color: var(--text-strong);
   background: transparent;
 }
 .command-palette-input::placeholder {
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .command-palette-hint {
   font-size: 10px;
   font-weight: 600;
-  color: #94a3b8;
-  background: light-dark(#f1f5f9, rgba(105, 148, 191, 0.16));
-  border: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 2px 6px;
   flex-shrink: 0;
@@ -5668,7 +5773,7 @@ select:focus-visible {
   padding: 30px 10px;
   text-align: center;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 .command-palette-group {
@@ -5680,7 +5785,7 @@ select:focus-visible {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #94a3b8;
+  color: var(--text-dim);
   padding: 6px 10px 4px;
 }
 
@@ -5694,7 +5799,7 @@ select:focus-visible {
 }
 .command-palette-item:hover,
 .command-palette-item.active {
-  background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16));
+  background: var(--primary-soft);
 }
 
 .cp-item-icon {
@@ -5702,19 +5807,19 @@ select:focus-visible {
   width: 18px;
   flex-shrink: 0;
   text-align: center;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
 }
 
 .cp-item-title {
   font-size: 13px;
   font-weight: 600;
-  color: light-dark(#1e293b, #a0b2cf);
+  color: var(--text-main);
   flex-shrink: 0;
 }
 
 .cp-item-sub {
   font-size: 12px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5903,7 +6008,7 @@ select:focus-visible {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #cbd5e1;
+  color: var(--text-dim);
   /* Длинное сообщение не должно растягивать карточку на пол-экрана. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -5923,7 +6028,7 @@ select:focus-visible {
 .toast-close {
   background: none;
   border: none;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   font-size: 13px;
   cursor: pointer;
   padding: 2px 4px;
@@ -6018,7 +6123,7 @@ select:focus-visible {
   height: 20px;
   padding: 0 6px;
   border-radius: 10px;
-  background: #dc2626;
+  background: var(--danger);
   color: #ffffff;
   font-size: 11px;
   font-weight: 700;
@@ -6029,7 +6134,7 @@ select:focus-visible {
 /* Отклонение заявки и отключение сотрудника — действия, которые не отменяются
    одним нажатием. Красная кнопка отличает их от остальных. */
 .btn-danger {
-  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  background: linear-gradient(180deg, var(--danger) 0%, var(--danger) 100%);
   color: #ffffff;
   border: 1px solid #b91c1c;
   border-radius: 5px;
@@ -6038,7 +6143,7 @@ select:focus-visible {
   cursor: pointer;
 }
 .btn-danger:hover:not(:disabled) {
-  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  background: linear-gradient(180deg, var(--danger) 0%, #b91c1c 100%);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.35)), 0 2px 5px light-dark(rgba(220, 38, 38, 0.3), rgba(0, 0, 0, 0.45));
 }
 .btn-danger:active:not(:disabled) {
@@ -6083,8 +6188,8 @@ select:focus-visible {
   z-index: 10000;
 }
 .app-dialog {
-  background: light-dark(#ffffff, #2c2e33);
-  color: light-dark(#1e293b, #a0b2cf);
+  background: var(--bg-card);
+  color: var(--text-main);
   border-radius: 8px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
   width: 92%;
@@ -6095,7 +6200,7 @@ select:focus-visible {
 }
 .app-dialog-header {
   padding: 14px 20px;
-  border-bottom: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
+  border-bottom: 1px solid var(--border-color);
   font-size: 14px;
   font-weight: 700;
 }
@@ -6116,8 +6221,8 @@ select:focus-visible {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 20px;
-  border-top: 1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38));
-  background: light-dark(#f8fafc, #313338);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-panel);
 }
 .app-dialog-actions .btn {
   padding: 6px 14px;
@@ -6126,27 +6231,27 @@ select:focus-visible {
 .app-dialog-label {
   font-size: 11px;
   font-weight: 600;
-  color: light-dark(#475569, #d3d6db);
+  color: var(--text-secondary);
 }
 .app-dialog-input {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   font-size: 13px;
 }
 .app-dialog-hint {
   font-size: 11px;
-  color: light-dark(#64748b, #a9aeb5);
+  color: var(--text-muted);
   line-height: 1.5;
 }
 .app-dialog-error {
   padding: 7px 10px;
-  border: 1px solid light-dark(#fecaca, rgba(235, 71, 71, 0.38));
+  border: 1px solid var(--danger-line);
   border-radius: 5px;
-  background: light-dark(#fef2f2, #313338);
-  color: light-dark(#b91c1c, #ec8383);
+  background: var(--danger-soft);
+  color: var(--danger-text);
   font-size: 12px;
 }
 .otp-password-row {
@@ -6157,10 +6262,10 @@ select:focus-visible {
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38));
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
-  background: light-dark(#f8fafc, #313338);
-  color: light-dark(#0f172a, #96aad9);
+  background: var(--bg-panel);
+  color: var(--text-strong);
   font-family: Consolas, 'Courier New', monospace;
   font-size: 16px;
   letter-spacing: 0.5px;
@@ -6169,17 +6274,17 @@ select:focus-visible {
   font-size: 11px;
 }
 .otp-copy-note.ok {
-  color: light-dark(#15803d, #84ebab);
+  color: var(--success-text);
 }
 .otp-copy-note.fail {
-  color: light-dark(#b91c1c, #ec8383);
+  color: var(--danger-text);
 }
 .otp-warning {
   padding: 8px 10px;
   border: 1px solid #fde68a;
   border-radius: 5px;
-  background: light-dark(#fffbeb, rgba(234, 199, 62, 0.16));
-  color: light-dark(#92400e, #f3a97d);
+  background: var(--warning-soft);
+  color: var(--warning-text);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -6195,13 +6300,13 @@ select:focus-visible {
   border-bottom: 1px solid;
 }
 .admin-toast.success {
-  background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16));
-  color: light-dark(#15803d, #84ebab);
+  background: var(--success-soft);
+  color: var(--success-text);
   border-color: #86efac;
 }
 .admin-toast.error {
-  background: light-dark(#fee2e2, rgba(234, 62, 62, 0.16));
-  color: light-dark(#b91c1c, #ec8383);
+  background: var(--danger-soft);
+  color: var(--danger-text);
   border-color: light-dark(#fca5a5, rgba(235, 71, 71, 0.38));
 }
 .admin-toast-text {
@@ -6263,14 +6368,6 @@ select:focus-visible {
    одни и те же элементы переопределены по нескольку раз.
    ========================================================================== */
 
-:root {
-  --primary-ring: rgba(37, 99, 235, 0.22);
-  --rail-accent: #60a5fa;
-  --text-secondary: light-dark(#475569, #d3d6db);
-  --control-height: 30px;
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
 ::selection { background: light-dark(#bfdbfe, rgba(62, 138, 234, 0.16)); color: var(--text-strong); }
 input, textarea { caret-color: var(--primary); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-pill); }
@@ -6321,7 +6418,7 @@ input:focus-visible {
   box-shadow: none;
 }
 .btn-primary:active:not(:disabled) {
-  background: #1e40af;
+  background: var(--primary-hover);
   transform: none;
   box-shadow: none;
 }
@@ -6374,7 +6471,7 @@ input:focus-visible {
 .classic-action-icon-btn.active,
 .classic-tool-item.active {
   background: var(--primary-soft);
-  border-color: light-dark(#93c5fd, rgba(71, 148, 235, 0.38));
+  border-color: var(--primary-line);
   color: var(--primary-hover);
   transform: none;
   box-shadow: none;
@@ -6421,7 +6518,7 @@ input:focus-visible {
    Выбор и присутствие — разные вещи. */
 .rail-tab-btn.active {
   border-left: none;
-  background-color: light-dark(#3b4455, #282828);
+  background-color: var(--frame-2);
   box-shadow: inset 3px 0 0 var(--rail-accent);
 }
 .rail-badge { box-shadow: 0 0 0 2px #2e3642; }
@@ -6726,7 +6823,7 @@ input:focus-visible {
   transform: none;
 }
 .classic-send-btn:hover:not(:disabled) svg { transform: none; }
-.classic-send-btn:active:not(:disabled) { background: #1e40af; transform: none; box-shadow: none; }
+.classic-send-btn:active:not(:disabled) { background: var(--primary-hover); transform: none; box-shadow: none; }
 .classic-send-btn:disabled { background: var(--bg-hover); border-color: var(--bg-hover); }
 .classic-send-btn:disabled svg { stroke: var(--text-dim) !important; }
 
@@ -6764,7 +6861,7 @@ input:focus-visible {
   font-weight: 500;
 }
 .tree-action-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text-strong); }
-.tree-action-btn.active { background: var(--primary-soft); border-color: light-dark(#93c5fd, rgba(71, 148, 235, 0.38)); color: var(--primary-hover); font-weight: 500; }
+.tree-action-btn.active { background: var(--primary-soft); border-color: var(--primary-line); color: var(--primary-hover); font-weight: 500; }
 .tree-online-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--online); }
 /* В узкой колонке третья кнопка уходила за край: название уступает место
    кнопкам, а у кнопок-значков нет лишних полей. */
@@ -6816,7 +6913,7 @@ input:focus-visible {
    там, где кто-то в сети. */
 .tree-count-pill { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; padding: 1px 6px; }
 .tree-count-pill.all-offline { background: transparent; color: var(--text-dim); }
-.tree-count-pill.has-online { background: light-dark(#dcfce7, rgba(62, 234, 121, 0.16)); color: light-dark(#166534, #8ae5ad); }
+.tree-count-pill.has-online { background: var(--success-soft); color: var(--success-text); }
 .cnt-online { font-weight: 600; }
 
 .tree-employee-node { color: var(--text-main); }
@@ -6890,7 +6987,7 @@ input:focus-visible {
 }
 .toast-card.has-target { cursor: pointer; }
 .toast-card:hover { border-color: var(--border-strong); }
-.toast-card.urgent { border-color: light-dark(#fecaca, rgba(235, 71, 71, 0.38)); }
+.toast-card.urgent { border-color: var(--danger-line); }
 
 .toast-avatar {
   width: 32px;
@@ -6900,7 +6997,7 @@ input:focus-visible {
   color: var(--primary-hover);
 }
 .toast-card.urgent .toast-avatar { background: var(--danger-soft); color: var(--danger); }
-.toast-card.announcement .toast-avatar { background: light-dark(#fef3c7, rgba(234, 199, 62, 0.16)); color: light-dark(#b45309, #f4af7b); }
+.toast-card.announcement .toast-avatar { background: var(--warning-soft); color: var(--warning-text); }
 
 .toast-head { margin-bottom: 2px; gap: 8px; }
 .toast-title { font-size: 13px; font-weight: 600; color: var(--text-strong); }
@@ -6912,8 +7009,8 @@ input:focus-visible {
   padding: 1px 6px;
   border-radius: var(--radius-pill);
 }
-.toast-card.urgent .toast-tag { background: var(--danger-soft); color: light-dark(#b91c1c, #ec8383); }
-.toast-card.announcement .toast-tag { background: light-dark(#fef3c7, rgba(234, 199, 62, 0.16)); color: light-dark(#92400e, #f3a97d); }
+.toast-card.urgent .toast-tag { background: var(--danger-soft); color: var(--danger-text); }
+.toast-card.announcement .toast-tag { background: var(--warning-soft); color: var(--warning-text); }
 .toast-text { font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
 
 .toast-close {
@@ -7013,8 +7110,8 @@ input:focus-visible {
 .login-error-box .ui-icon,
 .login-notice-box .ui-icon,
 .login-pending-box .ui-icon { margin-top: 1px; }
-.login-error-box { background: var(--danger-soft); border: 1px solid light-dark(#fecaca, rgba(235, 71, 71, 0.38)); color: light-dark(#b91c1c, #ec8383); }
-.login-notice-box { background: light-dark(#eff6ff, rgba(62, 137, 234, 0.16)); border: 1px solid light-dark(#bfdbfe, rgba(71, 144, 235, 0.38)); color: light-dark(#1e3a8a, #8aa2e5); }
+.login-error-box { background: var(--danger-soft); border: 1px solid var(--danger-line); color: var(--danger-text); }
+.login-notice-box { background: var(--primary-soft); border: 1px solid var(--primary-line); color: var(--accent-text); }
 
 /* Подписи полей были заглавными с разрядкой — и ещё с двоеточием. */
 .form-label {
@@ -7045,7 +7142,7 @@ select.form-input { padding-right: 8px; }
 .form-input:disabled { background: var(--bg-panel); color: var(--text-muted); }
 .login-form .form-group { margin-bottom: 14px; }
 .form-hint { font-size: 12px; margin-top: 5px; color: var(--text-muted); }
-.form-hint.is-warning { color: light-dark(#b45309, #f4af7b); }
+.form-hint.is-warning { color: var(--warning-text); }
 .checkbox-label { font-size: 12.5px; color: var(--text-secondary); }
 .checkbox-label input { accent-color: var(--primary); width: 15px; height: 15px; }
 .login-submit-btn { height: 40px; padding: 0 16px; font-size: 14px; font-weight: 600; border-radius: var(--radius-md); }
@@ -7071,19 +7168,7 @@ select.form-input { padding-right: 8px; }
    светлыми — это отдельный слой поверх рамки.
    ========================================================================== */
 
-:root {
-  --font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
-  --font-display: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
-
-  --frame-0: #0b1017;      /* полоса разделов — самый глубокий слой */
-  --frame-1: #111823;      /* меню, списки, строка состояния */
-  --frame-2: #18212e;      /* наведение */
-  --frame-3: #202b3a;      /* нажатие */
-  --frame-line: rgba(255, 255, 255, 0.07);
-  --frame-line-strong: rgba(255, 255, 255, 0.07);
-  --frame-selected: rgba(76, 141, 255, 0.16);
-  --frame-accent: #4c8dff;  /* фирменный синий, поднятый для тёмного фона */
-}
+/* Значения рамки (--frame-*) и шрифты — в :root в начале файла. */
 
 body { font-feature-settings: 'ss01' 0; -webkit-font-smoothing: antialiased; }
 
@@ -7253,7 +7338,7 @@ body { font-feature-settings: 'ss01' 0; -webkit-font-smoothing: antialiased; }
 }
 
 .sub-panel-dialogs .ui-avatar.channel-avatar { background: var(--frame-2); color: var(--text-secondary); }
-.dialog-list-item.active .ui-avatar.channel-avatar { background: light-dark(rgba(47, 107, 236, 0.165), rgba(76, 141, 255, 0.22)); color: light-dark(#1f4fb8, #cfe0ff); }
+.dialog-list-item.active .ui-avatar.channel-avatar { background: light-dark(rgba(47, 107, 236, 0.165), rgba(76, 141, 255, 0.22)); color: var(--accent-text); }
 
 .dialogs-empty-title,
 .no-conf-title { color: var(--text-strong); font-weight: 600; }
@@ -7269,9 +7354,9 @@ body { font-feature-settings: 'ss01' 0; -webkit-font-smoothing: antialiased; }
 /* Дерево контактов в рамке. */
 .tree-search-wrapper { background: var(--frame-1); }
 .tree-action-btn { background: transparent; border-color: var(--frame-line-strong); }
-.tree-action-btn.active { background: var(--frame-selected); border-color: light-dark(rgba(47, 107, 236, 0.338), rgba(76, 141, 255, 0.45)); color: light-dark(#1f4fb8, #cfe0ff); }
-.tree-meta-online { color: light-dark(#15803d, #4ade80); }
-.tree-count-pill.has-online { background: light-dark(rgba(31, 157, 97, 0.12), rgba(74, 222, 128, 0.12)); color: light-dark(#15803d, #86efac); }
+.tree-action-btn.active { background: var(--frame-selected); border-color: light-dark(rgba(47, 107, 236, 0.338), rgba(76, 141, 255, 0.45)); color: var(--accent-text); }
+.tree-meta-online { color: var(--success-text); }
+.tree-count-pill.has-online { background: light-dark(rgba(31, 157, 97, 0.12), rgba(74, 222, 128, 0.12)); color: var(--success-text); }
 .tree-employee-node.selected { background: var(--frame-selected); color: var(--on-selected); }
 .tree-employee-node.has-unread { background: light-dark(rgba(217, 48, 54, 0.08), rgba(248, 81, 73, 0.1)) !important; }
 .tree-root-row:hover,
@@ -7389,67 +7474,7 @@ body { font-feature-settings: 'ss01' 0; -webkit-font-smoothing: antialiased; }
    полтона темнее, тени мягкие. С 15:00 до 6:00 — вечер: тёмные ступени.
    Тему выбирает lib/theme.mjs и ставит data-theme на <html>; каждое значение
    ниже — light-dark(день, вечер), поэтому переключается один color-scheme. */
-:root { color-scheme: dark; }
-:root[data-theme='light'] { color-scheme: light; }
-
-:root {
-  --bg-main: light-dark(#fbfbfc, #26282c);
-  --bg-sidebar: light-dark(#f1f2f4, #212326);
-  --bg-card: light-dark(#ffffff, #2e3035);
-  --bg-panel: light-dark(#f5f6f8, #2a2c30);
-  --bg-elevated: light-dark(#ffffff, #33363b);
-  --bg-hover: light-dark(rgba(17, 24, 39, 0.045), rgba(255, 255, 255, 0.055));
-  --bg-active: light-dark(rgba(17, 24, 39, 0.075), rgba(255, 255, 255, 0.09));
-  --bg-active-chat: light-dark(rgba(47, 107, 236, 0.1), rgba(88, 140, 255, 0.17));
-  --bg-rail: light-dark(#e9ebee, #1d1e21);
-  --bg-rail-active: light-dark(rgba(17, 24, 39, 0.07), rgba(255, 255, 255, 0.08));
-
-  --border-color: light-dark(rgba(17, 24, 39, 0.09), rgba(255, 255, 255, 0.08));
-  --border-strong: light-dark(rgba(17, 24, 39, 0.16), rgba(255, 255, 255, 0.15));
-  --border-subtle: light-dark(rgba(17, 24, 39, 0.055), rgba(255, 255, 255, 0.05));
-
-  --text-strong: light-dark(#15171a, #f2f3f5);
-  --text-main: light-dark(#2a2d32, #dcdee2);
-  --text-secondary: light-dark(#484d55, #b5b9bf);
-  --text-muted: light-dark(#6a7079, #969ba3);
-  --text-dim: light-dark(#8d939b, #737880);
-
-  --primary: #2f6bec;
-  --primary-hover: light-dark(#2559cf, #4580f2);
-  --primary-pressed: light-dark(#1f4db5, #2a5fd4);
-  --primary-soft: light-dark(rgba(47, 107, 236, 0.1), rgba(88, 140, 255, 0.16));
-  --primary-ring: light-dark(rgba(47, 107, 236, 0.3), rgba(88, 140, 255, 0.42));
-  --accent-text: light-dark(#2156c9, #8fb4ff);
-
-  --danger: light-dark(#d9363b, #e5484d);
-  --danger-text: light-dark(#b4232a, #ff8b8b);
-  --danger-soft: light-dark(rgba(217, 54, 59, 0.08), rgba(229, 72, 77, 0.14));
-  --success: light-dark(#1f9d61, #3fb97a);
-  --success-text: light-dark(#157a4a, #6fd9a2);
-  --success-soft: light-dark(rgba(31, 157, 97, 0.1), rgba(63, 185, 122, 0.14));
-  --warning: light-dark(#c98212, #e5a13a);
-  --warning-text: light-dark(#8f5b00, #f3c26f);
-  --warning-soft: light-dark(rgba(201, 130, 18, 0.1), rgba(229, 161, 58, 0.14));
-
-  --online: light-dark(#2da44e, #3fb950);
-  --away: light-dark(#d4951c, #e5a13a);
-  --dnd: light-dark(#d9363b, #e5484d);
-  --offline: light-dark(#9aa0a8, #7b818a);
-
-  --shadow-sm: 0 1px 2px light-dark(rgba(15, 23, 42, 0.06), rgba(0, 0, 0, 0.3));
-  --shadow-md: 0 8px 24px light-dark(rgba(15, 23, 42, 0.1), rgba(0, 0, 0, 0.34)), 0 0 0 1px light-dark(rgba(15, 23, 42, 0.07), rgba(255, 255, 255, 0.06));
-  --shadow-lg: 0 18px 44px light-dark(rgba(15, 23, 42, 0.14), rgba(0, 0, 0, 0.45)), 0 0 0 1px light-dark(rgba(15, 23, 42, 0.07), rgba(255, 255, 255, 0.07));
-
-  --frame-0: light-dark(#e9ebee, #1d1e21);
-  --frame-1: light-dark(#f1f2f4, #212326);
-  --frame-2: light-dark(rgba(17, 24, 39, 0.055), rgba(255, 255, 255, 0.06));
-  --frame-3: light-dark(rgba(17, 24, 39, 0.09), rgba(255, 255, 255, 0.1));
-  --frame-line: light-dark(rgba(17, 24, 39, 0.08), rgba(255, 255, 255, 0.07));
-  --frame-line-strong: light-dark(rgba(17, 24, 39, 0.15), rgba(255, 255, 255, 0.13));
-  --frame-selected: light-dark(rgba(47, 107, 236, 0.12), rgba(88, 140, 255, 0.17));
-  --frame-accent: light-dark(#2f6bec, #7ea8ff);
-  --on-selected: light-dark(#0f1a33, #ffffff);
-}
+/* Значения обеих смен — в :root в начале файла. */
 
 /* Смена темы в 6:00 и 15:00 — плавная, а не вспышкой (см. applyTheme). */
 ::view-transition-old(root),
@@ -7475,11 +7500,6 @@ html, body, #root, .app-container, .workspace-layout { background: var(--bg-main
   --bg-active-chat: var(--frame-selected);
   --border-color: var(--frame-line);
   --border-strong: var(--frame-line-strong);
-  --text-main: light-dark(#2e3137, #d6d9dd);
-  --text-strong: light-dark(#15171a, #f2f3f5);
-  --text-secondary: light-dark(#4a4f57, #afb3ba);
-  --text-muted: light-dark(#666c75, #90959d);
-  --text-dim: light-dark(#8a9098, #6d727a);
 }
 .vertical-nav-rail { background: var(--frame-0); }
 .native-menu-bar,
@@ -7508,16 +7528,11 @@ html, body, #root, .app-container, .workspace-layout { background: var(--bg-main
 .confirm-dialog,
 .dialog-shell {
   --bg-card: var(--bg-elevated);
-  --bg-panel: light-dark(#f6f7f9, #2e3136);
-  --bg-hover: light-dark(rgba(17, 24, 39, 0.05), rgba(255, 255, 255, 0.06));
-  --bg-active: light-dark(rgba(17, 24, 39, 0.085), rgba(255, 255, 255, 0.1));
-  --border-color: light-dark(rgba(17, 24, 39, 0.09), rgba(255, 255, 255, 0.09));
-  --border-strong: light-dark(rgba(17, 24, 39, 0.16), rgba(255, 255, 255, 0.16));
-  --text-main: light-dark(#2a2d32, #dcdee2);
-  --text-strong: light-dark(#15171a, #f2f3f5);
-  --text-secondary: light-dark(#484d55, #b5b9bf);
-  --text-muted: light-dark(#6a7079, #9a9fa7);
-  --text-dim: light-dark(#8d939b, #757a82);
+  --bg-panel: var(--bg-elevated-panel);
+  --bg-hover: light-dark(rgba(24, 24, 56, 0.05), rgba(255, 255, 255, 0.06));
+  --bg-active: light-dark(rgba(24, 24, 56, 0.085), rgba(255, 255, 255, 0.1));
+  --border-color: light-dark(rgba(24, 24, 56, 0.1), rgba(255, 255, 255, 0.09));
+  --border-strong: light-dark(rgba(24, 24, 56, 0.17), rgba(255, 255, 255, 0.16));
 }
 .menu-dropdown-layer,
 .status-bar-menu,
@@ -7556,7 +7571,7 @@ html, body, #root, .app-container, .workspace-layout { background: var(--bg-main
 .classic-input-container { background: var(--bg-main); border-top-color: var(--border-color); }
 .classic-textarea-row { background: var(--bg-card); border-color: light-dark(rgba(17, 24, 39, 0.08), rgba(255, 255, 255, 0.1)); }
 .classic-textarea-row:hover { border-color: light-dark(rgba(17, 24, 39, 0.144), rgba(255, 255, 255, 0.18)); }
-.classic-textarea-row:focus-within { border-color: light-dark(#2f6bec, #5b8ff5); box-shadow: 0 0 0 3px var(--primary-ring); }
+.classic-textarea-row:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
 .classic-chat-textarea { color: var(--text-strong); }
 .classic-send-btn:disabled { background: light-dark(rgba(17, 24, 39, 0.048), rgba(255, 255, 255, 0.06)); border-color: transparent; }
 
@@ -7594,7 +7609,7 @@ textarea { color-scheme: inherit; }
 .form-input { background: light-dark(rgba(17, 24, 39, 0.032), rgba(255, 255, 255, 0.04)); border-color: light-dark(rgba(17, 24, 39, 0.112), rgba(255, 255, 255, 0.14)); color: var(--text-strong); }
 .form-input:hover:not(:disabled):not(:focus) { border-color: light-dark(rgba(17, 24, 39, 0.16), rgba(255, 255, 255, 0.24)); }
 .form-input:focus,
-.form-input:focus-visible { background: light-dark(rgba(255, 255, 255, 0.84), rgba(0, 0, 0, 0.12)); border-color: light-dark(#2f6bec, #5b8ff5); box-shadow: 0 0 0 3px var(--primary-ring); }
+.form-input:focus-visible { background: light-dark(rgba(255, 255, 255, 0.84), rgba(0, 0, 0, 0.12)); border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
 .form-input:disabled { background: light-dark(rgba(17, 24, 39, 0.016), rgba(255, 255, 255, 0.02)); color: var(--text-dim); }
 .form-label { color: var(--text-secondary); }
 .form-hint.is-warning { color: var(--warning-text); }
@@ -7603,7 +7618,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 
 /* Уведомления о состоянии */
 .login-error-box { background: var(--danger-soft); border-color: light-dark(rgba(217, 48, 54, 0.28), rgba(229, 72, 77, 0.35)); color: var(--danger-text); }
-.login-notice-box { background: var(--primary-soft); border-color: light-dark(rgba(47, 107, 236, 0.262), rgba(88, 140, 255, 0.35)); color: light-dark(#1f4fb8, #c3d6ff); }
+.login-notice-box { background: var(--primary-soft); border-color: light-dark(rgba(47, 107, 236, 0.262), rgba(88, 140, 255, 0.35)); color: var(--accent-text); }
 .login-pending-box { background: var(--success-soft); border-color: light-dark(rgba(31, 157, 97, 0.28), rgba(63, 185, 122, 0.35)); color: var(--success-text); }
 
 /* Счётчики и точки */
@@ -7791,8 +7806,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 }
 .app-dialog {
   --bg-card: var(--bg-elevated);
-  --text-main: light-dark(#2a2d32, #dcdee2);
-  --text-strong: light-dark(#15171a, #f2f3f5);
+  --bg-panel: var(--bg-elevated-panel);
   background: var(--bg-elevated);
   color: var(--text-main);
   border: 1px solid light-dark(rgba(17, 24, 39, 0.072), rgba(255, 255, 255, 0.09));
@@ -7808,12 +7822,6 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
    сразу, наведение подсвечивается без задержки, фокус с клавиатуры виден
    всегда. Всё на токенах — одинаково днём и вечером.
    ========================================================================== */
-
-:root {
-  --press-scale: 0.965;
-  --ease-press: cubic-bezier(0.2, 0, 0, 1);
-  --hit: 32px;
-}
 
 /* Курсор говорит правду: рука — только там, где нажатие что-то сделает. */
 :where(button, [role='button'], [role='switch'], [role='menuitem'], [role='menuitemcheckbox'], [role='tab'], summary, label[for], select) { cursor: pointer; }

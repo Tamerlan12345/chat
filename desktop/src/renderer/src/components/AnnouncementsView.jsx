@@ -174,7 +174,7 @@ export default function AnnouncementsView({
       <div className="announcements-sidebar">
         <div className="announcements-sidebar-header">
           <div className="announcements-sidebar-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#d97706, #f4bc7b)" }} strokeWidth="2" strokeLinecap="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--warning-text)" }} strokeWidth="2" strokeLinecap="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
               <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
             </svg>
@@ -200,7 +200,7 @@ export default function AnnouncementsView({
 
         <div className="announcements-list">
           {announcements.length === 0 ? (
-            <div style={{ padding: '30px 16px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>
+            <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '12px' }}>
               {loading ? 'Загрузка служебных оповещений...' : 'Нет активных оповещений'}
             </div>
           ) : (
@@ -220,7 +220,7 @@ export default function AnnouncementsView({
                         {a.priority === 'urgent' ? 'Срочно' : 'Оповещение'}
                       </span>
                     </span>
-                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
                       {new Date(a.created_at).toLocaleDateString()}
                     </span>
                   </div>
@@ -259,7 +259,7 @@ export default function AnnouncementsView({
                     {selectedAnn.priority === 'urgent' ? 'Срочный приказ' : 'Служебное оповещение'}
                   </span>
                 </span>
-                <span style={{ fontSize: '12px', color: 'light-dark(#64748b, #a9aeb5)' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Опубликовано: {new Date(selectedAnn.created_at).toLocaleString()}
                 </span>
               </div>
@@ -295,7 +295,7 @@ export default function AnnouncementsView({
                     ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="circleCheck" size={16} />Вы подтвердили ознакомление со служебным распоряжением</span>
                     : 'Обязательное подтверждение ознакомления'}
                 </div>
-                <div style={{ fontSize: '12px', color: 'light-dark(#64748b, #a9aeb5)' }}>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   {selectedAnn.is_confirmed === 1
                     ? `Отметка зафиксирована в реестре аудита: ${new Date(selectedAnn.confirmed_at || Date.now()).toLocaleString()}`
                     : 'Нажимая кнопку, вы подтверждаете факт прочтения и принятия условий распоряжения.'}
@@ -317,26 +317,26 @@ export default function AnnouncementsView({
             {/* Audit statistics table (for Administrator only) */}
             {canSeeAudit(selectedAnn) && auditData?.stats && (
               <div style={{
-                backgroundColor: 'light-dark(#f8fafc, #313338)',
-                border: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))',
+                backgroundColor: 'var(--bg-panel)',
+                border: '1px solid var(--border-strong)',
                 borderRadius: '8px',
                 padding: '18px 20px',
                 marginTop: '10px'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                  <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: 'light-dark(#0f172a, #96aad9)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Icon name="chart" size={18} />
                     Реестр ознакомления сотрудников (Контроль исполнения)
                   </h4>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'light-dark(#1d4ed8, #819eee)', background: 'light-dark(#eff6ff, rgba(62, 137, 234, 0.16))', padding: '3px 8px', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-text)', background: 'var(--primary-soft)', padding: '3px 8px', borderRadius: '4px' }}>
                     Подтвердили: {auditData.stats.confirmedCount} из {auditData.stats.total} ({auditData.stats.percentage}%)
                   </div>
                 </div>
 
-                <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid light-dark(#e2e8f0, rgba(121, 148, 185, 0.38))', borderRadius: '6px', background: 'light-dark(#ffffff, #2c2e33)' }}>
+                <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-card)' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                     <thead>
-                      <tr style={{ background: 'light-dark(#f1f5f9, rgba(105, 148, 191, 0.16))', borderBottom: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))', color: 'light-dark(#475569, #d3d6db)', textAlign: 'left' }}>
+                      <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border-strong)', color: 'var(--text-secondary)', textAlign: 'left' }}>
                         <th style={{ padding: '8px 12px' }}>Сотрудник</th>
                         <th style={{ padding: '8px 12px' }}>Подразделение</th>
                         <th style={{ padding: '8px 12px' }}>Статус</th>
@@ -345,17 +345,17 @@ export default function AnnouncementsView({
                     </thead>
                     <tbody>
                       {(Array.isArray(auditData.recipients) ? auditData.recipients : []).map((r) => (
-                        <tr key={r.id} style={{ borderBottom: '1px solid light-dark(#f1f5f9, rgba(112, 153, 194, 0.38))' }}>
-                          <td style={{ padding: '7px 12px', fontWeight: 600, color: 'light-dark(#1e293b, #a0b2cf)' }}>{r.full_name}</td>
-                          <td style={{ padding: '7px 12px', color: 'light-dark(#64748b, #a9aeb5)' }}>{r.department_name || '—'}</td>
+                        <tr key={r.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                          <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--text-main)' }}>{r.full_name}</td>
+                          <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{r.department_name || '—'}</td>
                           <td style={{ padding: '7px 12px' }}>
                             {r.is_confirmed === 1 ? (
-                              <span style={{ color: 'light-dark(#15803d, #84ebab)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="check" size={13} />Ознакомлен</span>
+                              <span style={{ color: 'var(--success-text)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="check" size={13} />Ознакомлен</span>
                             ) : (
-                              <span style={{ color: 'light-dark(#b91c1c, #ec8383)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="clock" size={13} />Не прочитано</span>
+                              <span style={{ color: 'var(--danger-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="clock" size={13} />Не прочитано</span>
                             )}
                           </td>
-                          <td style={{ padding: '7px 12px', color: 'light-dark(#64748b, #a9aeb5)', fontSize: '11px' }}>
+                          <td style={{ padding: '7px 12px', color: 'var(--text-muted)', fontSize: '11px' }}>
                             {r.confirmed_at ? new Date(r.confirmed_at).toLocaleString() : '—'}
                           </td>
                         </tr>

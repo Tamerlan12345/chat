@@ -149,7 +149,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
       <div className="server-connect-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="server-connect-header">
           <h3>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--accent-text)" }} strokeWidth="2" strokeLinecap="round">
               <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
               <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
               <line x1="6" y1="6" x2="6.01" y2="6" />
@@ -189,10 +189,10 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                 onChange={(e) => setProtocol(e.target.value)}
                 style={{
                   padding: '8px',
-                  border: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))',
+                  border: '1px solid var(--border-strong)',
                   borderRadius: '5px',
                   fontSize: '13px',
-                  background: 'light-dark(#f8fafc, #313338)',
+                  background: 'var(--bg-panel)',
                   outline: 'none'
                 }}
               >
@@ -239,7 +239,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                   </>
                 )}
                 {pingState.status === 'error' && (
-                  <span style={{ color: 'light-dark(#b91c1c, #ec8383)' }}>
+                  <span style={{ color: 'var(--danger-text)' }}>
                     Не удалось подключиться: {pingState.error}
                   </span>
                 )}

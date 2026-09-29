@@ -286,10 +286,10 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           color: 'var(--text-muted)'
         }}>
           <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath ?? '—'}</strong></div>
-          <div>Размер: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
+          <div>Размер: <strong style={{ color: 'var(--success-text)' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
           <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
           <div>Режим: <strong style={{ color: '#ffffff' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
-          <div>Целостность: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.integrity ?? '—'}</strong></div>
+          <div>Целостность: <strong style={{ color: 'var(--success-text)' }}>{stats.integrity ?? '—'}</strong></div>
           <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows ?? '—'}</strong></div>
         </div>
       )}
