@@ -59,6 +59,12 @@ function isWithinWindow(createdAt, windowMinutesRaw) {
   return ageMs <= minutes * 60 * 1000;
 }
 
+// Экранирование для LIKE … ESCAPE '\': символы шаблона из строки поиска
+// сотрудника ищутся буквально.
+function escapeLike(text) {
+  return String(text).replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 class MessageService {
   // У канала нет негласного правила «читать может каждый»: участие
   // проверяется явно, и в REST, и в WebSocket.
@@ -500,13 +506,15 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.is_deleted = 0 AND m.text LIKE ? AND (
+        WHERE m.is_deleted = 0 AND m.text LIKE ? ESCAPE '\\' AND (
           (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
           (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
         )
         ORDER BY m.id DESC LIMIT 30
       `)
-      .all(`%${query}%`, me, me, me);
+      // % и _ в строке поиска — буквально, а не шаблон: «100%» ищет «100%», а
+      // строка из сотни «%» не превращается в дорогой перебор (Р4-10).
+      .all(`%${escapeLike(String(query))}%`, me, me, me);
 
     return this.attachSenders(rows);
   }

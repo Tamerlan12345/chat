@@ -85,11 +85,17 @@ const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_tel
 // и на чтении Number('') === 0 означало «без ограничения», то есть пустое
 // значение молча снимало защиту (находка ревью раунда 1).
 const MESSAGE_WINDOW_SETTINGS = new Set(['message_edit_window_minutes', 'message_delete_window_minutes']);
+const RESERVED_SETTING_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 function validateSettingsUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
   const clean = {};
   for (const [key, value] of Object.entries(body)) {
     if (!/^[a-z0-9_]{1,64}$/.test(key)) throw new Error(`Недопустимое имя настройки: ${key}`);
+    // «__proto__», «constructor», «prototype» проходят шаблон выше. Снимок
+    // настроек — обычный объект: такой ключ либо молча терялся (присваивание
+    // строки в __proto__ игнорируется), либо затенял встроенное свойство
+    // (аудит, раунд 4, находка Р4-20).
+    if (RESERVED_SETTING_NAMES.has(key)) throw new Error(`Недопустимое имя настройки: ${key}`);
     if (INTERNAL_SETTING.test(key)) throw new Error(`Настройка ${key} служебная и не меняется вручную`);
     if (BOOLEAN_SETTINGS.has(key)) {
       const normalized = String(value);
@@ -1248,9 +1254,24 @@ router.post('/messages/channels/:targetId', requireAuth, route(async (req, res) 
   }
 }));
 
+// Поиск — полный просмотр таблицы сообщений (LIKE '%…%'), а node:sqlite
+// синхронен: пока идёт запрос, сервер не обслуживает никого. Без предела один
+// сотрудник частыми поисками по длинной строке останавливал сервер для всех
+// (аудит, раунд 4, находка Р4-10). Живой поиск в интерфейсе — единицы
+// запросов в секунду на время набора.
+const SEARCH_LIMIT = { maxAttempts: 30, windowMs: 60000 };
+const SEARCH_MAX_LENGTH = 200;
+
 router.get('/messages/search', requireAuth, route(async (req, res) => {
   const { q } = req.query;
   if (!q) return res.json([]);
+  if (typeof q !== 'string' || q.length > SEARCH_MAX_LENGTH) {
+    return res.status(400).json({ error: `Строка поиска — не длиннее ${SEARCH_MAX_LENGTH} символов` });
+  }
+  if (!checkRateLimit(`search:${req.user.id}`, SEARCH_LIMIT)) {
+    res.set('Retry-After', '60');
+    return res.status(429).json({ error: 'Слишком много поисковых запросов. Повторите через минуту.' });
+  }
   res.json(await MessageService.searchMessages(q, req.user.id));
 }));
 
@@ -1502,6 +1523,56 @@ function requireUploadPermission(req, res, next) {
   next();
 }
 
+// Типы, которые можно отдать вложению как есть: браузер не исполняет их как
+// документ. Сверяется только «тип/подтип» без параметров.
+const SAFE_DOWNLOAD_TYPES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp',
+  'application/pdf', 'text/plain', 'text/csv',
+  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/webm',
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'application/zip', 'application/x-7z-compressed', 'application/vnd.rar', 'application/x-rar-compressed'
+]);
+
+function safeDownloadType(mimeType) {
+  const base = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  if (!SAFE_DOWNLOAD_TYPES.has(base)) return 'application/octet-stream';
+  // Текст — всегда с явной кодировкой, чтобы браузер её не угадывал.
+  return base.startsWith('text/') ? `${base}; charset=utf-8` : base;
+}
+
+// Объём загрузок на сотрудника за час (UPLOAD_MAX_MB_PER_HOUR). Параллельных
+// загрузок и так не больше двух, но без предела по объёму один сотрудник за
+// ночь заполнял бы том сервера — и вместе с ним останавливалась бы база
+// (аудит, раунд 4, находка Р4-11; остаток находки №7 раунда 3).
+const UPLOAD_QUOTA_WINDOW_MS = 60 * 60 * 1000;
+const uploadVolume = new Map(); // userId -> { windowStart, bytes }
+
+function uploadQuotaBytes() {
+  return config.UPLOAD_MAX_MB_PER_HOUR * 1024 * 1024;
+}
+
+function uploadedThisHour(userId, now = Date.now()) {
+  const entry = uploadVolume.get(userId);
+  if (!entry || now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) return 0;
+  return entry.bytes;
+}
+
+function recordUploadVolume(userId, bytes, now = Date.now()) {
+  let entry = uploadVolume.get(userId);
+  if (!entry || now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) {
+    entry = { windowStart: now, bytes: 0 };
+    uploadVolume.set(userId, entry);
+  }
+  entry.bytes += Number(bytes) || 0;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, entry] of uploadVolume) {
+    if (now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) uploadVolume.delete(userId);
+  }
+}, 10 * 60000).unref();
+
 // Заявленный размер запроса известен до приёма тела. Без этой проверки
 // сервер читал 100 МБ и лишь потом отказывал — человек ждал минуты ради
 // «файл слишком большой». Запас в 1 МБ — на служебные части формы.
@@ -1524,6 +1595,16 @@ async function acceptUpload(req, res, next) {
   }
 
   const userId = req.user.id;
+  const quota = uploadQuotaBytes();
+  if (quota > 0) {
+    const pending = Number.isFinite(declared) ? declared : 0;
+    if (uploadedThisHour(userId) + pending > quota + FORM_OVERHEAD_BYTES) {
+      res.set('Retry-After', '600');
+      return res.status(429).json({
+        error: `Предел загрузок — ${config.UPLOAD_MAX_MB_PER_HOUR} МБ в час. Повторите позже или обратитесь к администратору.`
+      });
+    }
+  }
   const running = activeUploads.get(userId) || 0;
   if (running >= MAX_PARALLEL_UPLOADS) {
     return res.status(429).json({ error: 'Дождитесь окончания текущих загрузок' });
@@ -1554,6 +1635,9 @@ async function acceptUpload(req, res, next) {
 router.post('/files/upload', requireAuth, requireUploadPermission, route(acceptUpload), route(async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не прикреплен' });
+    // Засчитывается принятое на диск, даже если фильтр типов потом откажет:
+    // место и время сервер уже потратил.
+    recordUploadVolume(req.user.id, req.file.size);
     res.status(201).json(await FileService.saveUploadedFile({
       uploaderId: req.user.id,
       originalName: Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
@@ -1591,10 +1675,29 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   }
   // Тип файла назвал тот, кто его загрузил. Отданный «inline» HTML или SVG
   // исполнился бы в контексте приложения — поэтому только как вложение.
-  res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+  // Сверх того тип берётся из короткого списка безопасных (картинки без SVG,
+  // PDF, звук, видео, простой текст), всё остальное — octet-stream: вложение,
+  // песочница и nosniff уже не дают исполнить HTML/SVG, но заявленный
+  // отправителем тип вообще не должен доходить до браузера как есть (аудит,
+  // раунд 4, находка Р4-14).
+  res.setHeader('Content-Type', safeDownloadType(file.mime_type));
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-  fs.createReadStream(file.path).pipe(res);
+  res.setHeader('Cache-Control', 'private, no-store');
+  // Ошибка чтения (файл исчез между проверкой и открытием, исчерпаны
+  // дескрипторы) без обработчика — необработанное событие 'error' и падение
+  // процесса целиком, для всех сотрудников сразу.
+  const stream = fs.createReadStream(file.path);
+  stream.on('error', (err) => {
+    console.error('[API] отдача вложения не удалась:', err.message);
+    if (!res.headersSent) {
+      res.removeHeader('Content-Disposition');
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    } else {
+      res.destroy();
+    }
+  });
+  stream.pipe(res);
 });
 
 router.get('/files/recent', requireAuth, route(async (req, res) => {

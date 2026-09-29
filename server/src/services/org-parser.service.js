@@ -21,8 +21,17 @@ class OrgParserService {
    * Parse arbitrary raw text (Paths, Indents, CSV) into normalized structure
    */
   static parseRawText(rawText, formatHint = 'auto') {
-    if (!rawText || !rawText.trim()) {
+    if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
       return { departments: [], employees: [], tree: [], stats: { departmentsCount: 0, employeesCount: 0 } };
+    }
+    // Разбор строки сотрудника (_parseEmployeeString) держится на регулярных
+    // выражениях с ленивыми квантификаторами — их время растёт квадратично с
+    // длиной строки, и одна строка в 256 КБ останавливала сервер на десятки
+    // секунд (аудит, раунд 4, находка Р4-18). Настоящая строка оргструктуры —
+    // имя, логин, адрес, телефон, должность — укладывается в сотни символов.
+    const MAX_LINE = 2000;
+    if (rawText.split(/\r?\n/).some((line) => line.length > MAX_LINE)) {
+      throw new Error(`Строка длиннее ${MAX_LINE} символов — проверьте, что вставлен текст оргструктуры`);
     }
 
     const lines = rawText.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim().length > 0 && !l.trim().startsWith('#'));
