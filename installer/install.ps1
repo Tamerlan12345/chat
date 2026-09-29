@@ -20,8 +20,8 @@
 # OpenMyChat-Enterprise-Setup-<version>.exe (см. docs/автообновление.md).
 #
 # -ServerUrl/-Channel - необязательные параметры этого скрипта: если заданы,
-# он настраивает автообновление машины (client.json в ProgramData) через
-# configure-client.ps1 - но это требует прав администратора, которых у
+# он настраивает машину (политика реестра HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)
+# через configure-client.ps1 - но это требует прав администратора, которых у
 # установки "для себя" может не быть.
 
 param(
@@ -99,9 +99,9 @@ Write-Host "уведомление о новой версии со ссылко�
 Write-Host "автообновления раздайте сотрудникам OpenMyChat-Enterprise-Setup-*.exe" -ForegroundColor Yellow
 Write-Host "(см. docs/автообновление.md)." -ForegroundColor Yellow
 
-# Настройка client.json (адрес сервера/канал обновлений) требует прав
-# администратора, потому что каталог в ProgramData доступен на запись
-# только им - см. configure-client.ps1. Установка "для себя" (эта - без
+# Политика машины (адрес сервера/канал обновлений) пишется в
+# HKLM\SOFTWARE\Policies\OpenMyChat Enterprise - это могут только
+# администраторы, см. configure-client.ps1. Установка "для себя" (эта - без
 # UAC) их может не иметь, поэтому просто печатаем готовую команду для ИТ,
 # а не молча пропускаем настройку.
 $ConfigureScript = Join-Path $ScriptDir 'configure-client.ps1'
@@ -113,28 +113,32 @@ if (($ServerUrl -or $Channel) -and -not (Test-Path -LiteralPath $ConfigureScript
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
                ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-    $configArgs = @()
-    if ($ServerUrl) { $configArgs += @('-ServerUrl', $ServerUrl) }
-    if ($Channel) { $configArgs += @('-Channel', $Channel) }
+    # Хэш-таблица, а не массив: при splatting массива строка '-ServerUrl'
+    # уходит в скрипт позиционным значением, а не именем параметра.
+    $configArgs = @{}
+    if ($ServerUrl) { $configArgs['ServerUrl'] = $ServerUrl }
+    if ($Channel) { $configArgs['Channel'] = $Channel }
 
     if ($isAdmin) {
         Write-Host ""
-        Write-Host "Права администратора есть - настраиваю автообновление (client.json)..." -ForegroundColor Cyan
+        Write-Host "Права администратора есть - записываю политику машины (HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)..." -ForegroundColor Cyan
         try {
+            $global:LASTEXITCODE = 0
             & $ConfigureScript @configArgs
+            if ($LASTEXITCODE) {
+                Write-Host "Настройка политики машины завершилась с кодом $LASTEXITCODE - см. сообщение выше." -ForegroundColor Red
+            }
         } catch {
             # Установка приложения уже прошла успешно - сбой настройки
-            # client.json (например, отказ в диалоге UAC для Root-хранилища
-            # сертификата на другом шаге) не должен превращаться в общий
-            # провал install.ps1.
+            # политики не должен превращаться в общий провал install.ps1.
             Write-Host "Настройка автообновления не удалась: $($_.Exception.Message)" -ForegroundColor Red
         }
     } else {
         $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$ConfigureScript`""
-        foreach ($a in $configArgs) { $cmd += " `"$a`"" }
+        foreach ($name in $configArgs.Keys) { $cmd += " -$name `"$($configArgs[$name])`"" }
         Write-Host ""
-        Write-Host "Прав администратора нет - настройку автообновления (client.json) должен" -ForegroundColor Yellow
-        Write-Host "выполнить ИТ-отдел от имени администратора:" -ForegroundColor Yellow
+        Write-Host "Прав администратора нет - политику машины (HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)" -ForegroundColor Yellow
+        Write-Host "должен записать ИТ-отдел от имени администратора (или групповой политикой):" -ForegroundColor Yellow
         Write-Host "  $cmd" -ForegroundColor Cyan
     }
 }

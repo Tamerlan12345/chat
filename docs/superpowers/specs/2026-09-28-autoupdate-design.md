@@ -11,7 +11,7 @@
 | Факт | Следствие |
 |---|---|
 | Интерфейс (React, `desktop/dist`) раздаётся сервером — окно грузит `SERVER_URL` | Интерфейс обновляется при каждом выкате сервера. Автообновление нужно только для оболочки Electron (exe) |
-| `desktop/src/main/main.js:77` жёстко задаёт `DEFAULT_SERVER_URL`; `server-url.js` в собранной сборке игнорирует переменные окружения (так задумано) | Для сервера в локальной сети нужен админский файл `%ProgramData%\OpenMyChat Enterprise\client.json` |
+| `desktop/src/main/main.js:77` жёстко задаёт `DEFAULT_SERVER_URL`; `server-url.js` в собранной сборке игнорирует переменные окружения (так задумано) | Для сервера в локальной сети нужна политика машины `HKLM\SOFTWARE\Policies\OpenMyChat Enterprise` (пишут только администраторы) |
 | `session.defaultSession.webRequest.onBeforeRequest` режет http/ws в собранной сборке | electron-updater ходит через `session.fromPartition('electron-updater')` — на нём нужен такой же фильтр |
 | NSIS: `oneClick:false, perMachine:false` → показывается страница «для меня / для всех» | Установка «для всех» требует прав администратора при обновлении. Принудительно ставим «для текущего пользователя» |
 | `build/installer.nsh` `customUnInstall` удаляет автозапуск при любом удалении, в том числе на шаге обновления | Обернуть в `${ifNot} ${isUpdated}` |
@@ -45,16 +45,18 @@ desktop main: updater.js (electron-updater NsisUpdater, provider generic, setFee
 
 ## Конфигурация
 
-### Клиентский файл машины — `%ProgramData%\OpenMyChat Enterprise\client.json`
+### Политика машины — `HKLM\SOFTWARE\Policies\OpenMyChat Enterprise`
 
-```json
-{ "serverUrl": "https://chat.centras.local", "updates": { "enabled": true, "channel": "stable" } }
-```
-- `serverUrl`: только https (`isAllowedServerUrl({isPackaged:true})`); неверное значение игнорируется и пишется в лог.
-- `updates.channel`: `stable` | `beta`; неизвестное → `stable`.
-- Приоритет в собранной сборке: ProgramData `client.json` → текущая константа `DEFAULT_SERVER_URL`. Ни переменных окружения, ни пользовательского файла.
-- В разработке (`!isPackaged`) — прежнее поведение с переменными окружения; обновления выключены.
-- `updates.enabled=false` — выключатель обновлений на машине.
+| Значение | Тип | Смысл |
+|---|---|---|
+| `ServerUrl` | `REG_SZ` | Адрес сервера: только https (`isAllowedServerUrl({isPackaged:true})`), без имени и пароля; неверное значение игнорируется и пишется в лог. |
+| `UpdatesEnabled` | `REG_DWORD` | `0` — выключатель обновлений на машине; `1` или нет значения — включены; другое значение или тип — выключены (с записью в лог). |
+| `UpdateChannel` | `REG_SZ` | `stable` или `beta`; неизвестное → `stable`. |
+
+- Читается при старте `reg.exe query` из доверенного корня системы (`\\?\GLOBALROOT\SystemRoot` → `<корень>\System32\reg.exe`, не из PATH и не из переменной `SystemRoot`), один запуск на весь ключ. Значение другого типа не принимается.
+- Приоритет в собранной сборке: политика HKLM → текущая константа `DEFAULT_SERVER_URL`. Ни переменных окружения, ни файлов (ни в профиле, ни в `ProgramData`).
+- Почему не файл `%ProgramData%\OpenMyChat Enterprise\client.json` (так было в первой версии дизайна): в `ProgramData` по умолчанию любой пользователь может создать папку и стать её владельцем (CREATOR OWNER — полный доступ). На машине, где ИТ ещё не запускал настройку, сотрудник клал туда свой `client.json` — и приложение всех остальных пользователей ПК загружало чужой сервер (перехват паролей, API preload, удалённый стол, выключенные обновления). `HKLM\SOFTWARE\Policies` пишут только администраторы, на любой машине без подготовки, а в домене его раскладывает групповая политика (Group Policy Preferences → Registry). Собранная сборка `client.json` не читает вовсе.
+- В разработке (`!isPackaged`) — переменные окружения, затем политика, затем константа; обновления выключены.
 
 ### Состояние на пользователя — `%APPDATA%\OpenMyChat Enterprise\update-state.json`
 `{ "installId": "<uuid v4>", "lastCheckAt": "...", "lastError": "..." }`. installId случайный, нужен только для корзин раздачи и статистики.
@@ -125,7 +127,7 @@ desktop main: updater.js (electron-updater NsisUpdater, provider generic, setFee
 Новые чистые модули (тестируются без Electron, как `autostart.js`):
 
 1. `desktop/src/main/client-config.js`
-   - `readClientConfig({ programData, readFile, isPackaged })` → `{ serverUrl|null, updates:{enabled, channel}, source, problems:[] }`
+   - `readClientConfig({ systemRoot, isPackaged, regQuery })` → `{ serverUrl|null, updates:{enabled, channel}, source: 'hklm-policy'|'default', problems:[] }` — политика машины из реестра (см. «Политика машины»)
    - `resolveEffectiveServerUrl({ config, hardDefault, isPackaged, env })` — оборачивает существующий `resolveServerUrl`.
 2. `desktop/src/main/update-policy.js`
    - `compareVersions(a,b)` — semver с пререлизами (1.10.0 > 1.9.0; 1.2.0-beta.1 < 1.2.0).
@@ -187,7 +189,7 @@ Preload: `getAppInfo`, `getUpdateState`, `checkForUpdates`, `installUpdate`, `op
 
 ## Установщик
 
-- Новый `installer/configure-client.ps1` (+ `installer/настроить-клиент.bat`): требует прав администратора; параметры `-ServerUrl`, `-Channel stable|beta`, `-DisableUpdates`; проверяет https; создаёт `%ProgramData%\OpenMyChat Enterprise` с ACL `icacls "<dir>" /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX"`; пишет `client.json` в UTF-8 без BOM, сохраняя неизвестные ключи.
+- Новый `installer/configure-client.ps1` (+ `installer/настроить-клиент.bat`): требует прав администратора; параметры `-ServerUrl`, `-Channel stable|beta`, `-DisableUpdates` / `-EnableUpdates`; проверяет https и отсутствие имени/пароля в адресе; пишет `ServerUrl` (REG_SZ), `UpdatesEnabled` (REG_DWORD), `UpdateChannel` (REG_SZ) в `HKLM:\SOFTWARE\Policies\OpenMyChat Enterprise`; непереданные параметры не трогает (без `-ServerUrl` прежний адрес остаётся). В домене вместо скрипта — групповая политика (Group Policy Preferences → Registry), см. `docs/автообновление.md`.
 - `installer/install.ps1`: необязательные `-ServerUrl`/`-Channel`; с правами администратора вызывает `configure-client.ps1`, без них печатает, что должен выполнить ИТ; сообщает, что установка «копией» только уведомляет, и рекомендует `OpenMyChat-Enterprise-Setup-*.exe`.
 - `docs/автообновление.md` для администраторов: порядок выпуска, раздача, откат, условия (HTTPS с доверенным TLS-сертификатом, корневой сертификат на клиентах, `client_max_body_size 600m` на прокси для загрузки).
 
@@ -207,7 +209,7 @@ Preload: `getAppInfo`, `getUpdateState`, `checkForUpdates`, `installUpdate`, `op
 | Откат на старую подписанную уязвимую сборку | ProductVersion == версии из yml и > текущей; `allowDowngrade=false` |
 | electron-updater пропускает проверку без publisherName или при сбое PowerShell | Явный `publisherName`; проверка `app-update.yml` при старте; своя проверка, отказывающая при любой ошибке |
 | Обход пути при скачивании или импорте inbox | Регулярка имени + поиск по индексу, без `path.join` с вводом; регулярка имени inbox + `path.dirname(resolved) === INBOX`; тесты с `..`, `%2f`, `%5c`, `\`, NUL, абсолютными путями, длинными именами |
-| Перенаправление клиента на чужой сервер через конфиг | `client.json` только в ProgramData с ACL; в собранной сборке нет ни env, ни пользовательского файла; только https |
+| Перенаправление клиента на чужой сервер через конфиг | Адрес только из `HKLM\SOFTWARE\Policies` (пишут только администраторы), `reg.exe` из доверенного корня системы; в собранной сборке нет ни env, ни файлов (ни в профиле, ни в ProgramData); только https без учётных данных |
 | Шторм скачиваний в сети | Процент раздачи, случайный сдвиг расписания, дифференциальная загрузка (blockmap), предел одновременных скачиваний 503/Retry-After, задержка при ошибках |
 | Принудительный перезапуск во время работы или удалённого стола | Не ставится во время сеанса удалённого стола; обязательное — с отсчётом и одной отсрочкой; по умолчанию — при выходе |
 | Интерфейс (удалённый код) злоупотребляет IPC | Только `mainWindowOnly`; `install` только из `downloaded`; адрес скачивания из состояния main |

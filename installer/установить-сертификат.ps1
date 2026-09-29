@@ -9,7 +9,7 @@
 # «не удалось проверить издателя».
 #
 # Проверить текущее состояние можно так:
-#   Get-AuthenticodeSignature 'OpenMyChat-Enterprise-Setup.exe' | Select Status
+#   Get-AuthenticodeSignature '.\OpenMyChat-Enterprise-Setup-<версия>.exe' | Select Status
 # До установки сертификата Status = UnknownError, после = Valid.
 #
 # Важно: одного «Доверенного издателя» (TrustedPublisher) недостаточно — именно

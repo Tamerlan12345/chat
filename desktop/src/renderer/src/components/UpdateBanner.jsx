@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import Icon from './Icon';
-import { bannerFor, resolveLegacyDownloadUrl } from '../lib/update-status.mjs';
+import {
+  bannerFor,
+  legacyPolicyRequest,
+  legacyUpdateFromPolicy,
+  isLegacyBannerDismissed,
+  rememberLegacyBannerDismissed
+} from '../lib/update-status.mjs';
 
 // Баннер автообновления рядом со стопкой уведомлений (App.jsx). Данные —
 // только из состояния главного процесса (Задача 9, desktop/src/main/updater.js);
@@ -29,10 +35,20 @@ function installRefusalText(reason) {
   return INSTALL_REFUSAL_TEXT[reason] || `Установка не началась — сообщите в ИТ-службу (${reason})`;
 }
 
+// Доступ к window.sessionStorage сам может бросить (политика хранилища).
+function sessionStore() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 export default function UpdateBanner({ serverUrl }) {
   const [legacyShell] = useState(detectLegacyShell);
   const [state, setState] = useState(null);
-  const [legacyUrl, setLegacyUrl] = useState(null);
+  const [legacyUpdate, setLegacyUpdate] = useState(null);
+  const [legacyDismissed, setLegacyDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
 
@@ -51,26 +67,39 @@ export default function UpdateBanner({ serverUrl }) {
 
   // Старая оболочка сама проверять и ставить обновления не умеет — ссылку на
   // установщик берём напрямую из /updates/policy.json, как и главный процесс
-  // (Задача 9) делает это для видов установки notify. setupUrl достраивается
+  // (Задача 9) делает это для видов установки notify. Запрос — от имени
+  // версии 1.0.0: так сервер применяет minVersion и делает обновление
+  // обязательным (и доступным вне процента раздачи). setupUrl достраивается
   // и проверяется resolveLegacyDownloadUrl — сервер отдаёт его относительным,
   // но `new URL(x, base)` не трогает уже абсолютный x, а policy.json не
   // заслуживает доверия настолько, чтобы открывать присланную им ссылку без
-  // проверки происхождения.
+  // проверки происхождения. Нет ссылки — нет и баннера.
   useEffect(() => {
     if (!legacyShell) return undefined;
     let cancelled = false;
-    fetch(`${serverUrl}/updates/policy.json`)
+    const { url, headers } = legacyPolicyRequest(serverUrl);
+    fetch(url, { headers, cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then((policy) => {
-        if (cancelled || !policy?.setupUrl) return;
-        setLegacyUrl(resolveLegacyDownloadUrl(policy.setupUrl, serverUrl));
+        if (cancelled) return;
+        const update = legacyUpdateFromPolicy(policy, serverUrl);
+        setLegacyUpdate(update);
+        setLegacyDismissed(Boolean(update) && isLegacyBannerDismissed(sessionStore(), update.version));
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [legacyShell, serverUrl]);
 
-  const banner = bannerFor(state, { legacyShell });
+  const banner = bannerFor(state, {
+    legacyShell,
+    legacy: legacyUpdate ? { ...legacyUpdate, dismissed: legacyDismissed } : null
+  });
   if (!banner) return null;
+
+  const dismissLegacy = () => {
+    rememberLegacyBannerDismissed(sessionStore(), legacyUpdate?.version);
+    setLegacyDismissed(true);
+  };
 
   const handleAction = async () => {
     if (!banner.action || busy) return;
@@ -91,8 +120,8 @@ export default function UpdateBanner({ serverUrl }) {
       if (!legacyShell && window.electronAPI?.openUpdateDownload) {
         const opened = await window.electronAPI.openUpdateDownload().catch(() => false);
         if (!opened) setNote('Не удалось открыть ссылку на скачивание');
-      } else if (legacyUrl) {
-        window.open(legacyUrl, '_blank', 'noopener');
+      } else if (legacyUpdate?.downloadUrl) {
+        window.open(legacyUpdate.downloadUrl, '_blank', 'noopener');
       } else {
         setNote('Ссылка на скачивание пока недоступна — попробуйте позже');
       }
@@ -106,6 +135,17 @@ export default function UpdateBanner({ serverUrl }) {
       {banner.action && (
         <button type="button" className="update-banner-btn" onClick={handleAction} disabled={busy}>
           {busy ? 'Устанавливаем…' : banner.action.label}
+        </button>
+      )}
+      {banner.dismissible && (
+        <button
+          type="button"
+          className="update-banner-close"
+          onClick={dismissLegacy}
+          aria-label="Скрыть до перезапуска приложения"
+          title="Скрыть до перезапуска приложения"
+        >
+          <Icon name="x" size={14} />
         </button>
       )}
       {note && <span className="update-banner-note">{note}</span>}

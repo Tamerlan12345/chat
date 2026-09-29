@@ -1,37 +1,37 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const path = require('node:path');
+const fs = require('node:fs');
 const {
-  clientConfigPath,
+  POLICY_KEY,
   trustedSystemRoot,
   parseRegValue,
+  parseRegEntry,
   expandSystemPath,
   resolveSystemDirs,
   readClientConfig,
   resolveEffectiveServerUrl
 } = require('../src/main/client-config');
 
-const PROGRAM_DATA = 'C:\\ProgramData';
-const FILE = path.win32.join(PROGRAM_DATA, 'OpenMyChat Enterprise', 'client.json');
+const SYSTEM_ROOT = 'C:\\Windows';
 const HARD_DEFAULT = 'https://chat-production-0456.up.railway.app';
 
-function fileReader(content) {
-  return (file) => {
-    if (file !== FILE) throw Object.assign(new Error(`ENOENT: ${file}`), { code: 'ENOENT' });
-    if (content instanceof Error) throw content;
-    return content;
+// Вывод «reg.exe query <ключ политики>»: строки «    Имя    ТИП    значение».
+function policyOutput(values) {
+  const lines = values.map(([name, type, data]) => `    ${name}    ${type}    ${data}`);
+  return `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\OpenMyChat Enterprise\r\n${lines.join('\r\n')}\r\n\r\n`;
+}
+
+function policyReg(values, calls = []) {
+  return (exe, key, name) => {
+    calls.push({ exe, key, name });
+    return policyOutput(values);
   };
 }
 
-function missing() {
-  throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+// reg.exe на отсутствующий ключ: код выхода 1 и «ОШИБКА: …» в stderr.
+function noPolicyKey() {
+  throw Object.assign(new Error('Command failed: reg.exe query'), { status: 1 });
 }
-
-test('путь к client.json — %ProgramData%\\OpenMyChat Enterprise\\client.json', () => {
-  assert.strictEqual(clientConfigPath(PROGRAM_DATA), FILE);
-  assert.strictEqual(clientConfigPath(''), null);
-  assert.strictEqual(clientConfigPath(undefined), null);
-});
 
 // ── Папки Windows: в собранной сборке — не из окружения ────────────────────
 
@@ -118,113 +118,197 @@ test('на этой машине корень системы определяе�
   assert.deepStrictEqual(dirs.problems, []);
 });
 
-test('файл ProgramData побеждает константу', () => {
+// ── Политика машины: HKLM\SOFTWARE\Policies\OpenMyChat Enterprise ─────────
+
+test('ключ политики — HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise, читается reg.exe из доверенного корня', () => {
+  assert.strictEqual(POLICY_KEY, 'HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise');
+  const calls = [];
   const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('{ "serverUrl": "https://chat.centras.local", "updates": { "enabled": true, "channel": "beta" } }'),
-    isPackaged: true
+    systemRoot: 'D:\\Windows',
+    isPackaged: true,
+    regQuery: policyReg([
+      ['ServerUrl', 'REG_SZ', 'https://chat.centras.local'],
+      ['UpdatesEnabled', 'REG_DWORD', '0x1'],
+      ['UpdateChannel', 'REG_SZ', 'beta']
+    ], calls)
   });
+  assert.deepStrictEqual(calls, [{ exe: 'D:\\Windows\\System32\\reg.exe', key: POLICY_KEY, name: null }]);
   assert.strictEqual(config.serverUrl, 'https://chat.centras.local');
   assert.deepStrictEqual(config.updates, { enabled: true, channel: 'beta' });
-  assert.strictEqual(config.source, 'programdata');
+  assert.strictEqual(config.source, 'hklm-policy');
   assert.deepStrictEqual(config.problems, []);
 
   const effective = resolveEffectiveServerUrl({ config, hardDefault: HARD_DEFAULT, isPackaged: true, env: {} });
-  assert.strictEqual(effective.url, 'https://chat.centras.local');
-  assert.strictEqual(effective.source, 'client.json');
+  assert.deepStrictEqual(effective, { url: 'https://chat.centras.local', source: 'hklm-policy', ignored: null });
 });
 
-test('без файла — константа, обновления включены, канал stable', () => {
-  const config = readClientConfig({ programData: PROGRAM_DATA, readFile: missing, isPackaged: true });
+test('ключа политики нет — константа, обновления включены, канал stable', () => {
+  const config = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: noPolicyKey });
   assert.strictEqual(config.serverUrl, null);
   assert.deepStrictEqual(config.updates, { enabled: true, channel: 'stable' });
-  assert.strictEqual(config.source, 'none');
-  assert.strictEqual(config.problems.length, 1, 'отсутствие файла видно в журнале');
+  assert.strictEqual(config.source, 'default');
+  assert.strictEqual(config.problems.length, 1, 'отсутствие политики видно в журнале');
   const effective = resolveEffectiveServerUrl({ config, hardDefault: HARD_DEFAULT, isPackaged: true, env: {} });
   assert.deepStrictEqual(effective, { url: HARD_DEFAULT, source: 'default', ignored: null });
 });
 
-test('http, адрес с учётными данными и мусор вместо адреса игнорируются', () => {
-  for (const serverUrl of ['http://chat.centras.local', 'https://user:pass@chat.centras.local', 'file:///C:/evil.html', 'chat.centras.local', 42]) {
+test('ключ есть, но пустой — значения по умолчанию, источник — политика', () => {
+  const config = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([]) });
+  assert.strictEqual(config.serverUrl, null);
+  assert.deepStrictEqual(config.updates, { enabled: true, channel: 'stable' });
+  assert.strictEqual(config.source, 'hklm-policy');
+  assert.deepStrictEqual(config.problems, []);
+});
+
+test('reg.exe не запустился или завис — политика не читается, константа', () => {
+  for (const err of [
+    Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }),
+    Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' })
+  ]) {
+    const config = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: () => { throw err; } });
+    assert.strictEqual(config.serverUrl, null, err.code);
+    assert.strictEqual(config.source, 'default', err.code);
+    assert.deepStrictEqual(config.updates, { enabled: true, channel: 'stable' });
+    assert.strictEqual(config.problems.length, 1, err.code);
+  }
+});
+
+test('корень системы не определён — reg.exe не запускается', () => {
+  for (const systemRoot of [undefined, '', 'Q:', '\\\\evil\\share\\Windows', 'C:\\x\\..\\Windows']) {
+    let called = false;
+    const config = readClientConfig({ systemRoot, isPackaged: true, regQuery: () => { called = true; return ''; } });
+    assert.strictEqual(called, false, String(systemRoot));
+    assert.strictEqual(config.source, 'default');
+    assert.strictEqual(config.serverUrl, null);
+    assert.strictEqual(config.problems.length, 1);
+  }
+});
+
+test('ServerUrl: http, учётные данные в адресе и мусор отклоняются', () => {
+  for (const url of ['http://chat.centras.local', 'https://user:pass@chat.centras.local', 'https://user@chat.centras.local', 'file:///C:/evil.html', 'chat.centras.local', '']) {
     const config = readClientConfig({
-      programData: PROGRAM_DATA,
-      readFile: fileReader(JSON.stringify({ serverUrl })),
-      isPackaged: true
+      systemRoot: SYSTEM_ROOT,
+      isPackaged: true,
+      regQuery: policyReg([['ServerUrl', 'REG_SZ', url]])
     });
-    assert.strictEqual(config.serverUrl, null, String(serverUrl));
-    assert.strictEqual(config.problems.length, 1, String(serverUrl));
+    assert.strictEqual(config.serverUrl, null, url);
+    assert.strictEqual(config.problems.length, 1, url);
+    assert.ok(!config.problems[0].includes('pass'), 'адрес с паролем не пишется в журнал');
     assert.strictEqual(resolveEffectiveServerUrl({ config, hardDefault: HARD_DEFAULT, isPackaged: true, env: {} }).url, HARD_DEFAULT);
   }
 });
 
-test('испорченный JSON игнорируется целиком', () => {
-  for (const text of ['{oops', '', 'null', '[1,2]', '"https://chat.centras.local"']) {
-    const config = readClientConfig({ programData: PROGRAM_DATA, readFile: fileReader(text), isPackaged: true });
-    assert.strictEqual(config.serverUrl, null, JSON.stringify(text));
-    assert.deepStrictEqual(config.updates, { enabled: true, channel: 'stable' });
-    assert.strictEqual(config.source, 'none');
-    assert.ok(config.problems.length >= 1, JSON.stringify(text));
-  }
+test('значения неожиданного типа не принимаются', () => {
+  const expand = readClientConfig({
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['ServerUrl', 'REG_EXPAND_SZ', 'https://%COMPUTERNAME%.centras.local']])
+  });
+  assert.strictEqual(expand.serverUrl, null, 'REG_EXPAND_SZ для адреса не раскрывается и не принимается');
+  assert.strictEqual(expand.problems.length, 1);
+
+  const multi = readClientConfig({
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['ServerUrl', 'REG_MULTI_SZ', 'https://chat.centras.local\\0https://evil.example']])
+  });
+  assert.strictEqual(multi.serverUrl, null);
+  assert.strictEqual(multi.problems.length, 1);
+
+  // Выключатель с неверным типом («1» строкой) — как опечатка: обновления
+  // выключены, и это видно в журнале.
+  const enabledAsText = readClientConfig({
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['UpdatesEnabled', 'REG_SZ', '1']])
+  });
+  assert.strictEqual(enabledAsText.updates.enabled, false);
+  assert.strictEqual(enabledAsText.problems.length, 1);
+
+  const channelAsNumber = readClientConfig({
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['UpdateChannel', 'REG_DWORD', '0x1']])
+  });
+  assert.strictEqual(channelAsNumber.updates.channel, 'stable');
+  assert.strictEqual(channelAsNumber.problems.length, 1);
 });
 
-test('BOM в начале файла не мешает', () => {
+test('UpdatesEnabled=0 выключает обновления на машине, 1 — включает', () => {
+  const off = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([['UpdatesEnabled', 'REG_DWORD', '0x0']]) });
+  assert.deepStrictEqual(off.updates, { enabled: false, channel: 'stable' });
+  assert.strictEqual(off.source, 'hklm-policy');
+  assert.deepStrictEqual(off.problems, []);
+
+  const on = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([['UpdatesEnabled', 'REG_DWORD', '0x1']]) });
+  assert.strictEqual(on.updates.enabled, true);
+  assert.deepStrictEqual(on.problems, []);
+
+  const odd = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([['UpdatesEnabled', 'REG_DWORD', '0x2']]) });
+  assert.strictEqual(odd.updates.enabled, false, 'непонятное значение выключателя — выключено');
+  assert.strictEqual(odd.problems.length, 1);
+});
+
+test('UpdateChannel: неизвестный канал → stable', () => {
+  for (const channel of ['nightly', 'BETA', '', 'stable beta']) {
+    const config = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([['UpdateChannel', 'REG_SZ', channel]]) });
+    assert.strictEqual(config.updates.channel, 'stable', channel);
+    assert.strictEqual(config.problems.length, 1, channel);
+  }
+  const stable = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: policyReg([['UpdateChannel', 'REG_SZ', 'stable']]) });
+  assert.deepStrictEqual(stable.problems, []);
+});
+
+test('имена значений сравниваются без учёта регистра, как в реестре', () => {
   const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('\uFEFF{ "serverUrl": "https://chat.centras.local" }'),
-    isPackaged: true
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['serverurl', 'REG_SZ', 'https://chat.centras.local'], ['UPDATECHANNEL', 'REG_SZ', 'beta']])
   });
   assert.strictEqual(config.serverUrl, 'https://chat.centras.local');
-  assert.deepStrictEqual(config.problems, []);
+  assert.strictEqual(config.updates.channel, 'beta');
 });
 
-test('ошибка чтения (нет доступа) — файл игнорируется с записью', () => {
-  const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader(Object.assign(new Error('EACCES'), { code: 'EACCES' })),
-    isPackaged: true
-  });
-  assert.strictEqual(config.serverUrl, null);
-  assert.strictEqual(config.problems.length, 1);
-});
-
-test('updates.enabled=false выключает обновления на машине', () => {
-  const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('{ "updates": { "enabled": false } }'),
-    isPackaged: true
-  });
-  assert.strictEqual(config.updates.enabled, false);
-  assert.strictEqual(config.updates.channel, 'stable');
-  assert.strictEqual(config.source, 'programdata');
-});
-
-test('странное значение выключателя — обновления выключены (и это видно)', () => {
-  const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('{ "updates": { "enabled": "false" } }'),
-    isPackaged: true
-  });
-  assert.strictEqual(config.updates.enabled, false);
-  assert.strictEqual(config.problems.length, 1);
-});
-
-test('неизвестный канал → stable', () => {
-  for (const channel of ['nightly', 'BETA', '', 5, null]) {
-    const config = readClientConfig({
-      programData: PROGRAM_DATA,
-      readFile: fileReader(JSON.stringify({ updates: { channel } })),
-      isPackaged: true
-    });
-    assert.strictEqual(config.updates.channel, 'stable', String(channel));
-    assert.strictEqual(config.problems.length, 1, String(channel));
+test('собранная сборка не читает client.json из ProgramData вовсе', () => {
+  // Раньше адрес сервера брался из %ProgramData%\OpenMyChat Enterprise\client.json.
+  // Папку в ProgramData по умолчанию может создать любой пользователь — и
+  // увести на свой сервер всех, кто работает на этом ПК.
+  const touched = [];
+  const readFile = (file) => {
+    touched.push(`readFile:${file}`);
+    return '{ "serverUrl": "https://evil.example" }';
+  };
+  const spied = ['readFileSync', 'existsSync', 'statSync', 'openSync', 'accessSync'];
+  const originals = {};
+  for (const name of spied) {
+    originals[name] = fs[name];
+    fs[name] = (...args) => {
+      if (/client\.json/i.test(String(args[0]))) touched.push(`${name}:${args[0]}`);
+      return originals[name].apply(fs, args);
+    };
   }
+  let config;
+  try {
+    config = readClientConfig({
+      systemRoot: SYSTEM_ROOT,
+      programData: 'C:\\ProgramData',
+      readFile,
+      isPackaged: true,
+      regQuery: noPolicyKey
+    });
+  } finally {
+    for (const name of spied) fs[name] = originals[name];
+  }
+  assert.deepStrictEqual(touched, []);
+  assert.strictEqual(config.serverUrl, null);
+  assert.strictEqual(resolveEffectiveServerUrl({ config, hardDefault: HARD_DEFAULT, isPackaged: true, env: {} }).url, HARD_DEFAULT);
 });
 
 test('в разработке обновления выключены, переменные окружения работают', () => {
   const config = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('{ "serverUrl": "https://chat.centras.local", "updates": { "enabled": true } }'),
-    isPackaged: false
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: false,
+    regQuery: policyReg([['ServerUrl', 'REG_SZ', 'https://chat.centras.local'], ['UpdatesEnabled', 'REG_DWORD', '0x1']])
   });
   assert.strictEqual(config.updates.enabled, false);
 
@@ -239,10 +323,10 @@ test('в разработке обновления выключены, пере�
 
   const noEnv = resolveEffectiveServerUrl({ config, hardDefault: HARD_DEFAULT, isPackaged: false, env: {} });
   assert.strictEqual(noEnv.url, 'https://chat.centras.local');
-  assert.strictEqual(noEnv.source, 'client.json');
+  assert.strictEqual(noEnv.source, 'hklm-policy');
 
   const badEnv = resolveEffectiveServerUrl({
-    config: readClientConfig({ programData: PROGRAM_DATA, readFile: missing, isPackaged: false }),
+    config: readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: false, regQuery: noPolicyKey }),
     hardDefault: HARD_DEFAULT,
     isPackaged: false,
     env: { MYCHAT_SERVER_URL: 'http://10.0.0.5:2004' }
@@ -253,12 +337,28 @@ test('в разработке обновления выключены, пере�
 
 test('собранная сборка переменные окружения игнорирует', () => {
   const env = { VITE_DEV_SERVER_URL: 'https://evil.com', MYCHAT_SERVER_URL: 'https://evil.com' };
-  const withFile = readClientConfig({
-    programData: PROGRAM_DATA,
-    readFile: fileReader('{ "serverUrl": "https://chat.centras.local" }'),
-    isPackaged: true
+  const withPolicy = readClientConfig({
+    systemRoot: SYSTEM_ROOT,
+    isPackaged: true,
+    regQuery: policyReg([['ServerUrl', 'REG_SZ', 'https://chat.centras.local']])
   });
-  assert.strictEqual(resolveEffectiveServerUrl({ config: withFile, hardDefault: HARD_DEFAULT, isPackaged: true, env }).url, 'https://chat.centras.local');
-  const without = readClientConfig({ programData: PROGRAM_DATA, readFile: missing, isPackaged: true });
+  assert.strictEqual(resolveEffectiveServerUrl({ config: withPolicy, hardDefault: HARD_DEFAULT, isPackaged: true, env }).url, 'https://chat.centras.local');
+  const without = readClientConfig({ systemRoot: SYSTEM_ROOT, isPackaged: true, regQuery: noPolicyKey });
   assert.strictEqual(resolveEffectiveServerUrl({ config: without, hardDefault: HARD_DEFAULT, isPackaged: true, env }).url, HARD_DEFAULT);
+});
+
+test('разбор строк reg.exe с типом значения', () => {
+  const out = policyOutput([['ServerUrl', 'REG_SZ', 'https://a.b'], ['Empty', 'REG_SZ', ''], ['UpdatesEnabled', 'REG_DWORD', '0x0']]);
+  assert.deepStrictEqual(parseRegEntry(out, 'serverurl'), { type: 'REG_SZ', data: 'https://a.b' });
+  assert.deepStrictEqual(parseRegEntry(out, 'Empty'), { type: 'REG_SZ', data: '' });
+  assert.deepStrictEqual(parseRegEntry(out, 'UpdatesEnabled'), { type: 'REG_DWORD', data: '0x0' });
+  assert.strictEqual(parseRegEntry(out, 'Missing'), null);
+  assert.strictEqual(parseRegValue(out, 'UpdatesEnabled'), null, 'parseRegValue — только строковые типы');
+  assert.strictEqual(parseRegValue(out, 'ServerUrl'), 'https://a.b');
+});
+
+test('на этой машине политика читается настоящим reg.exe без сбоев', { skip: process.platform !== 'win32' }, () => {
+  const config = readClientConfig({ systemRoot: trustedSystemRoot(), isPackaged: true });
+  assert.ok(['hklm-policy', 'default'].includes(config.source), config.source);
+  if (config.source === 'default') assert.strictEqual(config.problems.length, 1, config.problems.join('; '));
 });

@@ -78,20 +78,18 @@ log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 // просмотра брали его из разных переменных и могли смотреть на разные серверы.
 // От него же отсчитывается, какой странице доверять (см. security.js).
 // В рабочей сборке переменные окружения не читаются, а http не принимается
-// вовсе (см. server-url.js). Сервер в локальной сети задаёт ИТ файлом
-// %ProgramData%\OpenMyChat Enterprise\client.json (см. client-config.js);
-// без него — константа ниже.
+// вовсе (см. server-url.js). Сервер в локальной сети задаёт ИТ политикой
+// реестра HKLM\SOFTWARE\Policies\OpenMyChat Enterprise (см. client-config.js);
+// без неё — константа ниже. Файл client.json в ProgramData не читается:
+// папку там может создать любой пользователь ПК.
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
 // ProgramData и корень Windows в собранной сборке — из ядра и HKLM, а не из
 // переменных окружения, которые сотрудник задаёт себе сам (см. client-config.js).
 const SYSTEM_DIRS = resolveSystemDirs({ isPackaged: app.isPackaged, env: process.env });
 for (const problem of SYSTEM_DIRS.problems) log(`system dirs: ${problem}`);
-const clientConfig = readClientConfig({
-  programData: SYSTEM_DIRS.programData,
-  readFile: (file) => fs.readFileSync(file, 'utf8'),
-  isPackaged: app.isPackaged
-});
-for (const problem of clientConfig.problems) log(`client.json: ${problem}`);
+// Политика читается reg.exe из того же доверенного корня системы.
+const clientConfig = readClientConfig({ systemRoot: SYSTEM_DIRS.systemRoot, isPackaged: app.isPackaged });
+for (const problem of clientConfig.problems) log(`machine policy: ${problem}`);
 const serverChoice = resolveEffectiveServerUrl({
   config: clientConfig,
   hardDefault: DEFAULT_SERVER_URL,
@@ -168,7 +166,7 @@ async function askUser(options, { signal, bringToFront = false } = {}) {
 function readRdPolicyHere() {
   return readRdPolicy({
     env: process.env,
-    // Та же доверенная ProgramData, что и для client.json: подменой переменной
+    // Доверенная ProgramData (из HKLM, а не из окружения): подменой переменной
     // запрет удалённого доступа от ИТ снимался бы.
     paths: policyPaths({ programData: SYSTEM_DIRS.programData, userData: app.getPath('userData') }),
     readFile: (file) => fs.readFileSync(file, 'utf8')
@@ -439,6 +437,9 @@ function createMainWindow() {
 
   const win = mainWindow;
   hardenWebContents(win.webContents);
+  // Масштаб Ctrl +/−/0 — в preload.js, после страницы: здесь, в
+  // before-input-event, он отнимал бы эти сочетания у просмотра удалённого
+  // стола.
 
   // Electron refuses navigator.mediaDevices.getDisplayMedia() unless the main
   // process answers the request itself — without this the screen-sharing side
