@@ -187,6 +187,34 @@ test('офис за одним NAT: 40 одновременных верных �
   assert.ok(results.every((r) => r.status === 200), 'все 40 верных входов в итоге успешны');
 });
 
+// Повтор только на 503 (как настоящий клиент): 429 — окончательный. Так тест
+// ловит именно регрессию (429-локаут офиса), а не маскирует её повтором.
+async function loginRetry503Only(username, password, ip, rounds = 15) {
+  for (let i = 0; i < rounds; i++) {
+    const res = await api('POST', '/api/auth/login', { ip, body: { username, password } });
+    if (res.status !== 503) return res;
+    await new Promise((r) => setTimeout(r, Math.min(3, Number(res.headers.get('retry-after')) || 1) * 250));
+  }
+  return { status: 0 };
+}
+
+test('офис за NAT: опечатки в последние минуты + пачка верных входов НЕ дают 429-локаут (третий раунд, п.1, воспроизведение d3)', { timeout: 90000 }, async () => {
+  const ip = '198.51.100.98';
+  const users = [];
+  for (let i = 0; i < 41; i++) users.push(await makeUser());
+  // Офис уже знаком: один успешный вход.
+  assert.strictEqual((await loginRetry503Only(users[40].username, users[40].password, ip)).status, 200);
+  // 12 опечаток (разные сотрудники, ниже блокировки пары адрес+логин).
+  for (let i = 0; i < 12; i++) {
+    await api('POST', '/api/auth/login', { ip, body: { username: users[i].username, password: 'опечатка' } });
+  }
+  // 40 одновременных ВЕРНЫХ входов, повтор только на 503. Ни одного 429.
+  const results = await Promise.all(users.slice(0, 40).map((u) => loginRetry503Only(u.username, u.password, ip)));
+  const got429 = results.filter((r) => r.status === 429).length;
+  assert.strictEqual(got429, 0, `не должно быть 429-локаута (получено ${got429})`);
+  assert.ok(results.every((r) => r.status === 200), 'все 40 верных входов прошли');
+});
+
 test('поток неверных паролей с адреса упирается в предел неудач и отвечает 503 сверх параллельного предела, но не считает их неудачами', async () => {
   const ip = '198.51.100.31';
   const results = await Promise.all(
@@ -286,26 +314,63 @@ test('распределённый подбор одной учётной зап
   LoginThrottle.resetThrottle();
 });
 
+test('пульсирующий подбор (всплеск-тишина-всплеск) НЕ обходит предел: ≤ ~750/сутки (третий раунд, п.2, воспроизведение j2)', () => {
+  const config = require('../src/config');
+  const bound = config.LOGIN_ACCOUNT_SOFT_LIMIT + config.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR * 24;
+  const quietMs = config.LOGIN_LOCKOUT_MINUTES * 60000;
+  const run = (N) => {
+    LoginThrottle.resetThrottle();
+    let now = 1e12;
+    const end = now + 86400e3;
+    let guesses = 0;
+    let ipIdx = 0;
+    while (now < end) {
+      // Всплеск: бьём, пока подряд не откажут 3N раз.
+      let refusedInRow = 0;
+      while (refusedInRow < 3 * N && now < end) {
+        const ip = 'ip' + (ipIdx++ % N);
+        const a = LoginThrottle.admit('victim', { ipKey: ip, now });
+        if (!a.ok) { refusedInRow += 1; now += 50; continue; }
+        refusedInRow = 0;
+        LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
+        now += 301;
+        guesses += 1;
+      }
+      now += quietMs; // тишина — окно неудач обнуляется, но ведро НЕ пополняется рывком
+    }
+    return guesses;
+  };
+  for (const N of [3, 10, 100]) {
+    const g = run(N);
+    assert.ok(g <= bound + 60, `пульс N=${N}: ${g} догадок/сутки должно быть в пределах ~${bound}`);
+  }
+  LoginThrottle.resetThrottle();
+});
+
 test('login-throttle: успех/нейтраль/BUSY возвращают токен ведра, тратит только неудача (I-A)', () => {
   LoginThrottle.resetThrottle();
   const name = 'refund.acct';
   let now = 7_000_000;
-  // Включаем защиту.
-  for (let i = 0; i < 8; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.1.0.${i}`, now });
+  // Ведро консультируется всегда для незнакомых. Много нейтральных исходов
+  // (например, BUSY) не вычерпывают его: токен берётся и тут же возвращается.
+  for (let i = 0; i < 200; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `10.2.0.${i % 7}`, now });
+    now += 1;
+    assert.strictEqual(a.ok, true, `нейтральная попытка ${i} должна допускаться`);
+    LoginThrottle.settle(a.ticket, 'neutral', { now });
+  }
+  // Тратит только подтверждённая неудача: cap = softLimit неудач исчерпывают ведро.
+  const soft = require('../src/config').LOGIN_ACCOUNT_SOFT_LIMIT;
+  for (let i = 0; i < soft; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `10.4.0.${i}`, now });
+    now += 1;
     if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
-    now += 1;
   }
-  // Нейтральный исход (например, BUSY) — токен возвращается: множество таких
-  // попыток не исчерпывают ведро.
-  for (let i = 0; i < 100; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.2.0.${i}`, now });
-    now += 1;
-    if (a.ok) LoginThrottle.settle(a.ticket, 'neutral', { now });
-  }
-  // Ведро не исчерпано: свежий незнакомый источник всё ещё допускается.
-  const after = LoginThrottle.admit(name, { ipKey: '10.9.9.9', now });
-  assert.strictEqual(after.ok, true, 'нейтральные исходы не вычерпали ведро');
+  const drained = LoginThrottle.admit(name, { ipKey: '10.9.9.9', now });
+  assert.strictEqual(drained.ok, false, 'после softLimit неудач ведро исчерпано');
+  assert.strictEqual(drained.reason, 'account');
+  // Знакомый источник при этом не затронут.
+  assert.strictEqual(LoginThrottle.admit(name, { ipKey: '10.9.9.9', trusted: true, now }).ok, true);
   LoginThrottle.resetThrottle();
 });
 
@@ -327,28 +392,23 @@ test('login-throttle: сброс состояния учётной записи 
   LoginThrottle.resetThrottle();
 });
 
-test('login-throttle (детерминированно): после включения задержки повтор с того же источника ждёт, знакомый — нет', () => {
+test('login-throttle (детерминированно): повтор одного источника упирается в персональную задержку; знакомый — никогда', () => {
   LoginThrottle.resetThrottle();
-  const soft = require('../src/config').LOGIN_ACCOUNT_SOFT_LIMIT;
   const name = 'unit.victim';
   let now = 5_000_000;
-  // Доводим учётную запись до задержки неудачами с разных адресов.
-  for (let i = 0; i < soft + 2; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.0.0.${i}`, now });
-    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
-    now += 1;
+  // Повторные неудачи с ОДНОГО адреса: сперва проходят (пока в ведре есть
+  // токены), затем этот источник упирается в персональную задержку или в
+  // исчерпанное ведро — в любом случае получает отказ с retryAfterMs.
+  let refused = null;
+  for (let i = 0; i < 12 && !refused; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: '10.0.0.7', now });
+    if (a.ok) { LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 }); now += 400; }
+    else refused = a;
   }
-  // Тот же источник: первый заход прошёл (окно зарезервировано), немедленный
-  // повтор — задержан.
-  const first = LoginThrottle.admit(name, { ipKey: '10.0.0.250', now });
-  assert.strictEqual(first.ok, true, 'первый заход нового источника проходит');
-  LoginThrottle.settle(first.ticket, 'failure', { now });
-  const repeat = LoginThrottle.admit(name, { ipKey: '10.0.0.250', now: now + 1 });
-  assert.strictEqual(repeat.ok, false, 'немедленный повтор с того же источника задержан');
-  assert.ok(repeat.retryAfterMs > 0);
-  // Знакомый источник не задерживается никогда.
-  const trusted = LoginThrottle.admit(name, { ipKey: '10.0.0.250', trusted: true, now: now + 1 });
-  assert.strictEqual(trusted.ok, true, 'знакомый источник проходит даже при включённой задержке');
+  assert.ok(refused, 'повторяющийся источник в итоге получает отказ');
+  assert.ok(refused.retryAfterMs > 0, 'с указанием, когда повторить');
+  // Знакомый источник не задерживается никогда, что бы ни творилось.
+  assert.strictEqual(LoginThrottle.admit(name, { ipKey: '10.0.0.7', trusted: true, now }).ok, true);
   LoginThrottle.resetThrottle();
 });
 

@@ -327,6 +327,24 @@ test('знакомые адреса: создаёт только allowCreate, п
   assert.strictEqual(TrustedSources.isFamiliarToAnyoneSync('203.0.113.150'), true);
 });
 
+test('после перезапуска адрес офиса знаком ещё до входа: индекс наполняется из last_login_ip (третий раунд, п.3)', async () => {
+  const TrustedSources = require('../src/services/trusted-sources.service');
+  const { rateLimitIpKey } = require('../src/services/ip-access.service');
+  const uid = people.w4_alice.id;
+  const officeIp = '198.51.100.240';
+  // Сотрудник недавно входил по паролю с этого адреса (last_login_ip пишется
+  // только после проверенного входа).
+  await identity.run('UPDATE users SET last_login_ip = $1, last_login_at = $2 WHERE id = $3',
+    [officeIp, new Date().toISOString(), uid]);
+  // Перезапуск: память сброшена, индекс ещё не наполнен.
+  TrustedSources._reset();
+  assert.strictEqual(TrustedSources.isFamiliarToAnyoneSync(rateLimitIpKey(officeIp)), false, 'до наполнения — неизвестен');
+  // Наполнение при старте (bootstrap вызывает primeReverseIndex).
+  await TrustedSources.primeReverseIndex();
+  assert.strictEqual(TrustedSources.isFamiliarToAnyoneSync(rateLimitIpKey(officeIp)), true,
+    'адрес офиса знаком ещё до первого входа после перезапуска');
+});
+
 test('знакомые адреса: суточный предел на число новых адресов у одного сотрудника (I-2)', async () => {
   const TrustedSources = require('../src/services/trusted-sources.service');
   TrustedSources._reset();
