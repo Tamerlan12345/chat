@@ -28,7 +28,11 @@ function userDataPath(appDataDir) {
   return path.join(appDataDir, LEGACY_USER_DATA_DIR);
 }
 
+// Явный ключ Chromium --user-data-dir (запуск с отдельным профилем для
+// диагностики или второй копии) важнее закрепления: его не перебиваем.
+// → путь, который закреплён, или null, если оставлен заданный ключом.
 function pinUserData(app) {
+  if (app.commandLine?.hasSwitch?.('user-data-dir')) return null;
   const dir = userDataPath(app.getPath('appData'));
   app.setPath('userData', dir);
   return dir;

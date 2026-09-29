@@ -77,6 +77,18 @@ test('переименование: профиль закреплён за %APPD
   assert.strictEqual(pinUserData(app), path.join(appData, 'mychat-desktop'));
   assert.deepStrictEqual(calls, [['getPath', 'appData'], ['setPath', 'userData', path.join(appData, 'mychat-desktop')]]);
 
+  // Явный --user-data-dir (отдельный профиль для диагностики) не перебивается.
+  const switched = [];
+  const withSwitch = {
+    commandLine: { hasSwitch: (name) => name === 'user-data-dir' },
+    getPath: (name) => { switched.push(['getPath', name]); return appData; },
+    setPath: (name, value) => switched.push(['setPath', name, value])
+  };
+  assert.strictEqual(pinUserData(withSwitch), null);
+  assert.deepStrictEqual(switched, [], 'ни чтения, ни закрепления');
+  const withOtherSwitch = { ...withSwitch, commandLine: { hasSwitch: () => false } };
+  assert.strictEqual(pinUserData(withOtherSwitch), path.join(appData, 'mychat-desktop'));
+
   const main = fs.readFileSync(path.join(DESKTOP_DIR, 'src', 'main', 'main.js'), 'utf8');
   const pinAt = main.indexOf('pinUserData(app);');
   assert.ok(pinAt > 0, 'main.js закрепляет профиль');
@@ -90,12 +102,27 @@ test('переименование: профиль закреплён за %APPD
   assert.match(main, /statePath: path\.join\(userDataPath\(app\.getPath\('appData'\)\), 'update-state\.json'\)/, 'update-state.json — в той же папке профиля');
 });
 
-test('переименование: установка через NSIS узнаётся и по новому, и по прежнему деинсталлятору', () => {
+test('переименование: установка через NSIS узнаётся и по новому, и (страховка) по прежнему деинсталлятору', () => {
   const { UNINSTALLER_NAME, UNINSTALLER_NAMES } = require('../src/main/update-policy');
   assert.strictEqual(UNINSTALLER_NAME, `Uninstall ${pkg.build.productName}.exe`);
   assert.deepStrictEqual([...UNINSTALLER_NAMES], ['Uninstall CentyChat.exe', 'Uninstall OpenMyChat Enterprise.exe']);
+  // Прежний деинсталлятор при обновлении на деле не остаётся (деинсталлятор
+  // 1.0.0 уносит всё содержимое папки в $PLUGINSDIR, иначе установка
+  // прерывается) — удаление одного файла с этим именем лишь страховка.
   const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
-  assert.match(nsh, /!macro customInstall\b[^]*Delete "\$INSTDIR\\Uninstall OpenMyChat Enterprise\.exe"[^]*!macroend/, 'оставшийся прежний деинсталлятор убирается');
+  assert.match(nsh, /!define \/ifndef CENTY_LEGACY_UNINSTALLER "Uninstall OpenMyChat Enterprise\.exe"/);
+  assert.match(nsh, /!macro customInstall\b[^]*Delete "\$INSTDIR\\\$\{CENTY_LEGACY_UNINSTALLER\}"[^]*!macroend/);
+});
+
+test('переименование: установка «копией» 1.0.0 убирается установщиком, папка — без захода в точки соединения', () => {
+  // Поведение проверяет installer-nsh.test.js настоящим makensis; здесь —
+  // то, что должно остаться в тексте, даже если makensis на машине нет.
+  const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
+  assert.match(nsh, /!define \/ifndef CENTY_LEGACY_COPY_DIR "\$LOCALAPPDATA\\Programs\\OpenMyChat Enterprise"/, 'только папка, куда её ставил install.ps1 1.0.0');
+  assert.match(nsh, /!macro customInit\b[^]*INSTALL_REGISTRY_KEY[^]*CENTY_COPY_ARP_KEY[^]*!macroend/, 'копия ищется, только если нет установки через Setup.exe');
+  assert.match(nsh, /rmdir \/s \/q "%CENTY_LEGACY_DIR%"/);
+  assert.ok(!/^\s*RMDir \/r/m.test(nsh), 'RMDir /r проходит по точкам соединения');
+  assert.match(nsh, /WriteRegStr HKCU "\$\{CENTY_RUN_KEY\}" "\$\{CENTY_AUMID\}" '"\$appExe" --autostart'/);
 });
 
 test('переименование: политика машины — HKLM\\SOFTWARE\\Policies\\CentyChat', () => {

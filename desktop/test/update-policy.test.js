@@ -85,7 +85,8 @@ test('detectInstallKind: разработка, portable, Program Files, уста
 
 test('detectInstallKind: установка 1.0.0, обновлённая до CentyChat, — по-прежнему NSIS', () => {
   // Прежняя папка установки сохраняется (обычная установка кладёт CentyChat в
-  // её подпапку), а рядом с exe может остаться деинсталлятор со старым именем.
+  // её подпапку). Деинсталлятор со старым именем рядом с exe на деле не
+  // остаётся, но если окажется — это всё равно установка через NSIS.
   const legacyDir = 'C:\\Users\\u\\AppData\\Local\\Programs\\OpenMyChat Enterprise\\';
   assert.deepStrictEqual([...UNINSTALLER_NAMES], [UNINSTALLER_NAME, 'Uninstall OpenMyChat Enterprise.exe']);
   assert.strictEqual(kindOf({ execPath: legacyDir + 'CentyChat.exe', files: [legacyDir + 'Uninstall CentyChat.exe'] }), 'nsis');

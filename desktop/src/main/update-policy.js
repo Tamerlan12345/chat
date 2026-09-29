@@ -11,10 +11,11 @@ const ERROR_CODE = /^[a-z0-9-]{1,32}$/;
 
 // Имя деинсталлятора, который NSIS (electron-builder) кладёт рядом с exe:
 // «Uninstall ${productName}.exe». До переименования в CentyChat продукт
-// назывался «OpenMyChat Enterprise», и прежнее имя тоже признаётся установкой
-// через NSIS: установка, обновлённая поверх 1.0.0, может хранить старый
-// деинсталлятор рядом с exe, если его не удалось убрать (см.
-// build/installer.nsh, customInstall).
+// назывался «OpenMyChat Enterprise». Прежнее имя тоже признаётся установкой
+// через NSIS — это страховка, а не ожидаемый случай: при обновлении
+// деинсталлятор 1.0.0 уносит из папки всё, включая себя, либо установка
+// прерывается целиком (см. build/installer.nsh, customInstall). Если же
+// такой файл всё-таки окажется рядом с exe, это заведомо папка NSIS.
 const UNINSTALLER_NAME = 'Uninstall CentyChat.exe';
 const LEGACY_UNINSTALLER_NAME = 'Uninstall OpenMyChat Enterprise.exe';
 const UNINSTALLER_NAMES = Object.freeze([UNINSTALLER_NAME, LEGACY_UNINSTALLER_NAME]);
