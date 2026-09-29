@@ -44,7 +44,7 @@ async function readJson(res) {
 function describeFailure(res, data, fallback) {
   if (data && typeof data.error === 'string' && data.error) return data.error;
   if (res.status === 403) return 'Доступ с этого адреса запрещён — обратитесь к администратору';
-  if (res.status === 404) return 'По этому адресу сервер MyChat не отвечает';
+  if (res.status === 404) return 'По этому адресу сервер CentyChat не отвечает';
   if (res.status === 429) return 'Слишком много попыток — повторите через минуту';
   if (res.status >= 500) return 'Сервер временно недоступен — повторите через минуту';
   return fallback;
@@ -277,7 +277,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
             </svg>
           </div>
           <h2 className="login-title">
-            {serverInfo?.company_name || 'OpenMyChat'}
+            {serverInfo?.company_name || 'CentyChat'}
           </h2>
           <p className="login-subtitle">
             Корпоративный мессенджер для сотрудников
@@ -411,7 +411,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
               className="btn btn-primary btn-block login-submit-btn"
               disabled={loading || checkingServer}
             >
-              {loading ? 'Вход в систему...' : 'Войти в MyChat'}
+              {loading ? 'Входим…' : 'Войти'}
             </button>
           </form>
         ) : (
@@ -529,7 +529,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         )}
 
         <div className="login-footer-text">
-          MyChat Client Enterprise • Автономная защищенная сеть
+          CentyChat · работает только внутри сети компании
         </div>
       </div>
     </div>

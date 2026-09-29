@@ -148,7 +148,7 @@ input, textarea, button, select {
   color: #ffffff;
 }
 
-/* Desktop Menu Bar (MyChat  Вид  Инструменты  Плагины  Справка) */
+/* Desktop Menu Bar (CentyChat  Вид  Инструменты  Плагины  Справка) */
 .desktop-menu-bar {
   display: flex;
   align-items: center;
@@ -1854,7 +1854,7 @@ input, textarea, button, select {
 
 
 /* ==========================================================================
-   MYCHAT CLIENT 2025.3.1 AUTHENTIC SCREENSHOT STYLES
+   CLASSIC CLIENT LAYOUT STYLES
    ========================================================================== */
 .workspace-layout {
   display: flex;
@@ -4506,7 +4506,7 @@ input, textarea, button, select {
 }
 
 /* ==========================================================================
-   9. MYCHAT SERVER CONTROL PANEL (https://nsoft-s.com/mcserverhelp/controlpanel.html)
+   9. SERVER CONTROL PANEL
    ========================================================================== */
 .admin-console-dialog {
   width: 95vw;
@@ -6248,7 +6248,7 @@ select:focus-visible {
 
 /* ==========================================================================
    ДОВОДКА ОСНОВНОГО ИНТЕРФЕЙСА
-   Раскладка MyChat остаётся прежней: тёмная полоса слева, список, переписка,
+   Раскладка приложения остаётся прежней: тёмная полоса слева, список, переписка,
    строка состояния. Меняется то, из-за чего интерфейс выглядел собранным из
    разных наборов:
    — глянцевые кнопки с градиентом, внутренним бликом и «прыжком» при
@@ -6490,7 +6490,7 @@ input:focus-visible {
 .conference-items-list .dialog-list-item.active { background-color: var(--bg-active-chat); }
 .dialogs-scrollable-list .dialog-list-item.active .dialog-peer-name { color: var(--text-strong); font-weight: 600; }
 
-/* Черта присутствия у левого края — узнаваемая деталь MyChat; остаётся, но
+/* Черта присутствия у левого края — узнаваемая деталь CentyChat; остаётся, но
    без серой полосы у всех, кто не в сети: так она сообщает только «в сети». */
 .dialog-list-item.online-bar::before { background-color: var(--online); width: 3px; }
 .dialog-list-item.offline-bar::before { background-color: transparent; }

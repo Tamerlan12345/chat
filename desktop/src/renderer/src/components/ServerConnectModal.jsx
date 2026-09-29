@@ -155,7 +155,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
               <line x1="6" y1="6" x2="6.01" y2="6" />
               <line x1="6" y1="18" x2="6.01" y2="18" />
             </svg>
-            Подключение к серверу MyChat
+            Подключение к серверу CentyChat
           </h3>
           <button className="server-connect-close-btn" onClick={onClose} title="Закрыть" aria-label="Закрыть"><Icon name="x" size={16} /></button>
         </div>
@@ -235,7 +235,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
                 {pingState.status === 'testing' && 'Отправка эхо-запроса TCP/HTTP на порт сервера...'}
                 {pingState.status === 'success' && (
                   <>
-                    Сервер доступен! {pingState.info?.server_name || 'MyChat Server'} — {pingState.info?.company_name || 'АО СК Сентрас'}
+                    Сервер доступен! {pingState.info?.server_name || 'CentyChat Server'} — {pingState.info?.company_name || 'АО СК Сентрас'}
                   </>
                 )}
                 {pingState.status === 'error' && (

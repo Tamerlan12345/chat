@@ -838,8 +838,8 @@ export default function App() {
       try { wsRef.current.close(); } catch {}
     }
     addToast({
-      title: 'Сетевой сервер MyChat',
-      body: `Адрес изменен на: ${newUrl}. Выполняется подключение...`,
+      title: 'Адрес сервера изменён',
+      body: `Новый адрес: ${newUrl}. Подключаемся…`,
       type: 'chat'
     });
   };
@@ -885,9 +885,9 @@ export default function App() {
       const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошёл' : currentUser.status === 'dnd' ? 'Не беспокоить' : 'Не в сети';
       const extText = currentUser.extension ? ` (в.н.${currentUser.extension})` : '';
       const name = currentUser.full_name || currentUser.username;
-      document.title = `MyChat Client 2025.3.1 — ${name}${extText} [${company}] (${statusText})`;
+      document.title = `CentyChat — ${name}${extText} [${company}] (${statusText})`;
     } else {
-      document.title = `MyChat Client 2025.3.1 — [${company}]`;
+      document.title = `CentyChat — [${company}]`;
     }
   }, [currentUser, serverInfo]);
 
@@ -2080,7 +2080,7 @@ export default function App() {
     return (
       <div className="login-container">
         <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
-          <p>Подключение к MyChat...</p>
+          <p>Подключение к CentyChat…</p>
         </div>
       </div>
     );

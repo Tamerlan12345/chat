@@ -10,7 +10,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
             <Icon name="message" size={24} />
             <div>
               <div style={{ fontWeight: 700, fontSize: '16px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
-                OpenMyChat Enterprise Client
+                CentyChat
               </div>
               <div style={{ fontSize: '11px', color: 'light-dark(#64748b, #a9aeb5)' }}>
                 {serverInfo?.company_name || 'Корпоративная сеть'} • Версия 2026.3.1 (LTS)

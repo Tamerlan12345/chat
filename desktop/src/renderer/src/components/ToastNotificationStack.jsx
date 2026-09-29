@@ -132,8 +132,8 @@ function ToastItem({ toast, onDismiss, onAction }) {
       <div className="toast-body">
         <div className="toast-head">
           <span className="toast-title">{toast.title || 'Новое уведомление'}</span>
-          {/* Метка нужна только там, где она что-то сообщает: «MyChat» на
-              каждом сообщении внутри MyChat — шум. */}
+          {/* Метка нужна только там, где она что-то сообщает: «CentyChat» на
+              каждом сообщении внутри CentyChat — шум. */}
           {(isUrgent || isAnnouncement) && (
             <span className="toast-tag">{isUrgent ? 'Срочно' : 'Оповещение'}</span>
           )}

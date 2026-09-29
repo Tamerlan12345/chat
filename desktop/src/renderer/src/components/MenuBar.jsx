@@ -47,13 +47,13 @@ export default function MenuBar({
 
   return (
     <div className="native-menu-bar" ref={menuBarRef}>
-      {/* 1. MyChat Menu */}
+      {/* 1. Меню приложения */}
       <div className="menu-item-wrapper">
         <button
           className={`menu-top-btn ${openMenu === 'mychat' ? 'active' : ''}`}
           onClick={() => toggleMenu('mychat')}
         >
-          MyChat
+          CentyChat
         </button>
         {openMenu === 'mychat' && (
           <div className="menu-dropdown-layer">
@@ -204,7 +204,7 @@ export default function MenuBar({
                   }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#1d4ed8, #819eee)" }} strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                  <span>Консоль управления сервером MyChat</span>
+                  <span>Консоль управления сервером</span>
                 </div>
                 {isSuperAdmin && (
                   <div
@@ -322,7 +322,7 @@ export default function MenuBar({
               }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              <span>Что нового в MyChat Enterprise?</span>
+              <span>Что нового в CentyChat?</span>
             </div>
             <div
               className="menu-drop-item"

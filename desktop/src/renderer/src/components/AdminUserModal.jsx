@@ -64,7 +64,7 @@ export default function AdminUserModal({
   const superAdmin = isSuperAdmin(currentUser);
   const scopedAdmin = !superAdmin && isScopedAdmin(currentUser);
 
-  // Official MyChat Control Panel Sections
+  // Разделы консоли управления сервером
   const [activeTab, setActiveTab] = useState(superAdmin ? 'server' : 'users');
   // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
 
@@ -174,7 +174,7 @@ export default function AdminUserModal({
   // Tab 7: Server Settings
   const [sysSettings, setSysSettings] = useState({
     company_name: 'АО "Страховая компания "Сентрас Иншуранс"',
-    server_name: 'OpenMyChat Enterprise Server',
+    server_name: 'CentyChat Server',
     allow_registration: 'false',
     max_upload_size_mb: '100',
     idle_timeout_seconds: '300',
@@ -1088,7 +1088,7 @@ export default function AdminUserModal({
         showToast(await readError(res, 'Параметры сервера не сохранены'), 'error');
         return;
       }
-      showToast('Параметры сервера MyChat успешно сохранены');
+      showToast('Параметры сервера сохранены');
       loadServerOverview();
     } catch (err) {
       showToast('Нет связи с сервером: ' + err.message, 'error');
@@ -1143,7 +1143,7 @@ export default function AdminUserModal({
         <div className="admin-console-header">
           <div className="admin-console-title">
             <Icon name="shield" size={18} />
-            <span>Консоль управления MyChat Server 2025.3.1</span>
+            <span>Консоль управления CentyChat</span>
             <span style={{ fontSize: '11px', background: '#2563eb', padding: '2px 8px', borderRadius: '10px' }}>
               АО СК "Сентрас Иншуранс"
             </span>
@@ -1166,7 +1166,7 @@ export default function AdminUserModal({
                   className={`admin-nav-item ${activeTab === 'server' ? 'active' : ''}`}
                   onClick={() => setActiveTab('server')}
                 >
-                  <Icon name="monitor" size={16} /> <span>MyChat Server</span>
+                  <Icon name="monitor" size={16} /> <span>Сервер CentyChat</span>
                 </button>
               )}
 
@@ -1281,11 +1281,11 @@ export default function AdminUserModal({
             )}
 
 
-            {/* TAB 1: MYCHAT SERVER (info.html) */}
+            {/* Раздел 1: сервер */}
             {activeTab === 'server' && (
               <div className="admin-tab-pane">
                 <h3 style={{ marginBottom: '14px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
-                  Общая информация о сервере MyChat (info.html)
+                  Общая информация о сервере
                 </h3>
 
                 <div className="admin-server-cards-grid">
@@ -2479,7 +2479,7 @@ export default function AdminUserModal({
 
                 {toolSubTab === 'ports' && (
                   <div>
-                    <h4 style={{ marginBottom: '8px' }}>Диагностика сетевых портов MyChat Server</h4>
+                    <h4 style={{ marginBottom: '8px' }}>Диагностика сетевых портов сервера</h4>
                     <p style={{ fontSize: '12px', color: 'light-dark(#64748b, #a9aeb5)', marginBottom: '14px' }}>
                       Проверка готовности сокетов к подключению клиентов LAN/WAN.
                     </p>
@@ -2644,7 +2644,7 @@ export default function AdminUserModal({
             {activeTab === 'settings' && (
               <div className="admin-tab-pane">
                 <h3 style={{ marginBottom: '14px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
-                  Общие настройки MyChat Server (settings.html)
+                  Общие настройки сервера
                 </h3>
 
                 <form onSubmit={handleSaveSettings} style={{ maxWidth: '600px' }}>
@@ -2868,14 +2868,14 @@ export default function AdminUserModal({
             {activeTab === 'licenses' && (
               <div className="admin-tab-pane">
                 <h3 style={{ marginBottom: '14px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
-                  Лицензии MyChat Server (licenses.html)
+                  Лицензии сервера
                 </h3>
 
                 <div style={{ background: 'light-dark(#f8fafc, #313338)', border: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))', borderRadius: '8px', padding: '20px', maxWidth: '640px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                     <span style={{ display: 'inline-flex', color: 'light-dark(#2563eb, #7ca1f3)' }}><Icon name="building" size={32} /></span>
                     <div>
-                      <h4 style={{ margin: 0, color: 'light-dark(#0f172a, #96aad9)' }}>{licenseData?.product_name || 'MyChat Server Enterprise'}</h4>
+                      <h4 style={{ margin: 0, color: 'light-dark(#0f172a, #96aad9)' }}>{licenseData?.product_name || 'CentyChat Server'}</h4>
                       <span style={{ fontSize: '12px', color: 'light-dark(#16a34a, #81eea9)', fontWeight: 600 }}>● Лицензия активна</span>
                     </div>
                   </div>

@@ -71,7 +71,7 @@ export default function GreetingView({
         <div className="greeting-links-section">
           <div className="greeting-link-row">
             <button className="greeting-text-link" onClick={onOpenWhatIsNew}>
-              Что нового в MyChat?
+              Что нового в CentyChat?
             </button>
           </div>
 
