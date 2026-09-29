@@ -159,55 +159,145 @@ test('текст индикатора: имя очищено и ограниче
   assert.ok(s.operatorName.length <= 80);
 });
 
-// ── Масштаб Ctrl +/−/0 (финальное ревью, п.5) ──────────────────────────────
+// ── Масштаб Ctrl +/−/0 (финальное ревью, п.5 и повторное ревью) ────────────
 // Меню приложения в собранной сборке убрано (через него открывались
-// DevTools), а вместе с ним пропали и сочетания масштаба — для тех, кому
-// мелко, это потеря. Масштаб возвращён обработчиком клавиш главного окна;
-// DevTools по-прежнему не открываются.
+// DevTools), а вместе с ним пропали и сочетания масштаба. Масштаб возвращён
+// в preload: слушатель keydown на window срабатывает ПОСЛЕ страницы и
+// пропускает событие, если страница его уже обработала (defaultPrevented).
+// Так просмотр удалённого стола, который сам передаёт Ctrl+−/+/0 на
+// удалённый компьютер, их не теряет. Первая версия перехватывала клавиши в
+// главном процессе (before-input-event) — до страницы.
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { zoomCommandForInput, nextZoomLevel, ZOOM_MIN_LEVEL, ZOOM_MAX_LEVEL } = require('../src/main/zoom-keys');
+const vm = require('node:vm');
+const Module = require('node:module');
 
-const keyDown = (key, code, mods = {}) => ({ type: 'keyDown', key, code, control: true, shift: false, alt: false, meta: false, ...mods });
+const PRELOAD = path.join(__dirname, '..', 'src', 'preload', 'preload.js');
+const preloadText = fs.readFileSync(PRELOAD, 'utf8');
+
+// Чистые функции масштаба — блок между метками в preload.js. Песочница
+// preload не даёт подключать локальные файлы, поэтому источник один — сам
+// preload, а тест берёт этот блок из него.
+function loadZoomHelpers() {
+  const begin = preloadText.indexOf('// zoom-keys:begin');
+  const end = preloadText.indexOf('// zoom-keys:end');
+  assert.ok(begin > 0 && end > begin, 'в preload.js есть блок // zoom-keys:begin … // zoom-keys:end');
+  const block = preloadText.slice(begin, end);
+  return vm.runInNewContext(`${block}\n({ zoomCommandForKeyEvent, nextZoomLevel, ZOOM_MIN_LEVEL, ZOOM_MAX_LEVEL });`);
+}
+
+const zoom = loadZoomHelpers();
+const keyEvent = (key, code, mods = {}) => ({ type: 'keydown', key, code, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, defaultPrevented: false, ...mods });
 
 test('Ctrl+= / Ctrl+Plus / Ctrl+NumpadAdd — крупнее, Ctrl+- — мельче, Ctrl+0 — сброс', () => {
-  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal')), 'in');
-  assert.strictEqual(zoomCommandForInput(keyDown('+', 'Equal', { shift: true })), 'in');
-  assert.strictEqual(zoomCommandForInput(keyDown('+', 'NumpadAdd')), 'in');
-  assert.strictEqual(zoomCommandForInput(keyDown('+', 'BracketRight')), 'in', 'клавиша «+» в других раскладках');
-  assert.strictEqual(zoomCommandForInput(keyDown('-', 'Minus')), 'out');
-  assert.strictEqual(zoomCommandForInput(keyDown('-', 'NumpadSubtract')), 'out');
-  assert.strictEqual(zoomCommandForInput(keyDown('0', 'Digit0')), 'reset');
-  assert.strictEqual(zoomCommandForInput(keyDown('0', 'Numpad0')), 'reset');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('=', 'Equal')), 'in');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('+', 'Equal', { shiftKey: true })), 'in');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('+', 'NumpadAdd')), 'in');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('+', 'BracketRight')), 'in', 'клавиша «+» в других раскладках');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('-', 'Minus')), 'out');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('-', 'NumpadSubtract')), 'out');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('0', 'Digit0')), 'reset');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('0', 'Numpad0')), 'reset');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('=', 'Equal', { ctrlKey: false, metaKey: true })), 'in');
 });
 
 test('прочие сочетания масштабом не считаются — DevTools, копирование, AltGr, отпускание', () => {
-  assert.strictEqual(zoomCommandForInput(keyDown('F12', 'F12', { control: false })), null);
-  assert.strictEqual(zoomCommandForInput(keyDown('I', 'KeyI', { shift: true })), null);
-  assert.strictEqual(zoomCommandForInput(keyDown('Insert', 'Numpad0')), null, 'Ctrl+Insert на цифровом блоке без NumLock — копирование');
-  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal', { alt: true })), null, 'AltGr = Ctrl+Alt');
-  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal', { control: false })), null);
-  assert.strictEqual(zoomCommandForInput({ ...keyDown('=', 'Equal'), type: 'keyUp' }), null);
-  assert.strictEqual(zoomCommandForInput(keyDown('r', 'KeyR')), null);
-  assert.strictEqual(zoomCommandForInput(null), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('F12', 'F12', { ctrlKey: false })), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('I', 'KeyI', { shiftKey: true })), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('Insert', 'Numpad0')), null, 'Ctrl+Insert на цифровом блоке без NumLock — копирование');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('=', 'Equal', { altKey: true })), null, 'AltGr = Ctrl+Alt');
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('=', 'Equal', { ctrlKey: false })), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent({ ...keyEvent('=', 'Equal'), type: 'keyup' }), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(keyEvent('r', 'KeyR')), null);
+  assert.strictEqual(zoom.zoomCommandForKeyEvent(null), null);
 });
 
 test('шаг масштаба 0.5 и пределы', () => {
-  assert.strictEqual(nextZoomLevel(0, 'in'), 0.5);
-  assert.strictEqual(nextZoomLevel(0, 'out'), -0.5);
-  assert.strictEqual(nextZoomLevel(2.5, 'reset'), 0);
-  assert.strictEqual(nextZoomLevel(ZOOM_MAX_LEVEL, 'in'), ZOOM_MAX_LEVEL);
-  assert.strictEqual(nextZoomLevel(ZOOM_MIN_LEVEL, 'out'), ZOOM_MIN_LEVEL);
-  assert.strictEqual(nextZoomLevel(Number.NaN, 'in'), 0.5);
+  assert.strictEqual(zoom.nextZoomLevel(0, 'in'), 0.5);
+  assert.strictEqual(zoom.nextZoomLevel(0, 'out'), -0.5);
+  assert.strictEqual(zoom.nextZoomLevel(2.5, 'reset'), 0);
+  assert.strictEqual(zoom.nextZoomLevel(zoom.ZOOM_MAX_LEVEL, 'in'), zoom.ZOOM_MAX_LEVEL);
+  assert.strictEqual(zoom.nextZoomLevel(zoom.ZOOM_MIN_LEVEL, 'out'), zoom.ZOOM_MIN_LEVEL);
+  assert.strictEqual(zoom.nextZoomLevel(Number.NaN, 'in'), 0.5);
 });
 
-test('main.js: масштаб — на главном окне, меню и DevTools по-прежнему закрыты', () => {
+// preload.js загружается как в песочнице: 'electron' подменён, window —
+// заглушка, которая запоминает слушателей.
+function loadPreload() {
+  const listeners = [];
+  const zoomCalls = [];
+  let level = 0;
+  const fakeElectron = {
+    contextBridge: { exposeInMainWorld() {} },
+    ipcRenderer: { on() {}, removeListener() {}, invoke() {}, send() {} },
+    webFrame: {
+      getZoomLevel: () => level,
+      setZoomLevel: (value) => { zoomCalls.push(value); level = value; }
+    }
+  };
+  const originalLoad = Module._load;
+  const hadWindow = Object.prototype.hasOwnProperty.call(global, 'window');
+  const previousWindow = global.window;
+  Module._load = function load(request, ...rest) {
+    if (request === 'electron') return fakeElectron;
+    return originalLoad.call(this, request, ...rest);
+  };
+  global.window = { addEventListener: (type, fn, options) => listeners.push({ type, fn, options }) };
+  try {
+    delete require.cache[PRELOAD];
+    require(PRELOAD);
+  } finally {
+    Module._load = originalLoad;
+    if (hadWindow) global.window = previousWindow;
+    else delete global.window;
+    delete require.cache[PRELOAD];
+  }
+  const keydown = listeners.filter((l) => l.type === 'keydown');
+  const dispatch = (event) => {
+    let prevented = event.defaultPrevented;
+    const e = { ...event, get defaultPrevented() { return prevented; }, preventDefault() { prevented = true; } };
+    for (const l of keydown) l.fn(e);
+    return prevented;
+  };
+  return { keydown, dispatch, zoomCalls, setLevel: (v) => { level = v; } };
+}
+
+test('preload: Ctrl+=/−/0 меняют масштаб окна, если страница клавишу не обработала', () => {
+  const p = loadPreload();
+  assert.strictEqual(p.keydown.length, 1, 'один слушатель keydown на window');
+  assert.notStrictEqual(p.keydown[0].options && p.keydown[0].options.capture, true, 'слушатель — на всплытии, после страницы');
+  assert.strictEqual(p.dispatch(keyEvent('=', 'Equal')), true, 'обработанное сочетание гасится');
+  assert.strictEqual(p.dispatch(keyEvent('-', 'Minus')), true);
+  assert.strictEqual(p.dispatch(keyEvent('+', 'NumpadAdd')), true);
+  assert.deepStrictEqual(p.zoomCalls, [0.5, 0, 0.5]);
+  p.setLevel(3);
+  p.dispatch(keyEvent('0', 'Digit0'));
+  assert.deepStrictEqual(p.zoomCalls, [0.5, 0, 0.5, 0]);
+  assert.strictEqual(p.dispatch(keyEvent('c', 'KeyC')), false, 'прочие сочетания не трогаются');
+  assert.strictEqual(p.zoomCalls.length, 4);
+});
+
+test('preload: если страница уже обработала клавишу (просмотр удалённого стола), масштаб не меняется', () => {
+  const p = loadPreload();
+  for (const e of [keyEvent('=', 'Equal'), keyEvent('-', 'Minus'), keyEvent('0', 'Digit0'), keyEvent('+', 'NumpadAdd')]) {
+    p.dispatch({ ...e, defaultPrevented: true });
+  }
+  assert.deepStrictEqual(p.zoomCalls, [], 'Ctrl+−/+/0 уходят на удалённый компьютер, а не масштабируют окно');
+});
+
+test('main.js не перехватывает клавиши масштаба до страницы; DevTools по-прежнему закрыты', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
-  const create = main.slice(main.indexOf('function createMainWindow'), main.indexOf('function createMainWindow') + 6000);
-  assert.match(create, /win\.webContents\.on\('before-input-event'[\s\S]{0,400}zoomCommandForInput\(input\)/, 'обработчик масштаба на главном окне');
-  assert.match(create, /setZoomLevel\(nextZoomLevel\(/);
+  assert.ok(!/zoomCommand|setZoomLevel|zoom-keys/.test(main), 'в главном процессе масштаб не обрабатывается');
+  const inputHandlers = main.split("on('before-input-event'").slice(1).map((s) => s.slice(0, 600));
+  assert.strictEqual(inputHandlers.length, 1, 'один before-input-event — гашение DevTools');
+  assert.match(inputHandlers[0], /isF12 \|\| isCtrlShiftI\) event\.preventDefault\(\)/, 'F12 и Ctrl+Shift+I по-прежнему гасятся');
+  assert.ok(!/Equal|Minus|Digit0|NumpadAdd/.test(inputHandlers[0]));
   assert.match(main, /if \(app\.isPackaged\) Menu\.setApplicationMenu\(null\);/, 'меню в собранной сборке не возвращается');
-  assert.match(main, /isF12 \|\| isCtrlShiftI\) event\.preventDefault\(\)/, 'F12 и Ctrl+Shift+I по-прежнему гасятся');
   assert.ok(!/openDevTools|toggleDevTools/.test(main), 'DevTools нигде не открываются');
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'main', 'zoom-keys.js')), 'единственный источник — preload.js');
+
+  assert.match(preloadText, /window\.addEventListener\('keydown'/, 'preload слушает keydown на window');
+  assert.match(preloadText, /if \(event\.defaultPrevented\) return;/, 'и уступает странице');
+  assert.match(preloadText, /webFrame\.setZoomLevel\(nextZoomLevel\(webFrame\.getZoomLevel\(\)/);
 });
