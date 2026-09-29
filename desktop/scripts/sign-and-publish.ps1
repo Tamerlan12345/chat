@@ -153,7 +153,10 @@ if ($signed -eq 0) {
 # же папке раздачи): кто может подменить установщик, подменит и лежащий рядом
 # список, а сверка с суммой из другого источника подмену выдаёт.
 $SumsPath = Join-Path $InstallerDir 'SHA256SUMS.txt'
-$SumFiles = $copiedNames + @('Centras-Corporate-Root.cer')
+# Скрипты установки «копией» раздаются тем же комплектом и выполняются у
+# сотрудника — их подмену тоже должна выдавать сверка сумм.
+$CopyInstallKit = @('install.bat', 'install.ps1', 'uninstall.ps1', 'copy-install-common.ps1')
+$SumFiles = $copiedNames + @('Centras-Corporate-Root.cer') + $CopyInstallKit
 $lines = foreach ($name in $SumFiles) {
     $file = Join-Path $InstallerDir $name
     if (Test-Path -LiteralPath $file) {

@@ -88,6 +88,21 @@ test('установщик и документация не называют ф�
   assert.match(readText(path.join(INSTALLER_DIR, 'SHA256SUMS.txt')), /(OpenMyChat-Enterprise|CentyChat)-Setup-\d+\.\d+\.\d+\.exe/);
 });
 
+test('комплект установки «копией» на месте и попадает в SHA256SUMS при подписи', () => {
+  const kit = ['install.bat', 'install.ps1', 'uninstall.ps1', 'copy-install-common.ps1'];
+  for (const name of kit) assert.ok(fs.existsSync(path.join(INSTALLER_DIR, name)), `нет installer/${name}`);
+  const sign = readText(path.join(REPO_ROOT, 'desktop', 'scripts', 'sign-and-publish.ps1'));
+  const list = sign.match(/\$CopyInstallKit = @\(([^)]*)\)/);
+  assert.ok(list, 'sign-and-publish.ps1: список $CopyInstallKit');
+  assert.deepStrictEqual(list[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')), kit);
+  assert.match(sign, /\$SumFiles = [^\n]*\$CopyInstallKit/);
+  // install.ps1 без copy-install-common.ps1 не работает — и сам кладёт его рядом с uninstall.ps1.
+  const install = readText(path.join(INSTALLER_DIR, 'install.ps1'));
+  assert.match(install, /Join-Path \$ScriptDir 'copy-install-common\.ps1'/);
+  assert.match(install, /Copy-Item -LiteralPath \$CommonScript -Destination \$InstallDir/);
+  for (const name of kit) assert.ok(readText(path.join(DOCS_DIR, 'автообновление.md')).includes(`\`${name}\``), `docs: ${name} в комплекте`);
+});
+
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {
   const batPath = path.join(INSTALLER_DIR, 'настроить-клиент.bat');
   assert.ok(fs.existsSync(batPath), 'должен существовать installer/настроить-клиент.bat');

@@ -60,9 +60,12 @@ $LegacyShortcutName = 'OpenMyChat Enterprise.lnk'
 # переименованием в CentyChat не менялся (показываемое имя - DisplayName).
 $UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenMyChatEnterprise'
 
-# Ищем собранное приложение либо рядом со скриптом (для раздачи сотрудникам -
-# просто кладём папку win-unpacked рядом с install.bat/install.ps1), либо
-# внутри репозитория (для локального теста у разработчика).
+# Ищем собранное приложение либо рядом со скриптом, либо внутри репозитория
+# (для локального теста у разработчика). Комплект для раздачи сотрудникам -
+# одна папка, где рядом лежат:
+#   install.bat, install.ps1, uninstall.ps1, copy-install-common.ps1
+#   (все четыре обязательны; configure-client.ps1 - если нужны -ServerUrl/-Channel)
+#   и собранное приложение - папка app или win-unpacked (из desktop\release).
 $Candidates = @(
     (Join-Path $ScriptDir 'app'),
     (Join-Path $ScriptDir 'win-unpacked'),
