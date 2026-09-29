@@ -85,6 +85,8 @@ function harness(opts = {}) {
   autoUpdater.setFeedURL = (o) => calls.setFeed.push(o);
   autoUpdater.installerPath = opts.installerPath === undefined ? DOWNLOADED.downloadedFile : opts.installerPath;
   autoUpdater.quitAndInstallCalled = false;
+  calls.addQuitHandler = 0;
+  autoUpdater.addQuitHandler = () => { calls.addQuitHandler += 1; };
   autoUpdater.quitAndInstall = (...args) => {
     calls.quit.push({ args, isQuitting: app.isQuitting });
     if (opts.quitThrows) throw new Error('spawn failed');
@@ -732,6 +734,79 @@ test('установщик не запустился → isQuitting и installin
     assert.strictEqual(s.error, 'install-failed');
     assert.strictEqual(h.savedState().lastError, 'install-failed');
   }
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+test('пока идёт проверка скачанного файла, установка при выходе выключена', async () => {
+  for (const [answer, expected] of [[null, true], ['signature-foreign', false]]) {
+    const pending = deferred();
+    const h = harness({ verify: () => pending.promise });
+    h.controller.start();
+    await h.timers.fire();
+    h.autoUpdater.emit('update-available', { version: '1.2.0' });
+    assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, true);
+    h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+    // Синхронно, до того как electron-updater вызовет addQuitHandler.
+    assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, false, 'выход во время проверки ничего не ставит');
+    h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+    await tick();
+    assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, false, 'проверка ещё идёт');
+    assert.strictEqual(h.controller.getState().status, 'downloading');
+
+    pending.resolve(answer);
+    await tick();
+    assert.strictEqual(h.autoUpdater.autoInstallOnAppQuit, expected, String(answer));
+    assert.strictEqual(h.controller.getState().status, answer ? 'error' : 'downloaded');
+    assert.strictEqual(h.calls.addQuitHandler, answer ? 0 : 1, 'обработчик выхода регистрируется после проверки');
+  }
+});
+
+test('обязательное: таймер сработал во время установки из трея, та упёрлась в сеанс — ожидание продолжается', async () => {
+  const installer = 'C:\\Users\\u\\AppData\\Local\\mychat-desktop-updater\\pending\\installer.exe';
+  const pending = deferred();
+  const h = await downloaded({
+    installerPath: installer,
+    respond: () => ({ status: 200, body: policy({ mandatory: true }) }),
+    confirm: async () => 'later',
+    verify: (file) => (file === installer ? pending.promise : Promise.resolve(null))
+  });
+  await tick();
+  assert.strictEqual(h.calls.confirm.length, 1);
+  assert.strictEqual(h.timers.next().ms, MANDATORY_DELAY_MS);
+
+  // «Перезапустить и обновить» из трея — идёт последняя проверка файла.
+  const trayInstall = h.controller.installNow();
+  // Отсчёт обязательного кончился именно сейчас: попытка уже идёт, таймер
+  // уходит вхолостую.
+  await h.timers.fire();
+  assert.strictEqual(h.timers.list.length, 0);
+
+  // Пока шла проверка, начался сеанс удалённого стола.
+  h.hostSession.active = true;
+  pending.resolve(null);
+  assert.deepStrictEqual(await trayInstall, { ok: false, reason: 'remote-session' });
+  assert.strictEqual(h.calls.quit.length, 0);
+  const wait = h.timers.next();
+  assert.ok(wait, 'ожидание конца сеанса снова взведено');
+  assert.strictEqual(wait.ms, RD_RECHECK_MS);
+
+  h.hostSession.active = false;
+  await h.timers.fire();
+  await tick();
+  assert.strictEqual(h.calls.quit.length, 1, 'после сеанса — установка');
+  assert.strictEqual(h.calls.confirm.length, 1, 'без второго вопроса');
+});
+
+test('обычное (не обязательное) обновление: отказ из-за сеанса таймеров не заводит', async () => {
+  const h = await downloaded();
+  h.hostSession.active = true;
+  assert.deepStrictEqual(await h.controller.installNow(), { ok: false, reason: 'remote-session' });
+  assert.strictEqual(h.timers.list.length, 0);
 });
 
 test('два щелчка «Перезапустить» подряд — одна установка', async () => {

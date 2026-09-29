@@ -27,11 +27,30 @@ const MAX_OUTPUT_BYTES = 64 * 1024;
 // задаёт сам (HKCU\Environment), и поддельный powershell.exe напечатал бы
 // «Valid» на что угодно. Его передаёт main.js из resolveSystemDirs (ядро,
 // \SystemRoot); без него — то же ядро здесь, затем C:\Windows.
-function powershellPath(systemRoot) {
-  const root = typeof systemRoot === 'string' && /^[A-Za-z]:\\[^"*?<>|%\r\n]+$/.test(systemRoot) && !systemRoot.includes('..')
+function safeSystemRoot(systemRoot) {
+  return typeof systemRoot === 'string' && /^[A-Za-z]:\\[^"*?<>|%\r\n]+$/.test(systemRoot) && !systemRoot.includes('..')
     ? systemRoot.replace(/\\+$/, '')
     : DEFAULT_SYSTEM_ROOT;
-  return `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+}
+
+function powershellPath(systemRoot) {
+  return `${safeSystemRoot(systemRoot)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+}
+
+// Окружение PowerShell — только это, без унаследованного от приложения.
+// В унаследованном PSModulePath первой идёт папка «Документы\WindowsPowerShell\
+// Modules» (и сотрудник может дописать туда что угодно через HKCU\Environment):
+// модуль Microsoft.PowerShell.Security из неё подменил бы
+// Get-AuthenticodeSignature, и поддельный установщик прошёл бы как «Valid».
+// С таким PSModulePath PowerShell 5.1 добавляет к нему лишь
+// «Program Files\WindowsPowerShell\Modules», куда пишут только администраторы.
+function psEnv(systemRoot) {
+  const root = safeSystemRoot(systemRoot);
+  return {
+    SystemRoot: root,
+    windir: root,
+    PSModulePath: `${root}\\System32\\WindowsPowerShell\\v1.0\\Modules`
+  };
 }
 
 // Строка в одинарных кавычках PowerShell: кавычка внутри удваивается.
@@ -40,17 +59,26 @@ function psQuote(value) {
   return `'${String(value).replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
+// Модули, чьи команды нужны проверке, загружаются явно из папки самого
+// PowerShell ($PSHOME), а команды вызываются с именем модуля: даже модуль с
+// тем же именем раньше по PSModulePath их не подменит. Версия файла берётся
+// прямо из .NET (FileVersionInfo) — без Get-Item и его модуля.
+const PS_MODULES = ['Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Utility'];
+
 function buildPsCommand(file) {
   const p = psQuote(file);
   return [
     "$ErrorActionPreference = 'Stop'",
     // Без этого первая загрузка модулей пишет в stderr прогресс в CLIXML.
     "$ProgressPreference = 'SilentlyContinue'",
-    `$s = Get-AuthenticodeSignature -LiteralPath ${p}`,
-    `$v = (Get-Item -LiteralPath ${p}).VersionInfo`,
+    ...PS_MODULES.map(
+      (m) => `Microsoft.PowerShell.Core\\Import-Module -Name ($PSHOME + '\\Modules\\${m}\\${m}.psd1')`
+    ),
+    `$s = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath ${p}`,
+    `$v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo(${p})`,
     '$c = $null',
     'if ($s.SignerCertificate) { $c = @{ Thumbprint = [string]$s.SignerCertificate.Thumbprint } }',
-    '@{ Status = [string]$s.Status; SignerCertificate = $c; VersionInfo = @{ ProductVersion = [string]$v.ProductVersion } } | ConvertTo-Json -Compress'
+    '@{ Status = [string]$s.Status; SignerCertificate = $c; VersionInfo = @{ ProductVersion = [string]$v.ProductVersion } } | Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress'
   ].join('\n');
 }
 
@@ -58,7 +86,7 @@ function buildPsCommand(file) {
 // кириллицей (имя пользователя в пути к временной папке) доходит до
 // PowerShell ровно таким, каким был, без правил разбора командной строки.
 function psArgs(script) {
-  return ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(String(script), 'utf16le').toString('base64')];
+  return ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(String(script), 'utf16le').toString('base64')];
 }
 
 /**
@@ -93,9 +121,9 @@ function evaluateSignature(json, { pinned = PINNED_THUMBPRINTS, expectedVersion,
   return null;
 }
 
-function defaultRun(exe, args, { timeout }) {
+function defaultRun(exe, args, { timeout, env }) {
   return new Promise((resolve, reject) => {
-    execFile(exe, args, { timeout, windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, encoding: 'utf8' }, (err, stdout) => {
+    execFile(exe, args, { timeout, env, windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, encoding: 'utf8' }, (err, stdout) => {
       if (err) reject(err);
       else resolve({ stdout });
     });
@@ -114,7 +142,10 @@ async function verifyInstaller(file, { expectedVersion, currentVersion, run = de
     timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
   });
   try {
-    const running = Promise.resolve().then(() => run(powershellPath(systemRoot || trustedSystemRoot()), psArgs(buildPsCommand(file)), { timeout: timeoutMs }));
+    const root = safeSystemRoot(systemRoot || trustedSystemRoot());
+    const running = Promise.resolve().then(() =>
+      run(powershellPath(root), psArgs(buildPsCommand(file)), { timeout: timeoutMs, env: psEnv(root) })
+    );
     const outcome = await Promise.race([running.then((r) => ({ r }), (error) => ({ error })), timeout]);
     if (outcome.timedOut) return 'signature-check-timeout';
     if (outcome.error) {
@@ -134,6 +165,7 @@ module.exports = {
   PINNED_THUMBPRINTS,
   VERIFY_TIMEOUT_MS,
   powershellPath,
+  psEnv,
   buildPsCommand,
   psArgs,
   evaluateSignature,

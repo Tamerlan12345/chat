@@ -456,6 +456,12 @@ class UpdateController {
   // приходит, пока первое ещё проверяет файл.
   onDownloaded(info) {
     if (this.state.status === 'downloaded' || this.downloadedCheck) return this.downloadedCheck || undefined;
+    // Сразу, до проверки: electron-updater вслед за этим событием регистрирует
+    // свой обработчик выхода (BaseUpdater.addQuitHandler), и обычный выход из
+    // приложения, пока идёт наша проверка (до 30 с), поставил бы ещё не
+    // проверенный файл. Флаг он читает в момент выхода; вернём его только
+    // после успешной проверки.
+    if (this.autoUpdater) this.autoUpdater.autoInstallOnAppQuit = false;
     const version = isValidVersion(info?.version) ? info.version : this.downloadVersion || this.state.offeredVersion;
     const file = typeof info?.downloadedFile === 'string' && info.downloadedFile ? info.downloadedFile : null;
     this.downloadedCheck = this.confirmDownloaded(version, file)
@@ -481,7 +487,14 @@ class UpdateController {
     }
     this.verifiedFiles.add(fileKey(file));
     this.downloadedFile = file;
-    if (this.autoUpdater) this.autoUpdater.autoInstallOnAppQuit = true;
+    if (this.autoUpdater) {
+      this.autoUpdater.autoInstallOnAppQuit = true;
+      // Пока флаг был снят, addQuitHandler мог отказаться регистрировать
+      // обработчик выхода; повторный вызов безопасен (quitHandlerAdded).
+      if (typeof this.autoUpdater.addQuitHandler === 'function') {
+        try { this.autoUpdater.addQuitHandler(); } catch (err) { this.deps.log(`updates: addQuitHandler failed: ${err.message}`); }
+      }
+    }
     this.clearCheckTimer();
     this.failures = 0;
     this.savePersisted({ lastError: null });
@@ -526,6 +539,18 @@ class UpdateController {
   }
 
   async installNow() {
+    const result = await this.attemptInstall();
+    // Установку (из трея, интерфейса или по таймеру обязательного
+    // обновления) остановил сеанс удалённого стола. Для обязательного
+    // обновления ожидание должно продолжиться, даже если его таймер уже
+    // сработал, пока шла эта попытка, и ушёл вхолостую.
+    if (!result.ok && result.reason === 'remote-session' && this.state.mandatory && this.mandatoryTimer === null) {
+      this.handleMandatory();
+    }
+    return result;
+  }
+
+  async attemptInstall() {
     if (this.installing) return { ok: false, reason: 'busy' };
     if (this.state.status !== 'downloaded') return { ok: false, reason: 'not-downloaded' };
     // Перезапуск посреди сеанса удалённого стола оборвал бы работу оператора
@@ -575,12 +600,9 @@ class UpdateController {
   }
 
   installFromMandatory() {
-    this.installNow()
-      .then((result) => {
-        // Сеанс удалённого стола начался, пока шла последняя проверка.
-        if (!result.ok && result.reason === 'remote-session') this.handleMandatory();
-      })
-      .catch((err) => this.deps.log(`mandatory install failed: ${err?.message || err}`));
+    // Сеанс, начавшийся во время последней проверки, возвращает в ожидание
+    // сам installNow.
+    this.installNow().catch((err) => this.deps.log(`mandatory install failed: ${err?.message || err}`));
   }
 
   handleMandatory() {

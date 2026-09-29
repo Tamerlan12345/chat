@@ -6,6 +6,7 @@ const {
   PINNED_THUMBPRINTS,
   VERIFY_TIMEOUT_MS,
   powershellPath,
+  psEnv,
   buildPsCommand,
   psArgs,
   evaluateSignature,
@@ -97,6 +98,27 @@ test('путь экранируется: одинарная кавычка уд�
   assert.match(script, /Thumbprint/);
 });
 
+test('команды — с именем модуля, модули — из $PSHOME, версия — из .NET', () => {
+  const script = buildPsCommand('C:\\t\\setup.exe');
+  assert.match(script, /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature -LiteralPath/);
+  assert.match(script, /\| Microsoft\.PowerShell\.Utility\\ConvertTo-Json -Compress/);
+  assert.match(script, /Microsoft\.PowerShell\.Core\\Import-Module -Name \(\$PSHOME \+ '\\Modules\\Microsoft\.PowerShell\.Security\\Microsoft\.PowerShell\.Security\.psd1'\)/);
+  assert.match(script, /Microsoft\.PowerShell\.Core\\Import-Module -Name \(\$PSHOME \+ '\\Modules\\Microsoft\.PowerShell\.Utility\\Microsoft\.PowerShell\.Utility\.psd1'\)/);
+  assert.match(script, /\[System\.Diagnostics\.FileVersionInfo\]::GetVersionInfo\('C:\\t\\setup\.exe'\)/);
+  // Ни одной команды без имени модуля: её мог бы подменить модуль-двойник.
+  const bare = script.split('\n').filter((line) => /(^|[\s(|=])(Get-AuthenticodeSignature|ConvertTo-Json|Get-Item|Import-Module|Join-Path)\b/.test(line.replace(/Microsoft\.PowerShell\.\w+\\/g, 'Q\\')));
+  assert.deepStrictEqual(bare, []);
+});
+
+test('окружение PowerShell — только корень системы и системный PSModulePath', () => {
+  assert.deepStrictEqual(psEnv('D:\\Windows'), {
+    SystemRoot: 'D:\\Windows',
+    windir: 'D:\\Windows',
+    PSModulePath: 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'
+  });
+  assert.strictEqual(psEnv('%TEMP%').PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
+});
+
 test('кавычки-«ёлочки» Юникода тоже экранируются', () => {
   // PowerShell считает ’ ‘ ‚ ‛ одинарными кавычками наравне с '.
   const script = buildPsCommand('C:\\a\u2019b.exe');
@@ -110,7 +132,7 @@ test('PowerShell запускается по абсолютному пути, б
     assert.strictEqual(powershellPath(junk), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', junk);
   }
   const args = psArgs('Write-Output 1');
-  assert.deepStrictEqual(args.slice(0, 2), ['-NoProfile', '-NonInteractive']);
+  assert.deepStrictEqual(args.slice(0, 3), ['-NoLogo', '-NoProfile', '-NonInteractive']);
   const encoded = args[args.indexOf('-EncodedCommand') + 1];
   assert.strictEqual(Buffer.from(encoded, 'base64').toString('utf16le'), 'Write-Output 1');
   assert.strictEqual(VERIFY_TIMEOUT_MS, 30_000);
@@ -129,6 +151,81 @@ test('verifyInstaller: успешная проверка → null, команд�
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].exe, 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.ok(calls[0].options.timeout <= 30_000);
+});
+
+test('verifyInstaller: окружение приложения PowerShell не наследует', async () => {
+  const saved = { PSModulePath: process.env.PSModulePath, USERPROFILE: process.env.USERPROFILE };
+  process.env.PSModulePath = 'C:\\Users\\u\\Documents\\WindowsPowerShell\\Modules';
+  process.env.USERPROFILE = process.env.USERPROFILE || 'C:\\Users\\u';
+  try {
+    let options = null;
+    await verifyInstaller('C:\\t\\setup.exe', {
+      expectedVersion: '1.2.0',
+      currentVersion: '1.1.0',
+      systemRoot: 'D:\\Win',
+      run: async (exe, args, o) => { options = o; return { stdout: report() }; }
+    });
+    assert.deepStrictEqual(options.env, {
+      SystemRoot: 'D:\\Win',
+      windir: 'D:\\Win',
+      PSModulePath: 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\Modules'
+    });
+    for (const inherited of ['USERPROFILE', 'HOMEPATH', 'APPDATA', 'PATH', 'Path']) assert.ok(!(inherited in options.env), inherited);
+  } finally {
+    for (const [k, val] of Object.entries(saved)) {
+      if (val === undefined) delete process.env[k];
+      else process.env[k] = val;
+    }
+  }
+});
+
+// Живая проверка на Windows: модуль-двойник Microsoft.PowerShell.Security /
+// Utility в «пользовательской» папке модулей подделывает ответ PowerShell,
+// которому достался PSModulePath приложения, но не нашу проверку.
+test('живой PowerShell: модуль-двойник в PSModulePath пользователя не подделывает «Valid»', { skip: process.platform !== 'win32', timeout: 60_000 }, async (t) => {
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const { trustedSystemRoot } = require('../src/main/client-config');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mychat-shadow-'));
+  const forged = `{"Status":"Valid","SignerCertificate":{"Thumbprint":"${PINNED}"},"VersionInfo":{"ProductVersion":"1.2.0"}}`;
+  const modules = {
+    'Microsoft.PowerShell.Security': `function Get-AuthenticodeSignature { param([string]$LiteralPath, [string]$FilePath) [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Thumbprint = '${PINNED}' } } }`,
+    'Microsoft.PowerShell.Utility': `function ConvertTo-Json { param([Parameter(ValueFromPipeline = $true)]$InputObject, [switch]$Compress) '${forged}' }`
+  };
+  const savedPath = process.env.PSModulePath;
+  try {
+    for (const [name, body] of Object.entries(modules)) {
+      fs.mkdirSync(path.join(dir, name));
+      fs.writeFileSync(path.join(dir, name, `${name}.psm1`), `${body}\nExport-ModuleMember -Function *\n`);
+    }
+    const fake = path.join(dir, 'OpenMyChat-Enterprise-Setup-1.2.0.exe');
+    fs.writeFileSync(fake, 'это не программа');
+    const shadowPath = `${dir};${savedPath || ''}`;
+
+    // Двойник действительно работает для PowerShell с унаследованным
+    // окружением (иначе — например, политика запрещает скрипты — проверять
+    // нечего).
+    let probe = '';
+    try {
+      probe = execFileSync(
+        powershellPath(trustedSystemRoot()),
+        ['-NoProfile', '-NonInteractive', '-Command', `[string](Get-AuthenticodeSignature -LiteralPath '${fake}').Status`],
+        { env: { ...process.env, PSModulePath: shadowPath }, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+      ).trim();
+    } catch {}
+    if (probe !== 'Valid') {
+      t.skip(`модуль-двойник не загрузился (${probe || 'ошибка'}) — нечего проверять`);
+      return;
+    }
+
+    process.env.PSModulePath = shadowPath;
+    const result = await verifyInstaller(fake, { expectedVersion: '1.2.0', currentVersion: '1.1.0' });
+    assert.strictEqual(result, 'signature-untrusted');
+  } finally {
+    if (savedPath === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = savedPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('verifyInstaller: переменная SystemRoot не выбирает, какой PowerShell запустить', async () => {
