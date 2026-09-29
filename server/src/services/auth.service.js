@@ -112,6 +112,10 @@ function throttledError({ retryAfterMs, reason, cls }) {
     message = 'Превышено число неверных попыток входа за сутки. Обратитесь к администратору.';
   } else if (reason === 'daily') {
     message = 'Слишком много неверных попыток входа под этим логином за сутки. Войдите с рабочего компьютера или обратитесь к администратору.';
+  } else if (reason === 'pending') {
+    // Остаток суточной корзины уже занят попытками, которые проверяются прямо
+    // сейчас (параллельный подбор): ждём их исхода, а не проверяем сверх предела.
+    message = `Слишком много одновременных попыток входа под этим логином. Повторите через ${seconds} с.`;
   } else {
     message = `Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`;
   }
@@ -134,6 +138,22 @@ async function isTrustedSource(row, ipKey) {
   if (LoginThrottle.isKnownSource(nameKey, ipKey)) return true;
   if (row.last_login_ip && rateLimitIpKey(row.last_login_ip) === ipKey) return true;
   return require('./trusted-sources.service').isTrusted(row.id, ipKey);
+}
+
+// Корзина суточного предела для попытки входа (sec5): знакомый этому сотруднику
+// адрес — F, иначе U. Исключение (проверка sec5, п.4): у только что заведённой
+// учётной записи знакомых адресов ещё нет вовсе, и первый вход с временным
+// паролем из офиса с опечатками расходовал бы корзину U (5) с советом «войдите с
+// рабочего компьютера» — тому, кто за ним и сидит. Поэтому для сотрудника БЕЗ
+// единого знакомого адреса адрес, знакомый другим сотрудникам (офис, обратный
+// индекс), считается F. Устоявшимся сотрудникам правило не расширяется: иначе
+// гостевой Wi-Fi за тем же NAT мог бы расходовать их офисную корзину F.
+async function budgetClassFor(row, ipKey, trusted) {
+  if (trusted) return 'F';
+  if (!row || row.last_login_ip) return 'U';
+  const TrustedSources = require('./trusted-sources.service');
+  if (!TrustedSources.isFamiliarToAnyoneSync(ipKey)) return 'U';
+  return (await TrustedSources.hasAnyFamiliar(row.id)) ? 'U' : 'F';
 }
 
 // Ключ ограничителя входа — конкретный адрес (сеть /64 для IPv6) и логин в
@@ -378,8 +398,13 @@ class AuthService {
     // существующего сотрудника журнал неудач подгружается из базы (переживает
     // перезапуск). Одинаково для несуществующих логинов — без оракула.
     const trusted = await isTrustedSource(row, ipKey);
-    if (row) await LoginThrottle.ensureLoaded(row.id);
-    const admission = LoginThrottle.admit(nameKey, { ipKey, trusted, userId: row?.id ?? null });
+    const budgetClass = await budgetClassFor(row, ipKey, trusted);
+    if (row) await LoginThrottle.ensureLoaded(row.id, nameKey);
+    // Ключ корзины — единая форма логина и для существующих, и для выдуманных
+    // (проверка sec5, п.2): вариант регистра существующего логина не получает
+    // свежую корзину. Между admit и try ниже нет ничего, что может бросить, —
+    // билет всегда возвращается в settle (там освобождается слот «в полёте»).
+    const admission = LoginThrottle.admit(nameKey, { ipKey, trusted, cls: budgetClass, userId: row?.id ?? null });
     if (!admission.ok) throw throttledError(admission);
 
     // Несуществующий, отключённый сотрудник и неверный пароль идут по ОДНОМУ

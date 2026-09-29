@@ -69,6 +69,18 @@ async function isTrusted(userId, ipKey) {
   return Boolean(at && Date.now() - at < TTL_MS);
 }
 
+// Есть ли у сотрудника хоть один действующий знакомый адрес (для правила
+// «новичок в офисе» суточного предела, sec5). Загрузка — та же, что у isTrusted,
+// поэтому на входе лишнего запроса нет.
+async function hasAnyFamiliar(userId, now = Date.now()) {
+  if (!userId) return false;
+  await ensureLoaded(userId);
+  const m = cache.get(Number(userId));
+  if (!m) return false;
+  for (const at of m.values()) if (now - at < TTL_MS) return true;
+  return false;
+}
+
 function touchFamiliar(ipKey) {
   if (!ipKey) return;
   familiarIps.delete(ipKey);
@@ -208,4 +220,4 @@ function _reset() {
   reverseLoading = null;
 }
 
-module.exports = { isTrusted, record, recordAsync, isFamiliarToAnyoneSync, primeReverseIndex, _reset };
+module.exports = { isTrusted, hasAnyFamiliar, record, recordAsync, isFamiliarToAnyoneSync, primeReverseIndex, _reset };

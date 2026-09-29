@@ -321,7 +321,7 @@ class UserService {
     // при смене), но НЕ корзины входа U/F: иначе каждая смена пароля владельцем
     // дарила бы постороннему, исчерпавшему U, свежие догадки (sec5).
     await this.setPassword(userId, newPassword, { mustChange: false, clearLoginBudgets: false });
-    require('./login-throttle.service').clearPasswordChange(userId);
+    require('./login-throttle.service').clearPasswordChange(row.username, { userId });
     return true;
   }
 

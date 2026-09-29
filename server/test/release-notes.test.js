@@ -100,6 +100,8 @@ test('суточный предел (sec5): заметки объясняют ц
   assert.match(text, /Суточный предел/);
   assert.match(text, /login_failure_log/);
   assert.match(text, /сброс пароля/i);
+  // Последнее средство восстановления: аварийный сброс чистит и журнал неудач.
+  assert.match(text, /ADMIN_PASSWORD_RESET[\s\S]{0,400}журнал неудачных входов/);
   const env = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
   for (const gone of ['LOGIN_ACCOUNT_SOFT_LIMIT', 'LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR']) {
     assert.doesNotMatch(env, new RegExp('^#\\s*' + gone + '=', 'm'), '.env.example не должен предлагать ' + gone);

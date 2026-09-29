@@ -645,38 +645,49 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     // Суточная корзина P (не больше PASSWORD_CHANGE_DAILY_FAILURES неверных
     // текущих паролей в сутки на сотрудника) — переживает перезапуск (sec5).
     // Короткий предел выше остаётся как защита от всплеска в минуту.
-    await LoginThrottle.ensureLoaded(req.user.id);
-    const pwDaily = LoginThrottle.passwordChangeStatus(req.user.id);
-    if (pwDaily.blocked) {
-      res.set('Retry-After', String(Math.min(3600, Math.ceil(pwDaily.retryAfterMs / 1000))));
-      return res.status(429).json({ error: 'Слишком много неверных попыток сменить пароль за сутки. Обратитесь к администратору.', code: 'ACCOUNT_THROTTLED' });
+    // Допуск учитывает и параллельные попытки «в полёте» (проверка sec5, п.1):
+    // билет обязан вернуться в settle при любом исходе — отсюда внешний finally.
+    await LoginThrottle.ensureLoaded(req.user.id, req.user.username);
+    const pwAdmission = LoginThrottle.admitPasswordChange(req.user.username, { userId: req.user.id });
+    if (!pwAdmission.ok) {
+      res.set('Retry-After', String(Math.min(3600, Math.ceil(pwAdmission.retryAfterMs / 1000))));
+      const error = pwAdmission.reason === 'pending'
+        ? 'Слишком много одновременных попыток сменить пароль. Повторите через несколько секунд.'
+        : 'Слишком много неверных попыток сменить пароль за сутки. Обратитесь к администратору.';
+      return res.status(429).json({ error, code: 'ACCOUNT_THROTTLED' });
     }
-    // Смена пароля тоже считает scrypt — тот же предел одновременных проверок
-    // на адрес, что и вход (I-C, общий): один источник не занимает очередь.
-    const ipKey = rateLimitIpKey(getClientIp(req));
-    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
-    if (!acquireHashSlot(ipKey, familiar)) {
-      res.set('Retry-After', String(busyRetryAfterSeconds()));
-      return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
-    }
-    const { oldPassword, newPassword } = req.body || {};
+    let pwOutcome = 'neutral';
     try {
-      await UserService.changePassword(req.user.id, oldPassword, newPassword);
-    } catch (err) {
-      if (err.code === 'OLD_PASSWORD_INVALID') {
-        registerFailure(failKey, failLimit);
-        LoginThrottle.recordPasswordChangeFailure(req.user.id);
-        AuditService.log({ userId: req.user.id, action: 'password_change_failed', ip: getClientIp(req) });
+      // Смена пароля тоже считает scrypt — тот же предел одновременных проверок
+      // на адрес, что и вход (I-C, общий): один источник не занимает очередь.
+      const ipKey = rateLimitIpKey(getClientIp(req));
+      const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
+      if (!acquireHashSlot(ipKey, familiar)) {
+        res.set('Retry-After', String(busyRetryAfterSeconds()));
+        return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
       }
-      if (err.code === 'PASSWORD_HASH_BUSY') {
-        res.set('Retry-After', String(jitterSeconds(3)));
-        return res.status(503).json({ error: err.message, code: err.code });
+      const { oldPassword, newPassword } = req.body || {};
+      try {
+        await UserService.changePassword(req.user.id, oldPassword, newPassword);
+        pwOutcome = 'success';
+      } catch (err) {
+        if (err.code === 'OLD_PASSWORD_INVALID') {
+          pwOutcome = 'failure';
+          registerFailure(failKey, failLimit);
+          AuditService.log({ userId: req.user.id, action: 'password_change_failed', ip: getClientIp(req) });
+        }
+        if (err.code === 'PASSWORD_HASH_BUSY') {
+          res.set('Retry-After', String(jitterSeconds(3)));
+          return res.status(503).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      } finally {
+        releaseHashSlot(ipKey, familiar);
       }
-      throw err;
     } finally {
-      releaseHashSlot(ipKey, familiar);
+      LoginThrottle.settle(pwAdmission.ticket, pwOutcome);
     }
-    resetLimit(failKey); // корзину P удачная смена чистит сама (UserService.changePassword)
+    resetLimit(failKey); // корзину P удачная смена чистит сама (settle и UserService.changePassword)
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
     // Старый токен отозван, но открытые соединения авторизовались им раньше.
     // Без разрыва тот, кто украл токен, продолжал бы писать от имени сотрудника.
