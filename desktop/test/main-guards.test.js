@@ -158,3 +158,56 @@ test('текст индикатора: имя очищено и ограниче
   s.start({ sessionId: 'rd_3', operatorName: 'Я'.repeat(500), accessLevel: 'full' });
   assert.ok(s.operatorName.length <= 80);
 });
+
+// ── Масштаб Ctrl +/−/0 (финальное ревью, п.5) ──────────────────────────────
+// Меню приложения в собранной сборке убрано (через него открывались
+// DevTools), а вместе с ним пропали и сочетания масштаба — для тех, кому
+// мелко, это потеря. Масштаб возвращён обработчиком клавиш главного окна;
+// DevTools по-прежнему не открываются.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { zoomCommandForInput, nextZoomLevel, ZOOM_MIN_LEVEL, ZOOM_MAX_LEVEL } = require('../src/main/zoom-keys');
+
+const keyDown = (key, code, mods = {}) => ({ type: 'keyDown', key, code, control: true, shift: false, alt: false, meta: false, ...mods });
+
+test('Ctrl+= / Ctrl+Plus / Ctrl+NumpadAdd — крупнее, Ctrl+- — мельче, Ctrl+0 — сброс', () => {
+  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal')), 'in');
+  assert.strictEqual(zoomCommandForInput(keyDown('+', 'Equal', { shift: true })), 'in');
+  assert.strictEqual(zoomCommandForInput(keyDown('+', 'NumpadAdd')), 'in');
+  assert.strictEqual(zoomCommandForInput(keyDown('+', 'BracketRight')), 'in', 'клавиша «+» в других раскладках');
+  assert.strictEqual(zoomCommandForInput(keyDown('-', 'Minus')), 'out');
+  assert.strictEqual(zoomCommandForInput(keyDown('-', 'NumpadSubtract')), 'out');
+  assert.strictEqual(zoomCommandForInput(keyDown('0', 'Digit0')), 'reset');
+  assert.strictEqual(zoomCommandForInput(keyDown('0', 'Numpad0')), 'reset');
+});
+
+test('прочие сочетания масштабом не считаются — DevTools, копирование, AltGr, отпускание', () => {
+  assert.strictEqual(zoomCommandForInput(keyDown('F12', 'F12', { control: false })), null);
+  assert.strictEqual(zoomCommandForInput(keyDown('I', 'KeyI', { shift: true })), null);
+  assert.strictEqual(zoomCommandForInput(keyDown('Insert', 'Numpad0')), null, 'Ctrl+Insert на цифровом блоке без NumLock — копирование');
+  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal', { alt: true })), null, 'AltGr = Ctrl+Alt');
+  assert.strictEqual(zoomCommandForInput(keyDown('=', 'Equal', { control: false })), null);
+  assert.strictEqual(zoomCommandForInput({ ...keyDown('=', 'Equal'), type: 'keyUp' }), null);
+  assert.strictEqual(zoomCommandForInput(keyDown('r', 'KeyR')), null);
+  assert.strictEqual(zoomCommandForInput(null), null);
+});
+
+test('шаг масштаба 0.5 и пределы', () => {
+  assert.strictEqual(nextZoomLevel(0, 'in'), 0.5);
+  assert.strictEqual(nextZoomLevel(0, 'out'), -0.5);
+  assert.strictEqual(nextZoomLevel(2.5, 'reset'), 0);
+  assert.strictEqual(nextZoomLevel(ZOOM_MAX_LEVEL, 'in'), ZOOM_MAX_LEVEL);
+  assert.strictEqual(nextZoomLevel(ZOOM_MIN_LEVEL, 'out'), ZOOM_MIN_LEVEL);
+  assert.strictEqual(nextZoomLevel(Number.NaN, 'in'), 0.5);
+});
+
+test('main.js: масштаб — на главном окне, меню и DevTools по-прежнему закрыты', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  const create = main.slice(main.indexOf('function createMainWindow'), main.indexOf('function createMainWindow') + 6000);
+  assert.match(create, /win\.webContents\.on\('before-input-event'[\s\S]{0,400}zoomCommandForInput\(input\)/, 'обработчик масштаба на главном окне');
+  assert.match(create, /setZoomLevel\(nextZoomLevel\(/);
+  assert.match(main, /if \(app\.isPackaged\) Menu\.setApplicationMenu\(null\);/, 'меню в собранной сборке не возвращается');
+  assert.match(main, /isF12 \|\| isCtrlShiftI\) event\.preventDefault\(\)/, 'F12 и Ctrl+Shift+I по-прежнему гасятся');
+  assert.ok(!/openDevTools|toggleDevTools/.test(main), 'DevTools нигде не открываются');
+});

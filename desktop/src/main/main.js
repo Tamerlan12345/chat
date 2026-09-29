@@ -24,6 +24,7 @@ const { detectInstallKind, updateCapability, isUpdaterRequestAllowed } = require
 const { UpdateController } = require('./updater');
 const { planReceivedFileName, zoneIdentifierContent, formatFileSize } = require('./received-file');
 const { safeDownloadName, isDangerousExtension } = require('./download-guard');
+const { zoomCommandForInput, nextZoomLevel } = require('./zoom-keys');
 const {
   buildConsentDialog,
   resolveConsent,
@@ -437,6 +438,18 @@ function createMainWindow() {
 
   const win = mainWindow;
   hardenWebContents(win.webContents);
+
+  // Масштаб Ctrl +/−/0 (см. zoom-keys.js): меню, где были эти сочетания, в
+  // собранной сборке убрано ради DevTools. Только главное окно: отдельное
+  // окно удалённого стола передаёт сочетания на удалённый компьютер. Во
+  // встроенном просмотре (он в главном окне) эти три сочетания остаются
+  // масштабом этого окна и на удалённый компьютер не уходят.
+  win.webContents.on('before-input-event', (event, input) => {
+    const command = zoomCommandForInput(input);
+    if (!command) return;
+    event.preventDefault();
+    win.webContents.setZoomLevel(nextZoomLevel(win.webContents.getZoomLevel(), command));
+  });
 
   // Electron refuses navigator.mediaDevices.getDisplayMedia() unless the main
   // process answers the request itself — without this the screen-sharing side
