@@ -83,7 +83,15 @@ router.get('/policy.json', (req, res) => {
   const channel = CHANNELS.has(req.query.channel) ? req.query.channel : 'stable';
   const info = clientInfo(req);
   const { policy, decision, release } = decideFor(channel, info);
-  recordInstall(req, info, channel);
+  // Тот же счётчик и порог, что у latest.yml (тот же ресурс защищаем —
+  // запись в client_installs), но здесь запрос не проваливается 429: это
+  // проверка баннера обновления, которую клиент дёргает намного чаще и в
+  // штатной работе приложения, а не только electron-updater'ом. Сверх предела
+  // просто пропускаем запись — ответ клиент всё равно получит (находка
+  // ревью, задача 6).
+  if (checkRateLimit('upd:' + getClientIp(req), { maxAttempts: 120, windowMs: 60000 })) {
+    recordInstall(req, info, channel);
+  }
 
   const enabled = !UpdatePolicy.isDisabledByEnv() && policy.enabled;
   // Адреса относительные: клиент достраивает их от адреса сервера, которому

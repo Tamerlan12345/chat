@@ -110,6 +110,20 @@ class UserService {
     return toPublicUser(user);
   }
 
+  // Та же граница, что getAllUsers применяет через SCOPED_ADMIN_FIELDS —
+  // token_version вместе с секретом устройства, который claim'ит один
+  // сотрудник, открывал бы контурному администратору вход без пароля под ним
+  // (аудит, находка №1). PUT /admin/users/:id раньше отдавал полную запись
+  // (adminUpdateUser читает её через getUserById → FULL_FIELDS) в обход этого
+  // правила — тот же ответ, тот же контурный администратор, то же поле.
+  static hideAdminOnlyFields(record, actor) {
+    if (record && actor?.permissions?.is_scoped_admin) {
+      const { token_version, ...rest } = record;
+      return rest;
+    }
+    return record;
+  }
+
   /**
    * Справочник сотрудников. Администратору подразделения возвращаются только
    * его люди — иначе «контур» ничего не ограничивает.
@@ -520,6 +534,14 @@ function assertPasswordPolicy(password, { allowWeakInitial = false } = {}) {
 
 module.exports = UserService;
 module.exports.assertPasswordPolicy = assertPasswordPolicy;
+// Переиспользуются в AuthService.register (самостоятельная регистрация) —
+// те же пределы формата и длины, что и у administratorа, редактирующего
+// профиль сотрудника (аудит, находка №5): анонимная заявка — тот же чужой
+// ввод, что и тело PUT /admin/users/:id.
+module.exports.assertEmail = assertEmail;
+module.exports.assertPhone = assertPhone;
+module.exports.assertFieldLength = assertFieldLength;
+module.exports.NAME_FIELD_MAX = NAME_FIELD_MAX;
 module.exports.isWeakPassword = (password) => {
   try {
     assertPasswordPolicy(password);

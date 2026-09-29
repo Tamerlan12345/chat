@@ -154,6 +154,31 @@ test('без identity.db сотрудники восстанавливаются
   assert.deepStrictEqual(usernames(IDENTITY_DB), ['admin', 'petrov']);
 });
 
+// Ревью (задача 8, находка №21): резервный файл может лежать на диске, но
+// быть пропущен именно из-за отсутствия IDENTITY_AUTO_IMPORT (а не из-за того,
+// что его вовсе нет). Фатальная ошибка обязана называть ИМЕННО этот флаг —
+// иначе оператор, следуя прежнему тексту (называвшему только
+// IDENTITY_ALLOW_EMPTY_BOOTSTRAP), создал бы поверх пропущенного резервного
+// файла чистую установку и потерял бы рабочие данные, которые на самом деле
+// были рядом и ждали только IDENTITY_AUTO_IMPORT=true.
+
+test('фатальная ошибка называет IDENTITY_AUTO_IMPORT, если резервный файл найден на диске, но пропущен без него', () => {
+  removeDb(IDENTITY_DB);
+  assert.ok(fs.existsSync(SNAPSHOT_DB), 'предпосылка: снимок остался на диске после предыдущего запуска');
+
+  // Файл в этом test-файле включён глобально (process.env.IDENTITY_AUTO_IMPORT
+  // = 'true', см. верх файла) — здесь он явно выключается только для этого
+  // одного дочернего процесса.
+  const run = runBoot({ extraEnv: { IDENTITY_AUTO_IMPORT: '' } });
+  assert.notStrictEqual(run.status, 0, 'сервер обязан отказаться подниматься');
+  assert.match(run.stderr, /не новая установка/);
+  assert.match(
+    run.stderr,
+    /IDENTITY_AUTO_IMPORT/,
+    'ошибка обязана называть флаг, из-за которого источник был пропущен, а не только IDENTITY_ALLOW_EMPTY_BOOTSTRAP'
+  );
+});
+
 test('поверх базы с перепиской администратор по умолчанию не создаётся', () => {
   removeDb(IDENTITY_DB);
   removeDb(SNAPSHOT_DB);

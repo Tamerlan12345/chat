@@ -4,7 +4,7 @@ const { hashPassword, verifyPassword } = require('../db/identity/password');
 const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
-const { isRateLimited, registerFailure } = require('./rate-limiter');
+const { isRateLimited, registerFailure, resetLimit } = require('./rate-limiter');
 
 // Одно сообщение на все отказы, включая временную блокировку: отдельный
 // текст о блокировке выдавал, что такой логин существует.
@@ -311,6 +311,11 @@ class AuthService {
       [nowIso, ip, row.id, weak ? 1 : 0]
     );
 
+    // Успешный вход снимает накопленные неудачи по этой же паре адрес+логин —
+    // иначе они продолжают копиться к следующей блокировке, хотя подбора не
+    // было ни секунды (аудит ревью, находка №19).
+    resetLimit(loginLockKey(ip, row.username));
+
     const user = await UserService.getUserById(row.id);
     return { user, token: this.generateToken(user) };
   }
@@ -365,6 +370,14 @@ class AuthService {
       throw new Error('Логин может состоять из латинских букв, цифр, точки, дефиса и подчёркивания (3–64 символа)');
     }
     UserService.assertPasswordPolicy(password);
+    // Самостоятельная регистрация доступна без входа — те же пределы формата
+    // и длины, что и у администратора, редактирующего чужой профиль (аудит,
+    // находка №5): без них анонимная заявка засоряла бы оргструктуру и ленту
+    // сообщений именем на десятки килобайт или фишинговым email/телефоном.
+    UserService.assertFieldLength(full_name, 'ФИО');
+    UserService.assertFieldLength(job_title, 'Должность');
+    UserService.assertEmail(email);
+    UserService.assertPhone(phone);
 
     const existing = await db.get('SELECT id FROM users WHERE username = $1', [login]);
     if (existing) {
@@ -442,6 +455,16 @@ class AuthService {
   // countLockedUsernames выше.
   static countLockedAccounts() {
     return countLockedUsernames();
+  }
+
+  // Та же граница, что verifyToken применяет к auth_time токена, — но нужна и
+  // ДО выпуска токена (DeviceService.knock, находка №9в): секрет устройства
+  // может быть ещё не истёкшим (DEVICE_SECRET_TTL_DAYS, по умолчанию 30 дней),
+  // а токен по нему — уже родиться отклонённым, если SESSION_MAX_DAYS короче.
+  // Общая функция вместо копии логики — иначе они разошлись бы при следующей
+  // правке одной из двух.
+  static sessionMaxSeconds() {
+    return sessionMaxSeconds();
   }
 }
 

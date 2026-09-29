@@ -506,6 +506,28 @@ test('client_installs: предел строк соблюдается, стар�
   assert.strictEqual(Number((await identity.get('SELECT COUNT(*) AS n FROM client_installs')).n), 0);
 });
 
+// Ревью (задача 6): сводка для одного экрана консоли администратора, не
+// полная выгрузка — без предела разнообразие версий в разросшемся парке
+// растило бы объект fleet неограниченно на каждый /api/admin/updates.
+test('fleetSummary: byVersion содержит не больше 50 записей на группу', async () => {
+  const now = new Date().toISOString();
+  for (let i = 0; i < 55; i += 1) {
+    await identity.run(
+      `INSERT INTO client_installs
+         (install_id, client_version, install_kind, channel, ip_address, last_error, first_seen_at, last_check_at)
+       VALUES ($1, $2, 'nsis', 'stable', '127.0.0.1', NULL, $3, $3)`,
+      [crypto.randomUUID(), `9.${i}.0`, now]
+    );
+  }
+  const { fleetSummary } = require('../src/updates/client-installs');
+  const summary = await fleetSummary();
+  assert.ok(
+    Object.keys(summary.byVersion).length <= 50,
+    `byVersion вернул ${Object.keys(summary.byVersion).length} записей, ожидалось ≤50`
+  );
+  await identity.run('DELETE FROM client_installs');
+});
+
 test('latest.yml ограничен по частоте с одного адреса', async () => {
   let limited = null;
   for (let i = 0; i < 130; i += 1) {
@@ -515,4 +537,18 @@ test('latest.yml ограничен по частоте с одного адре
   }
   assert.ok(limited, 'после 120 запросов в минуту — 429');
   assert.strictEqual(limited.headers.get('retry-after'), '60');
+});
+
+// Ревью (задача 6): policy.json делит тот же счётчик 'upd:'+ip, что и
+// latest.yml (предыдущий тест его уже исчерпал), — но, в отличие от
+// latest.yml, не проваливает сам запрос: клиент по-прежнему получает 200,
+// просто запись в client_installs пропускается сверх предела.
+test('policy.json при исчерпанном (тем же) счётчике частоты по-прежнему отвечает 200, но не пишет client_installs', async () => {
+  const { installRecorder } = require('../src/updates/router');
+  const id = crypto.randomUUID();
+  const res = await api('GET', '/updates/policy.json', { headers: clientHeaders(id, '1.1.0') });
+  assert.strictEqual(res.status, 200, res.text);
+  await installRecorder.idle();
+  const row = await identity.get('SELECT install_id FROM client_installs WHERE install_id = $1', [id]);
+  assert.ok(!row, 'запись должна была быть пропущена при исчерпанной частоте');
 });
