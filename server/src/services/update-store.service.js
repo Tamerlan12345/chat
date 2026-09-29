@@ -32,8 +32,8 @@ class UpdateStoreError extends Error {
   }
 }
 
-const setupNameOf = (version) => `OpenMyChat-Enterprise-Setup-${version}.exe`;
-const portableNameOf = (version) => `OpenMyChat-Enterprise-Portable-${version}.exe`;
+const setupNameOf = (version) => `CentyChat-Setup-${version}.exe`;
+const portableNameOf = (version) => `CentyChat-Portable-${version}.exe`;
 const clip = (s, n = 64) => String(s).slice(0, n);
 
 // ── latest.yml ─────────────────────────────────────────────────────────────

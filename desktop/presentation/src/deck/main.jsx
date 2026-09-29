@@ -8,6 +8,8 @@ import './deck.css';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Ключи mychat_* — те же ключи localStorage, что читает клиент; с
+// переименованием в CentyChat они не менялись.
 const ROLE_BOOT = {
   saparova: { storage: { mychat_token: fixtures.logins.saparova.token, mychat_server_url: 'https://chat.centras.local' } },
   akhmetov: { storage: { mychat_token: fixtures.logins.akhmetov.token, mychat_server_url: 'https://chat.centras.local' } },
@@ -202,7 +204,7 @@ function Deck() {
       <header className="top">
         <div className="brand">
           <i><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg></i>
-          OpenMyChat Enterprise
+          CentyChat
         </div>
         <nav className="tabs">
           {SLIDES.map((s, i) => (

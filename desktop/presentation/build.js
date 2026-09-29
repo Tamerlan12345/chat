@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const dir = path.join(__dirname, 'dist-deck');
-const out = process.argv[2] || path.join(__dirname, '..', '..', 'docs', 'OpenMyChat-презентация.html');
+const out = process.argv[2] || path.join(__dirname, '..', '..', 'docs', 'CentyChat-презентация.html');
 let html = fs.readFileSync(path.join(dir, 'deck.html'), 'utf8');
 const css = fs.readFileSync(path.join(dir, 'deck.css'), 'utf8');
 const js = fs.readFileSync(path.join(dir, 'deck.js'), 'utf8');

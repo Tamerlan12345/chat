@@ -57,7 +57,7 @@ async function decryptFile(sourcePath, targetPath, secret) {
     if (size < MAGIC.length + 28 + 16) throw new Error('Файл копии повреждён или обрезан');
     const header = Buffer.alloc(MAGIC.length + 28);
     await fd.read(header, 0, header.length, 0);
-    if (!header.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('Не зашифрованная копия OpenMyChat');
+    if (!header.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('Не зашифрованная копия CentyChat');
     const tag = Buffer.alloc(16);
     await fd.read(tag, 0, 16, size - 16);
     const salt = header.subarray(MAGIC.length, MAGIC.length + 16);

@@ -52,13 +52,13 @@ async function start() {
 
     console.log(`
 =====================================================================
-  ███╗   ███╗██╗   ██╗ ██████╗██╗  ██╗ █████╗ ████████╗
-  ████╗ ████║╚██╗ ██╔╝██╔════╝██║  ██║██╔══██╗╚══██╔══╝
-  ██╔████╔██║ ╚████╔╝ ██║     ███████║███████║   ██║
-  ██║╚██╔╝██║  ╚██╔╝  ██║     ██╔══██║██╔══██║   ██║
-  ██║ ╚═╝ ██║   ██║   ╚██████╗██║  ██║██║  ██║   ██║
-  ╚═╝     ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
-       OpenMyChat Enterprise Server Core v${config.SERVER_VERSION}
+   ██████╗███████╗███╗   ██╗████████╗██╗   ██╗ ██████╗██╗  ██╗ █████╗ ████████╗
+  ██╔════╝██╔════╝████╗  ██║╚══██╔══╝╚██╗ ██╔╝██╔════╝██║  ██║██╔══██╗╚══██╔══╝
+  ██║     █████╗  ██╔██╗ ██║   ██║    ╚████╔╝ ██║     ███████║███████║   ██║
+  ██║     ██╔══╝  ██║╚██╗██║   ██║     ╚██╔╝  ██║     ██╔══██║██╔══██║   ██║
+  ╚██████╗███████╗██║ ╚████║   ██║      ██║   ╚██████╗██║  ██║██║  ██║   ██║
+   ╚═════╝╚══════╝╚═╝  ╚═══╝   ╚═╝      ╚═╝    ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
+       CentyChat Server Core v${config.SERVER_VERSION}
 =====================================================================
   [✓] Порт:                ${config.PORT} (HTTP и WebSocket)
   [✓] Локальный адрес:     http://localhost:${config.PORT}
@@ -76,7 +76,7 @@ async function start() {
 }
 
 start().catch((err) => {
-  console.error('[MyChat Server] Запуск не удался:', err);
+  console.error('[CentyChat Server] Запуск не удался:', err);
   process.exit(1);
 });
 
@@ -84,7 +84,7 @@ let stopping = false;
 async function stop(signal) {
   if (stopping) return;
   stopping = true;
-  console.log(`\n[MyChat Server] ${signal}: останавливаюсь…`);
+  console.log(`\n[CentyChat Server] ${signal}: останавливаюсь…`);
 
   // Соединение с PostgreSQL закрывается явно: незакрытый пул держит процесс
   // живым, и контейнер снимается по таймауту вместо штатного завершения.
@@ -93,9 +93,9 @@ async function stop(signal) {
     try {
       await shutdown();
     } catch (err) {
-      console.warn('[MyChat Server] Ошибка при закрытии хранилища:', err.message);
+      console.warn('[CentyChat Server] Ошибка при закрытии хранилища:', err.message);
     }
-    console.log('[MyChat Server] Остановлен.');
+    console.log('[CentyChat Server] Остановлен.');
     process.exit(0);
   });
 

@@ -96,8 +96,8 @@ function runPs(command) {
 
 test('выпуск уходит полями yml, setup, blockmap, portable и notes; README.txt не загружается', { skip: SKIP }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mychat-publish-'));
-  const setupName = 'OpenMyChat-Enterprise-Setup-9.9.9.exe';
-  const portableName = 'OpenMyChat-Enterprise-Portable-9.9.9.exe';
+  const setupName = 'CentyChat-Setup-9.9.9.exe';
+  const portableName = 'CentyChat-Portable-9.9.9.exe';
   const files = {
     'latest.yml': Buffer.from('version: 9.9.9\n'),
     [setupName]: Buffer.concat([Buffer.from('MZ'), Buffer.alloc(300000, 7)]),

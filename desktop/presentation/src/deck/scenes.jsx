@@ -3,10 +3,10 @@ import { Cover } from './cover.jsx';
 import { Installer } from './installer.jsx';
 import { Limits } from './limits.jsx';
 
-const W = { role: 'saparova', title: 'OpenMyChat Enterprise — Сапарова Айгерим Маратовна', subtitle: 'Рабочий ПК руководителя управления корпоративного страхования' };
-const PEER = { role: 'akhmetov', title: 'OpenMyChat Enterprise — Ахметов Данияр Серикович', subtitle: 'Рабочий ПК ведущего андеррайтера', width: 900, height: 700 };
+const W = { role: 'saparova', title: 'CentyChat — Сапарова Айгерим Маратовна', subtitle: 'Рабочий ПК руководителя управления корпоративного страхования' };
+const PEER = { role: 'akhmetov', title: 'CentyChat — Ахметов Данияр Серикович', subtitle: 'Рабочий ПК ведущего андеррайтера', width: 900, height: 700 };
 const ME_SMALL = { ...W, width: 900, height: 700 };
-const ADMIN = { role: 'admin', title: 'OpenMyChat Enterprise — Администратор системы', subtitle: 'Рабочее место администратора' };
+const ADMIN = { role: 'admin', title: 'CentyChat — Администратор системы', subtitle: 'Рабочее место администратора' };
 
 const dlg = (name) => ({ do: 'click', sel: '.dialog-list-item', text: name });
 
@@ -23,7 +23,7 @@ export const SLIDES = [
     tab: 'Обзор',
     kicker: 'Живая презентация',
     title: 'Это не скриншоты. Это само приложение',
-    lead: 'В окнах ниже работает настоящий клиент OpenMyChat: тот же код, что ставится сотруднику. Сервер подставной и живет внутри файла, поэтому можно писать, открывать разделы и нажимать что угодно.',
+    lead: 'В окнах ниже работает настоящий клиент CentyChat: тот же код, что ставится сотруднику. Сервер подставной и живет внутри файла, поэтому можно писать, открывать разделы и нажимать что угодно.',
     facts: [
       'Личные чаты и каналы, файлы и фото до 100 МБ',
       'Голосовые звонки, «Разбудить», оповещения с подтверждением',
@@ -72,7 +72,7 @@ export const SLIDES = [
       'Временный пароль система просит сменить при первом входе',
       'Сессия <b>12 часов</b>, продлевается сама, «Выход» закрывает ее на сервере'
     ],
-    windows: [{ ...W, role: 'guest', title: 'OpenMyChat Enterprise — вход', subtitle: 'Первый запуск на компьютере сотрудника' }],
+    windows: [{ ...W, role: 'guest', title: 'CentyChat — вход', subtitle: 'Первый запуск на компьютере сотрудника' }],
     script: async (ctx) => {
       ctx.step('Сотрудник вводит логин');
       await ctx.cmd('guest', { do: 'type', sel: 'input[placeholder="Введите ваш логин"]', text: 'a.saparova', speed: 90 });
@@ -80,7 +80,7 @@ export const SLIDES = [
       ctx.step('Вводит пароль');
       await ctx.cmd('guest', { do: 'type', sel: 'input[type=password]', text: 'Рабочий-пароль-1', speed: 70 });
       await ctx.wait(500);
-      ctx.step('Нажимает «Войти в MyChat»');
+      ctx.step('Нажимает «Войти»');
       await ctx.cmd('guest', { do: 'click', sel: 'button[type=submit]' });
       await ctx.wait(1800);
       ctx.step('Сессия открыта, приложение загрузило контакты и переписку');

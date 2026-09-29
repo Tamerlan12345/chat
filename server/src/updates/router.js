@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('node:path');
 const config = require('../config');
 const UpdatePolicy = require('../services/update-policy.service');
-const { getUpdateStore, renderYml, feedOf, setupNameOf, portableNameOf, SAFE_FILE } = require('../services/update-store.service');
+const { getUpdateStore, renderYml, feedOf, SAFE_FILE } = require('../services/update-store.service');
 const { checkRateLimit } = require('../services/rate-limiter');
 const { getClientIp } = require('../services/ip-access.service');
 const { createInstallRecorder } = require('./client-installs');
@@ -64,6 +64,20 @@ function notFound(res) {
   res.status(404).type('text/plain').send('Not found');
 }
 
+// Ссылки на установщик и portable — по именам файлов, под которыми выпуск
+// сохранён (release.json), а не по шаблону имени текущей сборки: выпуск,
+// сохранённый под другим именем (например, до переименования в CentyChat),
+// получает рабочую ссылку. Адреса относительные: клиент достраивает их от
+// адреса сервера, которому уже доверяет, — брать схему и узел из запроса за
+// прокси было бы нельзя.
+function downloadUrls(channel, release) {
+  const fileUrl = (kind) => {
+    const file = release?.files?.find((f) => f.kind === kind);
+    return file ? `/updates/${channel}/${encodeURIComponent(file.name)}` : null;
+  };
+  return { setupUrl: fileUrl('setup'), portableUrl: fileUrl('portable') };
+}
+
 function decideFor(channel, info) {
   const store = getUpdateStore();
   const policy = UpdatePolicy.getPolicy();
@@ -94,10 +108,7 @@ router.get('/policy.json', (req, res) => {
   }
 
   const enabled = !UpdatePolicy.isDisabledByEnv() && policy.enabled;
-  // Адреса относительные: клиент достраивает их от адреса сервера, которому
-  // уже доверяет, — брать схему и узел из запроса за прокси было бы нельзя.
-  const fileUrl = (name) => `/updates/${channel}/${encodeURIComponent(name)}`;
-  const hasFile = (name) => Boolean(release?.files.some((f) => f.name === name));
+  const { setupUrl, portableUrl } = downloadUrls(channel, release);
 
   res.set('Cache-Control', 'no-store').json({
     enabled,
@@ -107,8 +118,8 @@ router.get('/policy.json', (req, res) => {
     minVersion: enabled ? policy.minVersion : null,
     message: enabled ? policy.message : null,
     checkIntervalMinutes: policy.checkIntervalMinutes,
-    setupUrl: release ? fileUrl(setupNameOf(release.version)) : null,
-    portableUrl: release && hasFile(portableNameOf(release.version)) ? fileUrl(portableNameOf(release.version)) : null
+    setupUrl,
+    portableUrl
   });
 });
 
@@ -182,3 +193,4 @@ router.use((req, res) => notFound(res));
 module.exports = router;
 module.exports.downloadGate = downloadGate;
 module.exports.installRecorder = installRecorder;
+module.exports.downloadUrls = downloadUrls;

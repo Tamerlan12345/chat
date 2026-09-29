@@ -4,7 +4,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 baseDir = fso.GetParentFolderName(WScript.ScriptFullName)
 desktopDir = baseDir & "\desktop"
 serverDir = baseDir & "\server"
-builtExe = desktopDir & "\release\win-unpacked\OpenMyChat Enterprise.exe"
+builtExe = desktopDir & "\release\win-unpacked\CentyChat.exe"
 
 ' 1. Check if server is running; if not, start it silently in background
 On Error Resume Next

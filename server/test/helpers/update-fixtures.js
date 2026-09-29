@@ -13,7 +13,7 @@ function sha512(buf) {
 }
 
 function buildFixture(version, { exe, withBlockmap = true, withPortable = false, releaseDate = '2026-09-28T10:00:00.000Z' } = {}) {
-  const setupName = `OpenMyChat-Enterprise-Setup-${version}.exe`;
+  const setupName = `CentyChat-Setup-${version}.exe`;
   const setup = exe || Buffer.concat([Buffer.from('MZ'), crypto.randomBytes(4096)]);
   const hash = sha512(setup);
   const fixture = {
@@ -23,7 +23,7 @@ function buildFixture(version, { exe, withBlockmap = true, withPortable = false,
     sha512: hash,
     blockmapName: `${setupName}.blockmap`,
     blockmap: withBlockmap ? Buffer.from(`blockmap ${version}`) : null,
-    portableName: `OpenMyChat-Enterprise-Portable-${version}.exe`,
+    portableName: `CentyChat-Portable-${version}.exe`,
     portable: withPortable ? Buffer.concat([Buffer.from('MZ'), crypto.randomBytes(1024)]) : null
   };
   fixture.yml = renderFixtureYml({

@@ -13,7 +13,7 @@
 # перестаёт считаться действительной в тот день, когда истечёт сертификат,
 # и все уже установленные копии разом «портятся».
 #
-# Внутренний «OpenMyChat Enterprise.exe» и dll подписываются раньше — во время
+# Внутренний «CentyChat.exe» и dll подписываются раньше — во время
 # npm run dist, хуком scripts/sign-windows.js, пока они ещё не упакованы в
 # установщик. Здесь это проверяется: выпуск с неподписанным внутренним exe
 # останавливается.
@@ -97,8 +97,8 @@ Write-Host ""
 # обновлений и publish-update.ps1, так что здесь имя не меняется, только копия
 # уходит в installer/ — папку ручной раздачи сотрудникам.
 $Targets = @(
-    @{ Pattern = 'OpenMyChat-Enterprise-Setup-*.exe' },
-    @{ Pattern = 'OpenMyChat-Enterprise-Portable-*.exe' }
+    @{ Pattern = 'CentyChat-Setup-*.exe' },
+    @{ Pattern = 'CentyChat-Portable-*.exe' }
 )
 
 $signed = 0
@@ -153,7 +153,10 @@ if ($signed -eq 0) {
 # же папке раздачи): кто может подменить установщик, подменит и лежащий рядом
 # список, а сверка с суммой из другого источника подмену выдаёт.
 $SumsPath = Join-Path $InstallerDir 'SHA256SUMS.txt'
-$SumFiles = $copiedNames + @('Centras-Corporate-Root.cer')
+# Скрипты установки «копией» раздаются тем же комплектом и выполняются у
+# сотрудника — их подмену тоже должна выдавать сверка сумм.
+$CopyInstallKit = @('install.bat', 'install.ps1', 'uninstall.ps1', 'copy-install-common.ps1')
+$SumFiles = $copiedNames + @('Centras-Corporate-Root.cer') + $CopyInstallKit
 $lines = foreach ($name in $SumFiles) {
     $file = Join-Path $InstallerDir $name
     if (Test-Path -LiteralPath $file) {
@@ -166,7 +169,7 @@ $lines = foreach ($name in $SumFiles) {
 Write-Host ""
 Write-Host "SHA-256 (опубликуйте отдельно от файлов):" -ForegroundColor Cyan
 $lines | ForEach-Object { Write-Host "  $_" }
-Write-Host "Проверка у сотрудника: Get-FileHash .\OpenMyChat-Enterprise-Setup-<версия>.exe" -ForegroundColor DarkGray
+Write-Host "Проверка у сотрудника: Get-FileHash .\CentyChat-Setup-<версия>.exe" -ForegroundColor DarkGray
 Write-Host ""
 
 # Статус UnknownError здесь — норма: подпись на месте, но корневой сертификат

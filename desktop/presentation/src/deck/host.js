@@ -6,7 +6,7 @@ import appCss from '../../dist-app/app.css?raw';
 const esc = (code) => String(code).replace(/<\/script/gi, '<\\/script');
 
 export function frameSrcDoc(boot) {
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>OpenMyChat Enterprise</title>
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>CentyChat</title>
 <style>${appCss}</style></head><body><div id="root"></div>
 <script>window.__OMC__=${JSON.stringify(boot).replace(/</g, '\\u003c')};<\/script>
 <script type="module">${esc(appJs)}<\/script></body></html>`;

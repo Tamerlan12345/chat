@@ -72,6 +72,11 @@ function isTruthyFlag(value) {
 
 function policyPaths({ programData, userData } = {}) {
   const out = [];
+  // Папка в ProgramData носит прежнее имя продукта: этот файл уже разложен
+  // администраторами по машинам, и после переименования в CentyChat он должен
+  // действовать как раньше. Новой папки «CentyChat» в ProgramData нет и не
+  // будет — туда может писать любой пользователь ПК; настройки машины теперь
+  // только в реестре HKLM (см. client-config.js).
   if (programData) out.push(path.join(programData, 'OpenMyChat Enterprise', POLICY_FILE));
   if (userData) out.push(path.join(userData, POLICY_FILE));
   return out;
