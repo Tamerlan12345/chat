@@ -114,13 +114,20 @@ test('переименование: установка через NSIS узна�
   assert.match(nsh, /!macro customInstall\b[^]*Delete "\$INSTDIR\\\$\{CENTY_LEGACY_UNINSTALLER\}"[^]*!macroend/);
 });
 
-test('переименование: установка «копией» 1.0.0 убирается установщиком, папка — без захода в точки соединения', () => {
+test('переименование: установка «копией» убирается установщиком — всё или ничего, без захода в точки соединения', () => {
   // Поведение проверяет installer-nsh.test.js настоящим makensis; здесь —
   // то, что должно остаться в тексте, даже если makensis на машине нет.
   const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
-  assert.match(nsh, /!define \/ifndef CENTY_LEGACY_COPY_DIR "\$LOCALAPPDATA\\Programs\\OpenMyChat Enterprise"/, 'только папка, куда её ставил install.ps1 1.0.0');
+  assert.match(nsh, /!define \/ifndef CENTY_COPY_PROGRAMS_DIR "\$LOCALAPPDATA\\Programs"/, 'копия — только прямая подпапка Programs, как в Test-CentyChatCopyDir');
   assert.match(nsh, /!macro customInit\b[^]*INSTALL_REGISTRY_KEY[^]*CENTY_COPY_ARP_KEY[^]*!macroend/, 'копия ищется, только если нет установки через Setup.exe');
-  assert.match(nsh, /rmdir \/s \/q "%CENTY_LEGACY_DIR%"/);
+  // Сначала переименование (удаётся, только если папку никто не держит),
+  // потом удаление; запись копии — после.
+  const body = nsh.slice(nsh.indexOf('!macro customInstall'), nsh.indexOf('!macro customUnInstall'));
+  const renameAt = body.indexOf('Rename "$centyCopyDir" "$R3"');
+  const rmdirAt = body.indexOf('rmdir /s /q "%CENTY_COPY_TRASH%"', renameAt);
+  const arpAt = body.indexOf('DeleteRegKey HKCU "${CENTY_COPY_ARP_KEY}"');
+  assert.ok(renameAt > 0 && rmdirAt > renameAt && arpAt > rmdirAt, 'переименование → удаление папки → удаление записи');
+  assert.match(body, /taskkill \/F \/IM "\$\{CENTY_EXE\}"/, 'запасной путь закрытия');
   assert.ok(!/^\s*RMDir \/r/m.test(nsh), 'RMDir /r проходит по точкам соединения');
   assert.match(nsh, /WriteRegStr HKCU "\$\{CENTY_RUN_KEY\}" "\$\{CENTY_AUMID\}" '"\$appExe" --autostart'/);
 });

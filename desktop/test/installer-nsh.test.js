@@ -1,17 +1,20 @@
 // Проверяет desktop/build/installer.nsh настоящим makensis из кэша
 // electron-builder: макросы собираются с -WX (как в сборке: предупреждение —
 // ошибка) и для установщика, и для деинсталлятора, а затем тестовый
-// установщик с этими макросами запускается на песочнице. Имена ключей
-// реестра, папка копии 1.0.0 и ярлыки подменяются через !define (installer.nsh
+// установщик с этими макросами запускается на песочнице. Ключи реестра,
+// %LOCALAPPDATA%\Programs и ярлыки подменяются через !define (installer.nsh
 // задаёт их через !define /ifndef) — настоящий профиль не трогается.
 //
-// Что проверяется — переход на CentyChat с установки «копией» 1.0.0, когда
-// установки через Setup.exe нет: запущенная 1.0.0 закрывается, её ярлыки,
-// запись и папка убираются (точки соединения внутри не проходятся),
-// автозапуск переписывается на новый exe. И что при установке через Setup.exe
-// или чужой папке ничего из этого не происходит.
+// Что проверяется — переход на CentyChat с установки «копией» (1.0.0 или уже
+// обновлённой новым install.ps1), когда установки через Setup.exe нет:
+// запущенное из папки копии закрывается, папка убирается (точки соединения
+// внутри не проходятся), а запись и прежние ярлыки — только если папки не
+// стало; автозапуск переписывается на новый exe, только если вёл в прежнюю
+// установку. И что при установке через Setup.exe, чужой папке или папке,
+// которую не удалось освободить, копия остаётся как была.
 //
-// Без makensis в кэше (сборки на этой машине не было) тест пропускается.
+// Без makensis в кэше (сборки на этой машине не было) тест пропускается —
+// кроме CI (переменная CI задана): там это ошибка.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -24,6 +27,8 @@ const { spawn, spawnSync } = require('node:child_process');
 const DESKTOP = path.join(__dirname, '..');
 const NSH = path.join(DESKTOP, 'build', 'installer.nsh');
 const TEMPLATE_INCLUDE = path.join(DESKTOP, 'node_modules', 'app-builder-lib', 'templates', 'nsis', 'include');
+const SYSTEM32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+const PING = path.join(SYSTEM32, 'PING.EXE');
 
 function electronBuilderCache() {
   if (process.env.ELECTRON_BUILDER_CACHE) return process.env.ELECTRON_BUILDER_CACHE;
@@ -48,9 +53,10 @@ function findInCache(prefix, rel) {
 
 const MAKENSIS = process.platform === 'win32' ? findInCache('nsis-3', path.join('Bin', 'makensis.exe')) : null;
 const PLUGINS = process.platform === 'win32' ? findInCache('nsis-resources-', path.join('plugins', 'x86-unicode')) : null;
+const MISSING = 'нет makensis в кэше electron-builder (соберите установщик хотя бы раз: npm run dist:nsis)';
 const SKIP = process.platform !== 'win32'
   ? 'только Windows'
-  : (!MAKENSIS || !PLUGINS) && 'нет makensis в кэше electron-builder (соберите установщик хотя бы раз: npm run dist:nsis)';
+  : (!MAKENSIS || !PLUGINS) && !process.env.CI && MISSING;
 
 const REG_ROOT = `Software\\CentyChatNshTest-${crypto.randomBytes(4).toString('hex')}`;
 const KEYS = {
@@ -67,6 +73,7 @@ const paths = () => ({
   programs: path.join(sandbox, 'Local', 'Programs'),
   legacy: path.join(sandbox, 'Local', 'Programs', 'OpenMyChat Enterprise'),
   fresh: path.join(sandbox, 'Local', 'Programs', 'CentyChat'),
+  desktop: path.join(sandbox, 'Desktop'),
   desktopLnk: path.join(sandbox, 'Desktop', 'OpenMyChat Enterprise.lnk'),
   menuLnk: path.join(sandbox, 'Menu', 'OpenMyChat Enterprise.lnk'),
   outside: path.join(sandbox, 'outside')
@@ -88,7 +95,7 @@ function harness({ uninstaller, outFile }) {
     `!define INSTALL_REGISTRY_KEY "${KEYS.install}"`,
     `!define CENTY_RUN_KEY "${KEYS.run}"`,
     `!define CENTY_COPY_ARP_KEY "${KEYS.arp}"`,
-    `!define CENTY_LEGACY_COPY_DIR "${p.legacy}"`,
+    `!define CENTY_COPY_PROGRAMS_DIR "${p.programs}"`,
     `!define CENTY_LEGACY_DESKTOP_LNK "${p.desktopLnk}"`,
     `!define CENTY_LEGACY_MENU_LNK "${p.menuLnk}"`,
     uninstaller ? '!define BUILD_UNINSTALLER' : '',
@@ -158,39 +165,47 @@ const regKeyExists = (key) => reg(['query', `HKCU\\${key}`]).status === 0;
 function resetSandbox() {
   reg(['delete', `HKCU\\${REG_ROOT}`, '/f']);
   const p = paths();
-  for (const dir of [path.join(sandbox, 'Local'), path.join(sandbox, 'Desktop'), path.join(sandbox, 'Menu'), p.outside]) {
+  for (const dir of [path.join(sandbox, 'Local'), p.desktop, path.join(sandbox, 'Menu'), p.outside]) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  for (const dir of [p.programs, path.join(sandbox, 'Desktop'), path.join(sandbox, 'Menu'), p.outside]) {
+  for (const dir of [p.programs, p.desktop, path.join(sandbox, 'Menu'), p.outside]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-// Копия 1.0.0 «копией»: exe, ресурсы, ярлыки, запись; внутри — точка
-// соединения на папку снаружи с файлом, который должен уцелеть.
-function makeLegacyCopy(dir, { withJunction = true, withUninstallScript = true } = {}) {
+function makeShortcut(lnk, target) {
+  const ps = `$s = (New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}'); $s.TargetPath = '${target}'; $s.Save()`;
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(r.status, 0, r.stderr);
+}
+
+// Установка «копией» в папке dir: exe (копия ping.exe, чтобы его можно было
+// запустить), ресурсы, uninstall.ps1, запись; у 1.0.0 — ярлыки
+// «OpenMyChat Enterprise.lnk», у уже обновлённой — «CentyChat.lnk». Внутри по
+// желанию — точка соединения на папку снаружи с файлом, который должен уцелеть.
+function makeCopy(dir, { exe = 'OpenMyChat Enterprise.exe', withJunction = false } = {}) {
   const p = paths();
   fs.mkdirSync(path.join(dir, 'resources'), { recursive: true });
-  fs.copyFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'PING.EXE'), path.join(dir, 'OpenMyChat Enterprise.exe'));
+  fs.copyFileSync(PING, path.join(dir, exe));
   fs.writeFileSync(path.join(dir, 'resources', 'app.asar'), 'old');
-  if (withUninstallScript) fs.writeFileSync(path.join(dir, 'uninstall.ps1'), '# old');
+  fs.writeFileSync(path.join(dir, 'uninstall.ps1'), '# copy');
+  fs.writeFileSync(path.join(dir, 'copy-install-common.ps1'), '# copy');
   if (withJunction) {
     fs.writeFileSync(path.join(p.outside, 'keep.txt'), 'keep');
     const r = spawnSync('cmd.exe', ['/c', 'mklink', '/J', path.join(dir, 'link'), p.outside], { encoding: 'utf8', windowsHide: true });
     assert.strictEqual(r.status, 0, r.stderr || r.stdout);
   }
-  const ps = [
-    '$ws = New-Object -ComObject WScript.Shell',
-    ...[p.desktopLnk, p.menuLnk].map((lnk) => `$s = $ws.CreateShortcut('${lnk}'); $s.TargetPath = '${path.join(dir, 'OpenMyChat Enterprise.exe')}'; $s.Save()`)
-  ].join('; ');
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true });
-  assert.strictEqual(r.status, 0, r.stderr);
+  if (exe === 'OpenMyChat Enterprise.exe') {
+    for (const lnk of [p.desktopLnk, p.menuLnk]) makeShortcut(lnk, path.join(dir, exe));
+  } else {
+    makeShortcut(path.join(p.desktop, 'CentyChat.lnk'), path.join(dir, exe));
+  }
   regSet(KEYS.arp, 'InstallLocation', dir);
+  return path.join(dir, exe);
 }
 
-function startLegacyApp(dir) {
-  const child = spawn(path.join(dir, 'OpenMyChat Enterprise.exe'), ['-n', '120', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });
-  return child;
+function start(exe, { cwd } = {}) {
+  return spawn(exe, ['-n', '120', '127.0.0.1'], { stdio: 'ignore', windowsHide: true, cwd });
 }
 
 function isRunning(pid) {
@@ -199,6 +214,16 @@ function isRunning(pid) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function withProcesses(children, fn) {
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    for (const child of children) assert.ok(isRunning(child.pid), 'подставной процесс запущен');
+    await fn();
+  } finally {
+    for (const child of children) if (isRunning(child.pid)) child.kill();
   }
 }
 
@@ -214,8 +239,11 @@ function runInstaller(installDir) {
   assert.strictEqual(r.status, 0, `установщик завершился с кодом ${r.status}`);
 }
 
+const leftovers = () => fs.readdirSync(paths().programs).filter((n) => n.includes('~centychat-remove'));
+
 test.before(() => {
   if (SKIP) return;
+  assert.ok(MAKENSIS && PLUGINS, `CI: ${MISSING}`);
   sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'centychat-nsh-'));
   const built = compile(false);
   assert.strictEqual(built.status, 0, `makensis (установщик):\n${built.stdout}\n${built.stderr}`);
@@ -223,7 +251,7 @@ test.before(() => {
 });
 
 test.after(() => {
-  if (SKIP) return;
+  if (SKIP || !sandbox) return;
   reg(['delete', `HKCU\\${REG_ROOT}`, '/f']);
   fs.rmSync(sandbox, { recursive: true, force: true });
 });
@@ -236,46 +264,119 @@ test('installer.nsh собирается с -WX и в деинсталлятор
 test('копия 1.0.0 без установки через Setup.exe: закрыта, ярлыки, запись и папка убраны, автозапуск на новом exe', { skip: SKIP }, async () => {
   resetSandbox();
   const p = paths();
-  makeLegacyCopy(p.legacy);
-  regSet(KEYS.run, AUMID, `"${path.join(p.legacy, 'OpenMyChat Enterprise.exe')}" --autostart`);
-  // Тот же exe из другой папки (например, portable) закрываться не должен:
+  const exe = makeCopy(p.legacy, { withJunction: true });
+  regSet(KEYS.run, AUMID, `"${exe}" --autostart`);
+  // Тот же exe из другой папки (например, portable) не закрывается:
   // закрывается только запущенное из папки копии.
   const other = path.join(sandbox, 'Local', 'portable');
   fs.mkdirSync(other, { recursive: true });
-  fs.copyFileSync(path.join(p.legacy, 'OpenMyChat Enterprise.exe'), path.join(other, 'OpenMyChat Enterprise.exe'));
-  const app = startLegacyApp(p.legacy);
-  const otherApp = startLegacyApp(other);
-  try {
-    await new Promise((r) => setTimeout(r, 500));
-    assert.ok(isRunning(app.pid), 'подставная 1.0.0 запущена');
-
+  fs.copyFileSync(PING, path.join(other, 'OpenMyChat Enterprise.exe'));
+  const app = start(exe);
+  const otherApp = start(path.join(other, 'OpenMyChat Enterprise.exe'));
+  await withProcesses([app, otherApp], () => {
     runInstaller(p.fresh);
-
     assert.ok(!isRunning(app.pid), 'запущенная 1.0.0 закрыта');
-    assert.ok(isRunning(otherApp.pid), 'exe с тем же именем из другой папки не закрыт (закрытие — по пути, через PowerShell)');
-    assert.ok(fs.existsSync(path.join(p.fresh, 'CentyChat.exe')));
-    assert.ok(!fs.existsSync(p.legacy), 'папка копии 1.0.0 удалена');
-    assert.strictEqual(fs.readFileSync(path.join(p.outside, 'keep.txt'), 'utf8'), 'keep', 'цель точки соединения не тронута');
-    assert.ok(!fs.existsSync(p.desktopLnk) && !fs.existsSync(p.menuLnk), 'ярлыки 1.0.0 удалены');
-    assert.ok(!regKeyExists(KEYS.arp), 'запись копии в «Установке и удалении программ» удалена');
-    assert.strictEqual(regGet(KEYS.run, AUMID), `"${path.join(p.fresh, 'CentyChat.exe')}" --autostart`);
-  } finally {
-    for (const child of [app, otherApp]) if (isRunning(child.pid)) child.kill();
-  }
+    assert.ok(isRunning(otherApp.pid), 'exe с тем же именем из другой папки не закрыт');
+  });
+  assert.ok(fs.existsSync(path.join(p.fresh, 'CentyChat.exe')));
+  assert.ok(!fs.existsSync(p.legacy), 'папка копии 1.0.0 удалена');
+  assert.deepStrictEqual(leftovers(), [], 'переименованная для удаления папка тоже убрана');
+  assert.strictEqual(fs.readFileSync(path.join(p.outside, 'keep.txt'), 'utf8'), 'keep', 'цель точки соединения не тронута');
+  assert.ok(!fs.existsSync(p.desktopLnk) && !fs.existsSync(p.menuLnk), 'ярлыки 1.0.0 удалены');
+  assert.ok(!regKeyExists(KEYS.arp), 'запись копии в «Установке и удалении программ» удалена');
+  assert.strictEqual(regGet(KEYS.run, AUMID), `"${path.join(p.fresh, 'CentyChat.exe')}" --autostart`);
 });
 
-test('есть установка через Setup.exe: копию не трогаем, автозапуска не было — не появляется', { skip: SKIP }, () => {
+test('копия, уже обновлённая install.ps1 до CentyChat.exe в прежней папке, тоже убирается', { skip: SKIP }, async () => {
   resetSandbox();
   const p = paths();
-  makeLegacyCopy(p.legacy, { withJunction: false });
-  regSet(KEYS.install, 'InstallLocation', p.fresh);
+  const exe = makeCopy(p.legacy, { exe: 'CentyChat.exe' });
+  regSet(KEYS.run, AUMID, `"${exe}" --autostart`);
+  const app = start(exe);
+  await withProcesses([app], () => {
+    runInstaller(p.fresh);
+    assert.ok(!isRunning(app.pid), 'запущенная копия закрыта');
+  });
+  assert.ok(!fs.existsSync(p.legacy), 'папка копии удалена');
+  assert.ok(!regKeyExists(KEYS.arp), 'запись копии удалена — в «Установке и удалении программ» одна запись');
+  assert.ok(fs.existsSync(path.join(p.desktop, 'CentyChat.lnk')), 'CentyChat.lnk не трогается: в сборке его пересоздаёт сам установщик');
+  assert.strictEqual(regGet(KEYS.run, AUMID), `"${path.join(p.fresh, 'CentyChat.exe')}" --autostart`);
+});
+
+test('копия в другой подпапке Programs тоже убирается', { skip: SKIP }, () => {
+  resetSandbox();
+  const p = paths();
+  const dir = path.join(p.programs, 'Chat');
+  makeCopy(dir, { exe: 'CentyChat.exe' });
+  runInstaller(p.fresh);
+  assert.ok(!fs.existsSync(dir));
+  assert.ok(!regKeyExists(KEYS.arp));
+  assert.strictEqual(regGet(KEYS.run, AUMID), null, 'автозапуска не было — не появляется');
+});
+
+test('автозапуск на постороннем пути (portable) не трогается', { skip: SKIP }, () => {
+  resetSandbox();
+  const p = paths();
+  makeCopy(p.legacy);
+  const portable = `"${path.join(sandbox, 'Downloads', 'CentyChat-Portable-1.1.0.exe')}" --autostart`;
+  regSet(KEYS.run, AUMID, portable);
+  runInstaller(p.fresh);
+  assert.ok(!fs.existsSync(p.legacy), 'копия убрана');
+  assert.strictEqual(regGet(KEYS.run, AUMID), portable);
+});
+
+test('процесс с тем же именем из другой папки держит папку копии — taskkill, и копия всё же убрана', { skip: SKIP }, async () => {
+  resetSandbox();
+  const p = paths();
+  makeCopy(p.legacy, { exe: 'CentyChat.exe' });
+  fs.mkdirSync(path.join(p.legacy, 'locked'));
+  // Запущен не из папки копии (закрытие по пути его не находит), но его
+  // текущая папка — внутри неё, и переименовать папку нельзя, пока он жив.
+  const other = path.join(sandbox, 'Local', 'elsewhere');
+  fs.mkdirSync(other, { recursive: true });
+  fs.copyFileSync(PING, path.join(other, 'CentyChat.exe'));
+  const holder = start(path.join(other, 'CentyChat.exe'), { cwd: path.join(p.legacy, 'locked') });
+  await withProcesses([holder], () => {
+    runInstaller(p.fresh);
+    assert.ok(!isRunning(holder.pid), 'закрыт запасным путём — taskkill по имени');
+  });
+  assert.ok(!fs.existsSync(p.legacy));
+  assert.ok(!regKeyExists(KEYS.arp));
+});
+
+test('папку копии не удалось освободить — копия, запись и ярлыки остаются как были', { skip: SKIP }, async () => {
+  resetSandbox();
+  const p = paths();
+  const exe = makeCopy(p.legacy);
+  regSet(KEYS.run, AUMID, `"${exe}" --autostart`);
+  fs.mkdirSync(path.join(p.legacy, 'locked'));
+  // Посторонний процесс (не наш exe — ни закрытие по пути, ни taskkill его
+  // не трогают) с текущей папкой внутри копии.
+  const holder = start(PING, { cwd: path.join(p.legacy, 'locked') });
+  await withProcesses([holder], () => runInstaller(p.fresh));
+  for (const name of ['OpenMyChat Enterprise.exe', 'uninstall.ps1', 'copy-install-common.ps1', path.join('resources', 'app.asar')]) {
+    assert.ok(fs.existsSync(path.join(p.legacy, name)), `${name} на месте — удалять нечего было частично`);
+  }
+  assert.deepStrictEqual(leftovers(), []);
+  assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), p.legacy, 'запись на месте — копию можно удалить штатно');
+  assert.ok(fs.existsSync(p.desktopLnk) && fs.existsSync(p.menuLnk), 'ярлыки на месте');
+  assert.strictEqual(regGet(KEYS.run, AUMID), `"${exe}" --autostart`, 'автозапуск по-прежнему на копию');
+});
+
+test('есть установка через Setup.exe: копию не трогаем, автозапуск на прежнюю установку — на новый exe', { skip: SKIP }, () => {
+  resetSandbox();
+  const p = paths();
+  makeCopy(p.legacy);
+  const oldNsis = path.join(p.programs, 'Old NSIS');
+  regSet(KEYS.install, 'InstallLocation', oldNsis);
+  regSet(KEYS.run, AUMID, `"${path.join(oldNsis, 'OpenMyChat Enterprise.exe')}" --autostart`);
 
   runInstaller(p.fresh);
 
   assert.ok(fs.existsSync(path.join(p.legacy, 'OpenMyChat Enterprise.exe')), 'папка копии на месте');
   assert.ok(fs.existsSync(p.desktopLnk) && fs.existsSync(p.menuLnk), 'ярлыки на месте');
   assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), p.legacy, 'запись копии на месте');
-  assert.strictEqual(regGet(KEYS.run, AUMID), null, 'автозапуск не включён');
+  assert.strictEqual(regGet(KEYS.run, AUMID), `"${path.join(p.fresh, 'CentyChat.exe')}" --autostart`);
 });
 
 test('запись копии без uninstall.ps1 в папке — нерабочая, удаляется; запись на эту же папку — тоже', { skip: SKIP }, () => {
@@ -300,30 +401,41 @@ test('запись копии без uninstall.ps1 в папке — нераб�
   assert.ok(fs.existsSync(path.join(p.fresh, 'CentyChat.exe')));
 });
 
-test('новая установка внутри папки копии 1.0.0: папка остаётся, убирается только прежний exe', { skip: SKIP }, () => {
+test('новая установка внутри папки копии: папка остаётся, убираются exe и скрипт удаления копии', { skip: SKIP }, () => {
   resetSandbox();
   const p = paths();
-  makeLegacyCopy(p.legacy, { withJunction: false });
+  makeCopy(p.legacy);
   const nested = path.join(p.legacy, 'CentyChat');
 
   runInstaller(nested);
 
   assert.ok(fs.existsSync(path.join(nested, 'CentyChat.exe')), 'новая версия на месте');
   assert.ok(!fs.existsSync(path.join(p.legacy, 'OpenMyChat Enterprise.exe')), 'прежний exe удалён');
+  assert.ok(!fs.existsSync(path.join(p.legacy, 'uninstall.ps1')), 'uninstall.ps1 копии удалён — он снёс бы и новую установку');
   assert.ok(fs.existsSync(path.join(p.legacy, 'resources', 'app.asar')), 'остальное не трогается');
   assert.ok(!regKeyExists(KEYS.arp));
   assert.ok(!fs.existsSync(p.desktopLnk) && !fs.existsSync(p.menuLnk));
 });
 
-test('копия не в %LOCALAPPDATA%\\Programs\\OpenMyChat Enterprise — чужая папка, не трогается', { skip: SKIP }, () => {
+test('копия не в Programs или в папке-ссылке — чужая, не трогается', { skip: SKIP }, () => {
   resetSandbox();
   const p = paths();
   const elsewhere = path.join(sandbox, 'Local', 'Elsewhere', 'OpenMyChat Enterprise');
-  makeLegacyCopy(elsewhere, { withJunction: false });
-
+  makeCopy(elsewhere);
   runInstaller(p.fresh);
-
   assert.ok(fs.existsSync(path.join(elsewhere, 'OpenMyChat Enterprise.exe')));
   assert.ok(fs.existsSync(p.desktopLnk));
   assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), elsewhere);
+
+  resetSandbox();
+  const target = path.join(sandbox, 'Local', 'Target');
+  makeCopy(target, { exe: 'CentyChat.exe' });
+  const linked = path.join(p.programs, 'Linked');
+  const r = spawnSync('cmd.exe', ['/c', 'mklink', '/J', linked, target], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+  regSet(KEYS.arp, 'InstallLocation', linked);
+  runInstaller(p.fresh);
+  assert.ok(fs.existsSync(path.join(target, 'CentyChat.exe')), 'цель ссылки цела');
+  assert.ok(fs.existsSync(linked), 'сама ссылка тоже');
+  assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), linked);
 });
