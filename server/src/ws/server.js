@@ -5,7 +5,7 @@ const MessageService = require('../services/message.service');
 const RemoteDesktopService = require('../services/remote-desktop.service');
 const AuditService = require('../services/audit.service');
 const { isRateLimited, registerFailure } = require('../services/rate-limiter');
-const { getClientIp, isIpAllowed } = require('../services/ip-access.service');
+const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
@@ -286,14 +286,17 @@ class WsServer {
         const ip = getClientIp(info.req) || '127.0.0.1';
         if (!isIpAllowed(ip)) return callback(false, 403, 'IP not allowed');
         if (!originAllowed(info.req)) return callback(false, 403, 'Origin not allowed');
-        if ((this.socketsPerIp.get(ip) || 0) >= MAX_SOCKETS_PER_IP) return callback(false, 429, 'Too many connections');
+        // Предел соединений — на сеть /64 для IPv6, а не на отдельный адрес:
+        // иначе он обходился сменой адреса внутри своей же сети (Р4-02).
+        if ((this.socketsPerIp.get(rateLimitIpKey(ip)) || 0) >= MAX_SOCKETS_PER_IP) return callback(false, 429, 'Too many connections');
         callback(true);
       }
     });
 
     this.wss.on('connection', (ws, req) => {
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
-      this.socketsPerIp.set(ws.remoteIp, (this.socketsPerIp.get(ws.remoteIp) || 0) + 1);
+      ws.ipKey = rateLimitIpKey(ws.remoteIp);
+      this.socketsPerIp.set(ws.ipKey, (this.socketsPerIp.get(ws.ipKey) || 0) + 1);
       ws.isAlive = true;
       ws.connectedAt = new Date().toISOString();
 
@@ -379,9 +382,9 @@ class WsServer {
 
       ws.on('close', () => {
         clearTimeout(ws.authTimer);
-        const left = (this.socketsPerIp.get(ws.remoteIp) || 1) - 1;
-        if (left > 0) this.socketsPerIp.set(ws.remoteIp, left);
-        else this.socketsPerIp.delete(ws.remoteIp);
+        const left = (this.socketsPerIp.get(ws.ipKey) || 1) - 1;
+        if (left > 0) this.socketsPerIp.set(ws.ipKey, left);
+        else this.socketsPerIp.delete(ws.ipKey);
         Promise.resolve(this.handleDisconnect(ws)).catch((err) =>
           console.error('[WS Error] Разрыв соединения обработан с ошибкой:', err.message)
         );
@@ -479,7 +482,10 @@ class WsServer {
     if (type === 'auth') {
       // Считаются только неудачные попытки: офис за одним адресом после
       // перезапуска сервера переподключается целиком, и это не подбор.
-      const limitKey = `ws_auth:${ws.remoteIp || '127.0.0.1'}`;
+      // WebSocket проверяет только подписанный токен, не пароль, — подбором
+      // пароля этот путь не является, и счётчик у него свой, отдельный от
+      // входа по паролю. Ключ — по сети /64, как и у остальных пределов (Р4-02).
+      const limitKey = `ws_auth:${ws.ipKey || rateLimitIpKey(ws.remoteIp)}`;
       if (isRateLimited(limitKey, AUTH_LIMIT)) {
         return ws.send(JSON.stringify({
           type: 'auth_error',

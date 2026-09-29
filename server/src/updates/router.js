@@ -4,7 +4,7 @@ const config = require('../config');
 const UpdatePolicy = require('../services/update-policy.service');
 const { getUpdateStore, renderYml, feedOf, setupNameOf, portableNameOf, SAFE_FILE } = require('../services/update-store.service');
 const { checkRateLimit } = require('../services/rate-limiter');
-const { getClientIp } = require('../services/ip-access.service');
+const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
 const { createInstallRecorder } = require('./client-installs');
 
 // Публичные маршруты автообновления. Открыты без входа пользователя
@@ -89,7 +89,7 @@ router.get('/policy.json', (req, res) => {
   // штатной работе приложения, а не только electron-updater'ом. Сверх предела
   // просто пропускаем запись — ответ клиент всё равно получит (находка
   // ревью, задача 6).
-  if (checkRateLimit('upd:' + getClientIp(req), { maxAttempts: 120, windowMs: 60000 })) {
+  if (checkRateLimit('upd:' + rateLimitIpKey(getClientIp(req)), { maxAttempts: 120, windowMs: 60000 })) {
     recordInstall(req, info, channel);
   }
 
@@ -115,7 +115,7 @@ router.get('/policy.json', (req, res) => {
 router.get('/:channel/latest.yml', (req, res) => {
   const { channel } = req.params;
   if (!CHANNELS.has(channel)) return notFound(res);
-  if (!checkRateLimit('upd:' + getClientIp(req), { maxAttempts: 120, windowMs: 60000 })) {
+  if (!checkRateLimit('upd:' + rateLimitIpKey(getClientIp(req)), { maxAttempts: 120, windowMs: 60000 })) {
     res.set('Retry-After', '60');
     return res.status(429).json({ error: 'Слишком много запросов, повторите позже' });
   }

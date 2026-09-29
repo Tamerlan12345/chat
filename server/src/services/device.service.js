@@ -6,6 +6,7 @@ const OrgService = require('./org.service');
 const wsServer = require('../ws/server');
 const config = require('../config');
 const { checkRateLimit } = require('./rate-limiter');
+const { normalizeIp, rateLimitIpKey } = require('./ip-access.service');
 
 // Аудит, находка №8: анонимный knock не должен раздувать очередь без предела
 // и заваливать администраторов уведомлением на каждый «стук».
@@ -38,7 +39,12 @@ class DeviceService {
 
     const db = identity();
     const now = new Date().toISOString();
-    const cleanIp = String(ip_address || '127.0.0.1').replace(/^.*:/, '');
+    // Адрес приходит уже разобранным (getClientIp: IPv4 внутри IPv6 снят).
+    // Прежнее «всё до последнего двоеточия долой» превращало настоящий IPv6 в
+    // последнюю группу («2001:db8::1» → «1»): разные машины сливались в один
+    // счётчик очереди, а сопоставление с bound_ip не срабатывало вовсе
+    // (аудит, раунд 4, находка Р4-17).
+    const cleanIp = normalizeIp(ip_address || '127.0.0.1') || '127.0.0.1';
 
     const pairing = await db.get(
       `SELECT p.device_id, p.user_id, p.secret_hash, p.secret_token_version, p.secret_user_id,
@@ -168,7 +174,7 @@ class DeviceService {
 
     // Не чаще раза в 10 секунд на IP: без предела каждый из тысяч возможных
     // «стуков» с одного адреса будил бы администраторов заново (находка №8).
-    if (checkRateLimit(`knock-broadcast:${cleanIp}`, { maxAttempts: 1, windowMs: KNOCK_BROADCAST_THROTTLE_MS })) {
+    if (checkRateLimit(`knock-broadcast:${rateLimitIpKey(cleanIp)}`, { maxAttempts: 1, windowMs: KNOCK_BROADCAST_THROTTLE_MS })) {
       try {
         wsServer.broadcastToAdmins({
           type: 'device_knock_received',
