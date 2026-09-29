@@ -8884,3 +8884,98 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   font-size: 11px;
   font-weight: 600;
 }
+/* ==========================================================================
+   CENTYCHAT: ЗНАК, ВХОД, ОКНА, КНОПКИ, ПОЛЯ
+   Последний слой — поэтому итоговый. Только токены из :root: день и вечер
+   переключаются вместе со всем приложением.
+   ========================================================================== */
+
+/* ── Знак и название ─────────────────────────────────────────────────────── */
+
+.brand-mark { display: block; flex-shrink: 0; border-radius: 23%; }
+.brand-lockup { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-wordmark {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+/* Две половины названия различаются насыщенностью, а не цветом. */
+.brand-wordmark-accent { font-weight: 400; }
+
+/* ── Меню приложения ─────────────────────────────────────────────────────── */
+
+.menu-top-btn.menu-app-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px 0 5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.menu-drop-dot { display: inline-flex; justify-content: center; width: 14px; flex-shrink: 0; }
+.menu-drop-dot .chat-header-status-dot { margin: 0; }
+
+/* ── Вход ────────────────────────────────────────────────────────────────── */
+
+/* Ожидание ответа сервера при запуске. */
+.login-card--status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 320px;
+  padding: 36px;
+  text-align: center;
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+}
+.login-card--status .brand-mark { animation: brand-wait 1.6s ease-in-out infinite; }
+@keyframes brand-wait { 50% { opacity: 0.55; transform: scale(0.94); } }
+
+.modal-footer,
+.server-connect-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 12px 20px;
+  background: var(--bg-elevated-panel);
+  border-top: 1px solid var(--border-color);
+}
+
+.modal-brand-head { display: flex; align-items: center; gap: var(--space-3); }
+.modal-brand-title { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; color: var(--text-strong); }
+.modal-brand-sub { margin-top: 3px; font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* ── Консоль управления ──────────────────────────────────────────────────── */
+
+.admin-console-header {
+  padding: 12px 14px 12px 18px;
+  background: var(--bg-card);
+  color: var(--text-strong);
+  border-bottom: 1px solid var(--border-color);
+}
+.admin-console-title { gap: 10px; font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.01em; }
+.admin-console-org {
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--primary-soft);
+  color: var(--accent-text);
+  font-family: var(--font-family);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* ── Приветствие ─────────────────────────────────────────────────────────── */
+
+.greeting-illustration-box { margin-bottom: var(--space-5); }
+.greeting-illustration-box .brand-mark { box-shadow: 0 14px 32px light-dark(rgba(91, 78, 230, 0.24), rgba(0, 0, 0, 0.4)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card--status .brand-mark { animation: none; }
+}

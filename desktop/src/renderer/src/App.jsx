@@ -21,6 +21,7 @@ import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
 import Avatar from './components/Avatar';
 import Icon from './components/Icon';
+import { BrandMark } from './components/BrandMark';
 import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
@@ -2079,7 +2080,8 @@ export default function App() {
   if (authState === 'checking') {
     return (
       <div className="login-container">
-        <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
+        <div className="login-card login-card--status" role="status">
+          <BrandMark size={48} />
           <p>Подключение к CentyChat…</p>
         </div>
       </div>

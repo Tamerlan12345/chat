@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { BrandMark } from './BrandMark';
 
 export default function MenuBar({
   currentUser,
@@ -50,10 +51,11 @@ export default function MenuBar({
       {/* 1. Меню приложения */}
       <div className="menu-item-wrapper">
         <button
-          className={`menu-top-btn ${openMenu === 'mychat' ? 'active' : ''}`}
+          className={`menu-top-btn menu-app-btn ${openMenu === 'mychat' ? 'active' : ''}`}
           onClick={() => toggleMenu('mychat')}
         >
-          CentyChat
+          <BrandMark size={15} />
+          <span>CentyChat</span>
         </button>
         {openMenu === 'mychat' && (
           <div className="menu-dropdown-layer">
@@ -84,8 +86,8 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--accent-text)" }} strokeWidth="2" strokeLinecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-              <span style={{ fontWeight: 500, color: 'var(--accent-text)' }}>Сетевой сервер...</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              <span>Сетевой сервер…</span>
             </div>
             <div className="menu-drop-divider" />
             {/* Статус выставляет система. Вручную — только «Не беспокоить». */}
@@ -99,7 +101,7 @@ export default function MenuBar({
                 setOpenMenu(null);
               }}
             >
-              <span className="chat-header-status-dot dnd" style={{ marginRight: 8 }} />
+              <span className="menu-drop-dot" aria-hidden="true"><span className="chat-header-status-dot dnd" /></span>
               <span style={{ flex: 1 }}>Не беспокоить</span>
               {isDnd && <span className="menu-drop-check" aria-hidden="true">✓</span>}
             </div>

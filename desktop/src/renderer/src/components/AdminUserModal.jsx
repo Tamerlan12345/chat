@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useConfirm } from './ConfirmDialog';
 import { useInlineToast } from './InlineToast';
 import Icon from './Icon';
+import { BrandMark } from './BrandMark';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
 import FilePolicyAdmin from './FilePolicyAdmin';
@@ -1142,11 +1143,9 @@ export default function AdminUserModal({
         {/* Console Header */}
         <div className="admin-console-header">
           <div className="admin-console-title">
-            <Icon name="shield" size={18} />
+            <BrandMark size={22} />
             <span>Консоль управления CentyChat</span>
-            <span style={{ fontSize: '11px', background: 'var(--primary)', padding: '2px 8px', borderRadius: '10px' }}>
-              АО СК "Сентрас Иншуранс"
-            </span>
+            <span className="admin-console-org">АО СК «Сентрас Иншуранс»</span>
           </div>
           <button className="btn-close-modal" onClick={onClose} aria-label="Закрыть"><Icon name="x" size={16} /></button>
         </div>

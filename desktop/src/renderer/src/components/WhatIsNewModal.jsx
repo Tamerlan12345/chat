@@ -1,20 +1,30 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Icon from './Icon';
+import { BrandMark } from './BrandMark';
 
 export default function WhatIsNewModal({ onClose, serverInfo }) {
+  // Номер версии — настоящий, от оболочки. Раньше здесь была выдуманная
+  // строка «2026.3.1 (LTS)». У старой оболочки getAppInfo() нет — тогда
+  // версия просто не показывается.
+  const [version, setVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.getAppInfo?.()
+      .then((info) => { if (!cancelled && typeof info?.version === 'string') setVersion(info.version); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const subtitle = [serverInfo?.company_name || 'Корпоративная сеть', version && `версия ${version}`].filter(Boolean).join(' · ');
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-dialog whatisnew-dialog" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Icon name="message" size={24} />
+          <div className="modal-brand-head">
+            <BrandMark size={36} />
             <div>
-              <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-main)' }}>
-                CentyChat
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                {serverInfo?.company_name || 'Корпоративная сеть'} • Версия 2026.3.1 (LTS)
-              </div>
+              <div className="modal-brand-title">CentyChat</div>
+              <div className="modal-brand-sub">{subtitle}</div>
             </div>
           </div>
           <button className="btn-close-modal" onClick={onClose} aria-label="Закрыть"><Icon name="x" size={16} /></button>
@@ -82,7 +92,7 @@ export default function WhatIsNewModal({ onClose, serverInfo }) {
           </div>
         </div>
 
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid var(--border-color)' }}>
+        <div className="modal-footer">
           <button className="btn btn-primary" onClick={onClose}>
             Закрыть
           </button>
