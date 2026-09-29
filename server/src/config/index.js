@@ -90,6 +90,25 @@ function positiveInt(raw, fallback) {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+// Целое в пределах [min, max]; всё прочее (пусто, «abc», «30s», вне
+// диапазона) — значение по умолчанию и предупреждение в журнал. Пределы
+// защиты от подбора не должны молча превращаться в NaN: сравнение с NaN
+// всегда ложно, и порог просто перестаёт срабатывать (аудит, раунд 4,
+// находка Р4-07).
+function boundedInt(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const text = String(raw).trim();
+  const n = /^-?\d+$/.test(text) ? Number(text) : NaN;
+  if (!Number.isSafeInteger(n) || n < min || n > max) {
+    console.warn(
+      `[Config] ${name}="${raw}" — ожидается целое число от ${min} до ${max}; использую значение по умолчанию (${fallback}).`
+    );
+    return fallback;
+  }
+  return n;
+}
+
 const DEFAULT_LEGACY_TOKEN_CUTOFF = '2026-10-15T00:00:00Z';
 
 // Отсечка задаётся оператором как строка окружения — опечатка («2026-13-40»,
@@ -143,12 +162,33 @@ module.exports = {
   // (см. AuthService.loginLockKey/registerFailedAttempt), а не в базе:
   // перезапуск сервера или смена адреса атакующим возобновляют отсчёт заново
   // — приемлемый компромисс для временной задержки, а не жёсткой блокировки.
-  LOGIN_MAX_FAILED_ATTEMPTS: process.env.LOGIN_MAX_FAILED_ATTEMPTS
-    ? parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10)
-    : 10,
-  LOGIN_LOCKOUT_MINUTES: process.env.LOGIN_LOCKOUT_MINUTES
-    ? parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10)
-    : 15,
+  //
+  // Раньше оба значения читались parseInt без проверки: «abc» давало NaN, и
+  // задержка не наступала никогда (count >= NaN всегда ложно) — опечатка в
+  // настройках молча выключала защиту от подбора (Р4-07).
+  LOGIN_MAX_FAILED_ATTEMPTS: boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 }),
+  LOGIN_LOCKOUT_MINUTES: boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 }),
+  // Задержка по учётной записи независимо от адреса (подбор с многих адресов
+  // сразу) — см. services/login-throttle.service.js. Порог — сколько неудач со
+  // всех адресов вместе допускается за LOGIN_LOCKOUT_MINUTES без задержки;
+  // выше предела «адрес + логин», чтобы один ошибающийся сотрудник сюда не
+  // доходил. Потолок задержки — сколько, в худшем случае, ждёт между
+  // попытками сотрудник с незнакомого адреса, пока идёт подбор.
+  LOGIN_ACCOUNT_SOFT_LIMIT: boundedInt('LOGIN_ACCOUNT_SOFT_LIMIT', 20, { min: 2, max: 10000 }),
+  LOGIN_ACCOUNT_MAX_DELAY_SECONDS: boundedInt('LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 60, { min: 1, max: 3600 }),
+  // Сколько расчётов хэша пароля (scrypt, ~128 МиБ каждый) идут одновременно;
+  // остальные ждут в короткой очереди, переполненная очередь — отказ 503.
+  // Без предела поток попыток входа занимал все потоки libuv (на них же
+  // чтение и запись файлов) и поднимал память на 128 МиБ за каждый (Р4-03).
+  PASSWORD_HASH_CONCURRENCY: boundedInt('PASSWORD_HASH_CONCURRENCY', 2, { min: 1, max: 16 }),
+  // Общий потолок анонимных запросов к /api и /health с одного адреса (сети
+  // /64 для IPv6) в минуту. Щедрый — офис за одним NAT при запуске делает
+  // несколько анонимных запросов на человека; 0 — выключено (Р4-12).
+  ANON_RATE_LIMIT_PER_MINUTE: boundedInt('ANON_RATE_LIMIT_PER_MINUTE', 3000, { min: 0, max: 1000000 }),
+  // Объём загрузок вложений на одного сотрудника за час (окно отсчитывается
+  // от первой загрузки), МБ;
+  // 0 — без предела (Р4-11).
+  UPLOAD_MAX_MB_PER_HOUR: boundedInt('UPLOAD_MAX_MB_PER_HOUR', 2048, { min: 0, max: 1000000 }),
   // Секрет устройства (вход без пароля) не вечен: не подтверждённый повторным
   // входом по паролю дольше этого срока перестаёт действовать сам. Без этого
   // предела украденная копия localStorage работала бы бессрочно (аудит,

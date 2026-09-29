@@ -5,6 +5,15 @@ const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
 const { isRateLimited, registerFailure, resetLimit } = require('./rate-limiter');
+const LoginThrottle = require('./login-throttle.service');
+const { canonicalUsername } = LoginThrottle;
+const { rateLimitIpKey } = require('./ip-access.service');
+
+// Логин длиннее этого не заводится ни регистрацией (до 64), ни разумным
+// администратором. Такой «логин» отклоняется сразу, до базы и до ключей
+// ограничителей: иначе каждый ключ в памяти нёс бы до 256 КБ строки из тела
+// запроса (аудит, раунд 4, находка Р4-04).
+const MAX_LOGIN_LENGTH = 256;
 
 // Одно сообщение на все отказы, включая временную блокировку: отдельный
 // текст о блокировке выдавал, что такой логин существует.
@@ -38,14 +47,74 @@ function sessionMaxSeconds() {
 function dummyHash() {
   if (!dummyHashPromise) {
     dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
+    // Неудачный расчёт (например, очередь хэшей переполнена) не должен
+    // запомниться навсегда — следующий вызов попробует снова.
+    dummyHashPromise.catch(() => { dummyHashPromise = null; });
   }
   return dummyHashPromise;
 }
 
-// Ключ ограничителя входа — конкретный адрес и конкретный логин, не учётная
-// запись сама по себе (см. registerFailedAttempt/login).
+// Сколько в среднем занимает проверка пароля с нынешними параметрами scrypt.
+// Нужна, чтобы выровнять по времени отказ для учётной записи, чей пароль ещё
+// хранится с прежними, более дешёвыми параметрами (N=2^15 или старый формат):
+// такая проверка идёт вчетверо быстрее приманки для несуществующего логина, и
+// по секундомеру отличались бы «есть такой, но давно не входил» и «нет
+// такого» — ровно на недели после подъёма N (аудит, раунд 4, находка Р4-09).
+let fullVerifyMs = 0;
+function noteFullVerify(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  fullVerifyMs = fullVerifyMs ? fullVerifyMs * 0.8 + ms * 0.2 : ms;
+}
+
+// Проверка против приманки. Ошибку «очередь хэшей переполнена» не глотает —
+// иначе при перегрузке несуществующий логин отвечал бы мгновенно, а
+// существующий — 503.
+async function dummyVerify(password) {
+  const started = Date.now();
+  try {
+    await verifyPassword(password, await dummyHash());
+  } catch (err) {
+    if (err?.code === 'PASSWORD_HASH_BUSY') throw err;
+    return;
+  }
+  if (typeof password === 'string' && password) noteFullVerify(Date.now() - started);
+}
+
+async function padToFullVerify(password, startedAt) {
+  if (!fullVerifyMs) {
+    // Образца ещё нет (первый отказ после запуска) — одна настоящая проверка
+    // приманки и даёт нужную длительность, и сама её выдерживает.
+    await dummyVerify(password);
+    return;
+  }
+  const left = fullVerifyMs - (Date.now() - startedAt);
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+}
+
+function throttledError(retryAfterMs) {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  // Текст не говорит, существует ли логин: задержка ведётся по имени и
+  // одинаково наступает и для несуществующих.
+  const err = new Error(`Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`);
+  err.code = 'ACCOUNT_THROTTLED';
+  err.retryAfterSeconds = seconds;
+  return err;
+}
+
+// «Знакомый» адрес для учётной записи: с него уже был удачный вход — сейчас
+// (в памяти процесса) или последний раз (last_login_ip в базе, переживает
+// перезапуск). С такого адреса задержка по учётной записи не действует — см.
+// services/login-throttle.service.js.
+function isTrustedSource(nameKey, ipKey, lastLoginIp) {
+  if (LoginThrottle.isKnownSource(nameKey, ipKey)) return true;
+  return Boolean(lastLoginIp) && rateLimitIpKey(lastLoginIp) === ipKey;
+}
+
+// Ключ ограничителя входа — конкретный адрес (сеть /64 для IPv6) и логин в
+// единой форме (canonicalUsername), не учётная запись сама по себе (см.
+// registerFailedAttempt/login).
 function loginLockKey(ip, username) {
-  return `login-lock:${ip || 'unknown'}:${String(username || '').trim().toLowerCase()}`;
+  return `login-lock:${rateLimitIpKey(ip)}:${canonicalUsername(username)}`;
 }
 function loginLockOptions() {
   return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
@@ -62,7 +131,7 @@ function loginLockOptions() {
 const lockedUsernamesUntil = new Map(); // логин в нижнем регистре -> когда снимется
 
 function markUsernameLocked(username, windowMs) {
-  lockedUsernamesUntil.set(String(username || '').trim().toLowerCase(), Date.now() + windowMs);
+  lockedUsernamesUntil.set(canonicalUsername(username), Date.now() + windowMs);
 }
 
 // Живой снимок, не кэш: устаревшие записи вычищаются здесь же, при каждом
@@ -240,49 +309,90 @@ class AuthService {
   }
 
   static async login(username, password, { ip = null } = {}) {
+    const nameKey = canonicalUsername(username);
+    if (!nameKey || nameKey.length > MAX_LOGIN_LENGTH) throw new Error(INVALID_CREDENTIALS);
+    const ipKey = rateLimitIpKey(ip);
+
     const db = identity();
     const row = await db.get(
       `SELECT u.id, u.username, u.password_hash, u.salt, u.is_active, u.approval_status,
-              u.token_version
+              u.token_version, u.last_login_ip
        FROM users u WHERE u.username = $1`,
       [String(username || '').trim()]
     );
 
-    // Отсутствующий, отключённый сотрудник и неверный пароль отвечают одним и
-    // тем же сообщением и за одно и то же время: по разнице ответов (или по
-    // секундомеру — scrypt идёт сотни миллисекунд) перебором выясняется, какие
-    // логины заведены в компании.
-    if (!row || !row.is_active) {
-      await verifyPassword(password, await dummyHash()).catch(() => {});
-      throw new Error(INVALID_CREDENTIALS);
+    // Задержка по учётной записи со всех адресов сразу (Р4-01) — до проверки
+    // пароля: пока она действует, пароль с незнакомого адреса не проверяется
+    // вовсе. Одинаково для существующих и несуществующих логинов (счёт по
+    // имени), и отвечает одинаково быстро — без scrypt.
+    const trusted = Boolean(row) && isTrustedSource(nameKey, ipKey, row.last_login_ip);
+    const admission = LoginThrottle.admit(nameKey, { trusted });
+    if (!admission.ok) throw throttledError(admission.retryAfterMs);
+    if (admission.engaged) {
+      require('./audit.service').log({
+        userId: row?.id ?? null,
+        action: 'login_account_throttled',
+        ip,
+        details: { username: nameKey.slice(0, 64) }
+      });
     }
 
-    // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
-    // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
-    // для всей компании, включая настоящего владельца с любого другого места
-    // (аудит, находка №12; план 1.7 — задержка по IP+имени вместо жёсткой
-    // блокировки). Ключ в памяти процесса, как и остальные ограничители —
-    // после перезапуска отсчёт начинается заново, что для временной задержки
-    // приемлемо.
-    if (isRateLimited(loginLockKey(ip, row.username), loginLockOptions())) {
-      await verifyPassword(password, await dummyHash()).catch(() => {});
-      throw new Error(INVALID_CREDENTIALS);
-    }
+    let outcome = 'neutral';
+    try {
+      // Отсутствующий, отключённый сотрудник и неверный пароль отвечают одним и
+      // тем же сообщением и за одно и то же время: по разнице ответов (или по
+      // секундомеру — scrypt идёт сотни миллисекунд) перебором выясняется, какие
+      // логины заведены в компании.
+      if (!row || !row.is_active) {
+        outcome = 'failure';
+        await dummyVerify(password);
+        throw new Error(INVALID_CREDENTIALS);
+      }
 
-    const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
-    if (!ok) {
-      await this.registerFailedAttempt(row, ip);
-      throw new Error(INVALID_CREDENTIALS);
-    }
+      // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
+      // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
+      // для всей компании, включая настоящего владельца с любого другого места
+      // (аудит, находка №12; план 1.7 — задержка по IP+имени вместо жёсткой
+      // блокировки). Ключ в памяти процесса, как и остальные ограничители —
+      // после перезапуска отсчёт начинается заново, что для временной задержки
+      // приемлемо. Пароль здесь не проверяется — и в счёт учётной записи эта
+      // попытка не идёт (outcome остаётся 'neutral').
+      if (isRateLimited(loginLockKey(ip, nameKey), loginLockOptions())) {
+        await dummyVerify(password);
+        throw new Error(INVALID_CREDENTIALS);
+      }
 
-    // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
-    // перебором выяснять, какие заявки поданы.
-    if (row.approval_status === 'pending') {
-      throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+      const startedAt = Date.now();
+      const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
+      if (!needsRehash && typeof password === 'string' && password) noteFullVerify(Date.now() - startedAt);
+      if (!ok) {
+        outcome = 'failure';
+        await this.registerFailedAttempt(row, ip);
+        // Пароль хранится с прежними, более дешёвыми параметрами — отказ
+        // выдерживается до длительности обычной проверки (Р4-09).
+        if (needsRehash) await padToFullVerify(password, startedAt);
+        throw new Error(INVALID_CREDENTIALS);
+      }
+      outcome = 'success';
+
+      // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
+      // перебором выяснять, какие заявки поданы.
+      if (row.approval_status === 'pending') {
+        throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+      }
+      if (row.approval_status === 'rejected') {
+        throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
+      }
+
+      return await this.completeLogin(row, password, { ip, nameKey, ipKey, needsRehash });
+    } finally {
+      LoginThrottle.settle(admission.ticket, outcome);
     }
-    if (row.approval_status === 'rejected') {
-      throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
-    }
+  }
+
+  // Вторая половина входа — пароль уже подошёл.
+  static async completeLogin(row, password, { ip, nameKey, ipKey, needsRehash }) {
+    const db = identity();
 
     // Пароль, сохранённый прежним способом (или с устаревшими параметрами),
     // пересчитывается прямо здесь: другого момента, когда открытый пароль
@@ -313,8 +423,12 @@ class AuthService {
 
     // Успешный вход снимает накопленные неудачи по этой же паре адрес+логин —
     // иначе они продолжают копиться к следующей блокировке, хотя подбора не
-    // было ни секунды (аудит ревью, находка №19).
-    resetLimit(loginLockKey(ip, row.username));
+    // было ни секунды (аудит ревью, находка №19). Счёт учётной записи со всех
+    // адресов (LoginThrottle) при этом не сбрасывается: вход настоящего
+    // сотрудника не значит, что подбор с других адресов закончился. Зато
+    // адрес запоминается как знакомый — с него задержки больше не будет.
+    resetLimit(loginLockKey(ip, nameKey));
+    LoginThrottle.rememberSuccess(nameKey, ipKey);
 
     const user = await UserService.getUserById(row.id);
     return { user, token: this.generateToken(user) };
@@ -328,7 +442,7 @@ class AuthService {
    * которого атакующий этим же логином не запирает нигде, кроме своего адреса.
    */
   static async registerFailedAttempt(row, ip) {
-    const key = loginLockKey(ip, row.username);
+    const key = loginLockKey(ip, row.username); // та же единая форма, что и при проверке
     const opts = loginLockOptions();
     const wasLocked = isRateLimited(key, opts);
     registerFailure(key, opts);
@@ -369,7 +483,7 @@ class AuthService {
     if (!/^[A-Za-z0-9._-]{3,64}$/.test(login)) {
       throw new Error('Логин может состоять из латинских букв, цифр, точки, дефиса и подчёркивания (3–64 символа)');
     }
-    UserService.assertPasswordPolicy(password);
+    UserService.assertPasswordPolicy(password, { username: login });
     // Самостоятельная регистрация доступна без входа — те же пределы формата
     // и длины, что и у администратора, редактирующего чужой профиль (аудит,
     // находка №5): без них анонимная заявка засоряла бы оргструктуру и ленту

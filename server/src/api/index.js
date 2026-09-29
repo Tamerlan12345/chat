@@ -14,8 +14,9 @@ const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
-const { checkRateLimit, isRateLimited, registerFailure } = require('../services/rate-limiter');
-const { getClientIp } = require('../services/ip-access.service');
+const { checkRateLimit, isRateLimited, registerFailure, refundFailure, resetLimit } = require('../services/rate-limiter');
+const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
+const { canonicalUsername } = require('../services/login-throttle.service');
 const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
 const AuditService = require('../services/audit.service');
@@ -136,6 +137,20 @@ function uploaderFor(limitBytes) {
 // сервер целиком.
 const route = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
+
+// Текст ошибки для анонимного ответа. Проверки самого сервера бросают простой
+// Error без кода — их текст и предназначен человеку («Неверный логин или
+// пароль», «Логин может состоять из…»). Всё прочее — ошибки базы (у pg свой
+// класс, у node:sqlite код ERR_SQLITE_*), сети (ECONNREFUSED с адресом базы),
+// программные TypeError — уходило бы наружу как есть: имена ограничений,
+// адреса узлов, подробности устройства сервера — любому, кто дотянулся до
+// входа (аудит, раунд 4, находка Р4-13). Такие пишутся в журнал сервера, а
+// наружу — общий текст.
+function publicErrorMessage(err, fallback) {
+  if (err instanceof Error && err.constructor === Error && !err.code) return err.message;
+  console.error('[API] внутренняя ошибка на анонимном маршруте:', err?.message || err);
+  return fallback;
+}
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
@@ -279,7 +294,10 @@ function safeParse(json) {
 router.post('/auth/knock', route(async (req, res) => {
   try {
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    if (!checkRateLimit(`knock:${remoteIp}`, { maxAttempts: 30, windowMs: 60000 })) {
+    // Секрет устройства — 256 случайных бит (claimDeviceSecret), подбирать его
+    // бессмысленно; предел здесь — от засорения очереди устройств. Ключ — сеть
+    // /64 для IPv6 (Р4-02).
+    if (!checkRateLimit(`knock:${rateLimitIpKey(remoteIp)}`, { maxAttempts: 30, windowMs: 60000 })) {
       return res.status(429).json({ error: 'Слишком много запросов. Повторите через минуту.' });
     }
     const { device_id, device_secret, device_name, platform, client_version } = req.body || {};
@@ -294,7 +312,7 @@ router.post('/auth/knock', route(async (req, res) => {
     }
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось обработать запрос устройства') });
   }
 }));
 
@@ -329,13 +347,27 @@ router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
 }));
 
 // ── 1. AUTH ──
+// Неудачи входа с одного адреса (сети /64 для IPv6): 30 за 10 минут.
+const LOGIN_FAIL_LIMIT = { maxAttempts: 30, windowMs: 600000 };
+// Заявок на регистрацию, ожидающих решения администратора, одновременно.
+const MAX_PENDING_REGISTRATIONS = 200;
+
 router.post('/auth/login', route(async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'Укажите логин и пароль' });
 
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    const rateLimitKey = `login:${remoteIp}:${String(username).toLowerCase()}`;
+    const ipKey = rateLimitIpKey(remoteIp);
+    // Логин в единой форме (NFKC, trim, нижний регистр) — ту же форму
+    // используют задержка по паре адрес+логин и по учётной записи. Раньше здесь
+    // не было trim, и « admin» с пробелом давал свежий счётчик для той же
+    // учётной записи (Р4-06). Слишком длинный логин ключом не становится вовсе.
+    const nameKey = canonicalUsername(username);
+    if (!nameKey || nameKey.length > 256) {
+      return res.status(400).json({ error: 'Неверный логин или пароль. После нескольких неудачных попыток вход временно заблокирован.' });
+    }
+    const rateLimitKey = `login:${ipKey}:${nameKey}`;
     if (!checkRateLimit(rateLimitKey, { maxAttempts: 5, windowMs: 60000 })) {
       return res.status(429).json({ error: 'Слишком много попыток входа. Повторите через минуту.' });
     }
@@ -343,19 +375,35 @@ router.post('/auth/login', route(async (req, res) => {
     // Перебор по многим логинам с одного адреса: предел на логин его не
     // останавливал. Считаются только неудачи — офис за одним NAT входит утром
     // весь сразу.
-    const failKey = `login-fail:${remoteIp}`;
-    if (isRateLimited(failKey, { maxAttempts: 30, windowMs: 600000 })) {
+    const failKey = `login-fail:${ipKey}`;
+    if (isRateLimited(failKey, LOGIN_FAIL_LIMIT)) {
       return res.status(429).json({ error: 'Слишком много неудачных попыток входа с этого адреса. Повторите позже.' });
     }
+    // Попытка засчитывается неудачей ЗАРАНЕЕ и возвращается, если вход удался
+    // или пароль так и не проверялся. Раньше неудача записывалась только после
+    // scrypt, и сотня одновременных запросов с одного адреса проходила проверку
+    // выше до того, как закончился первый (Р4-03). Удачные входы офиса за NAT
+    // по-прежнему ничего не расходуют — их попытка возвращается.
+    registerFailure(failKey, LOGIN_FAIL_LIMIT);
 
     let result;
     try {
       result = await AuthService.login(username, password, { ip: remoteIp });
     } catch (err) {
-      registerFailure(failKey, { windowMs: 600000 });
+      if (err.code === 'ACCOUNT_THROTTLED') {
+        refundFailure(failKey);
+        res.set('Retry-After', String(err.retryAfterSeconds || 60));
+        return res.status(429).json({ error: err.message, code: err.code });
+      }
+      if (err.code === 'PASSWORD_HASH_BUSY') {
+        refundFailure(failKey);
+        res.set('Retry-After', '5');
+        return res.status(503).json({ error: err.message, code: err.code });
+      }
       AuditService.log({ action: 'login_failed', ip: remoteIp, details: { username: String(username).slice(0, 64) } });
       throw err;
     }
+    refundFailure(failKey);
     AuditService.log({
       userId: result.user.id,
       action: 'login',
@@ -364,7 +412,7 @@ router.post('/auth/login', route(async (req, res) => {
     });
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось выполнить вход. Повторите позже.') });
   }
 }));
 
@@ -375,8 +423,16 @@ router.post('/auth/register', route(async (req, res) => {
       return res.status(403).json({ error: 'Самостоятельная регистрация отключена администратором' });
     }
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    if (!checkRateLimit(`register:${remoteIp}`, { maxAttempts: 10, windowMs: 600000 })) {
+    if (!checkRateLimit(`register:${rateLimitIpKey(remoteIp)}`, { maxAttempts: 10, windowMs: 600000 })) {
       return res.status(429).json({ error: 'Слишком много попыток регистрации. Повторите позже.' });
+    }
+    // Общий потолок неразобранных заявок: предел на адрес не мешает засыпать
+    // администраторов заявками с множества адресов, а каждая заявка — это
+    // строка в учётных записях, рассылка администраторам и расчёт scrypt
+    // (аудит, раунд 4, находка Р4-16).
+    const pendingCount = await identity().get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`);
+    if (Number(pendingCount?.n || 0) >= MAX_PENDING_REGISTRATIONS) {
+      return res.status(429).json({ error: 'Слишком много заявок ожидают подтверждения. Обратитесь к администратору.' });
     }
 
     const user = await AuthService.register(req.body);
@@ -387,7 +443,11 @@ router.post('/auth/register', route(async (req, res) => {
       message: 'Заявка отправлена. Вход станет возможен после подтверждения администратором.'
     });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (err?.code === 'PASSWORD_HASH_BUSY') {
+      res.set('Retry-After', '5');
+      return res.status(503).json({ error: err.message, code: err.code });
+    }
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось подать заявку. Повторите позже.') });
   }
 }));
 
@@ -468,8 +528,36 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     if (!checkRateLimit(`pwchange:${req.user.id}`, { maxAttempts: 5, windowMs: 60000 })) {
       return res.status(429).json({ error: 'Слишком много попыток. Повторите через минуту.' });
     }
+    // Смена пароля проверяет текущий пароль — то есть с действующим токеном
+    // (например, украденным) по ней можно подбирать пароль: 5 попыток в
+    // минуту давали 7200 в сутки, и счётчики входа об этом не знали (аудит,
+    // раунд 4, находка Р4-05). Теперь неверный текущий пароль — не больше 5
+    // раз за LOGIN_LOCKOUT_MINUTES на сотрудника, и каждая такая неудача идёт
+    // в общий счёт учётной записи (services/login-throttle.service.js).
+    const failKey = `pwchange-fail:${req.user.id}`;
+    const failLimit = { maxAttempts: 5, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
+    if (isRateLimited(failKey, failLimit)) {
+      return res.status(429).json({ error: 'Слишком много неверных попыток ввести текущий пароль. Повторите позже.' });
+    }
     const { oldPassword, newPassword } = req.body || {};
-    await UserService.changePassword(req.user.id, oldPassword, newPassword);
+    try {
+      await UserService.changePassword(req.user.id, oldPassword, newPassword, { ip: getClientIp(req) });
+    } catch (err) {
+      if (err.code === 'OLD_PASSWORD_INVALID') {
+        registerFailure(failKey, failLimit);
+        AuditService.log({ userId: req.user.id, action: 'password_change_failed', ip: getClientIp(req) });
+      }
+      if (err.code === 'ACCOUNT_THROTTLED') {
+        res.set('Retry-After', String(err.retryAfterSeconds || 60));
+        return res.status(429).json({ error: err.message, code: err.code });
+      }
+      if (err.code === 'PASSWORD_HASH_BUSY') {
+        res.set('Retry-After', '5');
+        return res.status(503).json({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+    resetLimit(failKey);
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
     // Старый токен отозван, но открытые соединения авторизовались им раньше.
     // Без разрыва тот, кто украл токен, продолжал бы писать от имени сотрудника.

@@ -497,7 +497,7 @@ function resolveInitialAdminPassword() {
   if (given) {
     const { assertPasswordPolicy } = require('../../services/user.service');
     try {
-      assertPasswordPolicy(given);
+      assertPasswordPolicy(given, { username: 'admin' });
     } catch (err) {
       throw new Error(`INITIAL_ADMIN_PASSWORD не подходит: ${err.message}`);
     }
@@ -579,7 +579,7 @@ async function applyEmergencyAdminReset(target) {
 
   const { assertPasswordPolicy } = require('../../services/user.service');
   try {
-    assertPasswordPolicy(requested);
+    assertPasswordPolicy(requested, { username });
   } catch (err) {
     console.warn(`[Recovery] ADMIN_PASSWORD_RESET не применён: ${err.message}`);
     return;
