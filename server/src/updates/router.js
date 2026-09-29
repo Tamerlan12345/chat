@@ -68,13 +68,17 @@ function notFound(res) {
 // по адресу: за одним NAT крупного офиса сотни установок опрашивают сервер
 // утром разом, и общий счётчик 120/мин на адрес срабатывал на штатной работе
 // (проверка раунда 4, M7). У каждой установки свой щедрый предел; на адрес
-// (сеть /64) — высокий потолок, чтобы уместился весь офис, но поток с одного
-// адреса без валидного install-id всё же был ограничен. Ключи — по адресу и
-// по install-id, оба fail open (ПР-01).
-const UPD_PER_INSTALL = { maxAttempts: 120, windowMs: 60000 };
+// (сеть /64) — высокий потолок, чтобы уместился весь офис.
+//
+// ВАЖНО (проверка раунда 4, I-B): ключ по install-id — это UUID из ЗАГОЛОВКА,
+// то есть выбор клиента. Держать его в общей (адресной) карте ограничителя
+// нельзя: поток случайных install-id вытеснял бы из неё адресные счётчики
+// (login-fail, knock-fail, ws_auth, pwchange-fail) и сбрасывал бы блокировку
+// подбора (repro k). Поэтому install-id живут в отдельной карте (scope
+// 'name', где и логины из запроса), а адресный ключ — в общей. Оба fail open.
+const UPD_PER_INSTALL = { maxAttempts: 120, windowMs: 60000, scope: 'name' };
 function updPerIpLimit() {
-  const n = Number(process.env.UPDATES_MAX_REQ_PER_MIN_PER_IP);
-  return { maxAttempts: Number.isInteger(n) && n > 0 ? n : 6000, windowMs: 60000 };
+  return { maxAttempts: config.UPDATES_MAX_REQ_PER_MIN_PER_IP, windowMs: 60000 };
 }
 function updateRequestAllowed(req, info) {
   const ipOk = checkRateLimit('upd-ip:' + rateLimitIpKey(getClientIp(req)), updPerIpLimit());

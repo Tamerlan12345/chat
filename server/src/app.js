@@ -154,7 +154,10 @@ app.use((req, res, next) => {
 // клиент запускается и опрашивает их у всех сотрудников разом. Из потолка
 // исключены — их флуд стоит только обработки HTTP, а вход/регистрация/«стук»
 // ограничены каждый своим пределом (проверка раунда 4, ПР-I1).
-const ANON_CEILING_EXEMPT = new Set(['/health', '/api/settings/info', '/api/settings/departments']);
+// /api/settings/departments НЕ исключён: он делает запрос к базе (в отличие от
+// settings/info и /health, отвечающих из памяти), поэтому остаётся под
+// потолком; сам ответ вдобавок кэшируется на 30 с (проверка раунда 4, M6).
+const ANON_CEILING_EXEMPT = new Set(['/health', '/api/settings/info']);
 app.use((req, res, next) => {
   const limit = config.ANON_RATE_LIMIT_PER_MINUTE;
   if (!limit) return next();

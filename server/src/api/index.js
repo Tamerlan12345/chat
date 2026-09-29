@@ -14,7 +14,8 @@ const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
-const { checkRateLimit, isRateLimited, registerFailure, resetLimit } = require('../services/rate-limiter');
+const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
+const TrustedSources = require('../services/trusted-sources.service');
 const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
 const { canonicalUsername } = require('../services/login-throttle.service');
 const { getDatabase } = require('../db');
@@ -164,35 +165,50 @@ function publicErrorMessage(err, fallback) {
   return fallback;
 }
 
-// Ограничение числа ОДНОВРЕМЕННЫХ запросов с проверкой пароля (scrypt) с
-// одного адреса (сети /64). Решает две задачи проверки раунда 4:
-//   ПР-02 — «в полёте» попытки больше не считаются неудачами (офис за одним
-//           NAT, входящий разом верными паролями, не запирает сам себя);
-//   ПР-06 — один адрес не занимает всю очередь хэшей: при пределе на адрес
-//           её не забить с четырёх адресов. Превышение — 503 с коротким
-//           Retry-After (не неудача), клиент повторяет.
-// Счётчик per-address, а не глобальный: глобальную пропускную способность
-// scrypt держит очередь в password.js (PASSWORD_HASH_CONCURRENCY + очередь).
-const LOGIN_INFLIGHT_PER_IP = Number(process.env.LOGIN_INFLIGHT_PER_IP) > 0
-  ? Math.min(Number(process.env.LOGIN_INFLIGHT_PER_IP), 200)
-  : 20;
+// Ограничение числа ОДНОВРЕМЕННЫХ проверок пароля (scrypt). Применяется ко
+// всем путям, где проверяется пароль: вход, смена пароля (проверка раунда 4,
+// I-C — «либо общий, либо честно об этом»). Задачи:
+//   ПР-02 — «в полёте» попытки не считаются неудачами (офис за NAT не запирает
+//           себя верными входами);
+//   ПР-06/I-C — один источник не занимает всю очередь хэшей.
+// Предел на адрес зависит от того, знаком ли адрес хоть одной учётной записи:
+//   — незнакомому НИ ОДНОЙ (типичный атакующий) — жёстко мало
+//     (LOGIN_INFLIGHT_UNFAMILIAR, 3): он не займёт очередь хэшей;
+//   — знакомому хотя бы одной (адрес офиса за NAT) — щедро (LOGIN_INFLIGHT_PER_IP,
+//     20), чтобы утренний вход всего офиса проходил.
+// Сверх того — глобальная бронь для знакомых источников: незнакомые все вместе
+// не занимают больше (очередь − бронь) мест, так что офису всегда есть место.
+const { HASH_QUEUE_MAX } = require('../db/identity/password');
+const FAMILIAR_RESERVE = Math.max(10, Math.floor(HASH_QUEUE_MAX * 0.25));
+const UNFAMILIAR_GLOBAL_CAP = Math.max(1, HASH_QUEUE_MAX - FAMILIAR_RESERVE);
 const inflightByIp = new Map(); // ipKey -> число идущих проверок пароля
+let unfamiliarInflight = 0;
 
-function acquireHashSlot(ipKey) {
-  const running = inflightByIp.get(ipKey) || 0;
-  if (running >= LOGIN_INFLIGHT_PER_IP) return false;
-  inflightByIp.set(ipKey, running + 1);
+function inflightFor(ipKey) {
+  return inflightByIp.get(ipKey) || 0;
+}
+function acquireHashSlot(ipKey, familiar) {
+  const cap = familiar ? config.LOGIN_INFLIGHT_PER_IP : config.LOGIN_INFLIGHT_UNFAMILIAR;
+  if (inflightFor(ipKey) >= cap) return false;
+  // Незнакомые источники все вместе не занимают больше (очередь − бронь):
+  // знакомым (офису) всегда остаётся место (I-C).
+  if (!familiar && unfamiliarInflight >= UNFAMILIAR_GLOBAL_CAP) return false;
+  inflightByIp.set(ipKey, inflightFor(ipKey) + 1);
+  if (!familiar) unfamiliarInflight += 1;
   return true;
 }
-function releaseHashSlot(ipKey) {
+function releaseHashSlot(ipKey, familiar) {
   const left = (inflightByIp.get(ipKey) || 1) - 1;
   if (left > 0) inflightByIp.set(ipKey, left);
   else inflightByIp.delete(ipKey);
+  if (!familiar && unfamiliarInflight > 0) unfamiliarInflight -= 1;
 }
-// Retry-After с разбросом: одинаковое точное значение позволяло атакующему
-// попадать ровно в момент открытия слота и вытеснять живого клиента (ПР-04).
+// Retry-After с разбросом (один раз): одинаковое точное значение позволяло
+// атакующему попадать ровно в момент открытия слота (ПР-04); держим в пределах
+// LOGIN_ACCOUNT_MAX_DELAY_SECONDS (M6).
 function jitterSeconds(base) {
-  return base + Math.floor(Math.random() * base);
+  const withJitter = base + Math.floor(Math.random() * Math.max(1, base));
+  return Math.min(withJitter, config.LOGIN_ACCOUNT_MAX_DELAY_SECONDS);
 }
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
@@ -428,17 +444,20 @@ router.post('/auth/login', route(async (req, res) => {
     // новый логин-догадка — это подтверждённая неудача), поэтому отдельного
     // счётчика «разных логинов на адрес» не нужно. Отсутствие ключа — «не
     // ограничено» (fail open, ПР-01).
+    // Предел «неудач с адреса»: считаются ТОЛЬКО подтверждённые неудачи (ниже,
+    // по коду INVALID_CREDENTIALS) — офис входит утром верными паролями и
+    // ничего не тратит (ПР-02). Но в проверку добавляются и «в полёте» попытки
+    // с этого же адреса: иначе десяток одновременных запросов проскакивал бы
+    // предел, и один /64 доходил до ~49 неудач вместо 30 (M6, overshoot).
     const failKey = `login-fail:${ipKey}`;
-    if (isRateLimited(failKey, LOGIN_FAIL_LIMIT)) {
+    if (peekCount(failKey, LOGIN_FAIL_LIMIT) + inflightFor(ipKey) >= LOGIN_FAIL_LIMIT.maxAttempts) {
       return res.status(429).json({ error: 'Слишком много неудачных попыток входа с этого адреса. Повторите позже.' });
     }
 
-    // Одновременных проверок пароля с одного адреса — не больше предела
-    // (ПР-02/ПР-06). Ключ с логином (login:ip:username) больше не заводится
-    // заранее: единственный ключ с логином — login-lock, и он создаётся уже
-    // ПОСЛЕ этой per-address проверки, внутри AuthService при подтверждённой
-    // неудаче (порядок из C1).
-    if (!acquireHashSlot(ipKey)) {
+    // Знаком ли адрес хотя бы одной учётной записи (адрес офиса за NAT) — от
+    // этого зависит щедрость предела одновременных проверок пароля (I-C).
+    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
+    if (!acquireHashSlot(ipKey, familiar)) {
       res.set('Retry-After', String(jitterSeconds(2)));
       return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
     }
@@ -449,7 +468,9 @@ router.post('/auth/login', route(async (req, res) => {
         result = await AuthService.login(username, password, { ip: remoteIp });
       } catch (err) {
         if (err.code === 'ACCOUNT_THROTTLED') {
-          res.set('Retry-After', String(jitterSeconds(err.retryAfterSeconds || 60)));
+          // Retry-After уже с разбросом и в пределах потолка (throttle) — не
+          // разбрасываем повторно (M6).
+          res.set('Retry-After', String(err.retryAfterSeconds || 60));
           return res.status(429).json({ error: err.message, code: err.code });
         }
         if (err.code === 'PASSWORD_HASH_BUSY') {
@@ -474,7 +495,7 @@ router.post('/auth/login', route(async (req, res) => {
       });
       res.json(result);
     } finally {
-      releaseHashSlot(ipKey);
+      releaseHashSlot(ipKey, familiar);
     }
   } catch (err) {
     res.status(400).json({ error: publicErrorMessage(err, 'Не удалось выполнить вход. Повторите позже.') });
@@ -529,8 +550,9 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
   }
   const token = await AuthService.refreshToken(req.user, req.tokenPayload);
   wsServer.replaceSocketToken(req.rawToken, token);
-  // Продление — подтверждённое действие: адрес знакомый (ПР-I4).
-  require('../services/trusted-sources.service').recordAsync(req.user.id, rateLimitIpKey(getClientIp(req)));
+  // Продление лишь ОБНОВЛЯЕТ уже знакомый адрес, но не заводит новый: иначе
+  // украденный живой токен посадил бы в «знакомые» адрес атакующего (I-2).
+  require('../services/trusted-sources.service').recordAsync(req.user.id, rateLimitIpKey(getClientIp(req)), { allowCreate: false });
   res.json({ token });
 }));
 
@@ -608,6 +630,14 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
       res.set('Retry-After', String(jitterSeconds(30)));
       return res.status(429).json({ error: 'Слишком много неверных попыток ввести текущий пароль. Повторите позже.' });
     }
+    // Смена пароля тоже считает scrypt — тот же предел одновременных проверок
+    // на адрес, что и вход (I-C, общий): один источник не занимает очередь.
+    const ipKey = rateLimitIpKey(getClientIp(req));
+    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
+    if (!acquireHashSlot(ipKey, familiar)) {
+      res.set('Retry-After', String(jitterSeconds(2)));
+      return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
+    }
     const { oldPassword, newPassword } = req.body || {};
     try {
       await UserService.changePassword(req.user.id, oldPassword, newPassword);
@@ -621,6 +651,8 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
         return res.status(503).json({ error: err.message, code: err.code });
       }
       throw err;
+    } finally {
+      releaseHashSlot(ipKey, familiar);
     }
     resetLimit(failKey);
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
@@ -1450,14 +1482,27 @@ router.get('/settings/info', route(async (req, res) => {
 // регистрация: форме регистрации этот список нужен до всякой авторизации, но
 // полное дерево — сотрудники, контакты, структура — не должно читаться
 // анонимным вызовом.
+let departmentsCache = { at: 0, payload: null };
+const DEPARTMENTS_CACHE_MS = 30000;
 router.get('/settings/departments', route(async (req, res) => {
+  // Кэш на 30 с: анонимная форма регистрации дёргает список у всех сразу, а
+  // содержимое меняется редко — незачем ходить в базу на каждый запрос
+  // (проверка раунда 4, M6).
+  if (departmentsCache.payload && Date.now() - departmentsCache.at < DEPARTMENTS_CACHE_MS) {
+    return res.json(departmentsCache.payload);
+  }
   const allowRegistration = (await SettingsService.getSetting('allow_registration', 'false')) === 'true';
-  if (!allowRegistration) return res.json({ departments: [] });
-
-  const departments = await identity().all(
-    'SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC'
-  );
-  res.json({ departments });
+  let payload;
+  if (!allowRegistration) {
+    payload = { departments: [] };
+  } else {
+    const departments = await identity().all(
+      'SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC'
+    );
+    payload = { departments };
+  }
+  departmentsCache = { at: Date.now(), payload };
+  res.json(payload);
 }));
 
 // ── ЗАЯВКИ НА РЕГИСТРАЦИЮ ──
