@@ -12,6 +12,13 @@ const path = require('node:path');
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const NOTES_PATH = path.join(REPO_ROOT, 'docs', 'выпуск-2026-10-безопасность.md');
 const ENV_EXAMPLE_PATH = path.join(REPO_ROOT, '.env.example');
+const ROUND4_ENV = [
+  'LOGIN_ACCOUNT_SOFT_LIMIT',
+  'LOGIN_ACCOUNT_MAX_DELAY_SECONDS',
+  'PASSWORD_HASH_CONCURRENCY',
+  'ANON_RATE_LIMIT_PER_MINUTE',
+  'UPLOAD_MAX_MB_PER_HOUR'
+];
 const IDENTITY_DOC_PATH = path.join(REPO_ROOT, 'docs', 'identity-store.md');
 
 test('заметки о выпуске существуют и называют однократные последствия деплоя', () => {
@@ -68,10 +75,19 @@ test('.env.example упоминает новые переменные окруж
     'UPDATES_DIR',
     'UPDATES_DISABLED',
     'UPDATES_MAX_CONCURRENT_DOWNLOADS',
-    'UPDATES_MAX_FILE_MB'
+    'UPDATES_MAX_FILE_MB',
+    // Аудит безопасности, раунд 4.
+    ...ROUND4_ENV
   ]) {
     assert.match(text, new RegExp(`^#\\s*${name}=`, 'm'), `.env.example должен упоминать ${name} закомментированной строкой`);
   }
+});
+
+test('заметки о выпуске описывают пределы раунда 4 и то, что действующие пароли продолжают пускать', () => {
+  const text = fs.readFileSync(NOTES_PATH, 'utf8');
+  for (const name of ROUND4_ENV) assert.match(text, new RegExp(name), `заметки должны упоминать ${name}`);
+  assert.match(text, /Действующие пароли продолжают работать/);
+  assert.match(text, /LOGIN_MAX_FAILED_ATTEMPTS/);
 });
 
 test('docs/identity-store.md отражает актуальный N=131072 и требование IDENTITY_AUTO_IMPORT для резервных файлов', () => {
