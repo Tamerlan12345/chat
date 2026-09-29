@@ -131,6 +131,47 @@ function resolveLegacyTokenCutoff() {
   return raw;
 }
 
+// Потолок анонимных запросов: 0 — выключено осознанно, иначе не меньше
+// разумного пола (иначе легко случайно перекрыть офис одной опечаткой).
+// Промежуточные значения 1..пол отклоняются к значению по умолчанию.
+function resolveAnonCeiling() {
+  const FLOOR = 600;
+  const DEFAULT = 12000;
+  const raw = process.env.ANON_RATE_LIMIT_PER_MINUTE;
+  if (raw === undefined || raw === '') return DEFAULT;
+  const text = String(raw).trim();
+  const n = /^-?\d+$/.test(text) ? Number(text) : NaN;
+  if (n === 0) return 0;
+  if (!Number.isSafeInteger(n) || n < FLOOR || n > 1000000) {
+    console.warn(
+      `[Config] ANON_RATE_LIMIT_PER_MINUTE="${raw}" — ожидается 0 (выключено) или число не меньше ${FLOOR}; ` +
+        `использую значение по умолчанию (${DEFAULT}).`
+    );
+    return DEFAULT;
+  }
+  return n;
+}
+
+// Порог задержки по учётной записи (LOGIN_ACCOUNT_SOFT_LIMIT) обязан быть выше
+// предела «адрес + логин» (LOGIN_MAX_FAILED_ATTEMPTS): иначе один сотрудник,
+// ошибающийся паролем со своего же адреса, доходил бы до задержки по учётной
+// записи раньше, чем до обычной блокировки пары адрес+логин (M5). Если задан
+// не так — предупреждение и оба к значениям по умолчанию.
+function resolveLoginThresholds() {
+  const maxFailed = boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 });
+  const lockout = boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 });
+  let soft = boundedInt('LOGIN_ACCOUNT_SOFT_LIMIT', 20, { min: 2, max: 10000 });
+  if (soft <= maxFailed) {
+    console.warn(
+      `[Config] LOGIN_ACCOUNT_SOFT_LIMIT (${soft}) должен быть больше LOGIN_MAX_FAILED_ATTEMPTS (${maxFailed}); ` +
+        'использую 20 и 10 по умолчанию.'
+    );
+    return { maxFailed: 10, lockout, soft: 20 };
+  }
+  return { maxFailed, lockout, soft };
+}
+const LOGIN_THRESHOLDS = resolveLoginThresholds();
+
 module.exports = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 2004,
   HOST: process.env.HOST || '0.0.0.0',
@@ -166,15 +207,15 @@ module.exports = {
   // Раньше оба значения читались parseInt без проверки: «abc» давало NaN, и
   // задержка не наступала никогда (count >= NaN всегда ложно) — опечатка в
   // настройках молча выключала защиту от подбора (Р4-07).
-  LOGIN_MAX_FAILED_ATTEMPTS: boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 }),
-  LOGIN_LOCKOUT_MINUTES: boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 }),
+  LOGIN_MAX_FAILED_ATTEMPTS: LOGIN_THRESHOLDS.maxFailed,
+  LOGIN_LOCKOUT_MINUTES: LOGIN_THRESHOLDS.lockout,
   // Задержка по учётной записи независимо от адреса (подбор с многих адресов
   // сразу) — см. services/login-throttle.service.js. Порог — сколько неудач со
   // всех адресов вместе допускается за LOGIN_LOCKOUT_MINUTES без задержки;
-  // выше предела «адрес + логин», чтобы один ошибающийся сотрудник сюда не
-  // доходил. Потолок задержки — сколько, в худшем случае, ждёт между
-  // попытками сотрудник с незнакомого адреса, пока идёт подбор.
-  LOGIN_ACCOUNT_SOFT_LIMIT: boundedInt('LOGIN_ACCOUNT_SOFT_LIMIT', 20, { min: 2, max: 10000 }),
+  // обязан быть выше предела «адрес + логин» (проверяется в
+  // resolveLoginThresholds). Потолок задержки — сколько, в худшем случае, ждёт
+  // между попытками сотрудник с незнакомого адреса, пока идёт подбор.
+  LOGIN_ACCOUNT_SOFT_LIMIT: LOGIN_THRESHOLDS.soft,
   LOGIN_ACCOUNT_MAX_DELAY_SECONDS: boundedInt('LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 60, { min: 1, max: 3600 }),
   // Сколько расчётов хэша пароля (scrypt, ~128 МиБ каждый) идут одновременно;
   // остальные ждут в короткой очереди, переполненная очередь — отказ 503.
@@ -182,13 +223,19 @@ module.exports = {
   // чтение и запись файлов) и поднимал память на 128 МиБ за каждый (Р4-03).
   PASSWORD_HASH_CONCURRENCY: boundedInt('PASSWORD_HASH_CONCURRENCY', 2, { min: 1, max: 16 }),
   // Общий потолок анонимных запросов к /api и /health с одного адреса (сети
-  // /64 для IPv6) в минуту. Щедрый — офис за одним NAT при запуске делает
-  // несколько анонимных запросов на человека; 0 — выключено (Р4-12).
-  ANON_RATE_LIMIT_PER_MINUTE: boundedInt('ANON_RATE_LIMIT_PER_MINUTE', 3000, { min: 0, max: 1000000 }),
+  // /64 для IPv6) в минуту. Дешёвые публичные GET (сведения о сервере,
+  // /health) из-под него исключены — иначе утренний запуск офиса за одним NAT
+  // (сотни клиентов, токены за ночь истекли) упирался бы в него (проверка
+  // раунда 4, ПР-I1). 0 — выключено; иначе не меньше 600.
+  ANON_RATE_LIMIT_PER_MINUTE: resolveAnonCeiling(),
   // Объём загрузок вложений на одного сотрудника за час (окно отсчитывается
   // от первой загрузки), МБ;
   // 0 — без предела (Р4-11).
   UPLOAD_MAX_MB_PER_HOUR: boundedInt('UPLOAD_MAX_MB_PER_HOUR', 2048, { min: 0, max: 1000000 }),
+  // Ниже этого запаса свободного места (МБ) на томе загрузок сервер не
+  // принимает файл: иначе запись базы переписки в тот же том может оборваться
+  // на переполнении (проверка раунда 4, M2). 0 — проверку выключить.
+  UPLOAD_MIN_FREE_DISK_MB: boundedInt('UPLOAD_MIN_FREE_DISK_MB', 1024, { min: 0, max: 10000000 }),
   // Секрет устройства (вход без пароля) не вечен: не подтверждённый повторным
   // входом по паролю дольше этого срока перестаёт действовать сам. Без этого
   // предела украденная копия localStorage работала бы бессрочно (аудит,

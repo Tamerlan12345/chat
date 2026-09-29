@@ -2,6 +2,12 @@ const { identity } = require('../db/identity');
 const { hashPassword, verifyPassword } = require('../db/identity/password');
 const OrgService = require('./org.service');
 
+// Экранирование спецсимволов LIKE (% _ \): строка поиска сотрудника ищется
+// буквально. Пара к ESCAPE '\' в запросе; работает в SQLite и PostgreSQL.
+function escapeLike(text) {
+  return String(text).replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 // Поля, которые видит любой авторизованный сотрудник. Отсюда намеренно убраны
 // bound_ip (адрес рабочего места коллеги — сведение служебное, не справочное),
 // admin_scope_dept_id и состояние заявки на регистрацию: справочник сотрудников
@@ -213,12 +219,16 @@ class UserService {
    * двух базах сразу: переписка ищется по тексту у себя, люди — здесь.
    */
   static async searchByName(term, limit = 50) {
-    const needle = `%${String(term || '').trim().toLowerCase()}%`;
-    if (needle === '%%') return [];
+    // Длина ограничена, а % и _ экранированы: строка ищется буквально, а не
+    // как шаблон, и «%%%…» не превращается в дорогой перебор (проверка
+    // раунда 4, M1). ESCAPE '\' работает и в SQLite, и в PostgreSQL.
+    const raw = String(term || '').trim().toLowerCase().slice(0, 200);
+    if (!raw) return [];
+    const needle = `%${escapeLike(raw)}%`;
     return identity().all(
       `SELECT u.id, u.username, u.full_name, u.uin
        FROM users u
-       WHERE LOWER(u.full_name) LIKE $1 OR LOWER(u.username) LIKE $1
+       WHERE LOWER(u.full_name) LIKE $1 ESCAPE '\\' OR LOWER(u.username) LIKE $1 ESCAPE '\\'
        ORDER BY u.full_name ASC
        LIMIT $2`,
       [needle, Math.min(Math.max(Number(limit) || 50, 1), 200)]
@@ -279,48 +289,27 @@ class UserService {
     return this.getUserById(userId);
   }
 
-  static async changePassword(userId, oldPassword, newPassword, { ip = null } = {}) {
+  static async changePassword(userId, oldPassword, newPassword) {
     const db = identity();
     const row = await db.get(
-      'SELECT username, password_hash, salt, last_login_ip FROM users WHERE id = $1',
+      'SELECT username, password_hash, salt FROM users WHERE id = $1',
       [Number(userId)]
     );
     if (!row) throw new Error('Пользователь не найден');
 
     if (!oldPassword) throw new Error('Укажите текущий пароль для подтверждения смены');
 
-    // Проверка текущего пароля — тот же подбор, что и вход, только с токеном.
-    // Поэтому она подчиняется той же задержке по учётной записи и сама в неё
-    // засчитывается (аудит, раунд 4, находка Р4-05). С адреса, откуда этот
-    // сотрудник уже входил, задержки нет — см. login-throttle.service.js.
-    const LoginThrottle = require('./login-throttle.service');
-    const { rateLimitIpKey } = require('./ip-access.service');
-    const nameKey = LoginThrottle.canonicalUsername(row.username);
-    const ipKey = rateLimitIpKey(ip);
-    const trusted =
-      LoginThrottle.isKnownSource(nameKey, ipKey) ||
-      (Boolean(row.last_login_ip) && rateLimitIpKey(row.last_login_ip) === ipKey);
-    const admission = LoginThrottle.admit(nameKey, { trusted });
-    if (!admission.ok) {
-      const seconds = Math.max(1, Math.ceil(admission.retryAfterMs / 1000));
-      const err = new Error(`Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`);
-      err.code = 'ACCOUNT_THROTTLED';
-      err.retryAfterSeconds = seconds;
+    // Смену пароля вызывает уже вошедший сотрудник (действующий токен). Её НЕ
+    // гейтит задержка по учётной записи, которую способен раскрутить кто-то
+    // снаружи: иначе посторонний, засыпав чужой логин на входе, заодно
+    // блокировал бы владельцу смену пароля (проверка раунда 4, ПР-I4). От
+    // подбора текущего пароля с украденным токеном защищает отдельный предел
+    // на сотрудника (маршрут /users/password, ключ pwchange-fail).
+    const { ok } = await verifyPassword(oldPassword, row.password_hash, row.salt);
+    if (!ok) {
+      const err = new Error('Старый пароль неверен');
+      err.code = 'OLD_PASSWORD_INVALID';
       throw err;
-    }
-
-    let outcome = 'neutral';
-    try {
-      const { ok } = await verifyPassword(oldPassword, row.password_hash, row.salt);
-      if (!ok) {
-        outcome = 'failure';
-        const err = new Error('Старый пароль неверен');
-        err.code = 'OLD_PASSWORD_INVALID';
-        throw err;
-      }
-      outcome = 'success';
-    } finally {
-      LoginThrottle.settle(admission.ticket, outcome);
     }
 
     assertPasswordPolicy(newPassword, { username: row.username });
@@ -583,6 +572,50 @@ const COMMON_PASSWORDS = new Set([
 // «Лето2026», «winter2025!» — время года и год.
 const SEASON_YEAR = /^(summer|winter|spring|autumn|fall|лето|зима|весна|осень)[\s._-]?\d{2,4}[!.]?$/;
 
+// Основа (stem) очевидно слабых паролей: их обыгрывают регистром, цифрами,
+// разделителями и знаками (Centychat1, Centras@2026, centy.chat1, Password1!,
+// Qwerty123!). Точного списка не хватало — проверка раунда 4 (ПР-I5) прошла
+// два десятка таких вариантов. Сверяем по буквам пароля (без цифр, точек и
+// знаков), в двух режимах:
+//
+//   BRAND_STEMS — марка и продукт компании (кириллица, латиница и набор не в
+//     той раскладке). Их отсекаем по НАЧАЛУ строки: «centrasins»,
+//     «centrasinsurance» — тоже подбор вокруг «centras». Слова эти достаточно
+//     необычные, чтобы префикс не задел нормальный пароль.
+//   WORD_STEMS — обычные словарные основы (password, пароль, qwerty…). Их
+//     отсекаем только когда ВСЕ буквы пароля и есть эта основа (то есть пароль
+//     — это основа плюс цифры/знаки): иначе «парольдлятеста» или «passwordbook»
+//     — вполне годные длинные фразы — отвергались бы зря.
+const BRAND_STEMS = [
+  'centychat', 'centy', 'сентичат',
+  'centras', 'sentras', 'сентрас', 'ctynhfc', // ctynhfc = «сентрас» в латинской раскладке
+  'centrasinsurance', 'centrasins',
+  'mychat', 'openmychat', 'мойчат'
+];
+const WORD_STEMS = [
+  'password', 'пароль', 'qwerty', 'qwertz', 'йцукен', 'gfhjkm', // gfhjkm = «пароль» в латинской раскладке
+  'welcome', 'letmein', 'changeme', 'iloveyou', 'administrator'
+];
+
+// Латинские буквы, которыми подменяют кириллические (гомоглифы): «Lето»,
+// «cен트рас». Приводим к кириллице ТОЛЬКО для сверки с основой — на хранение и
+// проверку пароля это не влияет.
+const CONFUSABLES = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', l: 'л', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у' };
+
+function lettersOnly(text) {
+  return [...text.normalize('NFKC').toLowerCase()].filter((ch) => /\p{L}/u.test(ch)).join('');
+}
+function deconfuse(text) {
+  return [...text].map((ch) => CONFUSABLES[ch] || ch).join('');
+}
+function matchesBannedStem(password) {
+  const letters = lettersOnly(password);
+  if (!letters) return false;
+  const variants = [letters, deconfuse(letters)];
+  if (BRAND_STEMS.some((stem) => variants.some((v) => v.startsWith(stem)))) return true;
+  return WORD_STEMS.some((stem) => variants.some((v) => v === stem));
+}
+
 // Временный пароль для передачи сотруднику из рук в руки. Алфавит без символов,
 // которые невозможно продиктовать без ошибки: 0/O, 1/l/I, 5/S.
 const TEMP_ALPHABET = 'ABCDEFGHJKMNPQRTUVWXYZabcdefghjkmnpqrtuvwxyz2346789';
@@ -627,7 +660,12 @@ function assertPasswordPolicy(password, { username = null, allowWeakInitial = fa
     throw new Error('Пароль слишком длинный');
   }
   const lower = normalized.toLowerCase();
-  if (WEAK.has(lower) || COMMON_PASSWORDS.has(lower) || SEASON_YEAR.test(lower)) {
+  const deconfusedLower = deconfuse(lower);
+  if (
+    WEAK.has(lower) || COMMON_PASSWORDS.has(lower) ||
+    SEASON_YEAR.test(lower) || SEASON_YEAR.test(deconfusedLower) ||
+    matchesBannedStem(password)
+  ) {
     throw new Error('Такой пароль слишком простой — подберите другой');
   }
   if (new Set(lower).size <= 2) {

@@ -116,6 +116,10 @@ class DeviceService {
       const authTime = pairing.secret_auth_time
         ? Math.floor(new Date(pairing.secret_auth_time).getTime() / 1000)
         : null;
+      // Успешный «стук» — тоже подтверждение личности: адрес становится
+      // знакомым, чтобы задержка входа по паролю под атакой не задевала
+      // сотрудника с его обычного рабочего места (проверка раунда 4, ПР-I4).
+      require('./trusted-sources.service').recordAsync(pairing.user_id, rateLimitIpKey(cleanIp));
       return {
         status: 'paired',
         auto_matched: false,
