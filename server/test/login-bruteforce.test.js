@@ -245,16 +245,86 @@ test('HTTP: пробелы вокруг логина делят один счё�
 
 // ── Задержка по учётной записи и её честные гарантии (ПР-I4) ────────────────
 
-test('под распределённым подбором знакомый адрес и первый заход с нового адреса всегда проходят (гарантия доступности)', async () => {
+test('под распределённым подбором знакомый адрес всегда входит (гарантия доступности)', async () => {
   const u = await makeUser();
   const homeIp = '203.0.113.200';
   assert.ok((await AuthService.login(u.username, u.password, { ip: homeIp })).token, 'адрес стал знакомым');
-  // Подбор с множества адресов доводит учётную запись до включённой задержки.
-  for (let i = 0; i < 10; i++) await AuthService.login(u.username, 'догадка', { ip: `192.0.2.${i + 1}` }).catch(() => {});
-  // Знакомый адрес входит сразу, сколько бы ни шёл подбор.
+  // Подбор с множества адресов доводит учётную запись до включённой задержки и
+  // может вычерпать общее ведро токенов (незнакомый адрес тогда подождёт).
+  for (let i = 0; i < 20; i++) await AuthService.login(u.username, 'догадка', { ip: `192.0.2.${i + 1}` }).catch(() => {});
+  // Знакомый адрес входит сразу, сколько бы ни шёл подбор и что бы ни было с
+  // ведром — это и есть твёрдая гарантия (I-A).
   assert.ok((await AuthService.login(u.username, u.password, { ip: homeIp })).token, 'знакомый адрес не задержан');
-  // Новый для сотрудника адрес: первая попытка проходит (своя очередь у адреса).
-  assert.ok((await AuthService.login(u.username, u.password, { ip: '198.51.100.222' })).token, 'новый адрес: первая попытка проходит');
+});
+
+test('распределённый подбор одной учётной записи ограничен ~750 догадками в сутки при любом числе адресов (I-A, воспроизведение j на реальном модуле)', () => {
+  const config = require('../src/config');
+  const bound = config.LOGIN_ACCOUNT_SOFT_LIMIT + 10 + config.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR * 24;
+  const run = (N) => {
+    LoginThrottle.resetThrottle();
+    const start = 1e12;
+    const end = start + 24 * 3600e3;
+    const next = new Array(N).fill(start);
+    let guesses = 0;
+    for (;;) {
+      let i = 0;
+      for (let k = 1; k < N; k++) if (next[k] < next[i]) i = k;
+      const now = next[i];
+      if (now > end) break;
+      const a = LoginThrottle.admit('victim', { ipKey: `ip${i}`, now });
+      if (!a.ok) { next[i] = now + a.retryAfterMs; continue; }
+      LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
+      guesses += 1;
+      next[i] = now + 301;
+    }
+    return guesses;
+  };
+  for (const N of [1, 10, 100]) {
+    const g = run(N);
+    assert.ok(g <= bound + 50, `N=${N}: ${g} догадок/сутки должно быть в пределах ~${bound}`);
+  }
+  LoginThrottle.resetThrottle();
+});
+
+test('login-throttle: успех/нейтраль/BUSY возвращают токен ведра, тратит только неудача (I-A)', () => {
+  LoginThrottle.resetThrottle();
+  const name = 'refund.acct';
+  let now = 7_000_000;
+  // Включаем защиту.
+  for (let i = 0; i < 8; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `10.1.0.${i}`, now });
+    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
+    now += 1;
+  }
+  // Нейтральный исход (например, BUSY) — токен возвращается: множество таких
+  // попыток не исчерпывают ведро.
+  for (let i = 0; i < 100; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `10.2.0.${i}`, now });
+    now += 1;
+    if (a.ok) LoginThrottle.settle(a.ticket, 'neutral', { now });
+  }
+  // Ведро не исчерпано: свежий незнакомый источник всё ещё допускается.
+  const after = LoginThrottle.admit(name, { ipKey: '10.9.9.9', now });
+  assert.strictEqual(after.ok, true, 'нейтральные исходы не вычерпали ведро');
+  LoginThrottle.resetThrottle();
+});
+
+test('login-throttle: сброс состояния учётной записи (сброс пароля админом) снимает задержку', () => {
+  LoginThrottle.resetThrottle();
+  const name = 'recover.acct';
+  let now = 8_000_000;
+  for (let i = 0; i < 40; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `10.3.0.${i % 3}`, now });
+    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
+    now += 1;
+  }
+  // Один из адресов атаки сейчас под персональной задержкой.
+  const before = LoginThrottle.admit(name, { ipKey: '10.3.0.0', now });
+  assert.strictEqual(before.ok, false, 'до сброса адрес под задержкой');
+  LoginThrottle.clearAccount(name);
+  const afterReset = LoginThrottle.admit(name, { ipKey: '10.3.0.0', now });
+  assert.strictEqual(afterReset.ok, true, 'после сброса состояния — вход свободен');
+  LoginThrottle.resetThrottle();
 });
 
 test('login-throttle (детерминированно): после включения задержки повтор с того же источника ждёт, знакомый — нет', () => {
@@ -282,9 +352,8 @@ test('login-throttle (детерминированно): после включе
   LoginThrottle.resetThrottle();
 });
 
-test('очередь задержки у каждого адреса своя: атакующий не запирает вход настоящему сотруднику (воспроизведение h с разными IP)', () => {
+test('знакомый сотрудник входит всегда, сколько бы ни шёл подбор с чужих адресов (воспроизведение h; знакомый = trusted)', () => {
   LoginThrottle.resetThrottle();
-  const config = require('../src/config');
   const name = 'victim';
   let now = 1_000_000;
   // Атакующий доводит учётную запись до задержки со своих адресов.
@@ -306,13 +375,13 @@ test('очередь задержки у каждого адреса своя: �
       else attackerNext = t + a.retryAfterMs + 5;
     } else {
       userTries += 1;
-      const a = LoginThrottle.admit(name, { ipKey: '198.51.100.9', now: t });
+      // Сотрудник с рабочего места — знакомый адрес (trusted): вход гарантирован.
+      const a = LoginThrottle.admit(name, { ipKey: '198.51.100.9', trusted: true, now: t });
       if (a.ok) { userWins += 1; LoginThrottle.settle(a.ticket, 'success', { now: t + 300 }); }
       userNext = t + 5000 + Math.floor(Math.random() * 10000);
     }
   }
-  void config;
-  assert.ok(userWins === userTries && userTries > 0, `сотрудник входит всегда: ${userWins}/${userTries}`);
+  assert.ok(userWins === userTries && userTries > 0, `знакомый сотрудник входит всегда: ${userWins}/${userTries}`);
   LoginThrottle.resetThrottle();
 });
 
@@ -411,12 +480,16 @@ test('политика: частые пароли, марочные основы
     'password1', 'qwerty123', '1q2w3e4r', 'Лето2026', 'aaaaaaaa', '１２３４５６７８',
     'centychat', 'Centychat1', 'CentyChat2026', 'CentyChat!', 'centy.chat1', 'сентичат123',
     'centras!', 'Centras2027', 'Centras@2026', 'Centras_2026', 'Сентрас2026', 'ctynhfc123',
-    'centrasins', 'mychat2026', 'openmychat1', 'Qwerty123!', 'Password1!', 'Lето2026'
+    'centrasins', 'MyCentras2026', 'openmychat1', 'Qwerty123!', 'Password1!', 'Lето2026',
+    // leetspeak и гомоглифы (ПР-I5, I-6)
+    'C3ntras2026', 'P@ssw0rd2026', 'Pa$$word1', 'сentras2026'
   ];
   for (const p of banned) assert.throws(() => policy(p), /простой|логином/, p);
   assert.throws(() => policy('petrov.ivan2026!', { username: 'petrov.ivan' }), /логином/);
-  // Длинные фразы, лишь начинающиеся со словарного слова, проходят.
-  for (const ok of ['парольдлятеста', 'Рабочий-пароль-1', 'passwordbook-9', 'ГорныйВелосипед7']) {
+  // Длинные фразы, лишь начинающиеся со словарного слова или голого «centy»/
+  // «mychat», проходят (I-6 — ложных срабатываний быть не должно).
+  for (const ok of ['парольдлятеста', 'Рабочий-пароль-1', 'passwordbook-9', 'ГорныйВелосипед7',
+    'Centymeter-long-phrase-9', 'mychatter-is-fun-2026']) {
     assert.doesNotThrow(() => policy(ok), ok);
   }
 });

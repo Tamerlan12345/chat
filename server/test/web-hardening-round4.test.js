@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { freshBoot, closeAll } = require('./helpers/boot');
 
 // Аудит безопасности, раунд 4 — веб-часть
@@ -181,6 +182,32 @@ test('ошибка чтения вложения — ответ 500, а серв
   assert.strictEqual(alive.status, 200, 'процесс жив');
 });
 
+test('оборванное скачивание не роняет сервер (обработчик close закрывает поток чтения)', async () => {
+  // Файл кладём на диск и заводим строку напрямую — минуя часовую квоту загрузок
+  // в этом наборе тестов; 8 МБ, чтобы поток не закончился мгновенно.
+  const config = require('../src/config');
+  const bigPath = require('node:path').join(config.UPLOADS_DIR, 'abort-dl.bin');
+  fs.writeFileSync(bigPath, Buffer.alloc(8 * 1024 * 1024, 0x7a));
+  const info = chat.prepare(
+    'INSERT INTO files (uploader_id, original_name, stored_filename, file_size, mime_type, sha256, path, created_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(people.w4_alice.id, 'abort-dl.bin', 'abort-dl.bin', 8 * 1024 * 1024, 'application/octet-stream', 'x', bigPath, new Date().toISOString());
+  const fileId = Number(info.lastInsertRowid);
+
+  for (let i = 0; i < 3; i++) {
+    const controller = new AbortController();
+    const p = fetch(`${baseUrl}/api/files/download/${fileId}`, {
+      headers: { Authorization: `Bearer ${people.w4_alice.token}`, 'X-Forwarded-For': '198.51.100.61' },
+      signal: controller.signal
+    }).then((r) => r.arrayBuffer()).catch(() => null);
+    setTimeout(() => controller.abort(), 2);
+    await p;
+  }
+  // Сервер жив и следующее скачивание проходит целиком.
+  const ok = await api('GET', `/api/files/download/${fileId}`, { token: people.w4_alice.token, ip: '198.51.100.61' });
+  assert.strictEqual(ok.status, 200, ok.text);
+  assert.strictEqual((await api('GET', '/health', { ip: '198.51.100.61' })).status, 200);
+});
+
 test('объём загрузок на сотрудника в час ограничен (UPLOAD_MAX_MB_PER_HOUR)', async () => {
   const big = 'a'.repeat(1536 * 1024); // 1,5 МБ
   const first = await api('POST', '/api/files/upload', { token: people.w4_carol.token, ip: '198.51.100.6', raw: uploadForm('big1.txt', big) });
@@ -275,18 +302,45 @@ test('knock с IPv6 сохраняет адрес целиком, а не пос
 
 // ── Знакомые адреса входа переживают перезапуск (ПР-I4) ─────────────────────
 
-test('знакомый адрес: записывается в trusted_login_sources, читается после сброса кэша и создаётся «стуком»', async () => {
+test('знакомые адреса: создаёт только allowCreate, продление/WS лишь обновляют; переживают перезапуск (I-2)', async () => {
   const TrustedSources = require('../src/services/trusted-sources.service');
   const uid = people.w4_carol.id;
-  await TrustedSources.record(uid, '203.0.113.150');
-  const row = await identity.get('SELECT ip_key FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.150']);
-  assert.ok(row, 'адрес записан в таблицу');
-  // Имитация перезапуска: кэш в памяти сброшен, знакомость читается из базы.
-  TrustedSources._reset();
-  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.150'), true, 'знакомость пережила сброс кэша');
-  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.199'), false, 'незнакомый адрес — не знакомый');
 
-  // Успешный «стук» привязанного устройства тоже делает адрес знакомым.
+  // Продление/WebSocket (allowCreate:false) НЕ заводят новый адрес.
+  await TrustedSources.record(uid, '203.0.113.150', { allowCreate: false });
+  assert.ok(
+    !(await identity.get('SELECT 1 AS x FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.150'])),
+    'без allowCreate новый адрес не заводится (украденный токен не сажает чужой адрес)'
+  );
+
+  // Вход по паролю / «стук» (allowCreate:true) — заводят.
+  await TrustedSources.record(uid, '203.0.113.150', { allowCreate: true });
+  assert.ok(await identity.get('SELECT 1 AS x FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.150']),
+    'вход по паролю заводит знакомый адрес');
+
+  // Имитация перезапуска: кэш сброшен, знакомость читается из базы.
+  TrustedSources._reset();
+  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.150'), true, 'знакомость пережила перезапуск');
+  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.199'), false, 'незнакомый адрес — не знакомый');
+  // И попал в обратный индекс «знаком хотя бы одному» (для предела проверок, I-C).
+  await TrustedSources.primeReverseIndex();
+  assert.strictEqual(TrustedSources.isFamiliarToAnyoneSync('203.0.113.150'), true);
+});
+
+test('знакомые адреса: суточный предел на число новых адресов у одного сотрудника (I-2)', async () => {
+  const TrustedSources = require('../src/services/trusted-sources.service');
+  TrustedSources._reset();
+  const uid = people.w4_bob.id;
+  await identity.run('DELETE FROM trusted_login_sources WHERE user_id = $1', [uid]);
+  // Больше 5 новых адресов за сутки — сверх предела не заводятся.
+  for (let i = 0; i < 9; i++) await TrustedSources.record(uid, `10.20.${i}.0`, { allowCreate: true });
+  const rows = await identity.all('SELECT ip_key FROM trusted_login_sources WHERE user_id = $1', [uid]);
+  assert.ok(rows.length <= 5, `новых адресов за сутки не больше 5 (получено ${rows.length})`);
+});
+
+test('знакомый адрес создаётся успешным «стуком» устройства (allowCreate)', async () => {
+  const TrustedSources = require('../src/services/trusted-sources.service');
+  const uid = people.w4_carol.id;
   const now = new Date().toISOString();
   await identity.run(
     `INSERT INTO device_pairings (device_id, user_id, paired_at, is_active, secret_hash, secret_token_version, secret_user_id, secret_expires_at, secret_auth_time)
@@ -295,15 +349,71 @@ test('знакомый адрес: записывается в trusted_login_sou
      (await identity.get('SELECT token_version FROM users WHERE id = $1', [uid])).token_version,
      new Date(Date.now() + 30 * 86400000).toISOString()]
   );
-  const secret = 'S'.repeat(43);
-  const knock = await api('POST', '/api/auth/knock', { ip: '203.0.113.151', body: { device_id: 'ts-dev-1', device_secret: secret } });
-  // Секрет-заглушка вряд ли совпадёт по хэшу — но даже статус login_required не
-  // важен: проверяем именно запись знакомого адреса при совпадении. Здесь хэш
-  // сходится (тот же 'S'*43), поэтому статус paired.
+  const knock = await api('POST', '/api/auth/knock', { ip: '203.0.113.151', body: { device_id: 'ts-dev-1', device_secret: 'S'.repeat(43) } });
   assert.strictEqual(knock.status, 200, knock.text);
-  await new Promise((r) => setTimeout(r, 50)); // recordAsync
+  await new Promise((r) => setTimeout(r, 60)); // recordAsync
   const knocked = await identity.get('SELECT ip_key FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.151']);
   assert.ok(knocked, '«стук» записал знакомый адрес');
+  void TrustedSources;
+});
+
+// ── /updates: install-id не вытесняет адресные счётчики (I-B, воспроизведение k) ─
+
+test('спрей случайными install-id в /updates не сбрасывает блокировку login-fail для того же адреса', async () => {
+  const limiter = require('../src/services/rate-limiter');
+  const { rateLimitIpKey } = require('../src/services/ip-access.service');
+  const ip = '203.0.113.90';
+  const ipKey = rateLimitIpKey(ip);
+  const failOpts = { maxAttempts: 30, windowMs: 600000 };
+  // Тесной делаем ОБЩУЮ (адресную) карту: если install-id попадали бы в неё,
+  // спрей вытеснил бы login-fail. Ключи с install-id живут в карте 'name'.
+  limiter.configureLimiter({ maxBuckets: 40, nameMaxBuckets: 40 });
+  try {
+    for (let i = 0; i < 30; i++) limiter.registerFailure(`login-fail:${ipKey}`, failOpts);
+    assert.ok(limiter.isRateLimited(`login-fail:${ipKey}`, failOpts), 'предпосылка: адрес заблокирован по login-fail');
+    for (let i = 0; i < 200; i++) {
+      await api('GET', '/updates/policy.json', { ip, headers: { 'X-MyChat-Install-Id': crypto.randomUUID() } });
+    }
+    assert.ok(limiter.isRateLimited(`login-fail:${ipKey}`, failOpts), 'после спрея install-id login-fail всё ещё заблокирован (I-B)');
+  } finally {
+    limiter.configureLimiter({});
+    limiter.resetLimit(`login-fail:${ipKey}`);
+  }
+});
+
+// ── knock считает только «пустые» стуки (M7) ────────────────────────────────
+
+test('успешные «стуки» привязанного устройства не расходуют предел knock', async () => {
+  const uid = people.w4_alice.id;
+  const now = new Date().toISOString();
+  const secret = 'K'.repeat(43);
+  await identity.run(
+    `INSERT INTO device_pairings (device_id, user_id, paired_at, is_active, secret_hash, secret_token_version, secret_user_id, secret_expires_at, secret_auth_time)
+     VALUES ($1, $2, $3, 1, $4, $5, $2, $6, $3)`,
+    ['knock-count-dev', uid, now, crypto.createHash('sha256').update(secret).digest('hex'),
+     (await identity.get('SELECT token_version FROM users WHERE id = $1', [uid])).token_version,
+     new Date(Date.now() + 30 * 86400000).toISOString()]
+  );
+  // 70 успешных «стуков» (порог «пустых» — 60): успех предел не расходует.
+  for (let i = 0; i < 70; i++) {
+    const res = await api('POST', '/api/auth/knock', { ip: '203.0.113.95', body: { device_id: 'knock-count-dev', device_secret: secret } });
+    assert.strictEqual(res.status, 200, `стук ${i}: ${res.text}`);
+    assert.strictEqual(res.json.status, 'paired', `стук ${i} должен быть paired`);
+  }
+});
+
+// ── Свободное место перед загрузкой (M2, 507) ───────────────────────────────
+
+test('загрузка отклоняется 507, когда на диске мало свободного места', async () => {
+  const original = fs.promises.statfs;
+  fs.promises.statfs = async () => ({ bsize: 4096, blocks: 1e6, bavail: 1, bfree: 1 }); // почти ноль свободно
+  try {
+    const res = await api('POST', '/api/files/upload', { token: people.w4_alice.token, ip: '198.51.100.60', raw: uploadForm('x.txt', 'данные') });
+    assert.strictEqual(res.status, 507, res.text);
+    assert.match(res.json.error, /свободного места/);
+  } finally {
+    fs.promises.statfs = original;
+  }
 });
 
 // ── Администрирование (Р4-18, Р4-20) ───────────────────────────────────────

@@ -12,7 +12,10 @@ const assert = require('node:assert');
 const ROUND4_KEYS = [
   'LOGIN_MAX_FAILED_ATTEMPTS', 'LOGIN_LOCKOUT_MINUTES', 'LOGIN_ACCOUNT_SOFT_LIMIT',
   'LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 'PASSWORD_HASH_CONCURRENCY', 'ANON_RATE_LIMIT_PER_MINUTE',
-  'UPLOAD_MAX_MB_PER_HOUR', 'UPLOAD_MIN_FREE_DISK_MB'
+  'UPLOAD_MAX_MB_PER_HOUR', 'UPLOAD_MIN_FREE_DISK_MB',
+  // Проверка раунда 4.
+  'LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR', 'LOGIN_INFLIGHT_PER_IP', 'LOGIN_INFLIGHT_UNFAMILIAR',
+  'UPDATES_MAX_REQ_PER_MIN_PER_IP'
 ];
 
 function loadConfig(env = {}) {
@@ -115,4 +118,34 @@ test('новые переменные раунда 4: корректные зн�
   assert.strictEqual(bad.LOGIN_ACCOUNT_MAX_DELAY_SECONDS, 60);
   assert.strictEqual(bad.PASSWORD_HASH_CONCURRENCY, 2);
   assert.strictEqual(bad.UPLOAD_MAX_MB_PER_HOUR, 2048);
+});
+
+// ── Проверка раунда 4: новые пределы через boundedInt (I-A, I-C, M6) ─────────
+
+test('новые переменные проверки раунда 4: значения по умолчанию', () => {
+  const config = loadConfig();
+  assert.strictEqual(config.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR, 30);
+  assert.strictEqual(config.LOGIN_INFLIGHT_PER_IP, 20);
+  assert.strictEqual(config.LOGIN_INFLIGHT_UNFAMILIAR, 3);
+  assert.strictEqual(config.UPDATES_MAX_REQ_PER_MIN_PER_IP, 6000);
+});
+
+test('новые переменные проверки раунда 4: мусор откатывается, корректное принимается', () => {
+  const bad = loadConfig({
+    LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR: 'abc', LOGIN_INFLIGHT_PER_IP: '0',
+    LOGIN_INFLIGHT_UNFAMILIAR: '-1', UPDATES_MAX_REQ_PER_MIN_PER_IP: '10'
+  });
+  assert.strictEqual(bad.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR, 30);
+  assert.strictEqual(bad.LOGIN_INFLIGHT_PER_IP, 20);
+  assert.strictEqual(bad.LOGIN_INFLIGHT_UNFAMILIAR, 3);
+  assert.strictEqual(bad.UPDATES_MAX_REQ_PER_MIN_PER_IP, 6000, 'ниже минимума 60 — по умолчанию');
+
+  const ok = loadConfig({
+    LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR: '0', LOGIN_INFLIGHT_PER_IP: '40',
+    LOGIN_INFLIGHT_UNFAMILIAR: '2', UPDATES_MAX_REQ_PER_MIN_PER_IP: '3000'
+  });
+  assert.strictEqual(ok.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR, 0, '0 — ведро выключено');
+  assert.strictEqual(ok.LOGIN_INFLIGHT_PER_IP, 40);
+  assert.strictEqual(ok.LOGIN_INFLIGHT_UNFAMILIAR, 2);
+  assert.strictEqual(ok.UPDATES_MAX_REQ_PER_MIN_PER_IP, 3000);
 });
