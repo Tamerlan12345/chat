@@ -1424,7 +1424,7 @@ export default function AdminUserModal({
                         <button className="btn btn-secondary" onClick={loadPendingDevices}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="refresh" size={14} />Обновить</span>
                         </button>
-                        <button className="btn btn-primary" style={{ background: 'var(--online)' }} onClick={handleAutoMatchIp}>
+                        <button className="btn btn-primary" style={{ background: 'var(--success-fill)' }} onClick={handleAutoMatchIp}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="zap" size={14} />Автосвязывание по IP</span>
                         </button>
                       </div>

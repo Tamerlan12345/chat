@@ -88,6 +88,14 @@
   --warning-text: light-dark(#8a5700, #f3c26f);
   --warning-soft: light-dark(rgba(201, 130, 18, 0.1), rgba(229, 161, 58, 0.14));
   --warning-line: light-dark(rgba(201, 130, 18, 0.32), rgba(229, 161, 58, 0.4));
+  /* Заливки кнопок и счётчиков с текстом. Тёмные в обеих темах: белый на
+     них не ниже 5:1. Цвета присутствия (--online, --dnd) — для точек, не для кнопок. */
+  --success-fill: #1a7f45;
+  --success-fill-hover: #156b3a;
+  --danger-fill: #c9302c;
+  --danger-fill-hover: #b02824;
+  --warning-fill: light-dark(#d4951c, #e5a13a);
+  --on-warning-fill: #1e1e24;
 
   /* ── Присутствие ───────────────────────────────────────────────────────── */
   --online: light-dark(#2da44e, #3fb950);
@@ -394,7 +402,7 @@ input, textarea, button, select {
   position: absolute;
   top: 4px;
   right: 4px;
-  background-color: var(--danger);
+  background-color: var(--danger-fill);
   color: #ffffff;
   font-size: 10px;
   font-weight: 700;
@@ -456,7 +464,7 @@ input, textarea, button, select {
   color: var(--text-main);
 }
 .dialogs-search-input:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
 }
 .dialogs-search-icon {
   position: absolute;
@@ -783,7 +791,7 @@ input, textarea, button, select {
   background-color: var(--primary-hover);
 }
 .btn-copy-code.copied {
-  background-color: var(--online);
+  background-color: var(--success-fill);
 }
 .security-card-notice {
   font-size: 11px;
@@ -874,7 +882,7 @@ input, textarea, button, select {
 }
 
 .chat-textarea:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
 }
 .chat-textarea::placeholder {
   color: var(--text-dim);
@@ -1290,7 +1298,7 @@ input, textarea, button, select {
 }
 
 .form-input:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   outline: none;
   box-shadow: 0 0 0 3px light-dark(rgba(91, 78, 230, 0.15), rgba(0, 0, 0, 0.3));
 }
@@ -2455,7 +2463,7 @@ input, textarea, button, select {
   user-select: none;
 }
 .rd-video-area.controllable:focus {
-  outline: 2px solid var(--primary);
+  outline: 2px solid #b0a9ff;
   outline-offset: -2px;
 }
 
@@ -2654,12 +2662,12 @@ input, textarea, button, select {
   cursor: pointer;
   transition: filter 0.12s;
 }
-.call-btn:hover { filter: brightness(1.12); }
+.call-btn:hover { filter: brightness(0.92); }
 .call-btn:active { transform: translateY(1px); }
-.call-btn.accept { background: var(--online); color: #fff; }
-.call-btn.decline { background: var(--danger); color: #fff; }
+.call-btn.accept { background: var(--success-fill); color: #fff; }
+.call-btn.decline { background: var(--danger-fill); color: #fff; }
 .call-btn.mute { background: #334155; color: #e2e8f0; }
-.call-btn.mute.on { background: var(--away); color: var(--text-main); }
+.call-btn.mute.on { background: var(--warning-fill); color: var(--on-warning-fill); }
 
 .announcements-error-banner {
   position: absolute;
@@ -3342,7 +3350,7 @@ input, textarea, button, select {
 
 .current-badge {
   font-size: 10px;
-  background-color: var(--online);
+  background-color: var(--success-fill);
   color: #ffffff;
   padding: 1px 6px;
   border-radius: 10px;
@@ -4161,7 +4169,7 @@ input, textarea, button, select {
 }
 
 .emoji-search-input:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 2px light-dark(rgba(91, 78, 230, 0.15), rgba(0, 0, 0, 0.3));
 }
 
@@ -4727,7 +4735,7 @@ input, textarea, button, select {
 }
 
 .admin-filter-input:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
 }
 
 .admin-filter-select {
@@ -5032,7 +5040,7 @@ input, textarea, button, select {
   background: var(--primary-soft);
   border-color: var(--primary);
   color: var(--accent-text);
-  box-shadow: inset 0 0 0 1px light-dark(#3b82f6, rgba(0, 0, 0, 0.5));
+  box-shadow: inset 0 0 0 1px var(--primary);
 }
 .server-preset-btn span.preset-title {
   font-weight: 600;
@@ -5073,7 +5081,7 @@ input, textarea, button, select {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .server-input-field:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 3px light-dark(rgba(91, 78, 230, 0.15), rgba(0, 0, 0, 0.3));
 }
 
@@ -5088,7 +5096,7 @@ input, textarea, button, select {
   outline: none;
 }
 .server-port-field:focus {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 3px light-dark(rgba(91, 78, 230, 0.15), rgba(0, 0, 0, 0.3));
 }
 
@@ -5474,7 +5482,7 @@ input, textarea, button, select {
 
 .parser-textarea:focus {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   background: var(--bg-card);
 }
 
@@ -5538,7 +5546,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -6112,7 +6120,7 @@ select:focus-visible {
   height: 20px;
   padding: 0 6px;
   border-radius: 10px;
-  background: var(--danger);
+  background: var(--danger-fill);
   color: #ffffff;
   font-size: 11px;
   font-weight: 700;
@@ -6123,16 +6131,16 @@ select:focus-visible {
 /* Отклонение заявки и отключение сотрудника — действия, которые не отменяются
    одним нажатием. Красная кнопка отличает их от остальных. */
 .btn-danger {
-  background: linear-gradient(180deg, var(--danger) 0%, var(--danger) 100%);
+  background: var(--danger-fill);
   color: #ffffff;
-  border: 1px solid #b91c1c;
+  border: 1px solid var(--danger-fill-hover);
   border-radius: 5px;
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.35)), 0 1px 2px rgba(0, 0, 0, 0.08);
   transition: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
 }
 .btn-danger:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--danger) 0%, #b91c1c 100%);
+  background: var(--danger-fill-hover);
   box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.35)), 0 2px 5px light-dark(rgba(220, 38, 38, 0.3), rgba(0, 0, 0, 0.45));
 }
 .btn-danger:active:not(:disabled) {
@@ -6321,22 +6329,22 @@ select:focus-visible {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 24px;
-  background: rgba(239, 68, 68, 0.15);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--danger-line);
+  color: var(--danger-text);
   font-size: 12px;
 }
 .db-studio-error.inline {
   padding: 8px 12px;
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  border: 1px solid var(--danger-line);
   border-radius: 6px;
 }
 .db-studio-note {
   padding: 8px 12px;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  border: 1px solid var(--warning-line);
   border-radius: 6px;
-  background: rgba(245, 158, 11, 0.12);
-  color: light-dark(#fbbf24, #f4d27b);
+  background: var(--warning-soft);
+  color: var(--warning-text);
   font-size: 12px;
 }
 
@@ -6367,7 +6375,7 @@ a:focus-visible,
 [tabindex]:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -6542,7 +6550,7 @@ input:focus-visible {
 .sub-panel-search-input:focus-visible {
   outline: none;
   background: var(--bg-card);
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 3px var(--primary-ring);
 }
 .sub-panel-search-box .search-icon {
@@ -6782,7 +6790,7 @@ input:focus-visible {
 }
 .classic-textarea-row:hover { border-color: var(--text-dim); }
 .classic-textarea-row:focus-within {
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 3px var(--primary-ring);
 }
 .classic-chat-textarea,
@@ -7114,7 +7122,7 @@ select.form-input { padding-right: 8px; }
 .form-input:focus,
 .form-input:focus-visible {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: 0 0 0 3px var(--primary-ring);
 }
 .form-input:disabled { background: var(--bg-panel); color: var(--text-muted); }
@@ -7543,7 +7551,7 @@ html, body, #root, .app-container, .workspace-layout { background: var(--bg-main
 .classic-input-container { background: var(--bg-main); border-top-color: var(--border-color); }
 .classic-textarea-row { background: var(--bg-card); border-color: light-dark(rgba(17, 24, 39, 0.08), rgba(255, 255, 255, 0.1)); }
 .classic-textarea-row:hover { border-color: light-dark(rgba(17, 24, 39, 0.144), rgba(255, 255, 255, 0.18)); }
-.classic-textarea-row:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.classic-textarea-row:focus-within { border-color: var(--focus-color); box-shadow: 0 0 0 3px var(--primary-ring); }
 .classic-chat-textarea { color: var(--text-strong); }
 .classic-send-btn:disabled { background: light-dark(rgba(17, 24, 39, 0.048), rgba(255, 255, 255, 0.06)); border-color: transparent; }
 
@@ -7581,7 +7589,7 @@ textarea { color-scheme: inherit; }
 .form-input { background: light-dark(rgba(17, 24, 39, 0.032), rgba(255, 255, 255, 0.04)); border-color: light-dark(rgba(17, 24, 39, 0.112), rgba(255, 255, 255, 0.14)); color: var(--text-strong); }
 .form-input:hover:not(:disabled):not(:focus) { border-color: light-dark(rgba(17, 24, 39, 0.16), rgba(255, 255, 255, 0.24)); }
 .form-input:focus,
-.form-input:focus-visible { background: light-dark(rgba(255, 255, 255, 0.84), rgba(0, 0, 0, 0.12)); border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.form-input:focus-visible { background: light-dark(rgba(255, 255, 255, 0.84), rgba(0, 0, 0, 0.12)); border-color: var(--focus-color); box-shadow: 0 0 0 3px var(--primary-ring); }
 .form-input:disabled { background: light-dark(rgba(17, 24, 39, 0.016), rgba(255, 255, 255, 0.02)); color: var(--text-dim); }
 .form-label { color: var(--text-secondary); }
 .form-hint.is-warning { color: var(--warning-text); }
@@ -7598,7 +7606,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
    действия (оповещения в «Важном»), иначе каждый второй диалог выглядел ошибкой. */
 .dialog-unread-badge,
 .tree-unread-badge { background: var(--primary) !important; color: var(--text-on-accent) !important; }
-.rail-badge { background: var(--danger) !important; color: #ffffff !important; }
+.rail-badge { background: var(--danger-fill) !important; color: #ffffff !important; }
 .chat-header-status-dot.online,
 .status-pill-dot.online,
 .tree-presence-dot.online,
@@ -7799,7 +7807,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 /* Фокус с клавиатуры — одно кольцо на всё приложение. :where не спорит с
    точечными правилами выше: где кольцо уже нарисовано, оно и останется. */
 :where(button, a, [role='button'], [role='switch'], [role='tab'], [role='menuitem'], [role='menuitemcheckbox'], [tabindex]):focus-visible {
-  outline: 2px solid var(--accent-text);
+  outline: var(--focus-outline);
   outline-offset: 2px;
 }
 :where(button, a, [role='button']):focus:not(:focus-visible) { outline: none; }
@@ -8246,7 +8254,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   background: var(--bg-card);
 }
 .classic-textarea-row:hover { border-color: light-dark(rgba(17, 24, 39, 0.24), rgba(255, 255, 255, 0.22)); }
-.classic-textarea-row:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.classic-textarea-row:focus-within { border-color: var(--focus-color); box-shadow: 0 0 0 3px var(--primary-ring); }
 .classic-chat-textarea,
 .classic-chat-textarea:focus-visible { font-size: 14px; line-height: 1.5; color: var(--text-strong); padding: 6px 0; }
 .classic-chat-textarea::placeholder { color: var(--text-dim); }
@@ -8632,7 +8640,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 }
 .sec-input::placeholder { color: var(--text-muted); }
 .sec-input:hover { border-color: var(--text-dim); }
-.sec-input:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.sec-input:focus-visible { border-color: var(--focus-color); box-shadow: 0 0 0 3px var(--primary-ring); }
 .sec-input[aria-invalid='true'] { border-color: var(--danger); }
 .sec-input[aria-invalid='true']:focus-visible { box-shadow: 0 0 0 3px var(--danger-soft); }
 .sec-textarea { width: 100%; min-height: 128px; resize: vertical; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; line-height: 1.5; }
@@ -8808,8 +8816,8 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   font-weight: 600;
   cursor: pointer;
 }
-.update-banner.is-warn .update-banner-btn { background: var(--warning); }
-.update-banner.is-error .update-banner-btn { background: var(--danger); }
+.update-banner.is-warn .update-banner-btn { background: var(--warning-fill); color: var(--on-warning-fill); }
+.update-banner.is-error .update-banner-btn { background: var(--danger-fill); }
 .update-banner-btn:disabled { opacity: 0.6; cursor: default; }
 .update-banner-close {
   display: inline-flex;
@@ -8826,7 +8834,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   cursor: pointer;
 }
 .update-banner-close:hover { background: var(--bg-hover); color: var(--text-main); }
-.update-banner-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.update-banner-close:focus-visible { outline: var(--focus-outline); outline-offset: 1px; }
 .update-banner-note { flex-basis: 100%; font-size: 11px; color: var(--text-muted); }
 
 .upd-channel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -8889,10 +8897,11 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 
 /* ── Вход ────────────────────────────────────────────────────────────────── */
 
+/* safe: карточка выше окна (регистрация) прокручивается, а не срезается сверху. */
 .login-container {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   width: 100vw;
   height: 100vh;
   padding: var(--space-6);
@@ -9052,6 +9061,12 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   line-height: 1.2;
 }
 .btn-block { display: flex; width: 100%; }
+/* Малая кнопка остаётся малой: общий размер выше её не перекрывает. */
+.btn.btn-sm { min-height: 26px; padding: 0 10px; font-size: var(--fs-xs); }
+/* Счётчик новых сообщений — как счётчики непрочитанного: белый на индиго. */
+.chat-jump-to-latest .jump-badge { background: var(--primary); color: var(--text-on-accent); }
+.btn-danger { background: var(--danger-fill); border: 1px solid transparent; color: #ffffff; box-shadow: none; }
+.btn-danger:hover:not(:disabled) { background: var(--danger-fill-hover); border-color: transparent; }
 .btn-primary {
   background: var(--primary);
   border: 1px solid transparent;
@@ -9097,7 +9112,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 .form-input:focus-visible {
   outline: none;
   background: var(--bg-card);
-  border-color: var(--primary);
+  border-color: var(--focus-color);
   box-shadow: var(--focus-ring);
 }
 .form-input:disabled { background: var(--bg-sunken); border-bottom-color: var(--border-control); color: var(--text-muted); }

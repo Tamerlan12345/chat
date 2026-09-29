@@ -728,7 +728,7 @@ export default function RemoteDesktopHostModal(props) {
               <button
                 type="button"
                 className="btn btn-primary"
-                style={{ background: 'var(--online)', borderColor: '#15803d', fontWeight: 600 }}
+                style={{ background: 'var(--success-fill)', borderColor: 'var(--success-fill)', fontWeight: 600 }}
                 onClick={handleAccept}
                 disabled={accepting}
               >
