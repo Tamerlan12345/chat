@@ -66,11 +66,9 @@ function Send-MyChatRelease {
     )
     # Windows PowerShell 5.1 (.NET Framework) по умолчанию может предложить
     # серверу только TLS 1.0/1.1, которые современный прокси отвергает.
-    $protocols = [Net.SecurityProtocolType]::Tls12
-    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') {
-        $protocols = $protocols -bor [Net.SecurityProtocolType]'Tls13'
-    }
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $protocols
+    # Только TLS 1.2: TLS 1.3 на системах, где SChannel его не поддерживает,
+    # ломает само рукопожатие.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     Add-Type -AssemblyName System.Net.Http
     $handler = New-Object System.Net.Http.HttpClientHandler

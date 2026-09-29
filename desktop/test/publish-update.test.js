@@ -54,7 +54,9 @@ test('publish-update.ps1 — токен из MYCHAT_UPDATE_TOKEN, TLS 1.2, по�
   const code = codeLines(text);
   assert.match(code, /\$env:MYCHAT_UPDATE_TOKEN/);
   assert.match(code, /\[Net\.ServicePointManager\]::SecurityProtocol/);
-  assert.match(code, /Tls12/);
+  assert.match(code, /\[Net\.ServicePointManager\]::SecurityProtocol = \[Net\.ServicePointManager\]::SecurityProtocol -bor \[Net\.SecurityProtocolType\]::Tls12/);
+  // TLS 1.3 в .NET Framework без поддержки в SChannel ломает рукопожатие.
+  assert.ok(!/Tls13/.test(code), 'только TLS 1.2');
   assert.match(code, /StreamContent/);
   assert.ok(!/ReadAllBytes/.test(code), 'файлы в сотни мегабайт не читаются в память целиком');
   assert.ok(!/Write-Host[^\n]*\$(Token|token|effectiveToken)\b/.test(code), 'токен не печатается');

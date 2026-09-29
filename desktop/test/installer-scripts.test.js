@@ -108,4 +108,9 @@ test('docs/автообновление.md — существует и опис�
   const text = readText(docPath);
   assert.match(text, /UPDATES_DISABLED/, 'должен описывать жёсткий выключатель UPDATES_DISABLED');
   assert.match(text, /publish:update/, 'должен описывать npm run publish:update');
+  assert.match(
+    text,
+    /client\.json[^]{0,200}теперь игнорируется[^]{0,200}удалите этот файл/,
+    'должен сказать, что client.json пилотной версии игнорируется и его нужно заменить политикой и удалить'
+  );
 });

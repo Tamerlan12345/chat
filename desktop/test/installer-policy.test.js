@@ -103,6 +103,19 @@ test('configure-client.ps1 пишет политику в реестр, client-c
     r = runScript(file, ['-DisableUpdates', '-EnableUpdates']);
     assert.strictEqual(r.status, 2, `код ${r.status}: ${r.stdout}`);
     assert.strictEqual(readPolicy().updates.enabled, true);
+
+    // Кириллический домен: reg.exe печатает значения в кодовой странице OEM,
+    // и клиент такой адрес прочитать не смог бы — записывается punycode.
+    r = runScript(file, ['-ServerUrl', 'https://чат.компания.kz']);
+    assert.strictEqual(r.status, 0, `код ${r.status}: ${r.stderr}\n${r.stdout}`);
+    config = readPolicy();
+    assert.strictEqual(config.serverUrl, 'https://xn--80a0bn.xn--80aqeigdi5k.kz/');
+    assert.deepStrictEqual(config.problems, []);
+
+    // Не-ASCII в пути так же переводится в ASCII (процентная запись).
+    r = runScript(file, ['-ServerUrl', 'https://chat.centras.local/чат']);
+    assert.strictEqual(r.status, 0, `код ${r.status}: ${r.stderr}\n${r.stdout}`);
+    assert.strictEqual(readPolicy().serverUrl, 'https://chat.centras.local/%D1%87%D0%B0%D1%82');
   } finally {
     spawnSync(regExe, ['delete', testKeyReg, '/f'], { windowsHide: true });
     fs.rmSync(dir, { recursive: true, force: true });

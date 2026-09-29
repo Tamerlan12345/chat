@@ -55,6 +55,23 @@ if ($ServerUrl) {
         Write-Host "Обновления и синхронизация по http не поддерживаются - см. docs/автообновление.md." -ForegroundColor Yellow
         exit 2
     }
+
+    # Клиент читает политику через reg.exe, а тот печатает значения в
+    # кодовой странице OEM: кириллица в адресе дошла бы до клиента
+    # испорченной, и он молча остался бы на адресе по умолчанию. Поэтому
+    # кириллический домен записывается в punycode (xn--...), а не-ASCII в
+    # пути - процентной записью.
+    if ($ServerUrl -match '[^\x21-\x7E]') {
+        $builder = New-Object System.UriBuilder $parsed
+        $builder.Host = $parsed.IdnHost
+        $asciiUrl = $builder.Uri.AbsoluteUri
+        if ($asciiUrl -match '[^\x21-\x7E]') {
+            Write-Host "ОТКАЗ: -ServerUrl не удалось записать латиницей (получено: $ServerUrl). Укажите адрес в punycode (https://xn--...)." -ForegroundColor Red
+            exit 2
+        }
+        Write-Host "Адрес с кириллицей записан латиницей (punycode): $asciiUrl" -ForegroundColor Yellow
+        $ServerUrl = $asciiUrl
+    }
 }
 
 # New-Item -Force на уже существующем ключе реестра пересоздаёт его и стирает
