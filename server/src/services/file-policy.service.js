@@ -131,10 +131,6 @@ async function validatePerUser(perUser) {
     if (!Number.isInteger(userId) || userId <= 0) {
       throw new Error(`Недопустимый идентификатор сотрудника: «${key}»`);
     }
-    const user = await UserService.getUserById(userId);
-    if (!user || !user.is_active) {
-      throw new Error(`Сотрудник №${userId} не найден или отключён`);
-    }
     if (!Array.isArray(list)) throw new Error(`Список расширений для сотрудника №${userId} должен быть массивом`);
     if (list.length > MAX_PER_USER_ENTRIES) {
       throw new Error(`Не больше ${MAX_PER_USER_ENTRIES} дополнительных расширений на сотрудника`);
@@ -145,6 +141,18 @@ async function validatePerUser(perUser) {
       if (!EXT_RE.test(ext)) throw new Error(`Недопустимое расширение: «${raw}»`);
       if (!cleanList.includes(ext)) cleanList.push(ext);
     }
+
+    // Устаревший ключ (сотрудник уволен/отключён или вовсе удалён) — не ошибка
+    // запроса, а тихо отбрасывается. Интерфейс всегда шлёт ПОЛНУЮ карту
+    // исключений обратно при любом сохранении (см. комментарий к setPolicy
+    // выше про мерж черновика) — и до этой правки такой ключ ронял КАЖДОЕ
+    // следующее сохранение политики целиком, включая правки, не имевшие к
+    // этому сотруднику отношения (аудит ревью, находка №22). Формат ключа и
+    // расширений при этом проверяется всегда, независимо от наличия
+    // сотрудника, — это ошибки самого запроса, а не устаревшие данные.
+    const user = await UserService.getUserById(userId);
+    if (!user || !user.is_active) continue;
+
     // Пустой список исключений — не ошибка, но и не нужен как ключ.
     if (cleanList.length) clean[String(userId)] = cleanList;
   }

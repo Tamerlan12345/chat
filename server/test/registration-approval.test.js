@@ -126,3 +126,51 @@ test('существующие учётные записи миграция не
   const admin = await identity.get(`SELECT approval_status FROM users WHERE username = 'admin'`);
   assert.strictEqual(admin.approval_status, 'approved', 'админ должен остаться рабочим');
 });
+
+// Ревью (задача 8): анонимная самостоятельная регистрация не должна проверять
+// пароль строже, чем остальные поля, — иначе заявка засоряла бы оргструктуру
+// и ленту сообщений именем на десятки килобайт или фишинговым email/телефоном
+// (те же пределы, что и в UserService.adminUpdateUser, аудит находка №5).
+
+test('регистрация отклоняет слишком длинное ФИО', async () => {
+  await assert.rejects(
+    () => AuthService.register({ username: 'longname', password: 'нормальныйпароль1', full_name: 'А'.repeat(200) }),
+    /ФИО/
+  );
+});
+
+test('регистрация отклоняет слишком длинную должность', async () => {
+  await assert.rejects(
+    () => AuthService.register({
+      username: 'longtitle', password: 'нормальныйпароль1', full_name: 'Кто-то', job_title: 'Б'.repeat(200)
+    }),
+    /Должность/
+  );
+});
+
+test('регистрация отклоняет неверный формат email', async () => {
+  await assert.rejects(
+    () => AuthService.register({
+      username: 'bademail', password: 'нормальныйпароль1', full_name: 'Кто-то', email: 'не-email'
+    }),
+    /email/
+  );
+});
+
+test('регистрация отклоняет недопустимые символы в телефоне', async () => {
+  await assert.rejects(
+    () => AuthService.register({
+      username: 'badphone', password: 'нормальныйпароль1', full_name: 'Кто-то', phone: 'звоните мне <script>'
+    }),
+    /телефон/
+  );
+});
+
+test('регистрация по-прежнему принимает корректные email и телефон', async () => {
+  const user = await AuthService.register({
+    username: 'gooddata', password: 'нормальныйпароль1', full_name: 'Хороший Данные',
+    email: 'user@example.com', phone: '+7 (700) 123-45-67'
+  });
+  assert.strictEqual(user.email, 'user@example.com');
+  assert.strictEqual(user.phone, '+7 (700) 123-45-67');
+});

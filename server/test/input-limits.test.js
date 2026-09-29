@@ -380,6 +380,32 @@ test('11 неудачных входов с одного адреса для adm
   assert.ok(fromElsewhere.token, 'с другого адреса верный пароль администратора должен пройти');
 });
 
+// Ревью (задача 7): успешный вход обязан снимать накопленные неудачи по паре
+// адрес+логин — иначе они продолжают копиться к следующей блокировке, хотя
+// подбора после успешного входа никто не вёл.
+test('успешный вход сбрасывает счётчик неудачных попыток по паре адрес+логин', async () => {
+  const ip = '198.51.100.99';
+  const created = await UserService.createUser({
+    username: 'resetcheck', full_name: 'Сброс Счётчика', password: 'Рабочий-пароль-1'
+  });
+  await UserService.setMustChangePassword(created.id, false);
+
+  for (let i = 0; i < config.LOGIN_MAX_FAILED_ATTEMPTS - 1; i++) {
+    await assert.rejects(() => AuthService.login('resetcheck', 'неверный', { ip }));
+  }
+  // Порог ещё не достигнут — верный пароль проходит и обязан сбросить счётчик.
+  const ok = await AuthService.login('resetcheck', 'Рабочий-пароль-1', { ip });
+  assert.ok(ok.token);
+
+  // Без сброса эта вторая серия сложилась бы с первой и заблокировала бы вход
+  // раньше, чем наберётся LOGIN_MAX_FAILED_ATTEMPTS попыток после успеха.
+  for (let i = 0; i < config.LOGIN_MAX_FAILED_ATTEMPTS - 1; i++) {
+    await assert.rejects(() => AuthService.login('resetcheck', 'неверный', { ip }));
+  }
+  const stillOk = await AuthService.login('resetcheck', 'Рабочий-пароль-1', { ip });
+  assert.ok(stillOk.token, 'счётчик обязан быть сброшен успешным входом, а не продолжать копиться между сериями');
+});
+
 // Раунд 1 ревью (важная находка): панель администратора (DbStudioService.
 // getIdentityStats → lockedAccounts) раньше читала users.locked_until,
 // которую блокировка по IP+логину больше не пишет — счётчик был бы всегда

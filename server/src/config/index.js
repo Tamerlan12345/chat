@@ -90,6 +90,28 @@ function positiveInt(raw, fallback) {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+const DEFAULT_LEGACY_TOKEN_CUTOFF = '2026-10-15T00:00:00Z';
+
+// Отсечка задаётся оператором как строка окружения — опечатка («2026-13-40»,
+// пустая строка после подстановки CI, случайный текст) не должна превращать
+// проверку в fail-open. new Date(мусор) даёт Invalid Date, чьё getTime() —
+// NaN; сравнение payload.exp < NaN всегда ложно, и старый токен принимался бы
+// вечно, каким бы его срок ни был (аудит ревью, находка №20). Невалидное
+// значение — предупреждение в журнал и откат к жёсткой дате по умолчанию, а
+// не отказ от запуска: отсечка не настолько критична, чтобы ронять сервер.
+function resolveLegacyTokenCutoff() {
+  const raw = process.env.LEGACY_TOKEN_CUTOFF;
+  if (!raw) return DEFAULT_LEGACY_TOKEN_CUTOFF;
+  if (Number.isNaN(new Date(raw).getTime())) {
+    console.warn(
+      `[Config] LEGACY_TOKEN_CUTOFF="${raw}" не распознан как дата — использую значение по умолчанию ` +
+        `(${DEFAULT_LEGACY_TOKEN_CUTOFF}). Без этого отсечка старого формата токенов не сработала бы вовсе.`
+    );
+    return DEFAULT_LEGACY_TOKEN_CUTOFF;
+  }
+  return raw;
+}
+
 module.exports = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 2004,
   HOST: process.env.HOST || '0.0.0.0',
@@ -131,15 +153,18 @@ module.exports = {
   // входом по паролю дольше этого срока перестаёт действовать сам. Без этого
   // предела украденная копия localStorage работала бы бессрочно (аудит,
   // находка №9).
-  DEVICE_SECRET_TTL_DAYS: process.env.DEVICE_SECRET_TTL_DAYS
-    ? parseInt(process.env.DEVICE_SECRET_TTL_DAYS, 10)
-    : 30,
+  // Нечисловое значение (опечатка вида "30d" или пустая переменная от CI)
+  // раньше давало NaN: claimDeviceSecret считал expiresAt через него и падал
+  // на new Date(NaN).toISOString() — 500 в ответ на обычный вход по паролю на
+  // уже привязанном устройстве (аудит ревью, находка №20). positiveInt — тот
+  // же помощник, что и для UPDATES_MAX_*, — откатывается к 30 сам.
+  DEVICE_SECRET_TTL_DAYS: positiveInt(process.env.DEVICE_SECRET_TTL_DAYS, 30),
   // Токены прежнего (миллисекундного) формата принимаются лишь до этой даты —
   // после неё отклоняются, даже если их exp ещё не наступил, и владельцу
   // придётся войти заново обычным способом. Без отсечки такой токен обходил
   // бы проверки iss/aud/auth_time, которым подчиняются все новые токены
   // (аудит, находка №17).
-  LEGACY_TOKEN_CUTOFF: process.env.LEGACY_TOKEN_CUTOFF || '2026-10-15T00:00:00Z',
+  LEGACY_TOKEN_CUTOFF: resolveLegacyTokenCutoff(),
   // Автоимпорт учётных записей из резервных файлов (data/identity.db,
   // data/pre-identity-split.db) в пустое хранилище — операция, которая
   // подставляет чужие пароли и устройства поверх того, что сервер считает

@@ -534,7 +534,7 @@ router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(asy
       wsServer.disconnectUser(targetId, 'Права учётной записи изменены — войдите заново');
     }
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
-    res.json(updated);
+    res.json(UserService.hideAdminOnlyFields(updated, req.user));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

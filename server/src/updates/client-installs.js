@@ -89,9 +89,17 @@ async function pruneClientInstalls({ days = RETENTION_DAYS } = {}) {
   return removed;
 }
 
+// Топ-50 по частоте на группу — сводка для одного экрана консоли
+// администратора, не полная выгрузка. Без предела разнообразие версий/ошибок
+// в разросшемся парке (или мусор в X-MyChat-Client-Version/Update-Error за
+// пределами их собственных проверок формата) отдавало бы неограниченно
+// растущий объект на каждый /api/admin/updates (находка ревью, задача 6).
+const MAX_GROUP_ENTRIES = 50;
+
 async function groupCount(column, where = '') {
   const rows = await identity().all(
-    `SELECT ${column} AS k, COUNT(*) AS n FROM client_installs ${where} GROUP BY ${column}`
+    `SELECT ${column} AS k, COUNT(*) AS n FROM client_installs ${where}
+     GROUP BY ${column} ORDER BY COUNT(*) DESC LIMIT ${MAX_GROUP_ENTRIES}`
   );
   const out = {};
   for (const row of rows) out[row.k ?? 'unknown'] = Number(row.n);

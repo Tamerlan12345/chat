@@ -230,12 +230,62 @@ test('попытка протащить путь через список рас�
   assert.strictEqual(res.status, 400, res.text);
 });
 
-test('исключение для несуществующего сотрудника отклонено', async () => {
+// Ревью (задача 5, находка №22): интерфейс всегда шлёт полную карту
+// исключений обратно — уволенный/отключённый сотрудник в ней не должен
+// ронять КАЖДОЕ следующее сохранение политики, включая правки, не имевшие к
+// нему отношения. Устаревший ключ тихо отбрасывается, а не отклоняет запрос;
+// формат (нечисловой ключ, недопустимое расширение) по-прежнему отклоняет.
+
+test('исключение для несуществующего сотрудника тихо отбрасывается, а не отклоняет весь запрос', async () => {
   const res = await api('PUT', '/api/admin/file-policy', {
     token: people.admin.token,
     body: { perUser: { '999999': ['exe'] } }
   });
-  assert.strictEqual(res.status, 400, res.text);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.ok(!('999999' in res.json.perUser), 'ключ несуществующего сотрудника не должен попасть в сохранённую политику');
+});
+
+test('деактивированный сотрудник в perUser не мешает следующему сохранению политики', async () => {
+  const departing = await UserService.createUser({
+    username: 'fp_departing', full_name: 'Уходящий Сотрудник', password: 'Рабочий-пароль-1'
+  });
+  await UserService.setMustChangePassword(departing.id, false);
+
+  const withException = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { [String(departing.id)]: ['exe'] } }
+  });
+  assert.strictEqual(withException.status, 200, withException.text);
+  assert.deepStrictEqual(withException.json.perUser[String(departing.id)], ['exe']);
+
+  await UserService.toggleUserActive(departing.id, false);
+
+  // Администратор сохраняет политику заново — так, как реально делает
+  // интерфейс: полной картой, включая теперь уже устаревший ключ.
+  const resave = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { [String(departing.id)]: ['exe'], [String(people.fp_bob.id)]: ['csv'] } }
+  });
+  assert.strictEqual(resave.status, 200, resave.text, 'сохранение не должно падать из-за устаревшего ключа');
+  assert.ok(
+    !(String(departing.id) in resave.json.perUser),
+    'ключ отключённого сотрудника должен быть тихо отброшен'
+  );
+  assert.deepStrictEqual(resave.json.perUser[String(people.fp_bob.id)], ['csv']);
+});
+
+test('нечисловой ключ или недопустимое расширение в perUser по-прежнему отклоняют весь запрос', async () => {
+  const badKey = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { abc: ['exe'] } }
+  });
+  assert.strictEqual(badKey.status, 400, badKey.text);
+
+  const badExt = await api('PUT', '/api/admin/file-policy', {
+    token: people.admin.token,
+    body: { perUser: { [String(people.fp_bob.id)]: ['../x'] } }
+  });
+  assert.strictEqual(badExt.status, 400, badExt.text);
 });
 
 // ── 5. Черновик мержится, а не заменяет политику целиком (ревью раунд 1) ──

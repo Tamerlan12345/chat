@@ -68,6 +68,24 @@ class DeviceService {
         pairing.secret_expires_at !== null &&
         pairing.secret_expires_at !== undefined &&
         new Date(pairing.secret_expires_at).getTime() <= Date.now();
+
+      // secret_expires_at (DEVICE_SECRET_TTL_DAYS, по умолчанию 30 дней) и
+      // SESSION_MAX_DAYS (по умолчанию тоже 30, но настраивается отдельно и
+      // независимо) — два разных предела. Токен, который выдаст knock, несёт
+      // auth_time = secret_auth_time, и verifyToken отклонит его сам, как
+      // только secret_auth_time старше SESSION_MAX_DAYS, — даже если секрет
+      // формально ещё не истёк. Без этой проверки здесь knock отвечал бы
+      // 'paired' с токеном, который тут же отклонит следующий же запрос:
+      // клиент получает 401 → forceLogout → перезагрузка → knock заново — вход
+      // без пароля превращается в бесконечный цикл перезагрузок (находка
+      // ревью №9в). Проверяется только когда secret_auth_time вообще есть —
+      // для записей без него (перенесённых до этой доработки) generateToken
+      // сам подставит текущее время, и ограничение здесь неприменимо.
+      const sessionExpired =
+        Boolean(pairing.secret_auth_time) &&
+        (Math.floor(new Date(pairing.secret_auth_time).getTime() / 1000) + AuthService.sessionMaxSeconds()) * 1000 <
+          Date.now();
+
       const trusted =
         pairing.is_active &&
         pairing.approval_status === 'approved' &&
@@ -76,7 +94,8 @@ class DeviceService {
         pairing.secret_user_id !== null &&
         pairing.secret_user_id !== undefined &&
         Number(pairing.secret_user_id) === Number(pairing.user_id) &&
-        !secretExpired;
+        !secretExpired &&
+        !sessionExpired;
 
       if (!trusted) {
         return { status: 'login_required', message: 'Войдите по паролю — устройство запомнит вход.' };
@@ -112,9 +131,15 @@ class DeviceService {
       cleanDeviceId
     ]);
     if (!alreadyPending) {
+      // Только СТРОКИ СО СТАТУСОМ 'pending' считаются к пределу — иначе за
+      // корпоративным NAT/прокси 20 уже привязанных компьютеров (status =
+      // 'paired', пересобираемых при каждом их же «стуке» строкой выше)
+      // навсегда закрывали бы очередь для любого нового устройства с того же
+      // адреса, и paired-строки эту очередь никогда бы не покидали (находка
+      // ревью №1).
       const [perIpCount, totalCount] = await Promise.all([
-        db.get('SELECT COUNT(*) AS c FROM pending_devices WHERE ip_address = $1', [cleanIp]),
-        db.get('SELECT COUNT(*) AS c FROM pending_devices')
+        db.get(`SELECT COUNT(*) AS c FROM pending_devices WHERE ip_address = $1 AND status = 'pending'`, [cleanIp]),
+        db.get(`SELECT COUNT(*) AS c FROM pending_devices WHERE status = 'pending'`)
       ]);
       if (
         Number(perIpCount?.c || 0) >= PENDING_DEVICES_MAX_PER_IP ||

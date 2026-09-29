@@ -328,6 +328,68 @@ test('21-й knock с новым device_id с одного IP получает 42
   assert.strictEqual(Number(countRepeat.c), 20);
 });
 
+// Ревью (задача 9): предел считает только НЕПРИВЯЗАННЫЕ узлы. За офисным
+// NAT/прокси у одного IP скапливаются десятки уже привязанных компьютеров
+// (status='paired', которые knock переписывает заново при каждом их «стуке»,
+// см. UPDATE ... status = 'paired' в начале knock) — без фильтра по статусу
+// они блокировали бы очередь для нового устройства с того же адреса навсегда.
+
+test('20 уже привязанных устройств с одного IP не блокируют knock нового устройства с того же адреса', async () => {
+  const ip = '10.55.55.55';
+  for (let i = 0; i < 20; i++) {
+    const deviceId = `dev-paired-flood-${i}`;
+    // Реальный порядок: анонимный «стук» заводит строку в pending_devices
+    // (status='pending'), администратор привязывает устройство — статус
+    // становится 'paired'. Дальнейшие «стуки» этого же устройства (пока оно
+    // привязано) переписывают эту же строку заново, но не создают новых.
+    await DeviceService.knock({ device_id: deviceId, ip_address: ip, device_name: 'ПК' });
+    await DeviceService.bindDevice({ device_id: deviceId, user_id: people.ivanov.id, ip_address: ip, adminUser: people.admin });
+  }
+
+  const pairedCount = await identity.get(
+    `SELECT COUNT(*) AS c FROM pending_devices WHERE ip_address = $1 AND status = 'paired'`,
+    [ip]
+  );
+  assert.strictEqual(Number(pairedCount.c), 20, 'предпосылка: 20 привязанных строк с этого IP');
+
+  const fresh = await DeviceService.knock({ device_id: 'dev-paired-flood-new', ip_address: ip, device_name: 'Новый ПК' });
+  assert.strictEqual(fresh.status, 'pending', 'привязанные устройства не должны считаться к пределу за новые узлы');
+});
+
+// Ревью (задача 9): SESSION_MAX_DAYS короче DEVICE_SECRET_TTL_DAYS не должен
+// приводить к выдаче токена, который тут же отклонит verifyToken.
+
+test('SESSION_MAX_DAYS=7 короче DEVICE_SECRET_TTL_DAYS: 10-дневный claim требует пароль, а не мёртвый токен', async () => {
+  const deviceId = 'dev-sessionmax-1';
+  const secret = randomSecret();
+
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: people.ivanov.id, adminUser: people.admin });
+  await DeviceService.claimDeviceSecret({ userId: people.ivanov.id, device_id: deviceId, device_secret: secret });
+
+  // claim случился 10 дней назад — секрет (TTL по умолчанию 30 дней) ещё в
+  // силе, но SESSION_MAX_DAYS=7 уже позади.
+  const claimedAt = new Date(Date.now() - 10 * 86400000);
+  await identity.run('UPDATE device_pairings SET secret_auth_time = $1 WHERE device_id = $2', [
+    claimedAt.toISOString(),
+    deviceId
+  ]);
+
+  const originalSessionMaxDays = process.env.SESSION_MAX_DAYS;
+  process.env.SESSION_MAX_DAYS = '7';
+  try {
+    const knock = await DeviceService.knock({ device_id: deviceId, device_secret: secret, ip_address: '127.0.0.1' });
+    assert.strictEqual(
+      knock.status,
+      'login_required',
+      'секрет старше SESSION_MAX_DAYS обязан требовать пароль, а не выдавать токен, который тут же отклонит verifyToken'
+    );
+    assert.strictEqual(knock.token, undefined);
+  } finally {
+    if (originalSessionMaxDays === undefined) delete process.env.SESSION_MAX_DAYS;
+    else process.env.SESSION_MAX_DAYS = originalSessionMaxDays;
+  }
+});
+
 test('маршрут /api/auth/knock превращает too_many_pending в HTTP 429', async () => {
   // Настоящий HTTP-запрос с этого тестового процесса всегда приходит с
   // 127.0.0.1 (локальный сокет) — очередь для этого адреса заполняется
@@ -430,4 +492,23 @@ test('GET /api/admin/users: контурный администратор не �
   const ivanovRow = full.json.find((u) => u.id === people.ivanov.id);
   assert.ok(ivanovRow);
   assert.ok('token_version' in ivanovRow, 'суперадминистратору token_version нужен для диагностики');
+});
+
+// Ревью (задача 9): то же правило, что и для GET, но для PUT — adminUpdateUser
+// читает запись через getUserById (FULL_FIELDS) и раньше отдавала её как есть.
+
+test('PUT /api/admin/users/:id: контурный администратор не получает token_version в ответе, суперадминистратор — получает', async () => {
+  const scopedRes = await api('PUT', `/api/admin/users/${people.ivanov.id}`, {
+    token: people.scoped.token,
+    body: { job_title: 'Обновлено контурным администратором' }
+  });
+  assert.strictEqual(scopedRes.status, 200, scopedRes.text);
+  assert.ok(!('token_version' in scopedRes.json), 'контурному администратору отдано token_version в ответе PUT');
+
+  const fullRes = await api('PUT', `/api/admin/users/${people.ivanov.id}`, {
+    token: people.admin.token,
+    body: { job_title: 'Обновлено суперадминистратором' }
+  });
+  assert.strictEqual(fullRes.status, 200, fullRes.text);
+  assert.ok('token_version' in fullRes.json, 'суперадминистратору token_version нужен для диагностики');
 });
