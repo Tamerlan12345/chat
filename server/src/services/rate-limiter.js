@@ -8,74 +8,65 @@
 // минуту) это приемлемо и дешевле скользящего окна; там, где важна точность
 // на длинной дистанции (подбор к одной учётной записи с многих адресов), —
 // отдельный механизм с затуханием, services/login-throttle.service.js.
+//
+// Главный принцип доступности (проверка раунда 4): переполнение карты НИКОГДА
+// не превращается в отказ живому сотруднику. Карта переполнена — вытесняется
+// самый старый ключ (порядок вставки Map даёт это за O(1)), а не отклоняется
+// новый. Для счётчиков «только неудачи» отсутствие ключа означает «не
+// ограничено» (fail open). Ключи, в составе которых есть логин из тела
+// запроса, живут в ОТДЕЛЬНОЙ карте с собственным потолком: поток запросов с
+// выдуманными логинами вытесняет только такие же ключи и не может вытолкнуть
+// или заморозить счётчики, ключом которых служит адрес.
 
+// Карта ключей, ключом которых служит адрес или идентификатор сессии, — то,
+// что нельзя подделать в теле запроса. Её и защищаем в первую очередь.
 const buckets = new Map(); // key -> { count, windowStart, windowMs, maxAttempts }
+// Карта ключей с логином из запроса (login:ip:username, login-lock:ip:username).
+// Свой потолок: спрей выдуманными логинами вытесняет только соседние такие же
+// ключи (аудит, проверка раунда 4, находка ПР-01).
+const nameBuckets = new Map();
 
-// Жёсткий потолок числа ключей. Ключи строятся из адреса и логина — то есть
-// из того, что присылает анонимный клиент. Без потолка поток запросов с
-// разными логинами (или с разных адресов IPv6) наращивал карту без предела
-// и выедал память процесса (аудит, раунд 4, находка Р4-04).
 const DEFAULT_MAX_BUCKETS = 100000;
+const DEFAULT_NAME_MAX_BUCKETS = 20000;
 let maxBuckets = DEFAULT_MAX_BUCKETS;
-// Сколько самых старых ключей просматривать в поисках вытесняемого. Предел
-// нужен, чтобы вытеснение не превращалось в полный проход по карте на каждом
-// запросе, когда она забита.
-const EVICTION_SCAN_LIMIT = 1000;
-let lastFullPruneAt = 0;
+let nameMaxBuckets = DEFAULT_NAME_MAX_BUCKETS;
 
-function isBlocking(bucket, now) {
-  if (now - bucket.windowStart >= bucket.windowMs) return false; // окно уже истекло
-  // Предел неизвестен (старый вызов без maxAttempts) — считаем ключ
-  // действующим: вытеснить его значило бы, возможно, снять чью-то блокировку.
-  if (!Number.isFinite(bucket.maxAttempts)) return true;
-  return bucket.count >= bucket.maxAttempts;
+function mapFor(scope) {
+  return scope === 'name' ? nameBuckets : buckets;
+}
+function capFor(scope) {
+  return scope === 'name' ? nameMaxBuckets : maxBuckets;
 }
 
-// Освобождает место под новый ключ. Вытесняется только то, что никого не
-// сдерживает: истёкшие окна и счётчики ниже порога. Действующую блокировку
-// вытеснить нельзя — иначе атакующий забивал бы карту мусором ровно для того,
-// чтобы снять блокировку со своего адреса или с чужого логина. Если места
-// нет, отвечает false, и вызывающий отказывает (fail closed).
-// evict=false — только узнать, найдётся ли место (для isRateLimited, который
-// сам ничего не заводит и не должен ради этого выбрасывать чужой счётчик).
-function ensureRoom(now, { evict = true } = {}) {
-  if (buckets.size < maxBuckets) return true;
-  if (now - lastFullPruneAt >= 1000) {
-    lastFullPruneAt = now;
-    pruneStaleBuckets(now);
-    if (buckets.size < maxBuckets) return true;
+// Кладёт ключ, вытесняя самый старый, если карта уже заполнена. Вытеснение —
+// O(1): первый ключ в порядке вставки и есть самый старый. Отказать вместо
+// вытеснения нельзя: это остановило бы вход и переподключение сотрудникам,
+// которых никто не атакует (находка ПР-01, критическая).
+function setBounded(map, cap, key, value) {
+  if (map.size >= cap && !map.has(key)) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
   }
-  let scanned = 0;
-  for (const [key, bucket] of buckets) {
-    if (++scanned > EVICTION_SCAN_LIMIT) break;
-    if (!isBlocking(bucket, now)) {
-      if (evict) buckets.delete(key);
-      return true;
-    }
-  }
-  return false;
+  map.set(key, value);
 }
 
-function currentBucket(key, windowMs) {
-  const bucket = buckets.get(key);
+function currentBucket(map, key, windowMs) {
+  const bucket = map.get(key);
   if (!bucket || Date.now() - bucket.windowStart >= windowMs) return null;
   return bucket;
 }
 
-function checkRateLimit(key, { maxAttempts = 5, windowMs = 60000 } = {}) {
+function checkRateLimit(key, { maxAttempts = 5, windowMs = 60000, scope = 'default' } = {}) {
   const now = Date.now();
-  const bucket = currentBucket(key, windowMs);
+  const map = mapFor(scope);
+  const bucket = currentBucket(map, key, windowMs);
 
   if (!bucket) {
-    // Новый ключ (или истёкшее окно старого). Истёкший удаляется, чтобы
-    // занять место заново в конце очереди вытеснения, а не в начале.
-    buckets.delete(key);
-    if (!ensureRoom(now)) return false; // карта забита действующими блокировками
     // windowMs хранится вместе с бакетом — иначе периодическая очистка ниже не
     // знает, сколько именно этому ключу положено жить, и либо снимает долгие
     // блокировки (вход, LOGIN_LOCKOUT_MINUTES) раньше срока, либо не чистит
     // короткие вовсе (находка ревью: cleanup всегда считала 10 минут).
-    buckets.set(key, { count: 1, windowStart: now, windowMs, maxAttempts });
+    setBounded(map, capFor(scope), key, { count: 1, windowStart: now, windowMs, maxAttempts });
     return true;
   }
 
@@ -91,46 +82,33 @@ function checkRateLimit(key, { maxAttempts = 5, windowMs = 60000 } = {}) {
 // Для мест, где считать нужно только неудачи. Офис выходит в интернет с одного
 // адреса: после перезапуска сервера все переподключаются разом, и если каждое
 // удачное подключение расходует попытку, десятый сотрудник и дальше остаются
-// без связи — хотя подбора никто не ведёт.
-function isRateLimited(key, { maxAttempts = 5, windowMs = 60000 } = {}) {
-  const bucket = currentBucket(key, windowMs);
-  if (bucket) {
-    bucket.maxAttempts = maxAttempts;
-    return bucket.count >= maxAttempts;
-  }
-  // Ключа нет. Если его и завести негде (карта забита действующими
-  // блокировками), следующая неудача не будет посчитана — значит, пускать
-  // нельзя: иначе переполнение карты стало бы способом обойти предел.
-  return !ensureRoom(Date.now(), { evict: false });
+// без связи — хотя подбора никто не ведёт. Отсутствие ключа — «не
+// ограничено» (fail open): переполнение карты никогда не выдаёт ложную
+// блокировку живому сотруднику (находка ПР-01).
+function isRateLimited(key, { maxAttempts = 5, windowMs = 60000, scope = 'default' } = {}) {
+  const bucket = currentBucket(mapFor(scope), key, windowMs);
+  if (!bucket) return false;
+  bucket.maxAttempts = maxAttempts;
+  return bucket.count >= maxAttempts;
 }
 
-function registerFailure(key, { windowMs = 60000, maxAttempts } = {}) {
+function registerFailure(key, { windowMs = 60000, maxAttempts, scope = 'default' } = {}) {
   const now = Date.now();
-  const bucket = currentBucket(key, windowMs);
+  const map = mapFor(scope);
+  const bucket = currentBucket(map, key, windowMs);
   if (bucket) {
     bucket.count += 1;
     if (Number.isFinite(maxAttempts)) bucket.maxAttempts = maxAttempts;
     return;
   }
-  buckets.delete(key);
-  if (!ensureRoom(now)) return; // isRateLimited уже отвечает «нельзя» для таких ключей
-  buckets.set(key, { count: 1, windowStart: now, windowMs, maxAttempts });
-}
-
-// Возврат заранее засчитанной неудачи. Ограничитель входа засчитывает
-// попытку ДО проверки пароля — иначе сотня одновременных запросов проходила
-// проверку предела раньше, чем первый из них успевал закончиться неудачей
-// (аудит, раунд 4, находка Р4-03). Удачный вход свою попытку возвращает.
-function refundFailure(key) {
-  const bucket = buckets.get(key);
-  if (bucket && bucket.count > 0) bucket.count -= 1;
+  setBounded(map, capFor(scope), key, { count: 1, windowStart: now, windowMs, maxAttempts });
 }
 
 // Успешное действие (например, вход) должно снимать уже накопленные неудачи
 // по этому же ключу — иначе они продолжают копиться к следующей блокировке,
 // хотя подбора не было ни секунды.
-function resetLimit(key) {
-  buckets.delete(key);
+function resetLimit(key, { scope = 'default' } = {}) {
+  mapFor(scope).delete(key);
 }
 
 // Бакет старше собственного окна уже не действует (currentBucket и так вернёт
@@ -139,19 +117,24 @@ function resetLimit(key) {
 // предел в 10 минут для всех ключей разом, и он снимал более долгие блокировки
 // (например, 15-минутную по LOGIN_LOCKOUT_MINUTES) на пять минут раньше срока.
 function pruneStaleBuckets(now = Date.now()) {
-  for (const [key, bucket] of buckets.entries()) {
-    const ttl = bucket.windowMs || 10 * 60000;
-    if (now - bucket.windowStart >= ttl) buckets.delete(key);
+  for (const map of [buckets, nameBuckets]) {
+    for (const [key, bucket] of map.entries()) {
+      const ttl = bucket.windowMs || 10 * 60000;
+      if (now - bucket.windowStart >= ttl) map.delete(key);
+    }
   }
 }
 
-// Для тестов: уменьшить потолок, чтобы проверить вытеснение без сотни тысяч
+// Для тестов: уменьшить потолки, чтобы проверить вытеснение без сотни тысяч
 // ключей, и узнать текущий размер.
-function configureLimiter({ maxBuckets: max } = {}) {
+function configureLimiter({ maxBuckets: max, nameMaxBuckets: nameMax } = {}) {
   maxBuckets = Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_BUCKETS;
+  nameMaxBuckets = Number.isInteger(nameMax) && nameMax > 0 ? nameMax : DEFAULT_NAME_MAX_BUCKETS;
 }
 
-function limiterSize() {
+function limiterSize(scope) {
+  if (scope === 'name') return nameBuckets.size;
+  if (scope === 'all') return buckets.size + nameBuckets.size;
   return buckets.size;
 }
 
@@ -162,7 +145,6 @@ module.exports = {
   checkRateLimit,
   isRateLimited,
   registerFailure,
-  refundFailure,
   resetLimit,
   pruneStaleBuckets,
   configureLimiter,

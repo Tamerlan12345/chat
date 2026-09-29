@@ -146,6 +146,20 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_client_installs_version ON client_installs(client_version);
+
+    -- Знакомые адреса входа: с них сотрудник уже проходил проверку личности
+    -- (вход по паролю, «стук» устройства, продление токена, WebSocket).
+    -- Пережитая перезапуском отметка, чтобы задержка входа по учётной записи
+    -- под распределённым подбором не задевала настоящего сотрудника с его
+    -- обычного адреса (проверка раунда 4, ПР-I4). Хранится сеть /64, не адрес.
+    CREATE TABLE IF NOT EXISTS trusted_login_sources (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ip_key TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, ip_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trusted_sources_user ON trusted_login_sources(user_id);
   `,
 
   sqlite: `
@@ -281,6 +295,16 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_client_installs_version ON client_installs(client_version);
+
+    -- Знакомые адреса входа — см. комментарий в диалекте postgres выше.
+    CREATE TABLE IF NOT EXISTS trusted_login_sources (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ip_key TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, ip_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trusted_sources_user ON trusted_login_sources(user_id);
   `
 };
 

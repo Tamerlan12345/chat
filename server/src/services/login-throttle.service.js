@@ -1,62 +1,61 @@
 // Задержка входа по учётной записи — независимо от адреса.
 //
-// Пределы «на адрес» (30 неудач за 10 минут) и «на адрес + логин» (10 неудач,
-// LOGIN_LOCKOUT_MINUTES) не мешают подбирать пароль к одной учётной записи
-// сразу со многих адресов: каждый новый адрес начинает свой отсчёт заново
-// (аудит, раунд 4, находка Р4-01). Здесь счёт идёт по самому логину, со всех
-// адресов вместе.
+// Пределы «на адрес» (30 неудач за 10 минут на сеть /64) и «на адрес + логин»
+// (10 неудач, LOGIN_LOCKOUT_MINUTES) не мешают подбирать пароль к одной учётной
+// записи сразу со многих адресов: каждый новый адрес начинает свой отсчёт
+// заново (аудит, раунд 4, находка Р4-01). Здесь неудачи считаются по самому
+// логину, со всех адресов вместе, — так распределённый подбор становится
+// виден и получает задержку.
 //
-// Почему задержка, а не блокировка. Жёсткая блокировка учётной записи после N
-// неудач — это готовый способ запереть любого сотрудника (в том числе
-// администратора), просто набирая неверный пароль к его логину (аудит,
-// раунд 3, находка №12). Поэтому:
+// Что мы обещаем (проверка раунда 4, ПР-I4 — честная формулировка):
+//   1. Пока неудач меньше LOGIN_ACCOUNT_SOFT_LIMIT — ничего не меняется. Порог
+//      выше предела «адрес + логин», так что один сотрудник, ошибающийся со
+//      своего компьютера, сюда не доходит: нужны неудачи с нескольких адресов.
+//   2. Знакомый адрес НИКОГДА не задерживается. Знакомый — это адрес (сеть
+//      /64), с которого сотрудник уже проходил проверку личности: вход по
+//      паролю, «стук» устройства, продление токена, WebSocket. Отметка
+//      переживает перезапуск (таблица trusted_login_sources). Привязанные
+//      устройства входят «стуком» и этой задержке не подчиняются вовсе.
+//   3. Задержка ведётся ПО ПАРЕ (учётная запись, адрес источника), а не одной
+//      общей очередью на учётную запись. Поэтому поток атакующего с его
+//      адресов не занимает «окно» настоящего сотрудника с ЕГО адреса: у того
+//      своя очередь, и первая попытка с нового адреса проходит без ожидания.
+//      Повторные неудачи с одного источника растят задержку этого источника
+//      (1, 2, 4… с, но не дольше LOGIN_ACCOUNT_MAX_DELAY_SECONDS) — с разбросом,
+//      чтобы атакующий не попадал ровно в момент открытия окна.
+//   4. Счёт затухает: после LOGIN_LOCKOUT_MINUTES без неудач обнуляется.
 //
-//   1. Пока неудач меньше LOGIN_ACCOUNT_SOFT_LIMIT (20) — ничего не меняется.
-//      Порог выше предела «адрес + логин» (10): один человек, ошибившийся
-//      паролем со своего компьютера, сюда не дойдёт никогда — только неудачи
-//      с нескольких адресов сразу.
-//   2. Сверх порога попытки с незнакомых адресов пропускаются по одной и не
-//      чаще, чем раз в задержку: 1 с, 2 с, 4 с… но не дольше
-//      LOGIN_ACCOUNT_MAX_DELAY_SECONDS (60 с). Пока ждёт очередь, пароль даже
-//      не проверяется — ответ 429 с Retry-After.
-//   3. С «знакомого» адреса — того, с которого этот логин уже входил успешно
-//      (последний вход из базы, last_login_ip, плюс недавние удачные входы в
-//      памяти), — задержки нет вовсе. Сотрудник за своим рабочим компьютером
-//      или из офиса входит как обычно, сколько бы ни шёл подбор извне. Сам
-//      знакомый адрес при этом не бесконтролен: для него действуют пределы
-//      «на адрес» и «на адрес + логин».
-//   4. Счёт затухает: через LOGIN_LOCKOUT_MINUTES без единой неудачи он
-//      обнуляется. Удачный вход счёт не сбрасывает — вход настоящего
-//      сотрудника не означает, что подбор с других адресов прекратился.
+// Чего задержка НЕ делает: не останавливает распределённый подбор, меняющий
+// адрес на каждую догадку, — с этим борется предел неудач на сеть /64 и
+// оповещение центру безопасности, а в пределе — список разрешённых адресов
+// (ALLOWED_CLIENT_IPS). Задержка нужна ровно для того, чтобы под таким
+// подбором настоящий сотрудник всё равно мог войти. Навсегда запереть учётную
+// запись этот механизм не может — ни извне, ни изнутри.
 //
-// Цена решения: во время подбора сотрудник с НОВОГО для себя адреса (впервые
-// из дома, с мобильного интернета) ждёт не дольше LOGIN_ACCOUNT_MAX_DELAY_SECONDS
-// между попытками. Навсегда запереть его нельзя — ни извне, ни изнутри.
+// Одинаково для существующих и несуществующих логинов: неудачи считаются по
+// имени, до и после поиска в базе, — иначе по тому, наступает ли задержка,
+// узнавали бы, какие логины заведены.
 //
-// Одинаково для существующих и несуществующих логинов: счёт ведётся по
-// имени, до поиска в базе, — иначе по тому, наступает ли задержка, можно было
-// бы узнавать, какие логины заведены.
-//
-// Состояние в памяти процесса, как и у остальных ограничителей: после
-// перезапуска отсчёт начинается заново — для временной задержки приемлемо.
+// Состояние в памяти процесса; после перезапуска отсчёт начинается заново — для
+// временной задержки приемлемо (знакомые адреса при этом восстанавливаются из
+// таблицы, см. trusted-sources.service.js).
 
 const config = require('../config');
 
-// Потолок числа отслеживаемых логинов. Логин присылает анонимный клиент, и
-// без потолка поток запросов с разными логинами растил бы карту без предела
-// (Р4-04). Вытесняется только то, что никого не сдерживает; если места нет —
-// новая запись считается уже задержанной (fail closed): знакомые адреса всё
-// равно входят, незнакомые ждут.
-const DEFAULT_MAX_ENTRIES = 20000;
+// Потолки карт. Переполнение НИКОГДА не отказывает живому входу: вытесняется
+// самый старый ключ (порядок вставки Map), а вход допускается (fail open,
+// ПР-01). Ключи содержат логин из запроса, поэтому потолок не даёт потоку
+// выдуманных логинов съесть память (Р4-04), но и не превращается в отказ.
+const DEFAULT_MAX_ENTRIES = 50000;
 let maxEntries = DEFAULT_MAX_ENTRIES;
-const EVICTION_SCAN_LIMIT = 1000;
 
-// Сколько знакомых адресов помнить на логин и как долго.
 const KNOWN_SOURCES_PER_ACCOUNT = 5;
 const KNOWN_SOURCE_TTL_MS = 30 * 86400000;
+const ENGAGED_BASE_DELAY_MS = 1000;
 
-const accounts = new Map(); // логин -> { failures, lastFailureAt, nextAllowedAt, inFlight }
-const knownSources = new Map(); // логин -> Map(ключ адреса -> время последнего удачного входа)
+const accounts = new Map(); // nameKey -> { failures, lastFailureAt, engagedAt }
+const sources = new Map();  // `${nameKey}\u0000${ipKey}` -> { failures, nextAllowedAt, lastAt }
+const knownSources = new Map(); // nameKey -> Map(ipKey -> время удачного входа) — «горячий» кэш поверх таблицы
 
 function softLimit() {
   return config.LOGIN_ACCOUNT_SOFT_LIMIT;
@@ -70,151 +69,133 @@ function quietWindowMs() {
 
 /**
  * Единая форма логина для всех ключей входа: NFKC, без пробелов по краям, в
- * нижнем регистре. Поиск в базе идёт по точному логину без пробелов по краям
- * (trim) — эта форма получается из него однозначно, поэтому все варианты
- * написания, которые находят одну и ту же учётную запись, попадают в один и
- * тот же счётчик. Обратное неверно и не нужно: «ADMIN» и «admin» делят
- * счётчик, даже если это две разные записи, — это строже, а не слабее.
- * Раньше предел «5 в минуту» строился без trim, и « admin», «admin » давали
- * новые ключи для одной и той же учётной записи (Р4-06).
+ * нижнем регистре. Все варианты написания, находящие одну учётную запись,
+ * попадают в один счётчик (Р4-06).
  */
 function canonicalUsername(raw) {
   if (raw === undefined || raw === null) return '';
   return String(raw).trim().normalize('NFKC').trim().toLowerCase();
 }
 
-function delayFor(pressure) {
-  const over = pressure - softLimit();
-  if (over < 0) return 0;
-  return Math.min(maxDelayMs(), 1000 * 2 ** Math.min(over, 30));
-}
-
-function isThrottling(entry, now) {
-  return entry.failures + entry.inFlight >= softLimit() || now < entry.nextAllowedAt;
-}
-
-function isStale(entry, now) {
-  return entry.inFlight === 0 && now >= entry.nextAllowedAt && now - entry.lastFailureAt >= quietWindowMs();
-}
-
-// Место под новую запись: сначала устаревшие, потом любая, что никого не
-// задерживает. false — места нет.
-function ensureRoom(now) {
-  if (accounts.size < maxEntries) return true;
-  let scanned = 0;
-  for (const [key, entry] of accounts) {
-    if (++scanned > EVICTION_SCAN_LIMIT) break;
-    if (isStale(entry, now) || (!isThrottling(entry, now) && entry.inFlight === 0)) {
-      accounts.delete(key);
-      return true;
-    }
+// Кладёт ключ, вытесняя самый старый при переполнении (никогда не отказывает).
+function setBounded(map, key, value) {
+  if (map.size >= maxEntries && !map.has(key)) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
   }
-  return false;
+  map.set(key, value);
 }
 
-function entryFor(nameKey, now, { create }) {
-  let entry = accounts.get(nameKey);
-  if (entry && isStale(entry, now)) {
-    accounts.delete(nameKey);
-    entry = undefined;
+// Задержка источника от числа ЕГО собственных неудач при включённой защите.
+function sourceDelay(sourceFailures) {
+  return Math.min(maxDelayMs(), ENGAGED_BASE_DELAY_MS * 2 ** Math.min(sourceFailures, 20));
+}
+
+function accountFor(nameKey, now, create) {
+  let acc = accounts.get(nameKey);
+  if (acc && acc.lastFailureAt && now - acc.lastFailureAt >= quietWindowMs()) {
+    // Затишье — счёт с нуля.
+    acc.failures = 0;
+    acc.engagedAt = 0;
   }
-  if (entry || !create) return entry || null;
-  if (!ensureRoom(now)) return null;
-  entry = { failures: 0, lastFailureAt: 0, nextAllowedAt: 0, inFlight: 0 };
-  accounts.set(nameKey, entry);
-  return entry;
+  if (!acc && create) {
+    acc = { failures: 0, lastFailureAt: 0, engagedAt: 0 };
+    setBounded(accounts, nameKey, acc);
+  }
+  return acc || null;
+}
+
+function sourceKey(nameKey, ipKey) {
+  return `${nameKey}\u0000${ipKey || 'unknown'}`;
+}
+function sourceEntryFor(nameKey, ipKey, now, create) {
+  const key = sourceKey(nameKey, ipKey);
+  let src = sources.get(key);
+  if (src && now - src.lastAt >= quietWindowMs() && now >= src.nextAllowedAt) {
+    sources.delete(key);
+    src = undefined;
+  }
+  if (!src && create) {
+    src = { failures: 0, nextAllowedAt: 0, lastAt: now };
+    setBounded(sources, key, src);
+  }
+  return src || null;
+}
+
+function jitter(ms) {
+  // ± до 30% и не меньше 250 мс разброса — чтобы точный Retry-After не давал
+  // атакующему попадать ровно в момент открытия окна (ПР-I4).
+  const spread = Math.max(250, Math.round(ms * 0.3));
+  return ms + Math.floor(Math.random() * spread);
 }
 
 /**
- * Можно ли сейчас проверить пароль этого логина.
+ * Можно ли сейчас проверить пароль под этим логином с этого адреса.
  *
- * @returns {{ ok: true, ticket: object, engaged: boolean } | { ok: false, retryAfterMs: number }}
- *   engaged — задержка только что включилась впервые (повод для записи в журнал).
+ * @returns {{ ok: true, ticket, engaged } | { ok: false, retryAfterMs }}
  */
-function admit(nameKey, { trusted = false, now = Date.now() } = {}) {
-  const entry = entryFor(nameKey, now, { create: true });
-  if (!entry) {
-    // Карта забита задержанными записями — новая считается задержанной тоже.
-    if (trusted) return { ok: true, ticket: { nameKey, entry: null }, engaged: false };
-    return { ok: false, retryAfterMs: maxDelayMs() };
+function admit(nameKey, { ipKey = null, trusted = false, now = Date.now() } = {}) {
+  // Знакомый адрес — никаких задержек и никакого влияния на счётчики.
+  if (trusted) return { ok: true, ticket: { nameKey, ipKey, trusted: true }, engaged: false };
+
+  const acc = accountFor(nameKey, now, true);
+  const engaged = acc.failures >= softLimit();
+  if (!engaged) {
+    return { ok: true, ticket: { nameKey, ipKey, trusted: false }, engaged: false };
   }
 
-  if (trusted) {
-    entry.inFlight += 1;
-    return { ok: true, ticket: { nameKey, entry }, engaged: false };
+  // Защита включена. Очередь — своя у каждого адреса источника: поток
+  // атакующего не съедает окно настоящего сотрудника (ПР-I4).
+  const src = sourceEntryFor(nameKey, ipKey, now, true);
+  if (now < src.nextAllowedAt) {
+    return { ok: false, retryAfterMs: jitter(src.nextAllowedAt - now) };
   }
-
-  const pressure = entry.failures + entry.inFlight;
-  if (pressure < softLimit()) {
-    entry.inFlight += 1;
-    return { ok: true, ticket: { nameKey, entry }, engaged: false };
-  }
-
-  if (now < entry.nextAllowedAt) {
-    return { ok: false, retryAfterMs: entry.nextAllowedAt - now };
-  }
-  // Сверх порога — по одной попытке за раз: следующая допускается не раньше
-  // чем через задержку, даже если эта ещё не закончилась. Иначе сотня
-  // одновременных запросов прошла бы в одно и то же открывшееся «окно».
-  const engaged = !entry.engagedAt;
-  if (engaged) entry.engagedAt = now;
-  entry.inFlight += 1;
-  entry.nextAllowedAt = now + delayFor(pressure + 1);
-  return { ok: true, ticket: { nameKey, entry }, engaged };
+  // Первая попытка нового источника проходит сразу; следующая — не раньше
+  // задержки этого источника. Так настоящий сотрудник с нового адреса входит
+  // с первой попытки даже под атакой.
+  const firstEngage = !acc.engagedAt;
+  if (firstEngage) acc.engagedAt = now;
+  src.nextAllowedAt = now + sourceDelay(src.failures + 1);
+  return { ok: true, ticket: { nameKey, ipKey, trusted: false }, engaged: firstEngage };
 }
 
 /**
  * Итог допущенной попытки.
  *   'failure' — пароль проверен и не подошёл (или логина нет);
- *   'success' — пароль подошёл;
- *   'neutral' — пароль не проверялся (например, отказ по пределу адреса).
+ *   'success' / 'neutral' — на счётчики не влияет.
  */
 function settle(ticket, outcome, { now = Date.now() } = {}) {
-  const entry = ticket?.entry;
-  if (!entry) return;
-  if (entry.inFlight > 0) entry.inFlight -= 1;
-  if (outcome !== 'failure') {
-    // Логин без единой неудачи держать в памяти незачем.
-    if (entry.failures === 0 && entry.inFlight === 0 && now >= entry.nextAllowedAt &&
-        accounts.get(ticket.nameKey) === entry) {
-      accounts.delete(ticket.nameKey);
-    }
-    return;
+  if (!ticket || ticket.trusted || outcome !== 'failure') return;
+  const acc = accountFor(ticket.nameKey, now, true);
+  acc.failures += 1;
+  acc.lastFailureAt = now;
+  // Свежую запись — в конец очереди вытеснения.
+  accounts.delete(ticket.nameKey);
+  accounts.set(ticket.nameKey, acc);
+
+  const key = sourceKey(ticket.nameKey, ticket.ipKey);
+  const src = sources.get(key) || { failures: 0, nextAllowedAt: 0, lastAt: now };
+  src.failures += 1;
+  src.lastAt = now;
+  if (acc.failures >= softLimit()) {
+    src.nextAllowedAt = Math.max(src.nextAllowedAt, now + sourceDelay(src.failures));
   }
-  // Долгое затишье перед этой неудачей — счёт с нуля, а не с прошлой атаки.
-  if (entry.lastFailureAt && now - entry.lastFailureAt >= quietWindowMs()) {
-    entry.failures = 0;
-    entry.engagedAt = 0;
-  }
-  entry.failures += 1;
-  entry.lastFailureAt = now;
-  const delay = delayFor(entry.failures);
-  if (delay > 0) entry.nextAllowedAt = Math.max(entry.nextAllowedAt, now + delay);
-  // Запись поднимается в конец очереди вытеснения: она свежая.
-  if (accounts.get(ticket.nameKey) === entry) {
-    accounts.delete(ticket.nameKey);
-    accounts.set(ticket.nameKey, entry);
-  }
+  sources.delete(key);
+  setBounded(sources, key, src);
 }
 
 function rememberSuccess(nameKey, ipKey, now = Date.now()) {
   if (!nameKey || !ipKey) return;
-  let sources = knownSources.get(nameKey);
-  if (!sources) {
-    // Логинов с удачным входом не больше, чем учётных записей, но потолок
-    // всё равно нужен: самый давний знакомый адрес забывается первым.
-    if (knownSources.size >= maxEntries) {
-      const oldest = knownSources.keys().next().value;
-      knownSources.delete(oldest);
-    }
-    sources = new Map();
+  let m = knownSources.get(nameKey);
+  if (!m) {
+    m = new Map();
   } else {
     knownSources.delete(nameKey);
   }
-  sources.delete(ipKey);
-  sources.set(ipKey, now);
-  while (sources.size > KNOWN_SOURCES_PER_ACCOUNT) sources.delete(sources.keys().next().value);
-  knownSources.set(nameKey, sources);
+  m.delete(ipKey);
+  m.set(ipKey, now);
+  while (m.size > KNOWN_SOURCES_PER_ACCOUNT) m.delete(m.keys().next().value);
+  setBounded(knownSources, nameKey, m);
 }
 
 function isKnownSource(nameKey, ipKey, now = Date.now()) {
@@ -222,9 +203,20 @@ function isKnownSource(nameKey, ipKey, now = Date.now()) {
   return Boolean(at && now - at < KNOWN_SOURCE_TTL_MS);
 }
 
+function prune(now = Date.now()) {
+  for (const [key, acc] of accounts) {
+    if (acc.lastFailureAt && now - acc.lastFailureAt >= quietWindowMs()) accounts.delete(key);
+  }
+  for (const [key, src] of sources) {
+    if (now - src.lastAt >= quietWindowMs() && now >= src.nextAllowedAt) sources.delete(key);
+  }
+}
+setInterval(() => prune(), 5 * 60000).unref();
+
 // Для тестов.
 function resetThrottle({ maxEntries: max } = {}) {
   accounts.clear();
+  sources.clear();
   knownSources.clear();
   maxEntries = Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_ENTRIES;
 }
