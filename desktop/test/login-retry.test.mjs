@@ -2,24 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { postLoginWithRetry, retryDelayMs, RETRYABLE_LOGIN_CODES } from '../src/renderer/src/lib/login-retry.mjs';
 
-// Проверка раунда 4, задача 4: клиент повторяет вход на 503 LOGIN_BUSY/
-// PASSWORD_HASH_BUSY, соблюдая Retry-After (потолок ~5 с), до двух раз, и
-// может быть отменён вмешательством пользователя.
+// Клиент повторяет вход на 503 LOGIN_BUSY/PASSWORD_HASH_BUSY в пределах общего
+// бюджета (~45 с) с экспоненциальной выдержкой и разбросом, соблюдая
+// Retry-After; 429 (задержка) и 503 без нашего JSON не повторяются; отмена
+// пользователем прекращает повтор (третий раунд проверки, пункт 4).
 
-function makeRes(status, body, retryAfter) {
+function makeRes(status, body, retryAfter, { badJson = false } = {}) {
   return {
     status,
     headers: { get: (h) => (h.toLowerCase() === 'retry-after' ? retryAfter : null) },
-    json: async () => body
+    json: async () => { if (badJson) throw new Error('not json'); return body; }
   };
 }
 
-test('retryDelayMs: Retry-After в пределах потолка, не короче 0.5 с', () => {
-  assert.strictEqual(retryDelayMs('2', 5000), 2000);
-  assert.strictEqual(retryDelayMs('99', 5000), 5000, 'обрезается по потолку');
-  assert.strictEqual(retryDelayMs(null, 5000), 1000, 'без заголовка — 1 с');
-  assert.strictEqual(retryDelayMs('0', 5000), 1000, '0/невалидное — запасная 1 с');
-  assert.strictEqual(retryDelayMs('0.2', 5000), 500, 'валидное, но крошечное — не короче 0.5 с');
+test('retryDelayMs: не меньше Retry-After и экспоненты, с разбросом, в пределах потолка', () => {
+  // attempt 0: экспонента 1000, Retry-After 2000 → база 2000, +до 50% разброса.
+  const d0 = retryDelayMs('2', 0);
+  assert.ok(d0 >= 2000 && d0 <= 3000, `${d0}`);
+  // Экспонента растёт с номером попытки: attempt 3 → база ≥ 8000.
+  const d3 = retryDelayMs(null, 3);
+  assert.ok(d3 >= 8000 && d3 <= 12000, `${d3}`);
+  // Потолок на одну паузу.
+  assert.ok(retryDelayMs('999', 6) <= 12000);
+  // Пол 0.5 с.
+  assert.ok(retryDelayMs('0', 0) >= 500);
 });
 
 test('коды повтора — только LOGIN_BUSY и PASSWORD_HASH_BUSY', () => {
@@ -46,20 +52,22 @@ test('503 LOGIN_BUSY повторяется и в итоге входит', asyn
   assert.strictEqual(res.status, 200);
   assert.strictEqual(data.token, 'T');
   assert.strictEqual(cancelled, false);
-  assert.strictEqual(calls, 3, 'две попытки повтора, затем успех');
-  assert.deepStrictEqual(waits, [1000, 2000]);
+  assert.strictEqual(calls, 3, 'две паузы, затем успех');
+  assert.strictEqual(waits.length, 2);
 });
 
-test('не больше двух повторов: третий 503 отдаётся как есть', async () => {
+test('бюджет ограничивает суммарное ожидание (~45 с) и в итоге отдаёт 503', async () => {
   let calls = 0;
+  let total = 0;
   const { res, cancelled } = await postLoginWithRetry({
-    fetchImpl: async () => { calls++; return makeRes(503, { code: 'LOGIN_BUSY' }, '1'); },
-    sleep: async () => {},
-    url: 'u', body: {}, maxRetries: 2
+    fetchImpl: async () => { calls++; return makeRes(503, { code: 'LOGIN_BUSY' }, null); },
+    sleep: async (ms) => { total += ms; },
+    url: 'u', body: {}, budgetMs: 45000
   });
   assert.strictEqual(res.status, 503);
   assert.strictEqual(cancelled, false);
-  assert.strictEqual(calls, 3, 'исходный запрос + два повтора');
+  assert.ok(total <= 45000, `суммарное ожидание ${total} мс в пределах бюджета`);
+  assert.ok(calls >= 2 && calls <= 12, `разумное число попыток: ${calls}`);
 });
 
 test('400 (неверный пароль) не повторяется', async () => {
@@ -82,6 +90,17 @@ test('429 ACCOUNT_THROTTLED не повторяется (это не «заня�
   });
   assert.strictEqual(res.status, 429);
   assert.strictEqual(calls, 1);
+});
+
+test('503 без нашего JSON (сбой прокси) не повторяется', async () => {
+  let calls = 0;
+  const { res } = await postLoginWithRetry({
+    fetchImpl: async () => { calls++; return makeRes(503, null, '1', { badJson: true }); },
+    sleep: async () => { throw new Error('спать не должны'); },
+    url: 'u', body: {}
+  });
+  assert.strictEqual(res.status, 503);
+  assert.strictEqual(calls, 1, 'без валидного JSON-кода повтора нет');
 });
 
 test('отмена пользователем прекращает повтор', async () => {

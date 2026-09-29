@@ -184,9 +184,8 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         sleep,
         url: `${cleanUrl}/api/auth/login`,
         body: { username: username.trim(), password },
-        maxRetries: 2,
-        capMs: 5000,
-        onRetry: (attempt) => setRetryNote(`Сервер занят, повторяю вход… (попытка ${attempt} из 2)`),
+        budgetMs: 45000,
+        onRetry: (attempt) => setRetryNote(`Сервер занят, повторяю вход… (попытка ${attempt})`),
         shouldCancel: () => cancelRetryRef.current
       });
       setRetryNote('');

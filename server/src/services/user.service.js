@@ -600,7 +600,10 @@ const BRAND_STEMS = [
 ];
 const WORD_STEMS = [
   'password', 'пароль', 'qwerty', 'qwertz', 'йцукен', 'gfhjkm', // gfhjkm = «пароль» в латинской раскладке
-  'welcome', 'letmein', 'changeme', 'iloveyou', 'administrator'
+  'welcome', 'letmein', 'changeme', 'iloveyou', 'administrator',
+  // Прежнее имя продукта: по ПОЛНОМУ совпадению — «mychat2026»/«MyChat!2026»
+  // отклоняются, а «mychatter-is-fun-2026» проходит (третий раунд, пункт 4).
+  'mychat'
 ];
 
 // Замена цифр и знаков на буквы (leetspeak): «P@ssw0rd», «C3ntras», «Pa$$word».
