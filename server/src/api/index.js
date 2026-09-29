@@ -210,6 +210,12 @@ function jitterSeconds(base) {
   const withJitter = base + Math.floor(Math.random() * Math.max(1, base));
   return Math.min(withJitter, config.LOGIN_ACCOUNT_MAX_DELAY_SECONDS);
 }
+// Retry-After для 503 «много входов»: широкий разброс 1–8 с, чтобы клиенты,
+// получившие отказ одновременно, не возвращались одной пачкой (третий раунд
+// проверки, мелкое).
+function busyRetryAfterSeconds() {
+  return 1 + Math.floor(Math.random() * 8);
+}
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
@@ -444,21 +450,26 @@ router.post('/auth/login', route(async (req, res) => {
     // новый логин-догадка — это подтверждённая неудача), поэтому отдельного
     // счётчика «разных логинов на адрес» не нужно. Отсутствие ключа — «не
     // ограничено» (fail open, ПР-01).
+    // Знаком ли адрес хотя бы одной учётной записи (адрес офиса за NAT) — от
+    // этого зависят и проверка «неудач с адреса», и щедрость предела
+    // одновременных проверок пароля (I-C).
+    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
+
     // Предел «неудач с адреса»: считаются ТОЛЬКО подтверждённые неудачи (ниже,
     // по коду INVALID_CREDENTIALS) — офис входит утром верными паролями и
-    // ничего не тратит (ПР-02). Но в проверку добавляются и «в полёте» попытки
-    // с этого же адреса: иначе десяток одновременных запросов проскакивал бы
-    // предел, и один /64 доходил до ~49 неудач вместо 30 (M6, overshoot).
+    // ничего не тратит (ПР-02). «В полёте» попытки добавляются к проверке ТОЛЬКО
+    // для незнакомого адреса (там их не больше LOGIN_INFLIGHT_UNFAMILIAR, так
+    // что превышение порога ничтожно). Для знакомого адреса офиса — нет: иначе
+    // десяток опечаток плюс утренняя пачка верных входов давали 429, который
+    // клиент не повторяет (третий раунд проверки, d3).
     const failKey = `login-fail:${ipKey}`;
-    if (peekCount(failKey, LOGIN_FAIL_LIMIT) + inflightFor(ipKey) >= LOGIN_FAIL_LIMIT.maxAttempts) {
+    const pending = familiar ? 0 : inflightFor(ipKey);
+    if (peekCount(failKey, LOGIN_FAIL_LIMIT) + pending >= LOGIN_FAIL_LIMIT.maxAttempts) {
       return res.status(429).json({ error: 'Слишком много неудачных попыток входа с этого адреса. Повторите позже.' });
     }
 
-    // Знаком ли адрес хотя бы одной учётной записи (адрес офиса за NAT) — от
-    // этого зависит щедрость предела одновременных проверок пароля (I-C).
-    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
     if (!acquireHashSlot(ipKey, familiar)) {
-      res.set('Retry-After', String(jitterSeconds(2)));
+      res.set('Retry-After', String(busyRetryAfterSeconds()));
       return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
     }
 
@@ -635,7 +646,7 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     const ipKey = rateLimitIpKey(getClientIp(req));
     const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
     if (!acquireHashSlot(ipKey, familiar)) {
-      res.set('Retry-After', String(jitterSeconds(2)));
+      res.set('Retry-After', String(busyRetryAfterSeconds()));
       return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
     }
     const { oldPassword, newPassword } = req.body || {};

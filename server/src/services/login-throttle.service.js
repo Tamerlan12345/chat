@@ -51,14 +51,20 @@ const EVICTION_SCAN = 200;
 const KNOWN_SOURCES_PER_ACCOUNT = 5;
 const KNOWN_SOURCE_TTL_MS = 30 * 86400000;
 const ENGAGED_BASE_DELAY_MS = 1000;
-const UNFAMILIAR_CAP = 10;
 
-const accounts = new Map(); // nameKey -> { failures, lastFailureAt, engagedAt, tokens, lastRefill }
+const accounts = new Map(); // nameKey -> { failures, lastFailureAt, engagedAt } — «включённость», заводится при неудаче
+const buckets = new Map();  // nameKey -> { tokens, lastRefill } — ведро для незнакомых, консультируется ВСЕГДА
 const sources = new Map();  // `${nameKey}\u0000${ipKey}` -> { failures, nextAllowedAt, lastAt }
 const knownSources = new Map(); // nameKey -> Map(ipKey -> время удачного входа) — «горячий» кэш поверх таблицы
 
 function softLimit() {
   return config.LOGIN_ACCOUNT_SOFT_LIMIT;
+}
+// Ёмкость ведра токенов для незнакомых источников = мягкий порог (третий раунд
+// проверки, пункт 2): столько догадок с незнакомых адресов допускается разом,
+// дальше — по мере пополнения.
+function bucketCap() {
+  return softLimit();
 }
 function maxDelayMs() {
   return config.LOGIN_ACCOUNT_MAX_DELAY_SECONDS * 1000;
@@ -112,9 +118,11 @@ function sourceDelay(sourceFailures) {
   return Math.min(maxDelayMs(), ENGAGED_BASE_DELAY_MS * 2 ** Math.min(sourceFailures, 20));
 }
 
-// Учётная запись читается, но НЕ создаётся при допуске: запись заводится только
-// при подтверждённой неудаче (settle). Иначе перегрузка очереди хэшей (BUSY)
-// плодила бы записи даром и могла вытеснить «включённое» состояние жертвы (I-A).
+// «Включённость» учётной записи (счёт неудач) читается, но НЕ создаётся при
+// допуске: заводится только при подтверждённой неудаче (settle). Иначе
+// перегрузка очереди хэшей (BUSY) плодила бы записи даром и могла вытеснить
+// «включённое» состояние жертвы (I-A). Ведро токенов — в ОТДЕЛЬНОЙ карте
+// (bucketFor), поэтому консультировать его на допуске можно, не трогая эту.
 function accountFor(nameKey, now, { create = false } = {}) {
   let acc = accounts.get(nameKey);
   if (acc && acc.lastFailureAt && now - acc.lastFailureAt >= quietWindowMs()) {
@@ -122,21 +130,44 @@ function accountFor(nameKey, now, { create = false } = {}) {
     acc.engagedAt = 0;
   }
   if (!acc && create) {
-    acc = { failures: 0, lastFailureAt: 0, engagedAt: 0, tokens: UNFAMILIAR_CAP, lastRefill: now };
+    acc = { failures: 0, lastFailureAt: 0, engagedAt: 0 };
     evictAccountIfNeeded(now);
     accounts.set(nameKey, acc);
   }
   return acc || null;
 }
 
-function refill(acc, now) {
+// Ведро токенов учётной записи. Консультируется ВСЕГДА для незнакомых
+// источников (не только когда защита «включена»), иначе «пульсирующий» подбор
+// (всплеск — тишина на LOGIN_LOCKOUT_MINUTES, чтобы счёт неудач обнулился, —
+// снова всплеск) обходил бы предел (третий раунд проверки, пункт 2). Пополнение
+// НЕ зависит от обнуления счёта неудач: за сутки доступно не больше
+// ёмкость + пополнение·24 ≈ 20 + 30·24 ≈ 740 токенов при любом ритме атаки.
+function bucketFor(nameKey, now, { create = false } = {}) {
+  let b = buckets.get(nameKey);
+  if (!b && create) {
+    b = { tokens: bucketCap(), lastRefill: now };
+    if (buckets.size >= maxEntries && !buckets.has(nameKey)) {
+      const oldest = buckets.keys().next().value;
+      if (oldest !== undefined) buckets.delete(oldest);
+    }
+    buckets.set(nameKey, b);
+  }
+  if (b) refill(b, now);
+  return b || null;
+}
+
+function refill(b, now) {
+  const cap = bucketCap();
   const perHour = unfamiliarPerHour();
-  if (perHour <= 0) { acc.tokens = UNFAMILIAR_CAP; acc.lastRefill = now; return; }
+  if (perHour <= 0) { b.tokens = cap; b.lastRefill = now; return; }
   const perMs = 3600000 / perHour;
-  const gained = (now - acc.lastRefill) / perMs;
+  const gained = (now - b.lastRefill) / perMs;
   if (gained > 0) {
-    acc.tokens = Math.min(UNFAMILIAR_CAP, acc.tokens + gained);
-    acc.lastRefill = now;
+    b.tokens = Math.min(cap, b.tokens + gained);
+    b.lastRefill = now;
+  } else if (b.tokens > cap) {
+    b.tokens = cap; // ёмкость могла уменьшиться при смене настройки
   }
 }
 
@@ -175,30 +206,40 @@ function admit(nameKey, { ipKey = null, trusted = false, now = Date.now() } = {}
   if (trusted) return { ok: true, ticket: { nameKey, ipKey, trusted: true, tookToken: false }, engaged: false };
 
   const acc = accountFor(nameKey, now, { create: false });
-  if (!isEngaged(acc)) {
-    return { ok: true, ticket: { nameKey, ipKey, trusted: false, tookToken: false }, engaged: false };
+  const engaged = isEngaged(acc);
+
+  // Персональная задержка источника — только когда защита включена
+  // (справедливость между адресами). Проверяется ДО ведра: задержанный источник
+  // токен не тратит.
+  if (engaged) {
+    const src = sourceEntryFor(nameKey, ipKey, now, true);
+    if (now < src.nextAllowedAt) {
+      return { ok: false, retryAfterMs: jitteredWithin(src.nextAllowedAt - now), reason: 'delay' };
+    }
   }
 
-  // Персональная задержка источника (справедливость между адресами).
-  const src = sourceEntryFor(nameKey, ipKey, now, true);
-  if (now < src.nextAllowedAt) {
-    return { ok: false, retryAfterMs: jitteredWithin(src.nextAllowedAt - now), reason: 'delay' };
-  }
-
-  // Общее ведро токенов на учётную запись для незнакомых источников (I-A).
+  // Общее ведро токенов на учётную запись для незнакомых источников —
+  // консультируется ВСЕГДА (пункт 2): именно оно, а не обнуляемый счёт неудач,
+  // держит суточную границу подбора при любом ритме.
+  let tookToken = false;
   if (unfamiliarPerHour() > 0) {
-    refill(acc, now);
-    if (acc.tokens < 1) {
+    const b = bucketFor(nameKey, now, { create: true });
+    if (b.tokens < 1) {
       const perMs = 3600000 / unfamiliarPerHour();
       return { ok: false, retryAfterMs: jitteredWithin(perMs), reason: 'account' };
     }
-    acc.tokens -= 1;
+    b.tokens -= 1;
+    tookToken = true;
   }
 
-  const firstEngage = !acc.engagedAt;
-  if (firstEngage) acc.engagedAt = now;
-  src.nextAllowedAt = now + sourceDelay(src.failures + 1);
-  return { ok: true, ticket: { nameKey, ipKey, trusted: false, tookToken: unfamiliarPerHour() > 0 }, engaged: firstEngage };
+  let firstEngage = false;
+  if (engaged) {
+    firstEngage = !acc.engagedAt;
+    if (firstEngage) acc.engagedAt = now;
+    const src = sourceEntryFor(nameKey, ipKey, now, true);
+    src.nextAllowedAt = now + sourceDelay(src.failures + 1);
+  }
+  return { ok: true, ticket: { nameKey, ipKey, trusted: false, tookToken }, engaged: firstEngage };
 }
 
 /**
@@ -211,10 +252,11 @@ function settle(ticket, outcome, { now = Date.now() } = {}) {
   if (!ticket || ticket.trusted) return;
 
   if (outcome !== 'failure') {
-    // Возврат токена: попытка не была подтверждённой неудачей.
+    // Возврат токена: попытка не была подтверждённой неудачей (успех, нейтраль,
+    // BUSY) — легитимный пользователь тратит токен только на реальную ошибку.
     if (ticket.tookToken) {
-      const acc = accounts.get(ticket.nameKey);
-      if (acc) acc.tokens = Math.min(UNFAMILIAR_CAP, acc.tokens + 1);
+      const b = buckets.get(ticket.nameKey);
+      if (b) b.tokens = Math.min(bucketCap(), b.tokens + 1);
     }
     return;
   }
@@ -243,6 +285,7 @@ function clearAccount(nameKey) {
   const key = canonicalUsername(nameKey);
   if (!key) return;
   accounts.delete(key);
+  buckets.delete(key);
   const prefix = `${key}\u0000`;
   for (const sk of sources.keys()) if (sk.startsWith(prefix)) sources.delete(sk);
 }
@@ -276,12 +319,19 @@ function prune(now = Date.now()) {
   for (const [key, src] of sources) {
     if (now - src.lastAt >= quietWindowMs() && now >= src.nextAllowedAt) sources.delete(key);
   }
+  // Полное ведро держать незачем; недополненное — оставляем (иначе тишина
+  // сбрасывала бы наказание, ровно чего «пульс» и добивается).
+  for (const [key, b] of buckets) {
+    refill(b, now);
+    if (b.tokens >= bucketCap()) buckets.delete(key);
+  }
 }
 setInterval(() => prune(), 5 * 60000).unref();
 
 // Для тестов.
 function resetThrottle({ maxEntries: max } = {}) {
   accounts.clear();
+  buckets.clear();
   sources.clear();
   knownSources.clear();
   maxEntries = Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_ENTRIES;

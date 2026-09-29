@@ -86,6 +86,22 @@ function loadReverseIndex() {
     try {
       const rows = await identity().all('SELECT DISTINCT ip_key FROM trusted_login_sources');
       for (const r of rows) touchFamiliar(r.ip_key);
+      // Плюс последний адрес входа по паролю у сотрудников, входивших за
+      // последние 60 дней: он пишется только после проверенного входа по
+      // паролю, поэтому безопасен как «знакомый», и после перезапуска адрес
+      // офиса становится знакомым ещё до первого входа (третий раунд, пункт 3).
+      // ISO-8601 в UTC сравнивается лексикографически — работает и в SQLite, и
+      // в PostgreSQL.
+      const cutoff = new Date(Date.now() - TTL_MS).toISOString();
+      const recent = await identity().all(
+        'SELECT last_login_ip FROM users WHERE last_login_ip IS NOT NULL AND last_login_at IS NOT NULL AND last_login_at >= $1',
+        [cutoff]
+      );
+      const { rateLimitIpKey } = require('./ip-access.service');
+      for (const r of recent) {
+        const key = rateLimitIpKey(r.last_login_ip);
+        if (key) touchFamiliar(key);
+      }
       reverseLoaded = true;
     } catch {
       /* нет таблицы — обратный индекс наполнится по ходу работы */
