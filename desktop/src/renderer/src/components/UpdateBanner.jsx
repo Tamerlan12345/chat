@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Icon from './Icon';
-import { bannerFor } from '../lib/update-status.mjs';
+import { bannerFor, resolveLegacyDownloadUrl } from '../lib/update-status.mjs';
 
 // Баннер автообновления рядом со стопкой уведомлений (App.jsx). Данные —
 // только из состояния главного процесса (Задача 9, desktop/src/main/updater.js);
@@ -51,7 +51,11 @@ export default function UpdateBanner({ serverUrl }) {
 
   // Старая оболочка сама проверять и ставить обновления не умеет — ссылку на
   // установщик берём напрямую из /updates/policy.json, как и главный процесс
-  // (Задача 9) делает это для видов установки notify.
+  // (Задача 9) делает это для видов установки notify. setupUrl достраивается
+  // и проверяется resolveLegacyDownloadUrl — сервер отдаёт его относительным,
+  // но `new URL(x, base)` не трогает уже абсолютный x, а policy.json не
+  // заслуживает доверия настолько, чтобы открывать присланную им ссылку без
+  // проверки происхождения.
   useEffect(() => {
     if (!legacyShell) return undefined;
     let cancelled = false;
@@ -59,11 +63,7 @@ export default function UpdateBanner({ serverUrl }) {
       .then((res) => (res.ok ? res.json() : null))
       .then((policy) => {
         if (cancelled || !policy?.setupUrl) return;
-        try {
-          setLegacyUrl(new URL(policy.setupUrl, serverUrl).toString());
-        } catch {
-          /* адрес в политике не разобрался — кнопка тогда ничего не откроет */
-        }
+        setLegacyUrl(resolveLegacyDownloadUrl(policy.setupUrl, serverUrl));
       })
       .catch(() => {});
     return () => { cancelled = true; };

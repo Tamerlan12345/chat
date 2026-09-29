@@ -89,3 +89,37 @@ export function bannerFor(state, { legacyShell = false } = {}) {
   // idle, checking, disabled, unsupported — показывать нечего.
   return null;
 }
+
+/**
+ * resolveLegacyDownloadUrl(setupUrl, serverUrl) → string | null.
+ *
+ * Оболочка 1.0.0 не умеет сама проверять и ставить обновления — у неё нет
+ * openUpdateDownload() (это Задача 9, есть только начиная с 1.1.0), поэтому
+ * баннер сам достраивает адрес установщика из setupUrl в /updates/policy.json.
+ * Сервер отдаёт его относительным, но `new URL(x, base)` НЕ трогает уже
+ * абсолютный x — без отдельной проверки происхождения страница открыла бы
+ * ссылку с чужого источника как есть, если бы policy.json (или сервер между
+ * клиентом и настоящим бэкендом) её подсунул. Правило то же самое, что
+ * resolveDownloadUrl в desktop/src/main/update-policy.js: только https и
+ * только тот же origin, что и у сервера, которому страница уже доверяет.
+ */
+export function resolveLegacyDownloadUrl(setupUrl, serverUrl) {
+  if (typeof setupUrl !== 'string' || !setupUrl) return null;
+
+  let origin;
+  try {
+    const server = new URL(String(serverUrl));
+    if (server.protocol !== 'https:') return null;
+    origin = server.origin;
+  } catch {
+    return null;
+  }
+
+  let resolved;
+  try {
+    resolved = new URL(setupUrl, origin + '/');
+  } catch {
+    return null;
+  }
+  return resolved.protocol === 'https:' && resolved.origin === origin ? resolved.toString() : null;
+}
