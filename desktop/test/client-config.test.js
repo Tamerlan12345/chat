@@ -18,7 +18,7 @@ const HARD_DEFAULT = 'https://chat-production-0456.up.railway.app';
 // Вывод «reg.exe query <ключ политики>»: строки «    Имя    ТИП    значение».
 function policyOutput(values) {
   const lines = values.map(([name, type, data]) => `    ${name}    ${type}    ${data}`);
-  return `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\OpenMyChat Enterprise\r\n${lines.join('\r\n')}\r\n\r\n`;
+  return `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\CentyChat\r\n${lines.join('\r\n')}\r\n\r\n`;
 }
 
 function policyReg(values, calls = []) {
@@ -118,10 +118,10 @@ test('на этой машине корень системы определяе�
   assert.deepStrictEqual(dirs.problems, []);
 });
 
-// ── Политика машины: HKLM\SOFTWARE\Policies\OpenMyChat Enterprise ─────────
+// ── Политика машины: HKLM\SOFTWARE\Policies\CentyChat ─────────────────────
 
-test('ключ политики — HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise, читается reg.exe из доверенного корня', () => {
-  assert.strictEqual(POLICY_KEY, 'HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise');
+test('ключ политики — HKLM\\SOFTWARE\\Policies\\CentyChat, читается reg.exe из доверенного корня', () => {
+  assert.strictEqual(POLICY_KEY, 'HKLM\\SOFTWARE\\Policies\\CentyChat');
   const calls = [];
   const config = readClientConfig({
     systemRoot: 'D:\\Windows',

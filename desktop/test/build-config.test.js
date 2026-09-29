@@ -32,8 +32,75 @@ test('win.verifyUpdateCodeSignature включён', () => {
 });
 
 test('artifactName для nsis и portable — с дефисами и ${version}', () => {
-  assert.strictEqual(pkg.build.nsis.artifactName, 'OpenMyChat-Enterprise-Setup-${version}.${ext}');
-  assert.strictEqual(pkg.build.portable.artifactName, 'OpenMyChat-Enterprise-Portable-${version}.${ext}');
+  assert.strictEqual(pkg.build.nsis.artifactName, 'CentyChat-Setup-${version}.${ext}');
+  assert.strictEqual(pkg.build.portable.artifactName, 'CentyChat-Portable-${version}.${ext}');
+});
+
+// ── Переименование OpenMyChat Enterprise → CentyChat ───────────────────────
+// Уже установленные у сотрудников копии (1.0.0) обновляются на месте и
+// сохраняют данные. Эти значения держат преемственность — см. комментарии в
+// src/main/app-paths.js и build/installer.nsh.
+
+test('переименование: видимые имена — CentyChat', () => {
+  assert.strictEqual(pkg.build.productName, 'CentyChat');
+  assert.strictEqual(pkg.build.nsis.shortcutName, 'CentyChat');
+  assert.match(pkg.build.nsis.uninstallDisplayName, /^CentyChat\b/);
+});
+
+test('переименование: appId прежний — из него NSIS выводит GUID установки, от него зависят ярлыки и уведомления', () => {
+  assert.strictEqual(pkg.build.appId, 'com.openmychat.desktop');
+  const main = fs.readFileSync(path.join(DESKTOP_DIR, 'src', 'main', 'main.js'), 'utf8');
+  assert.match(main, /app\.setAppUserModelId\('com\.openmychat\.desktop'\)/, 'AppUserModelId = appId');
+  const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
+  assert.match(nsh, /"com\.openmychat\.desktop"/, 'автозапуск убирается под прежним AppUserModelId');
+});
+
+test('переименование: имя пакета прежнее — из него папка кэша electron-updater и имя профиля 1.0.0', () => {
+  // electron-builder: updaterCacheDirName = `${name}-updater`
+  // (%LOCALAPPDATA%\mychat-desktop-updater); Electron называет профиль по
+  // name, пока productName не задан в корне package.json.
+  assert.strictEqual(pkg.name, 'mychat-desktop');
+});
+
+test('переименование: профиль закреплён за %APPDATA%\\mychat-desktop до блокировки единственного экземпляра', () => {
+  const { LEGACY_USER_DATA_DIR, userDataPath, pinUserData } = require('../src/main/app-paths');
+  assert.strictEqual(LEGACY_USER_DATA_DIR, 'mychat-desktop');
+  assert.strictEqual(LEGACY_USER_DATA_DIR, pkg.name, 'та же папка, что Electron брал по имени пакета в 1.0.0');
+  const appData = 'C:\\Users\\u\\AppData\\Roaming';
+  assert.strictEqual(userDataPath(appData), path.join(appData, 'mychat-desktop'));
+
+  const calls = [];
+  const app = {
+    getPath: (name) => { calls.push(['getPath', name]); return appData; },
+    setPath: (name, value) => calls.push(['setPath', name, value])
+  };
+  assert.strictEqual(pinUserData(app), path.join(appData, 'mychat-desktop'));
+  assert.deepStrictEqual(calls, [['getPath', 'appData'], ['setPath', 'userData', path.join(appData, 'mychat-desktop')]]);
+
+  const main = fs.readFileSync(path.join(DESKTOP_DIR, 'src', 'main', 'main.js'), 'utf8');
+  const pinAt = main.indexOf('pinUserData(app);');
+  assert.ok(pinAt > 0, 'main.js закрепляет профиль');
+  for (const later of ["app.getPath('userData')", "app.getPath('logs')", 'requestSingleInstanceLock()', 'log(', 'app.enableSandbox()', 'session.']) {
+    const at = main.indexOf(later);
+    assert.ok(at === -1 || pinAt < at, `pinUserData раньше первого ${later}`);
+  }
+  // Раньше pinUserData — только подключение модулей.
+  const before = main.slice(0, pinAt).split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('//'));
+  for (const line of before) assert.match(line, /^const .* = require\(/, `до закрепления профиля только require: ${line}`);
+  assert.match(main, /statePath: path\.join\(userDataPath\(app\.getPath\('appData'\)\), 'update-state\.json'\)/, 'update-state.json — в той же папке профиля');
+});
+
+test('переименование: установка через NSIS узнаётся и по новому, и по прежнему деинсталлятору', () => {
+  const { UNINSTALLER_NAME, UNINSTALLER_NAMES } = require('../src/main/update-policy');
+  assert.strictEqual(UNINSTALLER_NAME, `Uninstall ${pkg.build.productName}.exe`);
+  assert.deepStrictEqual([...UNINSTALLER_NAMES], ['Uninstall CentyChat.exe', 'Uninstall OpenMyChat Enterprise.exe']);
+  const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
+  assert.match(nsh, /!macro customInstall\b[^]*Delete "\$INSTDIR\\Uninstall OpenMyChat Enterprise\.exe"[^]*!macroend/, 'оставшийся прежний деинсталлятор убирается');
+});
+
+test('переименование: политика машины — HKLM\\SOFTWARE\\Policies\\CentyChat', () => {
+  const { POLICY_KEY } = require('../src/main/client-config');
+  assert.strictEqual(POLICY_KEY, 'HKLM\\SOFTWARE\\Policies\\CentyChat');
 });
 
 test('electron-updater — точная версия в dependencies (не devDependencies)', () => {

@@ -400,7 +400,7 @@ class UpdateController {
       const isNew = this.state.status !== 'available' || this.state.offeredVersion !== offered;
       this.setState({ ...base, status: 'available', progress: null, error: null, downloadUrl });
       this.savePersisted({ lastError: null });
-      if (isNew) this.safeNotify({ title: 'Доступна новая версия OpenMyChat', body: `Версия ${offered} — скачайте и установите её.` });
+      if (isNew) this.safeNotify({ title: 'Доступна новая версия CentyChat', body: `Версия ${offered} — скачайте и установите её.` });
       this.scheduleAfterSuccess();
       return;
     }
@@ -507,7 +507,7 @@ class UpdateController {
     this.setState({ status: 'downloaded', offeredVersion: version, progress: 100, error: null });
     this.deps.log(`updates: ${version} downloaded and verified`);
     this.safeNotify({
-      title: 'Обновление OpenMyChat готово',
+      title: 'Обновление CentyChat готово',
       body: this.state.mandatory
         ? `Обязательное обновление до версии ${version}. Приложение перезапустится.`
         : `Версия ${version} установится при выходе из приложения или по «Перезапустить и обновить» в меню значка.`

@@ -145,7 +145,7 @@ Write-Host "Версия к публикации: $version" -ForegroundColor Cya
 
 $SetupPath = Join-Path $ReleaseDir $setupName
 $BlockmapPath = "$SetupPath.blockmap"
-$PortableName = "OpenMyChat-Enterprise-Portable-$version.exe"
+$PortableName = "CentyChat-Portable-$version.exe"
 $PortablePath = Join-Path $ReleaseDir $PortableName
 
 foreach ($required in @($SetupPath, $BlockmapPath, $PortablePath)) {
@@ -209,8 +209,8 @@ Copy-Item -LiteralPath $BlockmapPath -Destination (Join-Path $UpdateDir "$setupN
 Copy-Item -LiteralPath $PortablePath -Destination (Join-Path $UpdateDir $PortableName) -Force
 
 $readme = @"
-Выпуск OpenMyChat Enterprise $version для автообновления
-=========================================================
+Выпуск CentyChat $version для автообновления
+============================================
 
 Состав:
   latest.yml                              — манифест для electron-updater

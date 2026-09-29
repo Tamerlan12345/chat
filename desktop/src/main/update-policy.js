@@ -10,8 +10,14 @@ const INSTALL_KINDS = new Set(['nsis', 'nsis-machine', 'portable', 'copy']);
 const ERROR_CODE = /^[a-z0-9-]{1,32}$/;
 
 // Имя деинсталлятора, который NSIS (electron-builder) кладёт рядом с exe:
-// «Uninstall ${productName}.exe».
-const UNINSTALLER_NAME = 'Uninstall OpenMyChat Enterprise.exe';
+// «Uninstall ${productName}.exe». До переименования в CentyChat продукт
+// назывался «OpenMyChat Enterprise», и прежнее имя тоже признаётся установкой
+// через NSIS: установка, обновлённая поверх 1.0.0, может хранить старый
+// деинсталлятор рядом с exe, если его не удалось убрать (см.
+// build/installer.nsh, customInstall).
+const UNINSTALLER_NAME = 'Uninstall CentyChat.exe';
+const LEGACY_UNINSTALLER_NAME = 'Uninstall OpenMyChat Enterprise.exe';
+const UNINSTALLER_NAMES = Object.freeze([UNINSTALLER_NAME, LEGACY_UNINSTALLER_NAME]);
 
 const MINUTE = 60_000;
 const FIRST_CHECK_MIN_MS = 60_000;
@@ -105,12 +111,14 @@ function detectInstallKind({ isPackaged, execPath, env = {}, exists = () => fals
   const exe = path.win32.normalize(String(execPath || ''));
   const roots = Array.isArray(programFiles) ? programFiles : [programFiles];
   if (roots.some((dir) => isInside(exe, dir))) return 'nsis-machine';
-  let hasUninstaller = false;
-  try {
-    hasUninstaller = Boolean(exists(path.win32.join(path.win32.dirname(exe), UNINSTALLER_NAME)));
-  } catch {
-    hasUninstaller = false;
-  }
+  const dir = path.win32.dirname(exe);
+  const hasUninstaller = UNINSTALLER_NAMES.some((name) => {
+    try {
+      return Boolean(exists(path.win32.join(dir, name)));
+    } catch {
+      return false;
+    }
+  });
   return hasUninstaller ? 'nsis' : 'copy';
 }
 
@@ -237,6 +245,7 @@ function nextCheckDelay({ intervalMin, attempt = 0, rand = Math.random, first = 
 module.exports = {
   CHANNELS,
   UNINSTALLER_NAME,
+  UNINSTALLER_NAMES,
   FIRST_CHECK_MIN_MS,
   FIRST_CHECK_MAX_MS,
   MAX_BACKOFF_MS,

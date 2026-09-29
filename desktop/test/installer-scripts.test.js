@@ -27,8 +27,8 @@ test('configure-client.ps1 — требует прав администрато�
   const text = readText(path.join(INSTALLER_DIR, 'configure-client.ps1'));
   assert.match(text, /^﻿?#Requires -RunAsAdministrator/m, 'должен требовать права администратора (#Requires -RunAsAdministrator)');
   assert.ok(
-    text.includes("$PolicyKey = 'HKLM:\\SOFTWARE\\Policies\\OpenMyChat Enterprise'"),
-    'политика машины — в HKLM:\\SOFTWARE\\Policies\\OpenMyChat Enterprise (пишут только администраторы)'
+    text.includes("$PolicyKey = 'HKLM:\\SOFTWARE\\Policies\\CentyChat'"),
+    'политика машины — в HKLM:\\SOFTWARE\\Policies\\CentyChat (пишут только администраторы)'
   );
   assert.match(text, /New-ItemProperty[^\n]*-Name ServerUrl[^\n]*-PropertyType String/, 'ServerUrl — REG_SZ');
   assert.match(text, /New-ItemProperty[^\n]*-Name UpdateChannel[^\n]*-PropertyType String/, 'UpdateChannel — REG_SZ');
@@ -49,7 +49,8 @@ test('install.ps1 и настроить-клиент.bat — говорят о �
   for (const name of ['install.ps1', 'настроить-клиент.bat']) {
     const text = readText(path.join(INSTALLER_DIR, name));
     assert.ok(!/client\.json/i.test(text), `${name} не должен упоминать client.json`);
-    assert.match(text, /Policies\\OpenMyChat Enterprise/, `${name} должен называть ключ политики`);
+    assert.match(text, /Policies\\CentyChat\b/, `${name} должен называть ключ политики`);
+    assert.ok(!/Policies\\OpenMyChat/.test(text), `${name}: прежнего имени ключа политики нет`);
   }
 });
 
@@ -68,10 +69,10 @@ test('правило брандмауэра — только домен/част
   }
 });
 
-// Установщик называется OpenMyChat-Enterprise-Setup-<версия>.exe
-// (build.nsis.artifactName); старое имя без версии в подсказках вводит в
-// заблуждение.
-const UNVERSIONED_ARTIFACT = /OpenMyChat-Enterprise-(Setup|Portable)\.exe/;
+// Установщик называется CentyChat-Setup-<версия>.exe (build.nsis.artifactName;
+// до переименования — OpenMyChat-Enterprise-Setup-<версия>.exe); имя без
+// версии в подсказках вводит в заблуждение.
+const UNVERSIONED_ARTIFACT = /(OpenMyChat-Enterprise|CentyChat)-(Setup|Portable)\.exe/;
 
 test('установщик и документация не называют файлы без версии', () => {
   const files = fs.readdirSync(INSTALLER_DIR)
@@ -82,7 +83,9 @@ test('установщик и документация не называют ф�
     const text = readText(file);
     assert.ok(!UNVERSIONED_ARTIFACT.test(text), `${path.basename(file)}: имя установщика без версии`);
   }
-  assert.match(readText(path.join(INSTALLER_DIR, 'SHA256SUMS.txt')), /OpenMyChat-Enterprise-Setup-\d+\.\d+\.\d+\.exe/);
+  // SHA256SUMS.txt переписывает sign-and-publish.ps1 при каждом выпуске; пока
+  // в нём суммы выпущенной 1.0.0 — под её прежними именами файлов.
+  assert.match(readText(path.join(INSTALLER_DIR, 'SHA256SUMS.txt')), /(OpenMyChat-Enterprise|CentyChat)-Setup-\d+\.\d+\.\d+\.exe/);
 });
 
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {

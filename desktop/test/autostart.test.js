@@ -17,14 +17,14 @@ const {
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mychat-autostart-'));
 
 test('установленная версия прописывает свой exe с ключом автозапуска', () => {
-  const options = loginItemOptions(true, { execPath: 'C:\\Apps\\OpenMyChat.exe', env: {} });
-  assert.deepStrictEqual(options, { openAtLogin: true, path: 'C:\\Apps\\OpenMyChat.exe', args: [LAUNCH_ARG] });
+  const options = loginItemOptions(true, { execPath: 'C:\\Apps\\CentyChat.exe', env: {} });
+  assert.deepStrictEqual(options, { openAtLogin: true, path: 'C:\\Apps\\CentyChat.exe', args: [LAUNCH_ARG] });
 });
 
 test('переносная версия прописывает сам файл, а не временную папку распаковки', () => {
   // Временная папка исчезает после выхода — Windows запускала бы пустоту.
-  const env = { PORTABLE_EXECUTABLE_FILE: 'D:\\Загрузки\\OpenMyChat-Portable.exe' };
-  assert.strictEqual(launcherPath({ execPath: 'C:\\Temp\\2abc\\OpenMyChat.exe', env }), env.PORTABLE_EXECUTABLE_FILE);
+  const env = { PORTABLE_EXECUTABLE_FILE: 'D:\\Загрузки\\CentyChat-Portable.exe' };
+  assert.strictEqual(launcherPath({ execPath: 'C:\\Temp\\2abc\\CentyChat.exe', env }), env.PORTABLE_EXECUTABLE_FILE);
 });
 
 test('запуск системой узнаётся по ключу или по отметке Windows', () => {
@@ -64,6 +64,6 @@ test('в режиме разработки автозагрузка систем
 test('собранное приложение передаёт настройки системе', { skip: process.platform !== 'win32' }, () => {
   let received = null;
   const app = { isPackaged: true, setLoginItemSettings: (o) => { received = o; } };
-  applyAutostart(app, { enabled: false, execPath: 'C:\\Apps\\OpenMyChat.exe', env: {} });
-  assert.deepStrictEqual(received, { openAtLogin: false, path: 'C:\\Apps\\OpenMyChat.exe', args: [LAUNCH_ARG] });
+  applyAutostart(app, { enabled: false, execPath: 'C:\\Apps\\CentyChat.exe', env: {} });
+  assert.deepStrictEqual(received, { openAtLogin: false, path: 'C:\\Apps\\CentyChat.exe', args: [LAUNCH_ARG] });
 });

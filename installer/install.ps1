@@ -1,10 +1,10 @@
-﻿# Устанавливает OpenMyChat Enterprise без NSIS-инсталлятора (Setup.exe).
+﻿# Устанавливает CentyChat без NSIS-инсталлятора (Setup.exe).
 # Просто копирует уже собранное приложение и создаёт ярлыки - никакого
 # UAC.dll и прочих NSIS-плагинов тут нет, поэтому блокировка Smart App
 # Control ("не удалось подтвердить издателя файла UAC.dll") здесь не
 # срабатывает: этому конкретному триггеру просто неоткуда взяться.
 #
-# Само приложение (OpenMyChat Enterprise.exe) при первом запуске всё равно
+# Само приложение (CentyChat.exe) при первом запуске всё равно
 # не подписано цифровой подписью - если Smart App Control включён в
 # строгом режиме, он теоретически может проверить и его тоже. Этот скрипт
 # решает именно ту проблему, которая уже наблюдалась (плагин установщика),
@@ -17,10 +17,20 @@
 # не обновляется electron-updater". Приложение, поставленное этим скриптом,
 # может только уведомить о новой версии ссылкой на скачивание - само оно
 # не обновится. Для автообновления сотрудникам нужен собранный установщик
-# OpenMyChat-Enterprise-Setup-<version>.exe (см. docs/автообновление.md).
+# CentyChat-Setup-<version>.exe (см. docs/автообновление.md).
+#
+# Переименование в CentyChat (1.1.0)
+# ----------------------------------
+# Раньше приложение называлось «OpenMyChat Enterprise»: exe «OpenMyChat
+# Enterprise.exe», ярлыки «OpenMyChat Enterprise.lnk», папка
+# Programs\OpenMyChat Enterprise. Установка «копией», сделанная раньше,
+# обновляется на месте: та же папка (её адрес хранит запись в «Установке и
+# удалении программ»), а прежние exe и ярлыки убираются - иначе по старому
+# ярлыку запускалась бы прежняя версия. Данные сотрудника лежат не здесь, а в
+# %APPDATA%\mychat-desktop, и этот скрипт их не трогает.
 #
 # -ServerUrl/-Channel - необязательные параметры этого скрипта: если заданы,
-# он настраивает машину (политика реестра HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)
+# он настраивает машину (политика реестра HKLM\SOFTWARE\Policies\CentyChat)
 # через configure-client.ps1 - но это требует прав администратора, которых у
 # установки "для себя" может не быть.
 
@@ -34,7 +44,15 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ExeName = 'OpenMyChat Enterprise.exe'
+$ExeName = 'CentyChat.exe'
+$ShortcutName = 'CentyChat.lnk'
+# Имена до переименования - только чтобы убрать их за собой.
+$LegacyExeName = 'OpenMyChat Enterprise.exe'
+$LegacyShortcutName = 'OpenMyChat Enterprise.lnk'
+# Ключ записи в «Установке и удалении программ» - идентификатор: по нему
+# uninstall.ps1 и повторный запуск этого скрипта находят установку. С
+# переименованием в CentyChat не менялся (показываемое имя - DisplayName).
+$UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenMyChatEnterprise'
 
 # Ищем собранное приложение либо рядом со скриптом (для раздачи сотрудникам -
 # просто кладём папку win-unpacked рядом с install.bat/install.ps1), либо
@@ -52,37 +70,61 @@ if (-not $SourceDir) {
     exit 1
 }
 
-$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\OpenMyChat Enterprise'
+# Новая установка - в Programs\CentyChat; уже стоящая «копией» (в том числе
+# прежняя, в Programs\OpenMyChat Enterprise) обновляется в своей папке.
+$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\CentyChat'
+$PreviousDir = (Get-ItemProperty -LiteralPath $UninstallKey -ErrorAction SilentlyContinue).InstallLocation
+if ($PreviousDir -and (Test-Path -LiteralPath $PreviousDir -PathType Container)) {
+    $InstallDir = $PreviousDir
+}
 
-Write-Host "Устанавливаю OpenMyChat Enterprise в:`n  $InstallDir" -ForegroundColor Cyan
+Write-Host "Устанавливаю CentyChat в:`n  $InstallDir" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Path (Join-Path $SourceDir '*') -Destination $InstallDir -Recurse -Force
 
 $ExePath = Join-Path $InstallDir $ExeName
+
+# Прежний exe рядом с новым не оставляем: по старому ярлыку или закреплению
+# на панели задач запускалась бы прежняя версия.
+$LegacyExePath = Join-Path $InstallDir $LegacyExeName
+if (Test-Path -LiteralPath $LegacyExePath) {
+    try {
+        Remove-Item -LiteralPath $LegacyExePath -Force
+    } catch {
+        Write-Host "Не удалось удалить прежний $LegacyExeName (приложение ещё запущено?) - закройте его и запустите установку снова." -ForegroundColor Yellow
+    }
+}
 
 # Ярлыки на рабочем столе и в меню "Пуск" (установка на пользователя, без
 # прав администратора - как и NSIS-версия с perMachine=false).
 $WshShell = New-Object -ComObject WScript.Shell
 $Desktop = [Environment]::GetFolderPath('Desktop')
 $ProgramsMenu = [Environment]::GetFolderPath('Programs')
+$InstallPrefix = $InstallDir.TrimEnd('\') + '\'
 
-foreach ($lnkPath in @(
-    (Join-Path $Desktop 'OpenMyChat Enterprise.lnk'),
-    (Join-Path $ProgramsMenu 'OpenMyChat Enterprise.lnk')
-)) {
-    $sc = $WshShell.CreateShortcut($lnkPath)
+foreach ($dir in @($Desktop, $ProgramsMenu)) {
+    # Прежний ярлык убирается, только если ведёт в эту же папку: ярлык другой
+    # установки (например, NSIS-версии 1.0.0) не трогаем.
+    $legacyLnk = Join-Path $dir $LegacyShortcutName
+    if (Test-Path -LiteralPath $legacyLnk) {
+        $legacyTarget = $WshShell.CreateShortcut($legacyLnk).TargetPath
+        if ($legacyTarget -and $legacyTarget.StartsWith($InstallPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $legacyLnk -Force
+        }
+    }
+
+    $sc = $WshShell.CreateShortcut((Join-Path $dir $ShortcutName))
     $sc.TargetPath = $ExePath
     $sc.WorkingDirectory = $InstallDir
     $sc.IconLocation = $ExePath
-    $sc.Description = 'OpenMyChat Enterprise Desktop Client'
+    $sc.Description = 'CentyChat Desktop Client'
     $sc.Save()
 }
 
 # Запись для "Установка и удаление программ" (по пользователю, HKCU - не
 # требует прав администратора) - чтобы приложение можно было штатно удалить.
-$UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenMyChatEnterprise'
 New-Item -Path $UninstallKey -Force | Out-Null
-Set-ItemProperty -Path $UninstallKey -Name 'DisplayName' -Value 'OpenMyChat Enterprise'
+Set-ItemProperty -Path $UninstallKey -Name 'DisplayName' -Value 'CentyChat'
 Set-ItemProperty -Path $UninstallKey -Name 'DisplayIcon' -Value $ExePath
 Set-ItemProperty -Path $UninstallKey -Name 'InstallLocation' -Value $InstallDir
 Set-ItemProperty -Path $UninstallKey -Name 'UninstallString' -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\uninstall.ps1`""
@@ -96,11 +138,11 @@ Write-Host ""
 Write-Host "Внимание: это установка «копией», не через NSIS-установщик." -ForegroundColor Yellow
 Write-Host "Приложение НЕ будет обновляться автоматически - оно лишь покажет" -ForegroundColor Yellow
 Write-Host "уведомление о новой версии со ссылкой на скачивание. Для" -ForegroundColor Yellow
-Write-Host "автообновления раздайте сотрудникам OpenMyChat-Enterprise-Setup-*.exe" -ForegroundColor Yellow
+Write-Host "автообновления раздайте сотрудникам CentyChat-Setup-*.exe" -ForegroundColor Yellow
 Write-Host "(см. docs/автообновление.md)." -ForegroundColor Yellow
 
 # Политика машины (адрес сервера/канал обновлений) пишется в
-# HKLM\SOFTWARE\Policies\OpenMyChat Enterprise - это могут только
+# HKLM\SOFTWARE\Policies\CentyChat - это могут только
 # администраторы, см. configure-client.ps1. Установка "для себя" (эта - без
 # UAC) их может не иметь, поэтому просто печатаем готовую команду для ИТ,
 # а не молча пропускаем настройку.
@@ -121,7 +163,7 @@ if (($ServerUrl -or $Channel) -and -not (Test-Path -LiteralPath $ConfigureScript
 
     if ($isAdmin) {
         Write-Host ""
-        Write-Host "Права администратора есть - записываю политику машины (HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)..." -ForegroundColor Cyan
+        Write-Host "Права администратора есть - записываю политику машины (HKLM\SOFTWARE\Policies\CentyChat)..." -ForegroundColor Cyan
         try {
             $global:LASTEXITCODE = 0
             & $ConfigureScript @configArgs
@@ -137,7 +179,7 @@ if (($ServerUrl -or $Channel) -and -not (Test-Path -LiteralPath $ConfigureScript
         $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$ConfigureScript`""
         foreach ($name in $configArgs.Keys) { $cmd += " -$name `"$($configArgs[$name])`"" }
         Write-Host ""
-        Write-Host "Прав администратора нет - политику машины (HKLM\SOFTWARE\Policies\OpenMyChat Enterprise)" -ForegroundColor Yellow
+        Write-Host "Прав администратора нет - политику машины (HKLM\SOFTWARE\Policies\CentyChat)" -ForegroundColor Yellow
         Write-Host "должен записать ИТ-отдел от имени администратора (или групповой политикой):" -ForegroundColor Yellow
         Write-Host "  $cmd" -ForegroundColor Cyan
     }

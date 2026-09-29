@@ -6,7 +6,7 @@ chcp 65001 > nul
 :: пользователя, не в общей сетевой папке). Иначе тот, кто может туда
 :: записать файл, подменит код, который выполняется с правами системы.
 echo =====================================================================
-echo   Установка MyChat Enterprise Server как системной службы Windows
+echo   Установка CentyChat Server как системной службы Windows
 echo =====================================================================
 
 :: Check administrator privileges
@@ -38,6 +38,11 @@ set SERVER_JS=%~dp0..\server\src\index.js
 echo Путь к Node.js: %NODE_PATH%
 echo Путь к серверу: %SERVER_JS%
 
+:: Имя службы MyChatServer и имя правила брандмауэра «MyChat Server (Port 2004)»
+:: — идентификаторы: по ним их находят uninstall-service.bat и повторный запуск
+:: этого сценария на уже настроенном сервере. С переименованием продукта в
+:: CentyChat меняется только отображаемое имя службы (DisplayName ниже).
+
 :: Open port in firewall — только для доменного/частного профиля: с публичной
 :: сети (кафе, гостиница) порт 2004 быть виден не должен.
 echo Добавление правила в Брандмауэр Windows (порт 2004, домен/частная сеть)...
@@ -48,15 +53,15 @@ echo Регистрация службы MyChatServer...
 sc stop "MyChatServer" >nul 2>&1
 sc delete "MyChatServer" >nul 2>&1
 
-sc create "MyChatServer" binPath= "\"%NODE_PATH%\" \"%SERVER_JS%\"" start= auto DisplayName= "MyChat Enterprise Corporate Server"
-sc description "MyChatServer" "Автономный локальный сервер корпоративного мессенджера MyChat с базой данных SQLite WAL"
+sc create "MyChatServer" binPath= "\"%NODE_PATH%\" \"%SERVER_JS%\"" start= auto DisplayName= "CentyChat Server"
+sc description "MyChatServer" "Автономный локальный сервер корпоративного мессенджера CentyChat с базой данных SQLite WAL"
 sc failure "MyChatServer" reset= 86400 actions= restart/5000/restart/10000/restart/60000
 
 echo Запуск службы MyChatServer...
 sc start "MyChatServer"
 
 echo =====================================================================
-echo [✓] Служба MyChatServer успешно установлена и запущена!
+echo [✓] Служба CentyChat Server (MyChatServer) успешно установлена и запущена!
 echo [✓] Порт 2004 открыт в Брандмауэре (домен/частная сеть).
 echo [✓] Сервер будет автоматически запускаться при старте Windows.
 echo [✓] Панель администрирования: http://localhost:2004/admin

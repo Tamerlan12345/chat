@@ -1,7 +1,7 @@
 {
   "name": "mychat-desktop",
   "version": "1.1.0",
-  "description": "OpenMyChat Enterprise Desktop Application Client",
+  "description": "CentyChat Desktop Application Client",
   "main": "src/main/main.js",
   "scripts": {
     "dev": "vite",
@@ -17,17 +17,17 @@
     "publish:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-update.ps1"
   },
   "keywords": [
-    "mychat",
+    "centychat",
     "desktop",
     "electron",
     "corporate-chat",
     "enterprise"
   ],
-  "author": "OpenMyChat Enterprise",
+  "author": "Centras Insurance (АО Сентрас Иншуранс)",
   "license": "ISC",
   "build": {
     "appId": "com.openmychat.desktop",
-    "productName": "OpenMyChat Enterprise",
+    "productName": "CentyChat",
     "directories": {
       "output": "release"
     },
@@ -50,7 +50,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://updates.invalid/openmychat/",
+        "url": "https://updates.invalid/centychat/",
         "channel": "latest"
       }
     ],
@@ -89,15 +89,15 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "OpenMyChat Enterprise",
+      "shortcutName": "CentyChat",
       "runAfterFinish": true,
       "perMachine": false,
-      "uninstallDisplayName": "OpenMyChat Enterprise (Сентрас Иншуранс)",
+      "uninstallDisplayName": "CentyChat (Сентрас Иншуранс)",
       "deleteAppDataOnUninstall": false,
-      "artifactName": "OpenMyChat-Enterprise-Setup-${version}.${ext}"
+      "artifactName": "CentyChat-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "OpenMyChat-Enterprise-Portable-${version}.${ext}"
+      "artifactName": "CentyChat-Portable-${version}.${ext}"
     }
   },
   "dependencies": {
