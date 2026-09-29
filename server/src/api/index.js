@@ -637,7 +637,7 @@ router.get('/admin/server/overview', requireAuth, requireAdmin, route(async (req
     const allChannels = MessageService.getChannels(req.user.id);
 
     res.json({
-      server_name: settings.server_name || 'OpenMyChat Enterprise Server',
+      server_name: settings.server_name || 'CentyChat Server',
       company_name: settings.company_name || 'АО "Страховая компания "Сентрас Иншуранс"',
       version: config.SERVER_VERSION,
       uptime_seconds: Math.floor(process.uptime()),
@@ -971,7 +971,7 @@ router.post('/admin/telegram/test', requireAuth, requireAdmin, route(async (req,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id,
-          text: '🔔 *OpenMyChat Enterprise Server*\\nТестовое оповещение успешно доставлено!',
+          text: '🔔 *CentyChat Server*\\nТестовое оповещение успешно доставлено!',
           parse_mode: 'Markdown'
         })
       });
@@ -1001,7 +1001,7 @@ router.get('/admin/licenses', requireAuth, requireAdmin, route(async (req, res) 
     UserService.getAllUsers()
   ]);
   res.json({
-    product_name: 'MyChat Server Enterprise',
+    product_name: 'CentyChat Server',
     license_type: 'Корпоративная неограниченная (Enterprise LAN/WAN)',
     license_owner: settings.company_name || 'АО "Страховая компания "Сентрас Иншуранс"',
     license_key: 'MC7-ENT-CENTR-2025-9981-A4F2',
@@ -1265,7 +1265,7 @@ router.get('/announcements/:id/audit', requireAuth, route(async (req, res) => {
 router.get('/settings/info', route(async (req, res) => {
   const settings = await SettingsService.getAllSettings();
   res.json({
-    server_name: settings.server_name || 'OpenMyChat Enterprise Server',
+    server_name: settings.server_name || 'CentyChat Server',
     company_name: settings.company_name || 'Корпоративная сеть',
     allow_registration: settings.allow_registration === 'true',
     // Окна правки/удаления сообщений: клиенту нужно знать их, чтобы не

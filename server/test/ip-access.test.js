@@ -98,7 +98,7 @@ test('маршруты /updates/* закрыты ALLOWED_CLIENT_IPS и стоя�
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    for (const p of ['/updates/policy.json', '/updates/stable/latest.yml', '/updates/stable/OpenMyChat-Enterprise-Setup-1.0.0.exe']) {
+    for (const p of ['/updates/policy.json', '/updates/stable/latest.yml', '/updates/stable/CentyChat-Setup-1.0.0.exe']) {
       const denied = await fetch(base + p, { headers: { 'User-Agent': 'Electron' } });
       await denied.arrayBuffer();
       assert.strictEqual(denied.status, 403, `${p}: чужой адрес не проходит`);

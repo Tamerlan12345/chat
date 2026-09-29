@@ -315,7 +315,7 @@ test('неизвестное имя и обход пути → 404', async () =>
   const paths = [
     '/updates/stable/release.json',
     '/updates/stable/latest.json',
-    '/updates/stable/OpenMyChat-Enterprise-Setup-9.9.9.exe',
+    '/updates/stable/CentyChat-Setup-9.9.9.exe',
     '/updates/stable/..%2F..%2F..%2Fpackage.json',
     '/updates/stable/..%2Freleases%2F1.2.0%2Frelease.json',
     '/updates/stable/..%5C..%5Cpackage.json',

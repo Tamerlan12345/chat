@@ -1196,7 +1196,7 @@ class WsServer {
           department_name: user.department_name || 'Департамент',
           ip: ws.remoteIp || '127.0.0.1',
           connectedAt: ws.connectedAt || new Date().toISOString(),
-          clientType: ws.clientType || 'MyChat Client',
+          clientType: ws.clientType || 'CentyChat Client',
           status: user.status || 'online',
           // Was Math.random(): the admin's "Активные подключения" table
           // reported a healthy 4-12 ms for every session regardless of the

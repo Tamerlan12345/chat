@@ -462,7 +462,7 @@ async function seedFreshInstall(target) {
 
   const settings = [
     ['company_name', COMPANY_NAME],
-    ['server_name', 'OpenMyChat Enterprise Server'],
+    ['server_name', 'CentyChat Server'],
     // Выключено на чистой установке: сервер может оказаться доступен из
     // интернета, и самостоятельная регистрация означала бы, что завести себе
     // учётную запись может любой, кто до него дотянулся.
