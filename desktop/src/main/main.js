@@ -1,5 +1,12 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard, shell, net, dialog, session } = require('electron');
 const path = require('node:path');
+const { pinUserData, userDataPath } = require('./app-paths');
+
+// Профиль — в прежней папке %APPDATA%\mychat-desktop, что бы ни стояло в
+// productName (см. app-paths.js). Раньше всего остального: журнал, сессии,
+// автозапуск и блокировка единственного экземпляра берут путь отсюда.
+pinUserData(app);
+
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { RemoteInput } = require('./remote-input');
@@ -79,7 +86,7 @@ log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 // От него же отсчитывается, какой странице доверять (см. security.js).
 // В рабочей сборке переменные окружения не читаются, а http не принимается
 // вовсе (см. server-url.js). Сервер в локальной сети задаёт ИТ политикой
-// реестра HKLM\SOFTWARE\Policies\OpenMyChat Enterprise (см. client-config.js);
+// реестра HKLM\SOFTWARE\Policies\CentyChat (см. client-config.js);
 // без неё — константа ниже. Файл client.json в ProgramData не читается:
 // папку там может создать любой пользователь ПК.
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
@@ -210,6 +217,10 @@ function capturedDisplayRect() {
 const remoteInput = new RemoteInput(log, { getTargetRect: capturedDisplayRect });
 
 // Single Instance Lock
+// AppUserModelId совпадает с appId сборки и после переименования в CentyChat
+// остаётся прежним: к нему привязаны ярлыки (NSIS ставит его в .lnk),
+// уведомления Windows и их настройки, закрепление на панели задач и имя
+// значения автозапуска в HKCU\...\Run (см. build/installer.nsh). Не менять.
 app.setAppUserModelId('com.openmychat.desktop');
 const gotTheLock = app.requestSingleInstanceLock();
 log('requestSingleInstanceLock: ' + gotTheLock);
@@ -418,7 +429,7 @@ function createMainWindow() {
     // устанавливается и уведомления приходят, но работа не перекрывается.
     show: !launchedAtLogin,
     frame: true, // Native Windows form frame
-    title: 'MyChat Enterprise Client',
+    title: 'CentyChat',
     // Фон до загрузки интерфейса — в цвет темы по часам, чтобы утром окно
     // не вспыхивало тёмным (см. renderer lib/theme.mjs).
     backgroundColor: isDaytime() ? '#fbfbfc' : '#26282c',
@@ -622,9 +633,9 @@ let rendererTrayTooltip = null;
 // то, что попросила страница (например, число непрочитанных).
 function refreshTrayTooltip() {
   if (!tray) return;
-  let text = rendererTrayTooltip || 'MyChat Enterprise';
-  if (offline.active) text = 'MyChat — нет связи с сервером';
-  if (hostSession.active) text = `MyChat — ${hostSession.indicatorText()}`;
+  let text = rendererTrayTooltip || 'CentyChat';
+  if (offline.active) text = 'CentyChat — нет связи с сервером';
+  if (hostSession.active) text = `CentyChat — ${hostSession.indicatorText()}`;
   tray.setToolTip(text.slice(0, 127));
 }
 
@@ -638,7 +649,7 @@ function updateTrayMenu(status = 'online') {
   if (status !== 'dnd') trayPresence = status;
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Открыть MyChat',
+      label: 'Открыть CentyChat',
       click: () => showMainWindow()
     },
     ...updateTrayItems(),
@@ -866,7 +877,9 @@ function startUpdater() {
       },
       hostSession,
       fetchJson: fetchUpdateJson,
-      statePath: path.join(app.getPath('appData'), 'OpenMyChat Enterprise', 'update-state.json'),
+      // В папке профиля, закреплённой в app-paths.js, — рядом с остальными
+      // данными сотрудника.
+      statePath: path.join(userDataPath(app.getPath('appData')), 'update-state.json'),
       readFile: (file) => fs.readFileSync(file, 'utf8'),
       writeFile: (file, text) => {
         fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1553,7 +1566,7 @@ ipcMain.handle('show-notification', (event, data) => {
       } catch (_) {}
 
       const notifOptions = {
-        title: String(title || 'Centras Chat').slice(0, 200),
+        title: String(title || 'CentyChat').slice(0, 200),
         body: String(body || '').slice(0, 1000),
         urgency: isUrgent ? 'critical' : 'normal',
         timeoutType: isUrgent ? 'never' : 'default'
@@ -1701,7 +1714,10 @@ app.whenReady().then(() => {
   }
 
   // Сервер видит, какая оболочка к нему пришла. Слово Electron в строке
-  // остаётся: по нему сервер отличает приложение от браузера.
+  // остаётся: по нему сервер отличает приложение от браузера. Метка
+  // OpenMyChatDesktop — технический идентификатор, как и заголовки
+  // X-MyChat-*: на неё могут опираться журналы и правила прокси, поэтому с
+  // переименованием в CentyChat она не менялась.
   app.userAgentFallback = `${app.userAgentFallback} OpenMyChatDesktop/${app.getVersion()} (${INSTALL_KIND})`;
 
   // Скачивание вложения обычной переписки (не файла удалённого стола —

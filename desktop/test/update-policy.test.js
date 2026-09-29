@@ -11,6 +11,7 @@ const {
   updateCapability,
   resolveDownloadUrl,
   UNINSTALLER_NAME,
+  UNINSTALLER_NAMES,
   FIRST_CHECK_MIN_MS,
   FIRST_CHECK_MAX_MS,
   MAX_BACKOFF_MS
@@ -61,25 +62,46 @@ test('detectInstallKind: разработка, portable, Program Files, уста
   assert.strictEqual(kindOf({ isPackaged: false, execPath: 'C:\\dev\\electron.exe' }), 'dev');
 
   assert.strictEqual(
-    kindOf({ execPath: 'C:\\Users\\u\\AppData\\Local\\Temp\\2abc\\OpenMyChat Enterprise.exe', env: { PORTABLE_EXECUTABLE_FILE: 'D:\\OpenMyChat.exe' } }),
+    kindOf({ execPath: 'C:\\Users\\u\\AppData\\Local\\Temp\\2abc\\CentyChat.exe', env: { PORTABLE_EXECUTABLE_FILE: 'D:\\CentyChat.exe' } }),
     'portable'
   );
 
-  const machine = 'C:\\Program Files\\OpenMyChat Enterprise\\OpenMyChat Enterprise.exe';
-  assert.strictEqual(kindOf({ execPath: machine, files: ['C:\\Program Files\\OpenMyChat Enterprise\\' + UNINSTALLER_NAME] }), 'nsis-machine');
-  assert.strictEqual(kindOf({ execPath: 'c:\\program files (x86)\\OpenMyChat\\OpenMyChat Enterprise.exe' }), 'nsis-machine', 'регистр не важен');
+  const machine = 'C:\\Program Files\\CentyChat\\CentyChat.exe';
+  assert.strictEqual(kindOf({ execPath: machine, files: ['C:\\Program Files\\CentyChat\\' + UNINSTALLER_NAME] }), 'nsis-machine');
+  assert.strictEqual(kindOf({ execPath: 'c:\\program files (x86)\\CentyChat\\CentyChat.exe' }), 'nsis-machine', 'регистр не важен');
 
-  const perUser = 'C:\\Users\\u\\AppData\\Local\\Programs\\OpenMyChat Enterprise\\OpenMyChat Enterprise.exe';
+  const perUser = 'C:\\Users\\u\\AppData\\Local\\Programs\\CentyChat\\CentyChat.exe';
   assert.strictEqual(
-    kindOf({ execPath: perUser, files: ['C:\\Users\\u\\AppData\\Local\\Programs\\OpenMyChat Enterprise\\' + UNINSTALLER_NAME] }),
+    kindOf({ execPath: perUser, files: ['C:\\Users\\u\\AppData\\Local\\Programs\\CentyChat\\' + UNINSTALLER_NAME] }),
     'nsis'
   );
   assert.strictEqual(kindOf({ execPath: perUser }), 'copy', 'без деинсталлятора рядом — копия');
-  assert.strictEqual(kindOf({ execPath: 'D:\\Apps\\MyChat\\OpenMyChat Enterprise.exe' }), 'copy');
+  assert.strictEqual(kindOf({ execPath: 'D:\\Apps\\CentyChat\\CentyChat.exe' }), 'copy');
 
   // «C:\Program Files Evil\...» — не Program Files.
-  assert.strictEqual(kindOf({ execPath: 'C:\\Program Files Evil\\OpenMyChat Enterprise.exe' }), 'copy');
-  assert.strictEqual(UNINSTALLER_NAME, 'Uninstall OpenMyChat Enterprise.exe');
+  assert.strictEqual(kindOf({ execPath: 'C:\\Program Files Evil\\CentyChat.exe' }), 'copy');
+  assert.strictEqual(UNINSTALLER_NAME, 'Uninstall CentyChat.exe');
+});
+
+test('detectInstallKind: установка 1.0.0, обновлённая до CentyChat, — по-прежнему NSIS', () => {
+  // Прежняя папка установки сохраняется (обычная установка кладёт CentyChat в
+  // её подпапку). Деинсталлятор со старым именем рядом с exe на деле не
+  // остаётся, но если окажется — это всё равно установка через NSIS.
+  const legacyDir = 'C:\\Users\\u\\AppData\\Local\\Programs\\OpenMyChat Enterprise\\';
+  assert.deepStrictEqual([...UNINSTALLER_NAMES], [UNINSTALLER_NAME, 'Uninstall OpenMyChat Enterprise.exe']);
+  assert.strictEqual(kindOf({ execPath: legacyDir + 'CentyChat.exe', files: [legacyDir + 'Uninstall CentyChat.exe'] }), 'nsis');
+  assert.strictEqual(kindOf({ execPath: legacyDir + 'CentyChat.exe', files: [legacyDir + 'Uninstall OpenMyChat Enterprise.exe'] }), 'nsis');
+  assert.strictEqual(
+    kindOf({ execPath: legacyDir + 'CentyChat\\CentyChat.exe', files: [legacyDir + 'CentyChat\\Uninstall CentyChat.exe'] }),
+    'nsis'
+  );
+  assert.strictEqual(kindOf({ execPath: legacyDir + 'CentyChat.exe', files: [legacyDir + 'Uninstall Other.exe'] }), 'copy');
+  // Сбой проверки одного имени не мешает найти другое.
+  const flaky = (f) => {
+    if (f.endsWith('Uninstall CentyChat.exe')) throw new Error('EACCES');
+    return f.endsWith('Uninstall OpenMyChat Enterprise.exe');
+  };
+  assert.strictEqual(detectInstallKind({ isPackaged: true, execPath: legacyDir + 'CentyChat.exe', exists: flaky, programFiles: PROGRAM_FILES }), 'nsis');
 });
 
 test('updateCapability', () => {
@@ -113,8 +135,8 @@ test('feedOptions: generic, канал latest, без multi-range', () => {
 test('адрес скачивания: относительный от сервера, только свой https-источник', () => {
   const origin = 'https://chat.centras.local';
   assert.strictEqual(
-    resolveDownloadUrl({ url: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe', serverOrigin: origin }),
-    'https://chat.centras.local/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe'
+    resolveDownloadUrl({ url: '/updates/stable/CentyChat-Setup-1.2.0.exe', serverOrigin: origin }),
+    'https://chat.centras.local/updates/stable/CentyChat-Setup-1.2.0.exe'
   );
   assert.strictEqual(resolveDownloadUrl({ url: 'https://evil.com/setup.exe', serverOrigin: origin }), null);
   assert.strictEqual(resolveDownloadUrl({ url: '//evil.com/setup.exe', serverOrigin: origin }), null);

@@ -23,7 +23,7 @@ export function Cover() {
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
         </div>
         <div className="cover-kicker">Инициатива AI HUB · АО СК «Сентрас Иншуранс»</div>
-        <h1>OpenMyChat Enterprise</h1>
+        <h1>CentyChat</h1>
         <p className="cover-lead">
           Корпоративный мессенджер собственной разработки. Работает внутри контура компании,
           заменяет платный MyChat и развивается под наши задачи.

@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 > nul
-title MyChat Enterprise Server
+title CentyChat Server
 echo =====================================================================
-echo   Запуск сервера MyChat Enterprise в портативном режиме...
+echo   Запуск сервера CentyChat в портативном режиме...
 echo =====================================================================
 cd /d "%~dp0..\server"
 node src/index.js

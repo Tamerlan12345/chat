@@ -145,7 +145,7 @@ test('available без downloadUrl (nsis, скачивание начинает�
 // всегда — даже при UPDATES_DISABLED и без выпуска, а «Скачать» отвечало, что
 // ссылки нет. Теперь баннер — только когда сервер дал ссылку.
 
-const LEGACY_URL = 'https://chat.example.com/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe';
+const LEGACY_URL = 'https://chat.example.com/updates/stable/CentyChat-Setup-1.2.0.exe';
 
 test('legacyShell без ссылки на установщик — баннера нет (ни при каком state)', () => {
   assert.strictEqual(bannerFor(null, { legacyShell: true }), null);
@@ -188,13 +188,13 @@ test('legacyUpdateFromPolicy — ссылка только из того же ht
     offeredVersion: '1.2.0',
     mandatory: true,
     minVersion: '1.1.0',
-    setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe'
+    setupUrl: '/updates/stable/CentyChat-Setup-1.2.0.exe'
   }, SERVER_URL);
   assert.deepStrictEqual(mandatory, { downloadUrl: LEGACY_URL, version: '1.2.0', mandatory: true });
   const b = bannerFor(null, { legacyShell: true, legacy: mandatory });
   assert.match(b.text, /Обязательное обновление/);
 
-  const optional = legacyUpdateFromPolicy({ enabled: true, offeredVersion: '1.2.0', mandatory: false, minVersion: null, setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe' }, SERVER_URL);
+  const optional = legacyUpdateFromPolicy({ enabled: true, offeredVersion: '1.2.0', mandatory: false, minVersion: null, setupUrl: '/updates/stable/CentyChat-Setup-1.2.0.exe' }, SERVER_URL);
   assert.strictEqual(optional.mandatory, false);
 
   // Выключено (UPDATES_DISABLED или политика), выпуска нет, ссылка чужая — ничего.
@@ -236,8 +236,8 @@ const SERVER = 'https://chat.example.com';
 
 test('resolveLegacyDownloadUrl — относительный путь достраивается до адреса того же источника', () => {
   assert.strictEqual(
-    resolveLegacyDownloadUrl('/updates/stable/OpenMyChat-Setup-1.2.0.exe', SERVER),
-    'https://chat.example.com/updates/stable/OpenMyChat-Setup-1.2.0.exe'
+    resolveLegacyDownloadUrl('/updates/stable/CentyChat-Setup-1.2.0.exe', SERVER),
+    'https://chat.example.com/updates/stable/CentyChat-Setup-1.2.0.exe'
   );
 });
 

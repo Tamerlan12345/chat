@@ -11,10 +11,10 @@ const {
 } = require('../src/main/updater');
 
 const ORIGIN = 'https://chat.centras.local';
-const STATE_PATH = 'C:\\Users\\u\\AppData\\Roaming\\OpenMyChat Enterprise\\update-state.json';
+const STATE_PATH = 'C:\\Users\\u\\AppData\\Roaming\\mychat-desktop\\update-state.json';
 const APP_UPDATE_YML = [
   'provider: generic',
-  'url: https://updates.invalid/openmychat/',
+  'url: https://updates.invalid/centychat/',
   'channel: latest',
   'publisherName:',
   '  - Centras Insurance (АО Сентрас Иншуранс)',
@@ -23,7 +23,7 @@ const APP_UPDATE_YML = [
 ].join('\n');
 const DOWNLOADED = {
   version: '1.2.0',
-  downloadedFile: 'C:\\Users\\u\\AppData\\Local\\mychat-desktop-updater\\pending\\OpenMyChat-Enterprise-Setup-1.2.0.exe'
+  downloadedFile: 'C:\\Users\\u\\AppData\\Local\\mychat-desktop-updater\\pending\\CentyChat-Setup-1.2.0.exe'
 };
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -64,8 +64,8 @@ function policy(overrides = {}) {
     minVersion: null,
     message: 'Исправлена передача файлов',
     checkIntervalMinutes: 240,
-    setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe',
-    portableUrl: '/updates/stable/OpenMyChat-Enterprise-Portable-1.2.0.exe',
+    setupUrl: '/updates/stable/CentyChat-Setup-1.2.0.exe',
+    portableUrl: '/updates/stable/CentyChat-Portable-1.2.0.exe',
     ...overrides
   };
 }
@@ -183,7 +183,7 @@ test('сервер не по https → проверок нет', async () => {
 
 test('нет publisherName в app-update.yml → build-misconfigured, checkForUpdates не вызывается', async () => {
   for (const readAppUpdateYml of [
-    () => 'provider: generic\nurl: https://updates.invalid/openmychat/\n',
+    () => 'provider: generic\nurl: https://updates.invalid/centychat/\n',
     () => { throw new Error('ENOENT app-update.yml'); },
     () => 'publisherName:\nupdaterCacheDirName: x\n'
   ]) {
@@ -500,7 +500,7 @@ test('portable: только уведомление со ссылкой на por
   const s = h.controller.getState();
   assert.strictEqual(s.status, 'available');
   assert.strictEqual(s.offeredVersion, '1.2.0');
-  assert.strictEqual(s.downloadUrl, 'https://chat.centras.local/updates/stable/OpenMyChat-Enterprise-Portable-1.2.0.exe');
+  assert.strictEqual(s.downloadUrl, 'https://chat.centras.local/updates/stable/CentyChat-Portable-1.2.0.exe');
   assert.strictEqual(h.calls.fetch[0].headers['X-MyChat-Install-Kind'], 'portable');
   assert.strictEqual(h.controller.openDownload(), true);
   assert.deepStrictEqual(h.calls.opened, [s.downloadUrl]);
@@ -513,12 +513,12 @@ test('копия и Program Files: ссылка на установщик; бе�
     h.controller.start();
     await h.timers.fire();
     assert.strictEqual(h.calls.check, 0);
-    assert.strictEqual(h.controller.getState().downloadUrl, 'https://chat.centras.local/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe', kind);
+    assert.strictEqual(h.controller.getState().downloadUrl, 'https://chat.centras.local/updates/stable/CentyChat-Setup-1.2.0.exe', kind);
   }
   const noPortable = harness({ kind: 'portable', respond: () => ({ status: 200, body: policy({ portableUrl: null }) }) });
   noPortable.controller.start();
   await noPortable.timers.fire();
-  assert.strictEqual(noPortable.controller.getState().downloadUrl, 'https://chat.centras.local/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe');
+  assert.strictEqual(noPortable.controller.getState().downloadUrl, 'https://chat.centras.local/updates/stable/CentyChat-Setup-1.2.0.exe');
 });
 
 test('ссылка на чужой сервер из policy.json не принимается', async () => {

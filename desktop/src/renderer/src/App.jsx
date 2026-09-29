@@ -21,6 +21,7 @@ import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
 import Avatar from './components/Avatar';
 import Icon from './components/Icon';
+import { BrandMark } from './components/BrandMark';
 import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
@@ -838,8 +839,8 @@ export default function App() {
       try { wsRef.current.close(); } catch {}
     }
     addToast({
-      title: 'Сетевой сервер MyChat',
-      body: `Адрес изменен на: ${newUrl}. Выполняется подключение...`,
+      title: 'Адрес сервера изменён',
+      body: `Новый адрес: ${newUrl}. Подключаемся…`,
       type: 'chat'
     });
   };
@@ -885,9 +886,9 @@ export default function App() {
       const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошёл' : currentUser.status === 'dnd' ? 'Не беспокоить' : 'Не в сети';
       const extText = currentUser.extension ? ` (в.н.${currentUser.extension})` : '';
       const name = currentUser.full_name || currentUser.username;
-      document.title = `MyChat Client 2025.3.1 — ${name}${extText} [${company}] (${statusText})`;
+      document.title = `CentyChat — ${name}${extText} [${company}] (${statusText})`;
     } else {
-      document.title = `MyChat Client 2025.3.1 — [${company}]`;
+      document.title = `CentyChat — [${company}]`;
     }
   }, [currentUser, serverInfo]);
 
@@ -2079,8 +2080,9 @@ export default function App() {
   if (authState === 'checking') {
     return (
       <div className="login-container">
-        <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
-          <p>Подключение к MyChat...</p>
+        <div className="login-card login-card--status" role="status">
+          <BrandMark size={48} />
+          <p>Подключение к CentyChat…</p>
         </div>
       </div>
     );
@@ -2796,7 +2798,11 @@ export default function App() {
 
       {inlineRdViewer && (
         <div className="modal-backdrop">
-          <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {/* Окно просмотра тёмное в любой теме: светлое индиго кольца фокуса
+              на нём почти не видно (2,6:1), поэтому здесь своё, светлое.
+              --focus-outline задаётся заново: в :root он уже вычислен из
+              корневого --focus-color и наследуется готовым. */}
+          <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column', '--focus-color': '#b0a9ff', '--focus-outline': '2px solid #b0a9ff' }}>
             <div style={{ padding: '8px 16px', background: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff' }}>
               <span>Удаленный рабочий стол: {inlineRdViewer.targetUser?.full_name}</span>
               <button className="btn btn-sm btn-secondary" onClick={endRdViewerSession}>Закрыть</button>

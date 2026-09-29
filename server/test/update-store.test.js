@@ -167,14 +167,16 @@ test('повтор версии → 409, существующий релиз н�
 
 test('имена файлов в yml: обход пути и чужие имена отвергаются', async () => {
   const names = [
-    '../OpenMyChat-Enterprise-Setup-1.2.0.exe',
-    '..\\OpenMyChat-Enterprise-Setup-1.2.0.exe',
-    '%2e%2e%2fOpenMyChat-Enterprise-Setup-1.2.0.exe',
-    '/etc/OpenMyChat-Enterprise-Setup-1.2.0.exe',
-    'C:\\OpenMyChat-Enterprise-Setup-1.2.0.exe',
-    'OpenMyChat-Enterprise-Setup-1.2.0.exe\u0000.txt',
+    '../CentyChat-Setup-1.2.0.exe',
+    '..\\CentyChat-Setup-1.2.0.exe',
+    '%2e%2e%2fCentyChat-Setup-1.2.0.exe',
+    '/etc/CentyChat-Setup-1.2.0.exe',
+    'C:\\CentyChat-Setup-1.2.0.exe',
+    'CentyChat-Setup-1.2.0.exe\u0000.txt',
     `${'A'.repeat(130)}.exe`,
-    'OpenMyChat-Enterprise-Setup-1.1.0.exe',
+    'CentyChat-Setup-1.1.0.exe',
+    // Имя сборок до переименования в CentyChat — тоже чужое.
+    'OpenMyChat-Enterprise-Setup-1.2.0.exe',
     'Setup.exe'
   ];
   for (const name of names) {
@@ -274,19 +276,19 @@ test('readYml разбирает формат electron-builder', () => {
   const text = [
     'version: 1.2.0',
     'files:',
-    '  - url: OpenMyChat-Enterprise-Setup-1.2.0.exe',
+    '  - url: CentyChat-Setup-1.2.0.exe',
     '    sha512: abc+/=',
     '    size: 12345',
     '    blockMapSize: 777',
-    'path: OpenMyChat-Enterprise-Setup-1.2.0.exe',
+    'path: CentyChat-Setup-1.2.0.exe',
     'sha512: abc+/=',
     "releaseDate: '2026-09-28T10:00:00.000Z'",
     ''
   ].join('\r\n');
   assert.deepStrictEqual(readYml(text), {
     version: '1.2.0',
-    files: [{ url: 'OpenMyChat-Enterprise-Setup-1.2.0.exe', sha512: 'abc+/=', size: 12345, blockMapSize: 777 }],
-    path: 'OpenMyChat-Enterprise-Setup-1.2.0.exe',
+    files: [{ url: 'CentyChat-Setup-1.2.0.exe', sha512: 'abc+/=', size: 12345, blockMapSize: 777 }],
+    path: 'CentyChat-Setup-1.2.0.exe',
     sha512: 'abc+/=',
     releaseDate: '2026-09-28T10:00:00.000Z'
   });
@@ -320,8 +322,8 @@ test('readYml отвергает неожиданную форму', () => {
 test('renderYml → readYml даёт исходное', () => {
   const feed = {
     version: '1.3.0-beta.2',
-    files: [{ url: 'OpenMyChat-Enterprise-Setup-1.3.0-beta.2.exe', sha512: 'q+w/e=r==', size: 987654 }],
-    path: 'OpenMyChat-Enterprise-Setup-1.3.0-beta.2.exe',
+    files: [{ url: 'CentyChat-Setup-1.3.0-beta.2.exe', sha512: 'q+w/e=r==', size: 987654 }],
+    path: 'CentyChat-Setup-1.3.0-beta.2.exe',
     sha512: 'q+w/e=r==',
     releaseDate: '2026-09-28T10:00:00.000Z',
     releaseNotes: "Строка с 'кавычками', \"двойными\", двоеточием: и # решёткой\nи переводом строки"

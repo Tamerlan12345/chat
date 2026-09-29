@@ -155,6 +155,8 @@ test('источники политики: переменная, файл, ис�
   assert.strictEqual(isFullAccessDisabled({ env: {}, paths: ['p'], readFile: () => '{oops' }), true, 'испорченный файл — запрет');
   const paths = policyPaths({ programData: 'C:\\ProgramData', userData: 'C:\\Users\\u\\AppData\\Roaming\\app' });
   assert.strictEqual(paths.length, 2);
+  // Прежнее имя папки в ProgramData — намеренно: файл уже разложен по машинам
+  // (см. rd-consent.js), новой папки CentyChat там нет.
   assert.ok(paths[0].endsWith(path.join('OpenMyChat Enterprise', 'policy.json')));
 });
 
@@ -292,13 +294,13 @@ test('фильтр раздела updater: https того же источник�
   const { isUpdaterRequestAllowed } = require('../src/main/update-policy');
   const UPD = 'https://chat.centras.local';
   assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/stable/latest.yml', UPD), true);
-  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe?x=1', UPD), true);
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/stable/CentyChat-Setup-1.2.0.exe?x=1', UPD), true);
   assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/policy.json?channel=stable', UPD), true);
   assert.strictEqual(isUpdaterRequestAllowed('http://chat.centras.local/updates/stable/latest.yml', UPD), false, 'http');
   assert.strictEqual(isUpdaterRequestAllowed('https://evil.com/setup.exe', UPD), false, 'чужой источник');
   assert.strictEqual(isUpdaterRequestAllowed('https://chat.centras.local.evil.com/x', UPD), false);
   assert.strictEqual(isUpdaterRequestAllowed('https://chat.centras.local:8443/x', UPD), false, 'другой порт');
-  assert.strictEqual(isUpdaterRequestAllowed('https://updates.invalid/openmychat/latest.yml', UPD), false, 'заглушка из app-update.yml');
+  assert.strictEqual(isUpdaterRequestAllowed('https://updates.invalid/centychat/latest.yml', UPD), false, 'заглушка из app-update.yml');
   assert.strictEqual(isUpdaterRequestAllowed('file:///C:/Windows/calc.exe', UPD), false);
   assert.strictEqual(isUpdaterRequestAllowed('ws://chat.centras.local/', UPD), false);
   assert.strictEqual(isUpdaterRequestAllowed(UPD + '/x', null), false, 'без адреса обновлений — ничего');

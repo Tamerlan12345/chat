@@ -234,7 +234,7 @@ class SecurityMonitor {
     const chatId = settings.telegram_channel_id;
     if (!token || !chatId) return;
     const severityLabel = { critical: 'КРИТИЧНО', high: 'ВЫСОКИЙ', medium: 'СРЕДНИЙ' }[alert.severity] || alert.severity;
-    const text = `OpenMyChat: оповещение безопасности [${severityLabel}]\n${alert.title}\nВремя: ${alert.created_at}\nПодробности — в консоли администратора.`;
+    const text = `CentyChat: оповещение безопасности [${severityLabel}]\n${alert.title}\nВремя: ${alert.created_at}\nПодробности — в консоли администратора.`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     try {
