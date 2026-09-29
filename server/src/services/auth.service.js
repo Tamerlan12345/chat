@@ -5,6 +5,24 @@ const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
 const { isRateLimited, registerFailure, resetLimit } = require('./rate-limiter');
+const LoginThrottle = require('./login-throttle.service');
+const { canonicalUsername } = LoginThrottle;
+const { rateLimitIpKey } = require('./ip-access.service');
+
+// Логин длиннее этого не заводится ни регистрацией (до 64), ни разумным
+// администратором. Такой «логин» отклоняется сразу, до базы и до ключей
+// ограничителей: иначе каждый ключ в памяти нёс бы до 256 КБ строки из тела
+// запроса (аудит, раунд 4, находка Р4-04).
+const MAX_LOGIN_LENGTH = 256;
+
+// Ошибка «неверные данные» с кодом: маршрут по коду отличает подтверждённо
+// неверный вход (его и только его засчитывать в предел неудач с адреса, ПР-02)
+// от отказов, которые входом не являются (задержка, перегрузка очереди хэшей).
+function invalidCredentials() {
+  const err = new Error(INVALID_CREDENTIALS);
+  err.code = 'INVALID_CREDENTIALS';
+  return err;
+}
 
 // Одно сообщение на все отказы, включая временную блокировку: отдельный
 // текст о блокировке выдавал, что такой логин существует.
@@ -38,17 +56,117 @@ function sessionMaxSeconds() {
 function dummyHash() {
   if (!dummyHashPromise) {
     dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
+    // Неудачный расчёт (например, очередь хэшей переполнена) не должен
+    // запомниться навсегда — следующий вызов попробует снова.
+    dummyHashPromise.catch(() => { dummyHashPromise = null; });
   }
   return dummyHashPromise;
 }
 
-// Ключ ограничителя входа — конкретный адрес и конкретный логин, не учётная
-// запись сама по себе (см. registerFailedAttempt/login).
+// Сколько в среднем занимает проверка пароля с нынешними параметрами scrypt.
+// Нужна, чтобы выровнять по времени отказ для учётной записи, чей пароль ещё
+// хранится с прежними, более дешёвыми параметрами (N=2^15 или старый формат):
+// такая проверка идёт вчетверо быстрее приманки для несуществующего логина, и
+// по секундомеру отличались бы «есть такой, но давно не входил» и «нет
+// такого» — ровно на недели после подъёма N (аудит, раунд 4, находка Р4-09).
+let fullVerifyMs = 0;
+function noteFullVerify(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  fullVerifyMs = fullVerifyMs ? fullVerifyMs * 0.8 + ms * 0.2 : ms;
+}
+
+// Проверка против приманки. Ошибку «очередь хэшей переполнена» не глотает —
+// иначе при перегрузке несуществующий логин отвечал бы мгновенно, а
+// существующий — 503.
+async function dummyVerify(password) {
+  const started = Date.now();
+  try {
+    await verifyPassword(password, await dummyHash());
+  } catch (err) {
+    if (err?.code === 'PASSWORD_HASH_BUSY') throw err;
+    return;
+  }
+  if (typeof password === 'string' && password) noteFullVerify(Date.now() - started);
+}
+
+async function padToFullVerify(password, startedAt) {
+  if (!fullVerifyMs) {
+    // Образца ещё нет (первый отказ после запуска) — одна настоящая проверка
+    // приманки и даёт нужную длительность, и сама её выдерживает.
+    await dummyVerify(password);
+    return;
+  }
+  const left = fullVerifyMs - (Date.now() - startedAt);
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+}
+
+function throttledError({ retryAfterMs, reason, cls }) {
+  const seconds = Math.max(1, Math.ceil((Number(retryAfterMs) || 1000) / 1000));
+  // Текст не выдаёт, существует ли логин: корзины ведутся по имени и одинаково
+  // наступают для несуществующих. При исчерпании суточной корзины (sec5)
+  // сотруднику подсказываем безопасный путь. Корзина U (незнакомые адреса) —
+  // «войдите с рабочего компьютера»; корзина F (уже знакомый адрес) — только
+  // администратор.
+  let message;
+  if (reason === 'daily' && cls === 'F') {
+    message = 'Превышено число неверных попыток входа за сутки. Обратитесь к администратору.';
+  } else if (reason === 'daily') {
+    message = 'Слишком много неверных попыток входа под этим логином за сутки. Войдите с рабочего компьютера или обратитесь к администратору.';
+  } else if (reason === 'pending') {
+    // Остаток суточной корзины уже занят попытками, которые проверяются прямо
+    // сейчас (параллельный подбор): ждём их исхода, а не проверяем сверх предела.
+    message = `Слишком много одновременных попыток входа под этим логином. Повторите через ${seconds} с.`;
+  } else {
+    message = `Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`;
+  }
+  const err = new Error(message);
+  err.code = 'ACCOUNT_THROTTLED';
+  err.retryAfterSeconds = seconds;
+  return err;
+}
+
+// «Знакомый» адрес для учётной записи: с него уже проходила проверка личности.
+// Источники «знакомости», от быстрого к надёжному:
+//   — «горячий» кэш удачных входов в памяти (LoginThrottle.isKnownSource);
+//   — last_login_ip из строки (последний вход по паролю, переживает перезапуск);
+//   — таблица trusted_login_sources (любое подтверждённое действие: вход,
+//     «стук», продление, WebSocket — тоже переживает перезапуск, ПР-I4).
+// С такого адреса задержка по учётной записи не действует.
+async function isTrustedSource(row, ipKey) {
+  if (!row) return false;
+  const nameKey = canonicalUsername(row.username);
+  if (LoginThrottle.isKnownSource(nameKey, ipKey)) return true;
+  if (row.last_login_ip && rateLimitIpKey(row.last_login_ip) === ipKey) return true;
+  return require('./trusted-sources.service').isTrusted(row.id, ipKey);
+}
+
+// Корзина суточного предела для попытки входа (sec5): знакомый этому сотруднику
+// адрес — F, иначе U. Исключение (проверка sec5, п.4): у только что заведённой
+// учётной записи знакомых адресов ещё нет вовсе, и первый вход с временным
+// паролем из офиса с опечатками расходовал бы корзину U (5) с советом «войдите с
+// рабочего компьютера» — тому, кто за ним и сидит. Поэтому для сотрудника БЕЗ
+// единого знакомого адреса адрес, знакомый другим сотрудникам (офис, обратный
+// индекс), считается F. Устоявшимся сотрудникам правило не расширяется: иначе
+// гостевой Wi-Fi за тем же NAT мог бы расходовать их офисную корзину F.
+async function budgetClassFor(row, ipKey, trusted) {
+  if (trusted) return 'F';
+  if (!row || row.last_login_ip) return 'U';
+  const TrustedSources = require('./trusted-sources.service');
+  if (!TrustedSources.isFamiliarToAnyoneSync(ipKey)) return 'U';
+  return (await TrustedSources.hasAnyFamiliar(row.id)) ? 'U' : 'F';
+}
+
+// Ключ ограничителя входа — конкретный адрес (сеть /64 для IPv6) и логин в
+// единой форме (canonicalUsername), не учётная запись сама по себе (см.
+// registerFailedAttempt/login).
 function loginLockKey(ip, username) {
-  return `login-lock:${ip || 'unknown'}:${String(username || '').trim().toLowerCase()}`;
+  return `login-lock:${rateLimitIpKey(ip)}:${canonicalUsername(username)}`;
 }
 function loginLockOptions() {
-  return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
+  // scope 'name': ключ содержит логин из тела запроса — живёт в отдельной
+  // карте, чтобы спрей выдуманными логинами не вытеснял адресные счётчики
+  // (проверка раунда 4, ПР-01).
+  return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000, scope: 'name' };
 }
 
 // «Сколько учётных записей сейчас заблокировано» для панели администратора
@@ -62,7 +180,7 @@ function loginLockOptions() {
 const lockedUsernamesUntil = new Map(); // логин в нижнем регистре -> когда снимется
 
 function markUsernameLocked(username, windowMs) {
-  lockedUsernamesUntil.set(String(username || '').trim().toLowerCase(), Date.now() + windowMs);
+  lockedUsernamesUntil.set(canonicalUsername(username), Date.now() + windowMs);
 }
 
 // Живой снимок, не кэш: устаревшие записи вычищаются здесь же, при каждом
@@ -113,6 +231,28 @@ class AuthService {
       .update(`${header}.${body}`)
       .digest('base64url');
     return `${header}.${body}.${signature}`;
+  }
+
+  // Подпись токена верна (структура + HMAC), без проверки срока и поколения.
+  // Нужна, чтобы отличить протухший, но НАШ токен (обычное переподключение
+  // утром) от мусора/подбора: первый — не попытка угадать токен и не должен
+  // расходовать предел ws_auth (проверка раунда 4, M7).
+  static signatureValid(token) {
+    try {
+      if (!token || typeof token !== 'string' || token.length > 4096) return false;
+      const parts = token.split('.');
+      if (parts.length !== 3) return false;
+      const [header, body, signature] = parts;
+      const expected = crypto
+        .createHmac('sha256', config.JWT_SECRET)
+        .update(`${header}.${body}`)
+        .digest('base64url');
+      const a = Buffer.from(signature);
+      const b = Buffer.from(expected);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   }
 
   static verifyToken(token) {
@@ -240,49 +380,96 @@ class AuthService {
   }
 
   static async login(username, password, { ip = null } = {}) {
+    const nameKey = canonicalUsername(username);
+    if (!nameKey || nameKey.length > MAX_LOGIN_LENGTH) throw invalidCredentials();
+    const ipKey = rateLimitIpKey(ip);
+
     const db = identity();
     const row = await db.get(
       `SELECT u.id, u.username, u.password_hash, u.salt, u.is_active, u.approval_status,
-              u.token_version
+              u.token_version, u.last_login_ip
        FROM users u WHERE u.username = $1`,
       [String(username || '').trim()]
     );
 
-    // Отсутствующий, отключённый сотрудник и неверный пароль отвечают одним и
-    // тем же сообщением и за одно и то же время: по разнице ответов (или по
-    // секундомеру — scrypt идёт сотни миллисекунд) перебором выясняется, какие
-    // логины заведены в компании.
-    if (!row || !row.is_active) {
-      await verifyPassword(password, await dummyHash()).catch(() => {});
-      throw new Error(INVALID_CREDENTIALS);
-    }
+    // Суточная корзина неудач на учётную запись (sec5) — до проверки пароля:
+    // исчерпанная корзина отклоняет вход БЕЗ scrypt, даже верный пароль. Класс
+    // выбирается по знакомости адреса (F — знакомый, U — незнакомый). Для
+    // существующего сотрудника журнал неудач подгружается из базы (переживает
+    // перезапуск). Одинаково для несуществующих логинов — без оракула.
+    const trusted = await isTrustedSource(row, ipKey);
+    const budgetClass = await budgetClassFor(row, ipKey, trusted);
+    if (row) await LoginThrottle.ensureLoaded(row.id, nameKey);
+    // Ключ корзины — единая форма логина и для существующих, и для выдуманных
+    // (проверка sec5, п.2): вариант регистра существующего логина не получает
+    // свежую корзину. Между admit и try ниже нет ничего, что может бросить, —
+    // билет всегда возвращается в settle (там освобождается слот «в полёте»).
+    const admission = LoginThrottle.admit(nameKey, { ipKey, trusted, cls: budgetClass, userId: row?.id ?? null });
+    if (!admission.ok) throw throttledError(admission);
 
-    // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
-    // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
-    // для всей компании, включая настоящего владельца с любого другого места
-    // (аудит, находка №12; план 1.7 — задержка по IP+имени вместо жёсткой
-    // блокировки). Ключ в памяти процесса, как и остальные ограничители —
-    // после перезапуска отсчёт начинается заново, что для временной задержки
-    // приемлемо.
-    if (isRateLimited(loginLockKey(ip, row.username), loginLockOptions())) {
-      await verifyPassword(password, await dummyHash()).catch(() => {});
-      throw new Error(INVALID_CREDENTIALS);
-    }
+    // Несуществующий, отключённый сотрудник и неверный пароль идут по ОДНОМУ
+    // пути — те же проверки, тот же счёт, то же время. Иначе по тому, на каком
+    // шаге ответ отличается (или когда включается задержка/блокировка),
+    // перебором выясняется, какие логины заведены (проверка раунда 4, ПР-03).
+    const active = Boolean(row && row.is_active);
+    let outcome = 'neutral';
+    try {
+      const lockKey = loginLockKey(ip, nameKey);
+      // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
+      // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
+      // для всей компании (аудит, находка №12; план 1.7). Проверяется одинаково
+      // для существующих и несуществующих логинов; пароль при блокировке не
+      // проверяется, и попытка нейтральна для задержки по учётной записи
+      // (outcome остаётся 'neutral').
+      if (isRateLimited(lockKey, loginLockOptions())) {
+        await dummyVerify(password); // приманка теми же параметрами scrypt; может бросить BUSY (нейтрально)
+        throw invalidCredentials();
+      }
 
-    const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
-    if (!ok) {
-      await this.registerFailedAttempt(row, ip);
-      throw new Error(INVALID_CREDENTIALS);
-    }
+      const startedAt = Date.now();
+      let ok = false;
+      let needsRehash = false;
+      if (active) {
+        // BUSY (очередь хэшей переполнена) бросается ДО установки outcome:
+        // и для существующего, и для несуществующего логина перегрузка
+        // нейтральна для счётчиков — иначе занятость очереди сама становилась
+        // бы оракулом (проверка раунда 4, ПР-03б).
+        ({ ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt));
+        if (!needsRehash && typeof password === 'string' && password) noteFullVerify(Date.now() - startedAt);
+      } else {
+        await dummyVerify(password); // то же время, что и настоящая проверка; тоже может бросить BUSY
+      }
 
-    // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
-    // перебором выяснять, какие заявки поданы.
-    if (row.approval_status === 'pending') {
-      throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+      if (!ok) {
+        // Пароль подтверждённо неверен (или логина нет/он отключён) — только
+        // теперь это неудача: BUSY выше сюда не доходит и в счёт не идёт.
+        outcome = 'failure';
+        await this.registerFailedAttempt({ nameKey, userId: row?.id ?? null, ip });
+        // Пароль хранится с прежними, более дешёвыми параметрами — отказ
+        // выдерживается до длительности обычной проверки (Р4-09).
+        if (active && needsRehash) await padToFullVerify(password, startedAt);
+        throw invalidCredentials();
+      }
+      outcome = 'success';
+
+      // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
+      // перебором выяснять, какие заявки поданы.
+      if (row.approval_status === 'pending') {
+        throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+      }
+      if (row.approval_status === 'rejected') {
+        throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
+      }
+
+      return await this.completeLogin(row, password, { ip, nameKey, ipKey, needsRehash });
+    } finally {
+      LoginThrottle.settle(admission.ticket, outcome);
     }
-    if (row.approval_status === 'rejected') {
-      throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
-    }
+  }
+
+  // Вторая половина входа — пароль уже подошёл.
+  static async completeLogin(row, password, { ip, nameKey, ipKey, needsRehash }) {
+    const db = identity();
 
     // Пароль, сохранённый прежним способом (или с устаревшими параметрами),
     // пересчитывается прямо здесь: другого момента, когда открытый пароль
@@ -312,9 +499,16 @@ class AuthService {
     );
 
     // Успешный вход снимает накопленные неудачи по этой же паре адрес+логин —
-    // иначе они продолжают копиться к следующей блокировке, хотя подбора не
-    // было ни секунды (аудит ревью, находка №19).
-    resetLimit(loginLockKey(ip, row.username));
+    // иначе они продолжают копиться к следующей блокировке (аудит ревью,
+    // находка №19). Суточную корзину сбрасывает settle('success') в login() —
+    // но ТОЛЬКО свою: успех со знакомого адреса чистит F, с незнакомого — U,
+    // и другой класс не трогает (иначе офисный вход дарил бы подбору бюджет).
+    // Адрес запоминается как знакомый.
+    resetLimit(loginLockKey(ip, nameKey), { scope: 'name' });
+    LoginThrottle.rememberSuccess(nameKey, ipKey);
+    // Адрес удачного входа по паролю — знакомый и после перезапуска; вход по
+    // паролю вправе завести новый знакомый адрес (ПР-I4, I-2).
+    require('./trusted-sources.service').recordAsync(row.id, ipKey, { allowCreate: true });
 
     const user = await UserService.getUserById(row.id);
     return { user, token: this.generateToken(user) };
@@ -327,31 +521,36 @@ class AuthService {
    * бессмысленным, и не трогая ни владельца с другого места, ни коллегу,
    * которого атакующий этим же логином не запирает нигде, кроме своего адреса.
    */
-  static async registerFailedAttempt(row, ip) {
-    const key = loginLockKey(ip, row.username);
+  static async registerFailedAttempt({ nameKey, userId = null, ip }) {
+    const key = loginLockKey(ip, nameKey); // та же единая форма, что и при проверке
     const opts = loginLockOptions();
     const wasLocked = isRateLimited(key, opts);
     registerFailure(key, opts);
     if (wasLocked) return; // уже заблокирован этой парой — событие не повторяется
 
     if (isRateLimited(key, opts)) {
-      // Порог только что достигнут для этой пары адрес+логин.
-      markUsernameLocked(row.username, opts.windowMs);
+      // Порог только что достигнут для этой пары адрес+логин. Событие и запись
+      // в статистику — только для реально существующей учётной записи: для
+      // несуществующего логина (userId = null) их нет, но это ненаблюдаемо для
+      // атакующего (тот же ответ, то же время), а счёт в ограничителе выше уже
+      // одинаков для обоих — этого достаточно, чтобы путь не расходился (ПР-03).
+      if (userId === null) return;
+      markUsernameLocked(nameKey, opts.windowMs);
 
       // В центр безопасности событие уходит только для учётной записи
       // администратора: рядовой сотрудник, несколько раз ошибившийся паролем,
       // тревоги поднимать не должен (план 1.7, аудит, находка №12).
-      const account = await UserService.getUserById(row.id);
+      const account = await UserService.getUserById(userId);
       if (account?.permissions?.is_admin || account?.permissions?.is_scoped_admin) {
         require('./audit.service').log({
-          userId: row.id,
+          userId,
           action: 'account_locked',
           ip,
-          details: { minutes: config.LOGIN_LOCKOUT_MINUTES, username: row.username }
+          details: { minutes: config.LOGIN_LOCKOUT_MINUTES, username: nameKey }
         });
       }
       console.warn(
-        `[Auth] Вход в учётную запись "${row.username}" с адреса ${ip || 'неизвестно'} заблокирован на ` +
+        `[Auth] Вход в учётную запись "${nameKey}" с адреса ${ip || 'неизвестно'} заблокирован на ` +
           `${config.LOGIN_LOCKOUT_MINUTES} мин. после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток.`
       );
     }
@@ -369,7 +568,7 @@ class AuthService {
     if (!/^[A-Za-z0-9._-]{3,64}$/.test(login)) {
       throw new Error('Логин может состоять из латинских букв, цифр, точки, дефиса и подчёркивания (3–64 символа)');
     }
-    UserService.assertPasswordPolicy(password);
+    UserService.assertPasswordPolicy(password, { username: login });
     // Самостоятельная регистрация доступна без входа — те же пределы формата
     // и длины, что и у администратора, редактирующего чужой профиль (аудит,
     // находка №5): без них анонимная заявка засоряла бы оргструктуру и ленту
@@ -455,6 +654,13 @@ class AuthService {
   // countLockedUsernames выше.
   static countLockedAccounts() {
     return countLockedUsernames();
+  }
+
+  // Логины под блокировкой пары адрес+логин прямо сейчас — чтобы панель могла
+  // объединить их с исчерпавшими суточную корзину без двойного счёта (sec5).
+  static lockedUsernames() {
+    countLockedUsernames(); // заодно вычищает истёкшие
+    return [...lockedUsernamesUntil.keys()];
   }
 
   // Та же граница, что verifyToken применяет к auth_time токена, — но нужна и

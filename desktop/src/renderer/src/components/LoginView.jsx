@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
+import { BrandLockup, BRAND_C_PATH } from './BrandMark';
+import { postLoginWithRetry } from '../lib/login-retry.mjs';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MIN_PASSWORD_LENGTH = 8;
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
@@ -44,7 +48,7 @@ async function readJson(res) {
 function describeFailure(res, data, fallback) {
   if (data && typeof data.error === 'string' && data.error) return data.error;
   if (res.status === 403) return 'Доступ с этого адреса запрещён — обратитесь к администратору';
-  if (res.status === 404) return 'По этому адресу сервер MyChat не отвечает';
+  if (res.status === 404) return 'По этому адресу сервер CentyChat не отвечает';
   if (res.status === 429) return 'Слишком много попыток — повторите через минуту';
   if (res.status >= 500) return 'Сервер временно недоступен — повторите через минуту';
   return fallback;
@@ -76,6 +80,10 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pendingMessage, setPendingMessage] = useState('');
+  // Автоповтор входа при перегрузке сервера (503): пока идёт пауза, поля входа
+  // остаются доступными — правка любого из них отменяет повтор (задача 4).
+  const [retryNote, setRetryNote] = useState('');
+  const cancelRetryRef = useRef(false);
   // Почему человек снова на экране входа: сеанс отозван, пароль сброшен
   // администратором. Без объяснения выброс на вход выглядел как сбой.
   const [notice] = useState(() => {
@@ -156,6 +164,8 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
     setLoading(true);
     setError('');
+    setRetryNote('');
+    cancelRetryRef.current = false;
 
     const cleanUrl = serverUrl.replace(/\/+$/, '');
     // Пароль по открытому каналу не отправляется.
@@ -166,16 +176,23 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
 
     try {
-      const res = await fetch(`${cleanUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.trim(),
-          password
-        })
+      // Сервер под наплывом входов отвечает 503 (LOGIN_BUSY/PASSWORD_HASH_BUSY)
+      // с Retry-After — это не отказ, а просьба повторить. Повторяем до двух
+      // раз, соблюдая Retry-After (пауза не дольше ~5 с), с видимым статусом.
+      const { res, data, cancelled } = await postLoginWithRetry({
+        fetchImpl: fetch,
+        sleep,
+        url: `${cleanUrl}/api/auth/login`,
+        body: { username: username.trim(), password },
+        budgetMs: 45000,
+        onRetry: (attempt) => setRetryNote(`Сервер занят, повторяю вход… (попытка ${attempt})`),
+        shouldCancel: () => cancelRetryRef.current
       });
-
-      const data = await readJson(res);
+      setRetryNote('');
+      if (cancelled) {
+        setError('Повтор входа отменён — нажмите «Войти», когда будете готовы');
+        return;
+      }
 
       if (!res.ok || !data.token) {
         throw new Error(describeFailure(res, data, 'Не удалось войти'));
@@ -192,6 +209,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
       onLoginSuccess(data.user, data.token, cleanUrl);
     } catch (err) {
+      setRetryNote('');
       setError(
         err instanceof TypeError
           ? 'Нет связи с сервером — проверьте сеть и повторите'
@@ -266,270 +284,290 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
   };
 
+  const companyName = serverInfo?.company_name || '';
+  const allowRegistration = Boolean(serverInfo?.allow_registration);
+
   return (
     <div className="login-container">
-      <div className="login-card">
-        {/* Logo / Header */}
-        <div className="login-header">
-          <div className="login-logo-circle">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-          </div>
-          <h2 className="login-title">
-            {serverInfo?.company_name || 'OpenMyChat'}
-          </h2>
-          <p className="login-subtitle">
-            Корпоративный мессенджер для сотрудников
-          </p>
-        </div>
+      <div className="login-card login-card--split">
+        {/* Фирменная сторона: знак, название и компания. В узком окне она
+            скрывается, и знак с названием переезжают в шапку формы. */}
+        <aside className="login-brand">
+          <svg className="login-brand-glyph" viewBox="0 0 880 880" aria-hidden="true" focusable="false">
+            <path d={BRAND_C_PATH} />
+          </svg>
+          <BrandLockup size={40} className="login-brand-lockup" />
+          <p className="login-brand-lead">Корпоративный мессенджер для сотрудников</p>
+          {companyName && <p className="login-brand-company">{companyName}</p>}
+        </aside>
 
-        {/* Server status indicator */}
-        {/* Название сервера не показывается — сотруднику важно лишь то, есть
-            связь или нет. */}
-        <div className="login-server-badge">
-          <span className={`server-status-dot ${serverInfo ? 'online' : 'offline'}`} />
-          <span className="server-status-text">
-            {checkingServer ? 'Подключаемся…' : serverInfo ? 'Связь установлена' : 'Нет связи с сервером'}
-          </span>
-          {!checkingServer && !serverInfo && (
-            <>
-              <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={() => checkServer(serverUrl)}>
-                Повторить
+        <div className="login-main">
+          <div className="login-header">
+            <div className="login-compact-brand">
+              <BrandLockup size={36} />
+              {companyName && <p className="login-compact-company">{companyName}</p>}
+            </div>
+            <h1 className="login-title">
+              {isRegister ? 'Регистрация сотрудника' : 'Вход в CentyChat'}
+            </h1>
+            <p className="login-subtitle">
+              {isRegister ? 'Заявку подтвердит администратор' : 'Войдите с рабочим логином и паролем'}
+            </p>
+          </div>
+
+          {/* Server status indicator */}
+          {/* Название сервера не показывается — сотруднику важно лишь то, есть
+              связь или нет. */}
+          <div className="login-server-badge">
+            <span className={`server-status-dot ${serverInfo ? 'online' : 'offline'}`} />
+            <span className="server-status-text">
+              {checkingServer ? 'Подключаемся…' : serverInfo ? 'Связь установлена' : 'Нет связи с сервером'}
+            </span>
+            {!checkingServer && !serverInfo && (
+              <>
+                <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={() => checkServer(serverUrl)}>
+                  Повторить
+                </button>
+                {canUseAppOrigin && (
+                  <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={handleUseAppOrigin}>
+                    Подключиться к серверу приложения
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Переключатель нужен, только когда есть из чего выбирать: одна
+              вкладка «Вход в систему» выглядела как лишняя кнопка. */}
+          {(allowRegistration || isRegister) && (
+            <div className="login-tabs">
+              <button
+                type="button"
+                className={`login-tab-btn ${!isRegister ? 'active' : ''}`}
+                onClick={() => { setIsRegister(false); setError(''); }}
+              >
+                Вход в систему
               </button>
-              {canUseAppOrigin && (
-                <button type="button" className="conf-link-btn" style={{ marginLeft: '8px' }} onClick={handleUseAppOrigin}>
-                  Подключиться к серверу приложения
+              {allowRegistration && (
+                <button
+                  type="button"
+                  className={`login-tab-btn ${isRegister ? 'active' : ''}`}
+                  onClick={() => { setIsRegister(true); setError(''); setPendingMessage(''); }}
+                >
+                  Регистрация сотрудника
                 </button>
               )}
-            </>
+            </div>
           )}
-        </div>
 
-        {/* Mode Tabs */}
-        <div className="login-tabs">
-          <button
-            type="button"
-            className={`login-tab-btn ${!isRegister ? 'active' : ''}`}
-            onClick={() => { setIsRegister(false); setError(''); }}
-          >
-            Вход в систему
-          </button>
-          {serverInfo?.allow_registration && (
-            <button
-              type="button"
-              className={`login-tab-btn ${isRegister ? 'active' : ''}`}
-              onClick={() => { setIsRegister(true); setError(''); setPendingMessage(''); }}
-            >
-              Регистрация сотрудника
-            </button>
+          {notice && !error && !pendingMessage && (
+            // Это объяснение, а не ошибка: красная рамка пугала сотрудника так,
+            // будто он сам что-то сломал.
+            <div role="status" className="login-notice-box">
+              <Icon name="info" size={14} />
+              <span>{notice}</span>
+            </div>
           )}
-        </div>
 
-        {notice && !error && !pendingMessage && (
-          // Это объяснение, а не ошибка: красная рамка пугала сотрудника так,
-          // будто он сам что-то сломал.
-          <div role="status" className="login-notice-box">
-            <Icon name="info" size={14} />
-            <span>{notice}</span>
-          </div>
-        )}
-
-        {error && (
-          <div className="login-error-box" role="alert">
-            <Icon name="alert" size={14} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {pendingMessage && (
-          <div className="login-pending-box" role="status">
-            <Icon name="check" size={14} />
-            <span>{pendingMessage}</span>
-          </div>
-        )}
-
-        {/* Login Form */}
-        {!isRegister ? (
-          <form onSubmit={handleLoginSubmit} className="login-form">
-            {/* Поля адреса сервера здесь нет намеренно: он зашит в приложение,
-                сотруднику вводить нечего, а показывать внутренний адрес всем
-                подряд незачем. Сменить его при необходимости можно через
-                «Сетевой сервер…» в меню. */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="login-username">Логин:</label>
-              <input
-                id="login-username"
-                type="text"
-                className="form-input"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Введите ваш логин"
-                autoComplete="username"
-                disabled={loading}
-                autoFocus
-                required
-              />
+          {error && (
+            <div className="login-error-box" role="alert">
+              <Icon name="alert" size={14} />
+              <span>{error}</span>
             </div>
+          )}
 
-            <div className="form-group">
-              <label className="form-label" htmlFor="login-password">Пароль:</label>
-              <input
-                id="login-password"
-                type="password"
-                className="form-input"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                onKeyUp={trackCapsLock}
-                onKeyDown={trackCapsLock}
-                placeholder="Введите ваш пароль"
-                autoComplete="current-password"
-                disabled={loading}
-                required
-              />
-              {capsLock && (
-                <div className="form-hint is-warning">
-                  Включён Caps Lock — пароль вводится заглавными буквами
-                </div>
-              )}
+          {pendingMessage && (
+            <div className="login-pending-box" role="status">
+              <Icon name="check" size={14} />
+              <span>{pendingMessage}</span>
             </div>
+          )}
 
-            <div className="form-checkbox-row">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={e => setRememberMe(e.target.checked)}
-                  disabled={loading}
-                />
-                Запомнить логин
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              className="btn btn-primary btn-block login-submit-btn"
-              disabled={loading || checkingServer}
-            >
-              {loading ? 'Вход в систему...' : 'Войти в MyChat'}
-            </button>
-          </form>
-        ) : (
-          /* Registration Form */
-          <form onSubmit={handleRegisterSubmit} className="login-form">
-            <div className="form-group">
-              <label className="form-label">ФИО сотрудника *:</label>
-              <input
-                type="text"
-                className="form-input"
-                value={regFullName}
-                onChange={e => setRegFullName(e.target.value)}
-                placeholder="Иванов Иван Иванович"
-                disabled={loading}
-                required
-              />
-            </div>
-
-            <div className="form-row-2">
+          {/* Login Form */}
+          {!isRegister ? (
+            <form onSubmit={handleLoginSubmit} className="login-form">
+              {/* Поля адреса сервера здесь нет намеренно: он зашит в приложение,
+                  сотруднику вводить нечего, а показывать внутренний адрес всем
+                  подряд незачем. Сменить его при необходимости можно через
+                  «Сетевой сервер…» в меню. */}
               <div className="form-group">
-                <label className="form-label">Логин *:</label>
+                <label className="form-label" htmlFor="login-username">Логин</label>
                 <input
+                  id="login-username"
                   type="text"
                   className="form-input"
                   value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  placeholder="ivanov"
+                  onChange={e => { setUsername(e.target.value); if (retryNote) cancelRetryRef.current = true; }}
+                  placeholder="Введите ваш логин"
                   autoComplete="username"
-                  disabled={loading}
+                  disabled={loading && !retryNote}
+                  autoFocus
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Пароль *:</label>
+                <label className="form-label" htmlFor="login-password">Пароль</label>
                 <input
+                  id="login-password"
                   type="password"
                   className="form-input"
                   value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder={`Не короче ${MIN_PASSWORD_LENGTH} символов`}
-                  autoComplete="new-password"
-                  minLength={MIN_PASSWORD_LENGTH}
+                  onChange={e => { setPassword(e.target.value); if (retryNote) cancelRetryRef.current = true; }}
+                  onKeyUp={trackCapsLock}
+                  onKeyDown={trackCapsLock}
+                  placeholder="Введите ваш пароль"
+                  autoComplete="current-password"
+                  disabled={loading && !retryNote}
+                  required
+                />
+                {capsLock && (
+                  <div className="form-hint is-warning">
+                    Включён Caps Lock — пароль вводится заглавными буквами
+                  </div>
+                )}
+              </div>
+
+              <div className="form-checkbox-row">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={e => setRememberMe(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Запомнить логин
+                </label>
+              </div>
+
+              {retryNote && (
+                <div className="form-hint is-warning" role="status">{retryNote}</div>
+              )}
+              <button
+                type="submit"
+                className="btn btn-primary btn-block login-submit-btn"
+                disabled={loading || checkingServer}
+              >
+                {retryNote ? 'Сервер занят, повторяю…' : loading ? 'Входим…' : 'Войти'}
+              </button>
+            </form>
+          ) : (
+            /* Registration Form */
+            <form onSubmit={handleRegisterSubmit} className="login-form">
+              <div className="form-group">
+                <label className="form-label">ФИО сотрудника *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={regFullName}
+                  onChange={e => setRegFullName(e.target.value)}
+                  placeholder="Иванов Иван Иванович"
                   disabled={loading}
                   required
                 />
               </div>
-            </div>
 
-            <div className="form-row-2">
+              <div className="form-row-2">
+                <div className="form-group">
+                  <label className="form-label">Логин *</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="ivanov"
+                    autoComplete="username"
+                    disabled={loading}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Пароль *</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder={`Не короче ${MIN_PASSWORD_LENGTH} символов`}
+                    autoComplete="new-password"
+                    minLength={MIN_PASSWORD_LENGTH}
+                    disabled={loading}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-row-2">
+                <div className="form-group">
+                  <label className="form-label">Должность</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={regJobTitle}
+                    onChange={e => setRegJobTitle(e.target.value)}
+                    placeholder="Менеджер / Инженер"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Внутр. телефон</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={regPhone}
+                    onChange={e => setRegPhone(e.target.value)}
+                    placeholder="например, 2101"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
               <div className="form-group">
-                <label className="form-label">Должность:</label>
+                <label className="form-label">Email</label>
                 <input
-                  type="text"
+                  type="email"
                   className="form-input"
-                  value={regJobTitle}
-                  onChange={e => setRegJobTitle(e.target.value)}
-                  placeholder="Менеджер / Инженер"
+                  value={regEmail}
+                  onChange={e => setRegEmail(e.target.value)}
+                  placeholder="i.ivanov@company.local"
                   disabled={loading}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Внутр. телефон:</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={regPhone}
-                  onChange={e => setRegPhone(e.target.value)}
-                  placeholder="например, 2101"
-                  disabled={loading}
-                />
-              </div>
-            </div>
+              {departments.length > 0 && (
+                <div className="form-group">
+                  <label className="form-label">Отдел компании</label>
+                  <select
+                    className="form-input"
+                    value={selectedDept}
+                    onChange={e => setSelectedDept(e.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="">Выберите отдел...</option>
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-            <div className="form-group">
-              <label className="form-label">Email:</label>
-              <input
-                type="email"
-                className="form-input"
-                value={regEmail}
-                onChange={e => setRegEmail(e.target.value)}
-                placeholder="i.ivanov@company.local"
+              {/* Кнопка обещала «и войти», хотя после регистрации вход закрыт до
+                  одобрения администратором. */}
+              <button
+                type="submit"
+                className="btn btn-primary btn-block login-submit-btn"
                 disabled={loading}
-              />
-            </div>
+              >
+                {loading ? 'Отправляем заявку...' : 'Отправить заявку на регистрацию'}
+              </button>
+            </form>
+          )}
 
-            {departments.length > 0 && (
-              <div className="form-group">
-                <label className="form-label">Отдел компании:</label>
-                <select
-                  className="form-input"
-                  value={selectedDept}
-                  onChange={e => setSelectedDept(e.target.value)}
-                  disabled={loading}
-                >
-                  <option value="">Выберите отдел...</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Кнопка обещала «и войти», хотя после регистрации вход закрыт до
-                одобрения администратором. */}
-            <button
-              type="submit"
-              className="btn btn-primary btn-block login-submit-btn"
-              disabled={loading}
-            >
-              {loading ? 'Отправляем заявку...' : 'Отправить заявку на регистрацию'}
-            </button>
-          </form>
-        )}
-
-        <div className="login-footer-text">
-          MyChat Client Enterprise • Автономная защищенная сеть
+          <div className="login-footer-text">
+            CentyChat · автономная защищённая сеть
+          </div>
         </div>
       </div>
     </div>

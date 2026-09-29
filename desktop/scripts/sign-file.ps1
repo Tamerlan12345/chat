@@ -1,5 +1,5 @@
 ﻿# Подписывает один файл. Вызывается из scripts/sign-windows.js — хука
-# electron-builder — для внутреннего «OpenMyChat Enterprise.exe», dll и
+# electron-builder — для внутреннего «CentyChat.exe», dll и
 # самих установщиков, пока они ещё не упакованы.
 #
 # Коды выхода: 0 — подписан (или подпись третьей стороны оставлена),

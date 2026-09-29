@@ -641,10 +641,10 @@ export default function RemoteDesktopHostModal(props) {
   return (
     <div className="modal-backdrop" onClick={handleReject}>
       <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
-        <div className="modal-header" style={{ background: 'light-dark(#f8fafc, #313338)', borderBottom: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))' }}>
+        <div className="modal-header" style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-strong)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Icon name="monitor" size={18} />
-            <span style={{ fontWeight: 700, fontSize: '15px', color: 'light-dark(#1e293b, #a0b2cf)' }}>
+            <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-main)' }}>
               Запрос на удаленный рабочий стол
             </span>
           </div>
@@ -654,7 +654,7 @@ export default function RemoteDesktopHostModal(props) {
         <div style={{ padding: '24px 20px' }}>
           <div className="rd-operator-card">
             <div className="rd-operator-avatar">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ stroke: "light-dark(#2563eb, #7ca1f3)" }} strokeWidth="1.8">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--accent-text)" }} strokeWidth="1.8">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                 <circle cx="12" cy="7" r="4"></circle>
               </svg>
@@ -666,12 +666,12 @@ export default function RemoteDesktopHostModal(props) {
             </div>
           </div>
 
-          <p style={{ fontSize: '13px', color: 'light-dark(#334155, #a6b4c9)', lineHeight: '1.5', margin: '16px 0 14px' }}>
+          <p style={{ fontSize: '13px', color: 'var(--text-main)', lineHeight: '1.5', margin: '16px 0 14px' }}>
             Коллега запрашивает подключение к вашему компьютеру для оказания помощи или демонстрации экрана.
           </p>
 
           {error ? (
-            <div className="rd-security-notice" role="alert" style={{ color: 'light-dark(#b91c1c, #ec8383)' }}>
+            <div className="rd-security-notice" role="alert" style={{ color: 'var(--danger-text)' }}>
               {error}
             </div>
           ) : (
@@ -715,7 +715,7 @@ export default function RemoteDesktopHostModal(props) {
           )}
         </div>
 
-        <div className="modal-footer" style={{ background: 'light-dark(#f8fafc, #313338)', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <div className="modal-footer" style={{ background: 'var(--bg-panel)', padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
           {error ? (
             <button type="button" className="btn btn-secondary" onClick={closeModal}>
               Закрыть
@@ -728,7 +728,7 @@ export default function RemoteDesktopHostModal(props) {
               <button
                 type="button"
                 className="btn btn-primary"
-                style={{ background: '#16a34a', borderColor: '#15803d', fontWeight: 600 }}
+                style={{ background: 'var(--success-fill)', borderColor: 'var(--success-fill)', fontWeight: 600 }}
                 onClick={handleAccept}
                 disabled={accepting}
               >

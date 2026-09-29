@@ -2,9 +2,9 @@ const express = require('express');
 const path = require('node:path');
 const config = require('../config');
 const UpdatePolicy = require('../services/update-policy.service');
-const { getUpdateStore, renderYml, feedOf, setupNameOf, portableNameOf, SAFE_FILE } = require('../services/update-store.service');
+const { getUpdateStore, renderYml, feedOf, SAFE_FILE } = require('../services/update-store.service');
 const { checkRateLimit } = require('../services/rate-limiter');
-const { getClientIp } = require('../services/ip-access.service');
+const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
 const { createInstallRecorder } = require('./client-installs');
 
 // Публичные маршруты автообновления. Открыты без входа пользователя
@@ -64,6 +64,45 @@ function notFound(res) {
   res.status(404).type('text/plain').send('Not found');
 }
 
+// Предел частоты обновлений — по установке (X-MyChat-Install-Id), а не только
+// по адресу: за одним NAT крупного офиса сотни установок опрашивают сервер
+// утром разом, и общий счётчик 120/мин на адрес срабатывал на штатной работе
+// (проверка раунда 4, M7). У каждой установки свой щедрый предел; на адрес
+// (сеть /64) — высокий потолок, чтобы уместился весь офис.
+//
+// ВАЖНО (проверка раунда 4, I-B): ключ по install-id — это UUID из ЗАГОЛОВКА,
+// то есть выбор клиента. Держать его в общей (адресной) карте ограничителя
+// нельзя: поток случайных install-id вытеснял бы из неё адресные счётчики
+// (login-fail, knock-fail, ws_auth, pwchange-fail) и сбрасывал бы блокировку
+// подбора (repro k). Поэтому install-id живут в отдельной карте (scope
+// 'name', где и логины из запроса), а адресный ключ — в общей. Оба fail open.
+const UPD_PER_INSTALL = { maxAttempts: 120, windowMs: 60000, scope: 'name' };
+function updPerIpLimit() {
+  return { maxAttempts: config.UPDATES_MAX_REQ_PER_MIN_PER_IP, windowMs: 60000 };
+}
+function updateRequestAllowed(req, info) {
+  const ipOk = checkRateLimit('upd-ip:' + rateLimitIpKey(getClientIp(req)), updPerIpLimit());
+  if (info.installId) {
+    const idOk = checkRateLimit('upd-id:' + info.installId, UPD_PER_INSTALL);
+    return ipOk && idOk;
+  }
+  return ipOk;
+}
+
+// Ссылки на установщик и portable — по именам файлов, под которыми выпуск
+// сохранён (release.json), а не по шаблону имени текущей сборки: выпуск,
+// сохранённый под другим именем (например, до переименования в CentyChat),
+// получает рабочую ссылку. Адреса относительные: клиент достраивает их от
+// адреса сервера, которому уже доверяет, — брать схему и узел из запроса за
+// прокси было бы нельзя.
+function downloadUrls(channel, release) {
+  const fileUrl = (kind) => {
+    const file = release?.files?.find((f) => f.kind === kind);
+    return file ? `/updates/${channel}/${encodeURIComponent(file.name)}` : null;
+  };
+  return { setupUrl: fileUrl('setup'), portableUrl: fileUrl('portable') };
+}
+
 function decideFor(channel, info) {
   const store = getUpdateStore();
   const policy = UpdatePolicy.getPolicy();
@@ -89,15 +128,12 @@ router.get('/policy.json', (req, res) => {
   // штатной работе приложения, а не только electron-updater'ом. Сверх предела
   // просто пропускаем запись — ответ клиент всё равно получит (находка
   // ревью, задача 6).
-  if (checkRateLimit('upd:' + getClientIp(req), { maxAttempts: 120, windowMs: 60000 })) {
+  if (updateRequestAllowed(req, info)) {
     recordInstall(req, info, channel);
   }
 
   const enabled = !UpdatePolicy.isDisabledByEnv() && policy.enabled;
-  // Адреса относительные: клиент достраивает их от адреса сервера, которому
-  // уже доверяет, — брать схему и узел из запроса за прокси было бы нельзя.
-  const fileUrl = (name) => `/updates/${channel}/${encodeURIComponent(name)}`;
-  const hasFile = (name) => Boolean(release?.files.some((f) => f.name === name));
+  const { setupUrl, portableUrl } = downloadUrls(channel, release);
 
   res.set('Cache-Control', 'no-store').json({
     enabled,
@@ -107,20 +143,20 @@ router.get('/policy.json', (req, res) => {
     minVersion: enabled ? policy.minVersion : null,
     message: enabled ? policy.message : null,
     checkIntervalMinutes: policy.checkIntervalMinutes,
-    setupUrl: release ? fileUrl(setupNameOf(release.version)) : null,
-    portableUrl: release && hasFile(portableNameOf(release.version)) ? fileUrl(portableNameOf(release.version)) : null
+    setupUrl,
+    portableUrl
   });
 });
 
 router.get('/:channel/latest.yml', (req, res) => {
   const { channel } = req.params;
   if (!CHANNELS.has(channel)) return notFound(res);
-  if (!checkRateLimit('upd:' + getClientIp(req), { maxAttempts: 120, windowMs: 60000 })) {
+  const info = clientInfo(req);
+  if (!updateRequestAllowed(req, info)) {
     res.set('Retry-After', '60');
     return res.status(429).json({ error: 'Слишком много запросов, повторите позже' });
   }
 
-  const info = clientInfo(req);
   recordInstall(req, info, channel);
   // Нет права на версию — 404: для electron-updater это «обновлений нет».
   const { release } = decideFor(channel, info);
@@ -182,3 +218,4 @@ router.use((req, res) => notFound(res));
 module.exports = router;
 module.exports.downloadGate = downloadGate;
 module.exports.installRecorder = installRecorder;
+module.exports.downloadUrls = downloadUrls;

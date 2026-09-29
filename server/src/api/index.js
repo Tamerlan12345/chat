@@ -14,8 +14,11 @@ const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
-const { checkRateLimit, isRateLimited, registerFailure } = require('../services/rate-limiter');
-const { getClientIp } = require('../services/ip-access.service');
+const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
+const TrustedSources = require('../services/trusted-sources.service');
+const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
+const LoginThrottle = require('../services/login-throttle.service');
+const { canonicalUsername } = LoginThrottle;
 const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
 const AuditService = require('../services/audit.service');
@@ -84,11 +87,17 @@ const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_tel
 // и на чтении Number('') === 0 означало «без ограничения», то есть пустое
 // значение молча снимало защиту (находка ревью раунда 1).
 const MESSAGE_WINDOW_SETTINGS = new Set(['message_edit_window_minutes', 'message_delete_window_minutes']);
+const RESERVED_SETTING_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 function validateSettingsUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
   const clean = {};
   for (const [key, value] of Object.entries(body)) {
     if (!/^[a-z0-9_]{1,64}$/.test(key)) throw new Error(`Недопустимое имя настройки: ${key}`);
+    // «__proto__», «constructor», «prototype» проходят шаблон выше. Снимок
+    // настроек — обычный объект: такой ключ либо молча терялся (присваивание
+    // строки в __proto__ игнорируется), либо затенял встроенное свойство
+    // (аудит, раунд 4, находка Р4-20).
+    if (RESERVED_SETTING_NAMES.has(key)) throw new Error(`Недопустимое имя настройки: ${key}`);
     if (INTERNAL_SETTING.test(key)) throw new Error(`Настройка ${key} служебная и не меняется вручную`);
     if (BOOLEAN_SETTINGS.has(key)) {
       const normalized = String(value);
@@ -136,6 +145,78 @@ function uploaderFor(limitBytes) {
 // сервер целиком.
 const route = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
+
+// Текст ошибки для анонимного ответа. Проверки самого сервера бросают простой
+// Error без кода — их текст и предназначен человеку («Неверный логин или
+// пароль», «Логин может состоять из…»). Всё прочее — ошибки базы (у pg свой
+// класс, у node:sqlite код ERR_SQLITE_*), сети (ECONNREFUSED с адресом базы),
+// программные TypeError — уходило бы наружу как есть: имена ограничений,
+// адреса узлов, подробности устройства сервера — любому, кто дотянулся до
+// входа (аудит, раунд 4, находка Р4-13). Такие пишутся в журнал сервера, а
+// наружу — общий текст.
+// Коды наших собственных ошибок, чей текст предназначен человеку и может
+// уйти наружу. Всё остальное с кодом — ошибки драйверов и сети.
+const SAFE_ERROR_CODES = new Set(['INVALID_CREDENTIALS', 'ACCOUNT_THROTTLED', 'PASSWORD_HASH_BUSY', 'OLD_PASSWORD_INVALID']);
+
+function publicErrorMessage(err, fallback) {
+  if (err instanceof Error && err.constructor === Error && (!err.code || SAFE_ERROR_CODES.has(err.code))) {
+    return err.message;
+  }
+  console.error('[API] внутренняя ошибка на анонимном маршруте:', err?.message || err);
+  return fallback;
+}
+
+// Ограничение числа ОДНОВРЕМЕННЫХ проверок пароля (scrypt). Применяется ко
+// всем путям, где проверяется пароль: вход, смена пароля (проверка раунда 4,
+// I-C — «либо общий, либо честно об этом»). Задачи:
+//   ПР-02 — «в полёте» попытки не считаются неудачами (офис за NAT не запирает
+//           себя верными входами);
+//   ПР-06/I-C — один источник не занимает всю очередь хэшей.
+// Предел на адрес зависит от того, знаком ли адрес хоть одной учётной записи:
+//   — незнакомому НИ ОДНОЙ (типичный атакующий) — жёстко мало
+//     (LOGIN_INFLIGHT_UNFAMILIAR, 3): он не займёт очередь хэшей;
+//   — знакомому хотя бы одной (адрес офиса за NAT) — щедро (LOGIN_INFLIGHT_PER_IP,
+//     20), чтобы утренний вход всего офиса проходил.
+// Сверх того — глобальная бронь для знакомых источников: незнакомые все вместе
+// не занимают больше (очередь − бронь) мест, так что офису всегда есть место.
+const { HASH_QUEUE_MAX } = require('../db/identity/password');
+const FAMILIAR_RESERVE = Math.max(10, Math.floor(HASH_QUEUE_MAX * 0.25));
+const UNFAMILIAR_GLOBAL_CAP = Math.max(1, HASH_QUEUE_MAX - FAMILIAR_RESERVE);
+const inflightByIp = new Map(); // ipKey -> число идущих проверок пароля
+let unfamiliarInflight = 0;
+
+function inflightFor(ipKey) {
+  return inflightByIp.get(ipKey) || 0;
+}
+function acquireHashSlot(ipKey, familiar) {
+  const cap = familiar ? config.LOGIN_INFLIGHT_PER_IP : config.LOGIN_INFLIGHT_UNFAMILIAR;
+  if (inflightFor(ipKey) >= cap) return false;
+  // Незнакомые источники все вместе не занимают больше (очередь − бронь):
+  // знакомым (офису) всегда остаётся место (I-C).
+  if (!familiar && unfamiliarInflight >= UNFAMILIAR_GLOBAL_CAP) return false;
+  inflightByIp.set(ipKey, inflightFor(ipKey) + 1);
+  if (!familiar) unfamiliarInflight += 1;
+  return true;
+}
+function releaseHashSlot(ipKey, familiar) {
+  const left = (inflightByIp.get(ipKey) || 1) - 1;
+  if (left > 0) inflightByIp.set(ipKey, left);
+  else inflightByIp.delete(ipKey);
+  if (!familiar && unfamiliarInflight > 0) unfamiliarInflight -= 1;
+}
+// Retry-After с разбросом (один раз): одинаковое точное значение позволяло
+// атакующему попадать ровно в момент открытия слота (ПР-04); держим в пределах
+// LOGIN_ACCOUNT_MAX_DELAY_SECONDS (M6).
+function jitterSeconds(base) {
+  const withJitter = base + Math.floor(Math.random() * Math.max(1, base));
+  return Math.min(withJitter, config.LOGIN_ACCOUNT_MAX_DELAY_SECONDS);
+}
+// Retry-After для 503 «много входов»: широкий разброс 1–8 с, чтобы клиенты,
+// получившие отказ одновременно, не возвращались одной пачкой (третий раунд
+// проверки, мелкое).
+function busyRetryAfterSeconds() {
+  return 1 + Math.floor(Math.random() * 8);
+}
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
@@ -276,16 +357,29 @@ function safeParse(json) {
   }
 }
 
+// Считаются только «пустые» стуки — те, что не выдали токен (неизвестное
+// устройство, непредъявленный/неверный секрет, очередь). Успешный стук
+// привязанного устройства не расходует предел: утром весь офис за одним NAT
+// переподключается разом, и это не злоупотребление (проверка раунда 4, M7).
+// Секрет — 256 случайных бит, подбирать бессмысленно; предел — от засорения
+// очереди устройств (плюс отдельные пределы pending_devices на IP и throttle
+// рассылки администраторам). Ключ — сеть /64 (Р4-02); fail open (ПР-01).
+const KNOCK_FAIL_LIMIT = { maxAttempts: 60, windowMs: 60000 };
+
 router.post('/auth/knock', route(async (req, res) => {
   try {
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    if (!checkRateLimit(`knock:${remoteIp}`, { maxAttempts: 30, windowMs: 60000 })) {
+    const knockFailKey = `knock-fail:${rateLimitIpKey(remoteIp)}`;
+    if (isRateLimited(knockFailKey, KNOCK_FAIL_LIMIT)) {
       return res.status(429).json({ error: 'Слишком много запросов. Повторите через минуту.' });
     }
     const { device_id, device_secret, device_name, platform, client_version } = req.body || {};
     const result = await DeviceService.knock({
       device_id, device_secret, device_name, ip_address: remoteIp, platform, client_version
     });
+    if (result.status !== 'paired') {
+      registerFailure(knockFailKey, KNOCK_FAIL_LIMIT);
+    }
     if (result.status === 'too_many_pending') {
       return res.status(429).json({ error: result.message });
     }
@@ -294,7 +388,7 @@ router.post('/auth/knock', route(async (req, res) => {
     }
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось обработать запрос устройства') });
   }
 }));
 
@@ -329,42 +423,94 @@ router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
 }));
 
 // ── 1. AUTH ──
+// Неудачи входа с одного адреса (сети /64 для IPv6): 30 за 10 минут.
+const LOGIN_FAIL_LIMIT = { maxAttempts: 30, windowMs: 600000 };
+// Заявок на регистрацию, ожидающих решения администратора, одновременно.
+const MAX_PENDING_REGISTRATIONS = 200;
+
 router.post('/auth/login', route(async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'Укажите логин и пароль' });
 
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    const rateLimitKey = `login:${remoteIp}:${String(username).toLowerCase()}`;
-    if (!checkRateLimit(rateLimitKey, { maxAttempts: 5, windowMs: 60000 })) {
-      return res.status(429).json({ error: 'Слишком много попыток входа. Повторите через минуту.' });
+    const ipKey = rateLimitIpKey(remoteIp);
+    // Логин в единой форме (NFKC, trim, нижний регистр) — ту же форму
+    // используют задержка по паре адрес+логин и по учётной записи. Раньше здесь
+    // не было trim, и « admin» с пробелом давал свежий счётчик для той же
+    // учётной записи (Р4-06). Слишком длинный логин ключом не становится вовсе.
+    const nameKey = canonicalUsername(username);
+    if (!nameKey || nameKey.length > 256) {
+      return res.status(400).json({ error: 'Неверный логин или пароль. После нескольких неудачных попыток вход временно заблокирован.' });
     }
+    // Перебор по многим логинам с одного адреса: считаются ТОЛЬКО
+    // подтверждённые неудачи (ниже, в catch по коду INVALID_CREDENTIALS) —
+    // офис за одним NAT входит утром весь сразу верными паролями и ничего не
+    // расходует (ПР-02). Предел «неудач с адреса» одновременно ограничивает,
+    // сколько разных логинов один адрес успевает перебрать за окно (каждый
+    // новый логин-догадка — это подтверждённая неудача), поэтому отдельного
+    // счётчика «разных логинов на адрес» не нужно. Отсутствие ключа — «не
+    // ограничено» (fail open, ПР-01).
+    // Знаком ли адрес хотя бы одной учётной записи (адрес офиса за NAT) — от
+    // этого зависят и проверка «неудач с адреса», и щедрость предела
+    // одновременных проверок пароля (I-C).
+    const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
 
-    // Перебор по многим логинам с одного адреса: предел на логин его не
-    // останавливал. Считаются только неудачи — офис за одним NAT входит утром
-    // весь сразу.
-    const failKey = `login-fail:${remoteIp}`;
-    if (isRateLimited(failKey, { maxAttempts: 30, windowMs: 600000 })) {
+    // Предел «неудач с адреса»: считаются ТОЛЬКО подтверждённые неудачи (ниже,
+    // по коду INVALID_CREDENTIALS) — офис входит утром верными паролями и
+    // ничего не тратит (ПР-02). «В полёте» попытки добавляются к проверке ТОЛЬКО
+    // для незнакомого адреса (там их не больше LOGIN_INFLIGHT_UNFAMILIAR, так
+    // что превышение порога ничтожно). Для знакомого адреса офиса — нет: иначе
+    // десяток опечаток плюс утренняя пачка верных входов давали 429, который
+    // клиент не повторяет (третий раунд проверки, d3).
+    const failKey = `login-fail:${ipKey}`;
+    const pending = familiar ? 0 : inflightFor(ipKey);
+    if (peekCount(failKey, LOGIN_FAIL_LIMIT) + pending >= LOGIN_FAIL_LIMIT.maxAttempts) {
       return res.status(429).json({ error: 'Слишком много неудачных попыток входа с этого адреса. Повторите позже.' });
     }
 
-    let result;
-    try {
-      result = await AuthService.login(username, password, { ip: remoteIp });
-    } catch (err) {
-      registerFailure(failKey, { windowMs: 600000 });
-      AuditService.log({ action: 'login_failed', ip: remoteIp, details: { username: String(username).slice(0, 64) } });
-      throw err;
+    if (!acquireHashSlot(ipKey, familiar)) {
+      res.set('Retry-After', String(busyRetryAfterSeconds()));
+      return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
     }
-    AuditService.log({
-      userId: result.user.id,
-      action: 'login',
-      ip: remoteIp,
-      details: { username: result.user.username }
-    });
-    res.json(result);
+
+    try {
+      let result;
+      try {
+        result = await AuthService.login(username, password, { ip: remoteIp });
+      } catch (err) {
+        if (err.code === 'ACCOUNT_THROTTLED') {
+          // Retry-After уже с разбросом и в пределах потолка (throttle) — не
+          // разбрасываем повторно (M6).
+          res.set('Retry-After', String(err.retryAfterSeconds || 60));
+          return res.status(429).json({ error: err.message, code: err.code });
+        }
+        if (err.code === 'PASSWORD_HASH_BUSY') {
+          res.set('Retry-After', String(jitterSeconds(3)));
+          return res.status(503).json({ error: err.message, code: err.code });
+        }
+        // Подтверждённая неудача входа (неверный пароль, нет такого/отключён) —
+        // только теперь она идёт в предел неудач с адреса. Отказ по «заявка
+        // ещё не подтверждена» входом не является (пароль-то верный) и в
+        // предел не идёт.
+        if (err.code === 'INVALID_CREDENTIALS') {
+          registerFailure(failKey, LOGIN_FAIL_LIMIT);
+          AuditService.log({ action: 'login_failed', ip: remoteIp, details: { username: String(username).slice(0, 64) } });
+        }
+        throw err;
+      }
+      AuditService.log({
+        userId: result.user.id,
+        action: 'login',
+        ip: remoteIp,
+        details: { username: result.user.username }
+      });
+      res.json(result);
+    } finally {
+      releaseHashSlot(ipKey, familiar);
+    }
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось выполнить вход. Повторите позже.') });
   }
 }));
 
@@ -375,8 +521,16 @@ router.post('/auth/register', route(async (req, res) => {
       return res.status(403).json({ error: 'Самостоятельная регистрация отключена администратором' });
     }
     const remoteIp = getClientIp(req) || '127.0.0.1';
-    if (!checkRateLimit(`register:${remoteIp}`, { maxAttempts: 10, windowMs: 600000 })) {
+    if (!checkRateLimit(`register:${rateLimitIpKey(remoteIp)}`, { maxAttempts: 10, windowMs: 600000 })) {
       return res.status(429).json({ error: 'Слишком много попыток регистрации. Повторите позже.' });
+    }
+    // Общий потолок неразобранных заявок: предел на адрес не мешает засыпать
+    // администраторов заявками с множества адресов, а каждая заявка — это
+    // строка в учётных записях, рассылка администраторам и расчёт scrypt
+    // (аудит, раунд 4, находка Р4-16).
+    const pendingCount = await identity().get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`);
+    if (Number(pendingCount?.n || 0) >= MAX_PENDING_REGISTRATIONS) {
+      return res.status(429).json({ error: 'Слишком много заявок ожидают подтверждения. Обратитесь к администратору.' });
     }
 
     const user = await AuthService.register(req.body);
@@ -387,7 +541,11 @@ router.post('/auth/register', route(async (req, res) => {
       message: 'Заявка отправлена. Вход станет возможен после подтверждения администратором.'
     });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (err?.code === 'PASSWORD_HASH_BUSY') {
+      res.set('Retry-After', '5');
+      return res.status(503).json({ error: err.message, code: err.code });
+    }
+    res.status(400).json({ error: publicErrorMessage(err, 'Не удалось подать заявку. Повторите позже.') });
   }
 }));
 
@@ -404,6 +562,9 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
   }
   const token = await AuthService.refreshToken(req.user, req.tokenPayload);
   wsServer.replaceSocketToken(req.rawToken, token);
+  // Продление лишь ОБНОВЛЯЕТ уже знакомый адрес, но не заводит новый: иначе
+  // украденный живой токен посадил бы в «знакомые» адрес атакующего (I-2).
+  require('../services/trusted-sources.service').recordAsync(req.user.id, rateLimitIpKey(getClientIp(req)), { allowCreate: false });
   res.json({ token });
 }));
 
@@ -468,8 +629,65 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     if (!checkRateLimit(`pwchange:${req.user.id}`, { maxAttempts: 5, windowMs: 60000 })) {
       return res.status(429).json({ error: 'Слишком много попыток. Повторите через минуту.' });
     }
-    const { oldPassword, newPassword } = req.body || {};
-    await UserService.changePassword(req.user.id, oldPassword, newPassword);
+    // Смена пароля проверяет текущий пароль — то есть с действующим токеном
+    // (например, украденным) по ней можно подбирать пароль: 5 попыток в
+    // минуту давали 7200 в сутки, и счётчики входа об этом не знали (аудит,
+    // раунд 4, находка Р4-05). Предел — на самого сотрудника (не на адрес):
+    // 5 неверных текущих паролей за LOGIN_LOCKOUT_MINUTES. Задержкой по учётной
+    // записи, которую снаружи раскручивает посторонний, смена НЕ гейтится —
+    // иначе он бы блокировал владельцу смену пароля (проверка раунда 4, ПР-I4).
+    const failKey = `pwchange-fail:${req.user.id}`;
+    const failLimit = { maxAttempts: 5, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
+    if (isRateLimited(failKey, failLimit)) {
+      res.set('Retry-After', String(jitterSeconds(30)));
+      return res.status(429).json({ error: 'Слишком много неверных попыток ввести текущий пароль. Повторите позже.' });
+    }
+    // Суточная корзина P (не больше PASSWORD_CHANGE_DAILY_FAILURES неверных
+    // текущих паролей в сутки на сотрудника) — переживает перезапуск (sec5).
+    // Короткий предел выше остаётся как защита от всплеска в минуту.
+    // Допуск учитывает и параллельные попытки «в полёте» (проверка sec5, п.1):
+    // билет обязан вернуться в settle при любом исходе — отсюда внешний finally.
+    await LoginThrottle.ensureLoaded(req.user.id, req.user.username);
+    const pwAdmission = LoginThrottle.admitPasswordChange(req.user.username, { userId: req.user.id });
+    if (!pwAdmission.ok) {
+      res.set('Retry-After', String(Math.min(3600, Math.ceil(pwAdmission.retryAfterMs / 1000))));
+      const error = pwAdmission.reason === 'pending'
+        ? 'Слишком много одновременных попыток сменить пароль. Повторите через несколько секунд.'
+        : 'Слишком много неверных попыток сменить пароль за сутки. Обратитесь к администратору.';
+      return res.status(429).json({ error, code: 'ACCOUNT_THROTTLED' });
+    }
+    let pwOutcome = 'neutral';
+    try {
+      // Смена пароля тоже считает scrypt — тот же предел одновременных проверок
+      // на адрес, что и вход (I-C, общий): один источник не занимает очередь.
+      const ipKey = rateLimitIpKey(getClientIp(req));
+      const familiar = TrustedSources.isFamiliarToAnyoneSync(ipKey);
+      if (!acquireHashSlot(ipKey, familiar)) {
+        res.set('Retry-After', String(busyRetryAfterSeconds()));
+        return res.status(503).json({ error: 'Сервер сейчас обрабатывает много входов. Повторите через несколько секунд.', code: 'LOGIN_BUSY' });
+      }
+      const { oldPassword, newPassword } = req.body || {};
+      try {
+        await UserService.changePassword(req.user.id, oldPassword, newPassword);
+        pwOutcome = 'success';
+      } catch (err) {
+        if (err.code === 'OLD_PASSWORD_INVALID') {
+          pwOutcome = 'failure';
+          registerFailure(failKey, failLimit);
+          AuditService.log({ userId: req.user.id, action: 'password_change_failed', ip: getClientIp(req) });
+        }
+        if (err.code === 'PASSWORD_HASH_BUSY') {
+          res.set('Retry-After', String(jitterSeconds(3)));
+          return res.status(503).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      } finally {
+        releaseHashSlot(ipKey, familiar);
+      }
+    } finally {
+      LoginThrottle.settle(pwAdmission.ticket, pwOutcome);
+    }
+    resetLimit(failKey); // корзину P удачная смена чистит сама (settle и UserService.changePassword)
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
     // Старый токен отозван, но открытые соединения авторизовались им раньше.
     // Без разрыва тот, кто украл токен, продолжал бы писать от имени сотрудника.
@@ -637,7 +855,7 @@ router.get('/admin/server/overview', requireAuth, requireAdmin, route(async (req
     const allChannels = MessageService.getChannels(req.user.id);
 
     res.json({
-      server_name: settings.server_name || 'OpenMyChat Enterprise Server',
+      server_name: settings.server_name || 'CentyChat Server',
       company_name: settings.company_name || 'АО "Страховая компания "Сентрас Иншуранс"',
       version: config.SERVER_VERSION,
       uptime_seconds: Math.floor(process.uptime()),
@@ -971,7 +1189,7 @@ router.post('/admin/telegram/test', requireAuth, requireAdmin, route(async (req,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id,
-          text: '🔔 *OpenMyChat Enterprise Server*\\nТестовое оповещение успешно доставлено!',
+          text: '🔔 *CentyChat Server*\\nТестовое оповещение успешно доставлено!',
           parse_mode: 'Markdown'
         })
       });
@@ -1001,7 +1219,7 @@ router.get('/admin/licenses', requireAuth, requireAdmin, route(async (req, res) 
     UserService.getAllUsers()
   ]);
   res.json({
-    product_name: 'MyChat Server Enterprise',
+    product_name: 'CentyChat Server',
     license_type: 'Корпоративная неограниченная (Enterprise LAN/WAN)',
     license_owner: settings.company_name || 'АО "Страховая компания "Сентрас Иншуранс"',
     license_key: 'MC7-ENT-CENTR-2025-9981-A4F2',
@@ -1160,9 +1378,24 @@ router.post('/messages/channels/:targetId', requireAuth, route(async (req, res) 
   }
 }));
 
+// Поиск — полный просмотр таблицы сообщений (LIKE '%…%'), а node:sqlite
+// синхронен: пока идёт запрос, сервер не обслуживает никого. Без предела один
+// сотрудник частыми поисками по длинной строке останавливал сервер для всех
+// (аудит, раунд 4, находка Р4-10). Живой поиск в интерфейсе — единицы
+// запросов в секунду на время набора.
+const SEARCH_LIMIT = { maxAttempts: 30, windowMs: 60000 };
+const SEARCH_MAX_LENGTH = 200;
+
 router.get('/messages/search', requireAuth, route(async (req, res) => {
   const { q } = req.query;
   if (!q) return res.json([]);
+  if (typeof q !== 'string' || q.length > SEARCH_MAX_LENGTH) {
+    return res.status(400).json({ error: `Строка поиска — не длиннее ${SEARCH_MAX_LENGTH} символов` });
+  }
+  if (!checkRateLimit(`search:${req.user.id}`, SEARCH_LIMIT)) {
+    res.set('Retry-After', '60');
+    return res.status(429).json({ error: 'Слишком много поисковых запросов. Повторите через минуту.' });
+  }
   res.json(await MessageService.searchMessages(q, req.user.id));
 }));
 
@@ -1265,7 +1498,7 @@ router.get('/announcements/:id/audit', requireAuth, route(async (req, res) => {
 router.get('/settings/info', route(async (req, res) => {
   const settings = await SettingsService.getAllSettings();
   res.json({
-    server_name: settings.server_name || 'OpenMyChat Enterprise Server',
+    server_name: settings.server_name || 'CentyChat Server',
     company_name: settings.company_name || 'Корпоративная сеть',
     allow_registration: settings.allow_registration === 'true',
     // Окна правки/удаления сообщений: клиенту нужно знать их, чтобы не
@@ -1282,14 +1515,27 @@ router.get('/settings/info', route(async (req, res) => {
 // регистрация: форме регистрации этот список нужен до всякой авторизации, но
 // полное дерево — сотрудники, контакты, структура — не должно читаться
 // анонимным вызовом.
+let departmentsCache = { at: 0, payload: null };
+const DEPARTMENTS_CACHE_MS = 30000;
 router.get('/settings/departments', route(async (req, res) => {
+  // Кэш на 30 с: анонимная форма регистрации дёргает список у всех сразу, а
+  // содержимое меняется редко — незачем ходить в базу на каждый запрос
+  // (проверка раунда 4, M6).
+  if (departmentsCache.payload && Date.now() - departmentsCache.at < DEPARTMENTS_CACHE_MS) {
+    return res.json(departmentsCache.payload);
+  }
   const allowRegistration = (await SettingsService.getSetting('allow_registration', 'false')) === 'true';
-  if (!allowRegistration) return res.json({ departments: [] });
-
-  const departments = await identity().all(
-    'SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC'
-  );
-  res.json({ departments });
+  let payload;
+  if (!allowRegistration) {
+    payload = { departments: [] };
+  } else {
+    const departments = await identity().all(
+      'SELECT id, name FROM departments ORDER BY sort_order ASC, name ASC'
+    );
+    payload = { departments };
+  }
+  departmentsCache = { at: Date.now(), payload };
+  res.json(payload);
 }));
 
 // ── ЗАЯВКИ НА РЕГИСТРАЦИЮ ──
@@ -1414,6 +1660,64 @@ function requireUploadPermission(req, res, next) {
   next();
 }
 
+// Типы, которые можно отдать вложению как есть: браузер не исполняет их как
+// документ. Сверяется только «тип/подтип» без параметров.
+const SAFE_DOWNLOAD_TYPES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp',
+  'application/pdf', 'text/plain', 'text/csv',
+  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/webm',
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'application/zip', 'application/x-7z-compressed', 'application/vnd.rar', 'application/x-rar-compressed'
+]);
+
+function safeDownloadType(mimeType) {
+  const base = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  if (!SAFE_DOWNLOAD_TYPES.has(base)) return 'application/octet-stream';
+  // Текст — всегда с явной кодировкой, чтобы браузер её не угадывал.
+  return base.startsWith('text/') ? `${base}; charset=utf-8` : base;
+}
+
+// Объём загрузок на сотрудника за час (UPLOAD_MAX_MB_PER_HOUR). Параллельных
+// загрузок и так не больше двух, но без предела по объёму один сотрудник за
+// ночь заполнял бы том сервера — и вместе с ним останавливалась бы база
+// (аудит, раунд 4, находка Р4-11; остаток находки №7 раунда 3).
+const UPLOAD_QUOTA_WINDOW_MS = 60 * 60 * 1000;
+const uploadVolume = new Map(); // userId -> { windowStart, bytes }
+
+function uploadQuotaBytes() {
+  return config.UPLOAD_MAX_MB_PER_HOUR * 1024 * 1024;
+}
+
+function uploadedThisHour(userId, now = Date.now()) {
+  const entry = uploadVolume.get(userId);
+  if (!entry || now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) return 0;
+  return entry.bytes;
+}
+
+// Сколько секунд до обнуления часового окна квоты — осмысленный Retry-After
+// вместо фиксированной догадки (M2).
+function uploadWindowResetSeconds(userId, now = Date.now()) {
+  const entry = uploadVolume.get(userId);
+  if (!entry) return 1;
+  return Math.max(1, Math.ceil((entry.windowStart + UPLOAD_QUOTA_WINDOW_MS - now) / 1000));
+}
+
+function recordUploadVolume(userId, bytes, now = Date.now()) {
+  let entry = uploadVolume.get(userId);
+  if (!entry || now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) {
+    entry = { windowStart: now, bytes: 0 };
+    uploadVolume.set(userId, entry);
+  }
+  entry.bytes += Number(bytes) || 0;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, entry] of uploadVolume) {
+    if (now - entry.windowStart >= UPLOAD_QUOTA_WINDOW_MS) uploadVolume.delete(userId);
+  }
+}, 10 * 60000).unref();
+
 // Заявленный размер запроса известен до приёма тела. Без этой проверки
 // сервер читал 100 МБ и лишь потом отказывал — человек ждал минуты ради
 // «файл слишком большой». Запас в 1 МБ — на служебные части формы.
@@ -1435,7 +1739,34 @@ async function acceptUpload(req, res, next) {
     return res.status(413).json({ error: `Файл больше ${limitMb} МБ — такой файл загрузить нельзя` });
   }
 
+  // Свободное место на диске: приняв файл в почти полный том, сервер рискует
+  // тем, что запись базы переписки в тот же том оборвётся на середине. Ниже
+  // порога UPLOAD_MIN_FREE_DISK_MB загрузка отклоняется заранее (M2, 507).
+  if (config.UPLOAD_MIN_FREE_DISK_MB > 0 && fs.promises.statfs) {
+    try {
+      const st = await fs.promises.statfs(UPLOAD_TMP_DIR);
+      const freeBytes = st.bavail * st.bsize;
+      const needed = (Number.isFinite(declared) ? declared : 0) + config.UPLOAD_MIN_FREE_DISK_MB * 1024 * 1024;
+      if (freeBytes < needed) {
+        res.set('Retry-After', String(jitterSeconds(300)));
+        return res.status(507).json({ error: 'На сервере недостаточно свободного места. Обратитесь к администратору.' });
+      }
+    } catch {
+      /* statfs недоступен на этой ФС — не повод отказывать в загрузке */
+    }
+  }
+
   const userId = req.user.id;
+  const quota = uploadQuotaBytes();
+  if (quota > 0) {
+    const pending = Number.isFinite(declared) ? declared : 0;
+    if (uploadedThisHour(userId) + pending > quota + FORM_OVERHEAD_BYTES) {
+      res.set('Retry-After', String(uploadWindowResetSeconds(userId)));
+      return res.status(429).json({
+        error: `Предел загрузок — ${config.UPLOAD_MAX_MB_PER_HOUR} МБ в час. Повторите позже или обратитесь к администратору.`
+      });
+    }
+  }
   const running = activeUploads.get(userId) || 0;
   if (running >= MAX_PARALLEL_UPLOADS) {
     return res.status(429).json({ error: 'Дождитесь окончания текущих загрузок' });
@@ -1466,6 +1797,9 @@ async function acceptUpload(req, res, next) {
 router.post('/files/upload', requireAuth, requireUploadPermission, route(acceptUpload), route(async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не прикреплен' });
+    // Засчитывается принятое на диск, даже если фильтр типов потом откажет:
+    // место и время сервер уже потратил.
+    recordUploadVolume(req.user.id, req.file.size);
     res.status(201).json(await FileService.saveUploadedFile({
       uploaderId: req.user.id,
       originalName: Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
@@ -1503,10 +1837,35 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   }
   // Тип файла назвал тот, кто его загрузил. Отданный «inline» HTML или SVG
   // исполнился бы в контексте приложения — поэтому только как вложение.
-  res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+  // Сверх того тип берётся из короткого списка безопасных (картинки без SVG,
+  // PDF, звук, видео, простой текст), всё остальное — octet-stream: вложение,
+  // песочница и nosniff уже не дают исполнить HTML/SVG, но заявленный
+  // отправителем тип вообще не должен доходить до браузера как есть (аудит,
+  // раунд 4, находка Р4-14).
+  res.setHeader('Content-Type', safeDownloadType(file.mime_type));
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-  fs.createReadStream(file.path).pipe(res);
+  res.setHeader('Cache-Control', 'private, no-store');
+  // Обрыв соединения закрывает поток чтения (иначе дескриптор подтекал бы на
+  // каждом прерванном скачивании), а ошибка чтения (файл исчез между проверкой
+  // и открытием, исчерпаны дескрипторы) не роняет процесс, а отвечает 500 (M3).
+  // stream.pipeline здесь не подходит: при ошибке источника он разрушает res
+  // до того, как удастся отдать понятный 500. Поэтому — ручной pipe плюс явное
+  // закрытие потока на 'close' соединения.
+  const src = fs.createReadStream(file.path);
+  const closeSrc = () => src.destroy();
+  res.on('close', closeSrc);
+  src.on('error', (err) => {
+    console.error('[API] отдача вложения не удалась:', err.message);
+    src.destroy();
+    if (!res.headersSent) {
+      res.removeHeader('Content-Disposition');
+      res.type('json').status(500).json({ error: 'Внутренняя ошибка сервера' });
+    } else {
+      res.destroy();
+    }
+  });
+  src.pipe(res);
 });
 
 router.get('/files/recent', requireAuth, route(async (req, res) => {

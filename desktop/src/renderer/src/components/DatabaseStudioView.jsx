@@ -228,7 +228,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
         backgroundColor: 'var(--bg-panel)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ fontSize: '18px', fontWeight: 700, color: '#93c5fd', display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name="wrench" size={18} />Web Database Studio (SQLite)</span>
+          <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--accent-text)', display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name="wrench" size={18} />Web Database Studio (SQLite)</span>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button
               className={`btn btn-sm ${activeTab === 'browser' ? 'btn-primary' : 'btn-secondary'}`}
@@ -256,7 +256,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             className="btn btn-primary btn-sm"
             onClick={handleCreateBackup}
             disabled={backupLoading}
-            style={{ backgroundColor: '#10b981' }}
+            style={{ backgroundColor: 'var(--success-fill)' }}
           >
             {backupLoading ? 'Создание...' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="zap" size={14} />Создать бэкап сейчас</span>}
           </button>
@@ -285,12 +285,12 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           fontSize: '12px',
           color: 'var(--text-muted)'
         }}>
-          <div>Файл БД: <strong style={{ color: '#ffffff' }}>{stats.dbPath ?? '—'}</strong></div>
-          <div>Размер: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
-          <div>WAL журнал: <strong style={{ color: '#60a5fa' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
-          <div>Режим: <strong style={{ color: '#ffffff' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
-          <div>Целостность: <strong style={{ color: 'light-dark(#10b981, #7cf4cc)' }}>{stats.integrity ?? '—'}</strong></div>
-          <div>Всего записей: <strong style={{ color: '#ffffff' }}>{stats.totalRows ?? '—'}</strong></div>
+          <div>Файл БД: <strong style={{ color: 'var(--text-strong)' }}>{stats.dbPath ?? '—'}</strong></div>
+          <div>Размер: <strong style={{ color: 'var(--success-text)' }}>{stats.dbSizeFormatted ?? '—'}</strong></div>
+          <div>WAL журнал: <strong style={{ color: 'var(--accent-text)' }}>{stats.walSizeFormatted ?? '—'}</strong></div>
+          <div>Режим: <strong style={{ color: 'var(--text-strong)' }}>{String(stats.journalMode ?? '—').toUpperCase()}</strong></div>
+          <div>Целостность: <strong style={{ color: 'var(--success-text)' }}>{stats.integrity ?? '—'}</strong></div>
+          <div>Всего записей: <strong style={{ color: 'var(--text-strong)' }}>{stats.totalRows ?? '—'}</strong></div>
         </div>
       )}
 
@@ -313,7 +313,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                     justifyContent: 'space-between',
                     padding: '8px 14px',
                     backgroundColor: selectedTable === t.name ? 'var(--bg-active)' : 'transparent',
-                    color: selectedTable === t.name ? '#ffffff' : 'var(--text-main)'
+                    color: selectedTable === t.name ? 'var(--text-strong)' : 'var(--text-main)'
                   }}
                 >
                   <span style={{ fontWeight: 500, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="folder" size={14} />{t.name}</span>
@@ -328,7 +328,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             {selectedTable && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Таблица: <span style={{ color: '#60a5fa' }}>{selectedTable}</span></h3>
+                  <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Таблица: <span style={{ color: 'var(--accent-text)' }}>{selectedTable}</span></h3>
                   <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Всего строк: {tableData?.total || 0}</span>
                 </div>
 
@@ -345,7 +345,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                 {schemaColumns.length > 0 && (
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '8px', backgroundColor: 'var(--bg-sidebar)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                     {schemaColumns.map(c => (
-                      <span key={c.name} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-card)', color: c.pk ? '#f59e0b' : 'var(--text-muted)' }}>
+                      <span key={c.name} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--bg-card)', color: c.pk ? 'var(--warning-text)' : 'var(--text-muted)' }}>
                         {c.pk ? <Icon name="key" size={11} /> : null}{c.pk ? ' ' : ''}<strong>{c.name}</strong>: {c.type}
                       </span>
                     ))}
@@ -394,7 +394,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
             <textarea
               className="search-input"
               rows={5}
-              style={{ fontFamily: 'monospace', fontSize: '13px', backgroundColor: '#0f172a' }}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', backgroundColor: 'var(--bg-card)' }}
               value={sqlQuery}
               onChange={(e) => setSqlQuery(e.target.value)}
               placeholder="Введите SQL запрос, например: SELECT * FROM messages ORDER BY id DESC LIMIT 20;"
@@ -404,7 +404,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
           {queryResult && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {queryResult.error ? (
-                <div style={{ padding: '12px', backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ padding: '12px', backgroundColor: 'var(--danger-soft)', color: 'var(--danger-text)', borderRadius: 'var(--radius-md)' }}>
                   Ошибка выполнения: {queryResult.error}
                 </div>
               ) : (
@@ -476,7 +476,7 @@ export default function DatabaseStudioView({ token, serverUrl = '' }) {
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '14px', color: '#ffffff' }}>{b.fileName}</div>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-strong)' }}>{b.fileName}</div>
                   <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
                     Создан: {b.createdAt ? new Date(b.createdAt).toLocaleString() : '—'} · Размер: {b.sizeFormatted ?? '—'}
                   </div>

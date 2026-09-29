@@ -88,9 +88,9 @@ test('без закреплённых отпечатков не проходит
 // ── Команда PowerShell ─────────────────────────────────────────────────────
 
 test('путь экранируется: одинарная кавычка удваивается, пробелы остаются', () => {
-  const file = "C:\\Users\\O'Brien Ivanov\\AppData\\Local\\mychat-desktop-updater\\pending\\temp-OpenMyChat Setup.exe";
+  const file = "C:\\Users\\O'Brien Ivanov\\AppData\\Local\\mychat-desktop-updater\\pending\\temp-CentyChat Setup.exe";
   const script = buildPsCommand(file);
-  assert.ok(script.includes("-LiteralPath 'C:\\Users\\O''Brien Ivanov\\AppData\\Local\\mychat-desktop-updater\\pending\\temp-OpenMyChat Setup.exe'"), script);
+  assert.ok(script.includes("-LiteralPath 'C:\\Users\\O''Brien Ivanov\\AppData\\Local\\mychat-desktop-updater\\pending\\temp-CentyChat Setup.exe'"), script);
   assert.ok(!script.includes("O'Brien"), 'неудвоенной кавычки нет');
   assert.match(script, /Get-AuthenticodeSignature/);
   assert.match(script, /ConvertTo-Json/);
@@ -203,7 +203,7 @@ test('живой PowerShell: модуль-двойник в PSModulePath пол�
       fs.mkdirSync(path.join(dir, name));
       fs.writeFileSync(path.join(dir, name, `${name}.psm1`), `${body}\nExport-ModuleMember -Function *\n`);
     }
-    const fake = path.join(dir, 'OpenMyChat-Enterprise-Setup-1.2.0.exe');
+    const fake = path.join(dir, 'CentyChat-Setup-1.2.0.exe');
     fs.writeFileSync(fake, 'это не программа');
     const shadowPath = `${dir};${savedPath || ''}`;
 

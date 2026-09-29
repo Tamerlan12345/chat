@@ -3,7 +3,7 @@
 // путём, что и собранное приложение (reg.exe из доверенного корня системы).
 //
 // Сам скрипт требует прав администратора и пишет в
-// HKLM\SOFTWARE\Policies\OpenMyChat Enterprise. Тест запускает его копию, где
+// HKLM\SOFTWARE\Policies\CentyChat. Тест запускает его копию, где
 // ключ политики заменён на временный ключ в HKCU, а строка
 // «#Requires -RunAsAdministrator» убрана, — вся остальная логика (проверка
 // https, типы значений, «без -ServerUrl адрес не трогать») исполняется как
@@ -20,7 +20,7 @@ const { readClientConfig, trustedSystemRoot, POLICY_KEY } = require('../src/main
 
 const SCRIPT = path.join(__dirname, '..', '..', 'installer', 'configure-client.ps1');
 const SKIP = process.platform !== 'win32' && 'только Windows (реестр, PowerShell)';
-const PS_POLICY_LINE = "$PolicyKey = 'HKLM:\\SOFTWARE\\Policies\\OpenMyChat Enterprise'";
+const PS_POLICY_LINE = "$PolicyKey = 'HKLM:\\SOFTWARE\\Policies\\CentyChat'";
 
 function makeTestCopy(testKeyPs) {
   const text = fs.readFileSync(SCRIPT, 'utf8');
@@ -46,7 +46,7 @@ function runScript(file, args) {
 }
 
 test('configure-client.ps1 пишет политику в реестр, client-config.js её читает', { skip: SKIP }, () => {
-  const name = `OpenMyChatPolicyTest-${crypto.randomBytes(4).toString('hex')}`;
+  const name = `CentyChatPolicyTest-${crypto.randomBytes(4).toString('hex')}`;
   const testKeyPs = `HKCU:\\Software\\${name}`;
   const testKeyReg = `HKCU\\Software\\${name}`;
   const { dir, file } = makeTestCopy(testKeyPs);

@@ -21,6 +21,11 @@ const { freshBoot, closeAll } = require('./helpers/boot');
 //         заниженную стоимость; права роли сохранялись без проверки ключей.
 
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
+// Порог пары адрес+логин ниже суточной корзины U (5, sec5): при значениях по
+// умолчанию (10 > 5) корзина срабатывает раньше, и блокировку пары отсюда не
+// достать — а тесты находки №12 ниже проверяют именно её. Совместная работа
+// обоих пределов — в login-bruteforce.test.js.
+process.env.LOGIN_MAX_FAILED_ATTEMPTS = '3';
 
 let baseUrl;
 let wsUrl;

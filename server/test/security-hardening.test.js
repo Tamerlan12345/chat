@@ -22,6 +22,12 @@ const { freshBoot, closeAll } = require('./helpers/boot');
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
 process.env.WS_REVALIDATE_MS = '300';
 process.env.RD_REQUEST_TTL_MS = '600';
+// Порог пары адрес+логин ниже суточной корзины U (5, sec5): при значениях по
+// умолчанию (10 > 5) корзина срабатывает раньше, и блокировку пары отсюда не
+// достать — а тест «блокировка отвечает тем же текстом» проверяет именно её.
+// Текст исчерпанной корзины одинаков для существующих и несуществующих логинов
+// (login-bruteforce.test.js, воспроизведение f).
+process.env.LOGIN_MAX_FAILED_ATTEMPTS = '3';
 
 let baseUrl;
 let wsUrl;

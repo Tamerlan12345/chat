@@ -12,6 +12,18 @@ const path = require('node:path');
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const NOTES_PATH = path.join(REPO_ROOT, 'docs', 'выпуск-2026-10-безопасность.md');
 const ENV_EXAMPLE_PATH = path.join(REPO_ROOT, '.env.example');
+const ROUND4_ENV = [
+  'LOGIN_ACCOUNT_MAX_DELAY_SECONDS',
+  // Суточный предел неверных проверок пароля (sec5) — заменил ведро и мягкий порог.
+  'LOGIN_DAILY_FAILURES_UNFAMILIAR',
+  'LOGIN_DAILY_FAILURES_FAMILIAR',
+  'PASSWORD_CHANGE_DAILY_FAILURES',
+  'PASSWORD_HASH_CONCURRENCY',
+  'ANON_RATE_LIMIT_PER_MINUTE',
+  'LOGIN_INFLIGHT_PER_IP',
+  'UPLOAD_MAX_MB_PER_HOUR',
+  'UPDATES_MAX_REQ_PER_MIN_PER_IP'
+];
 const IDENTITY_DOC_PATH = path.join(REPO_ROOT, 'docs', 'identity-store.md');
 
 test('заметки о выпуске существуют и называют однократные последствия деплоя', () => {
@@ -68,9 +80,32 @@ test('.env.example упоминает новые переменные окруж
     'UPDATES_DIR',
     'UPDATES_DISABLED',
     'UPDATES_MAX_CONCURRENT_DOWNLOADS',
-    'UPDATES_MAX_FILE_MB'
+    'UPDATES_MAX_FILE_MB',
+    // Аудит безопасности, раунд 4.
+    ...ROUND4_ENV
   ]) {
     assert.match(text, new RegExp(`^#\\s*${name}=`, 'm'), `.env.example должен упоминать ${name} закомментированной строкой`);
+  }
+});
+
+test('заметки о выпуске описывают пределы раунда 4 и то, что действующие пароли продолжают пускать', () => {
+  const text = fs.readFileSync(NOTES_PATH, 'utf8');
+  for (const name of ROUND4_ENV) assert.match(text, new RegExp(name), `заметки должны упоминать ${name}`);
+  assert.match(text, /Действующие пароли продолжают работать/);
+  assert.match(text, /LOGIN_MAX_FAILED_ATTEMPTS/);
+});
+
+test('суточный предел (sec5): заметки объясняют цену, .env.example не предлагает прежнее ведро', () => {
+  const text = fs.readFileSync(NOTES_PATH, 'utf8');
+  assert.match(text, /Суточный предел/);
+  assert.match(text, /login_failure_log/);
+  assert.match(text, /сброс пароля/i);
+  // Последнее средство восстановления: аварийный сброс чистит и журнал неудач.
+  assert.match(text, /ADMIN_PASSWORD_RESET[\s\S]{0,400}журнал неудачных входов/);
+  const env = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
+  for (const gone of ['LOGIN_ACCOUNT_SOFT_LIMIT', 'LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR']) {
+    assert.doesNotMatch(env, new RegExp('^#\\s*' + gone + '=', 'm'), '.env.example не должен предлагать ' + gone);
+    assert.doesNotMatch(text, new RegExp('\\| `' + gone + '`'), 'таблица переменных не должна содержать ' + gone);
   }
 });
 

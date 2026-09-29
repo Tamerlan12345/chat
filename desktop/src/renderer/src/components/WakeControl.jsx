@@ -45,7 +45,7 @@ export default function WakeControl({ peer, wake, connected, onWake }) {
 
   let state = 'ready';
   let label = 'Разбудить';
-  let hint = 'Разбудить собеседника: у него прозвучит сигнал и замигает окно MyChat. Не чаще раза в минуту.';
+  let hint = 'Разбудить собеседника: у него прозвучит сигнал и замигает окно CentyChat. Не чаще раза в минуту.';
   let icon = 'alarm';
 
   if (view.phase === 'sending') {

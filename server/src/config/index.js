@@ -90,6 +90,25 @@ function positiveInt(raw, fallback) {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+// Целое в пределах [min, max]; всё прочее (пусто, «abc», «30s», вне
+// диапазона) — значение по умолчанию и предупреждение в журнал. Пределы
+// защиты от подбора не должны молча превращаться в NaN: сравнение с NaN
+// всегда ложно, и порог просто перестаёт срабатывать (аудит, раунд 4,
+// находка Р4-07).
+function boundedInt(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const text = String(raw).trim();
+  const n = /^-?\d+$/.test(text) ? Number(text) : NaN;
+  if (!Number.isSafeInteger(n) || n < min || n > max) {
+    console.warn(
+      `[Config] ${name}="${raw}" — ожидается целое число от ${min} до ${max}; использую значение по умолчанию (${fallback}).`
+    );
+    return fallback;
+  }
+  return n;
+}
+
 const DEFAULT_LEGACY_TOKEN_CUTOFF = '2026-10-15T00:00:00Z';
 
 // Отсечка задаётся оператором как строка окружения — опечатка («2026-13-40»,
@@ -111,6 +130,28 @@ function resolveLegacyTokenCutoff() {
   }
   return raw;
 }
+
+// Потолок анонимных запросов: 0 — выключено осознанно, иначе не меньше
+// разумного пола (иначе легко случайно перекрыть офис одной опечаткой).
+// Промежуточные значения 1..пол отклоняются к значению по умолчанию.
+function resolveAnonCeiling() {
+  const FLOOR = 600;
+  const DEFAULT = 12000;
+  const raw = process.env.ANON_RATE_LIMIT_PER_MINUTE;
+  if (raw === undefined || raw === '') return DEFAULT;
+  const text = String(raw).trim();
+  const n = /^-?\d+$/.test(text) ? Number(text) : NaN;
+  if (n === 0) return 0;
+  if (!Number.isSafeInteger(n) || n < FLOOR || n > 1000000) {
+    console.warn(
+      `[Config] ANON_RATE_LIMIT_PER_MINUTE="${raw}" — ожидается 0 (выключено) или число не меньше ${FLOOR}; ` +
+        `использую значение по умолчанию (${DEFAULT}).`
+    );
+    return DEFAULT;
+  }
+  return n;
+}
+
 
 module.exports = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 2004,
@@ -143,12 +184,47 @@ module.exports = {
   // (см. AuthService.loginLockKey/registerFailedAttempt), а не в базе:
   // перезапуск сервера или смена адреса атакующим возобновляют отсчёт заново
   // — приемлемый компромисс для временной задержки, а не жёсткой блокировки.
-  LOGIN_MAX_FAILED_ATTEMPTS: process.env.LOGIN_MAX_FAILED_ATTEMPTS
-    ? parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10)
-    : 10,
-  LOGIN_LOCKOUT_MINUTES: process.env.LOGIN_LOCKOUT_MINUTES
-    ? parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10)
-    : 15,
+  //
+  // Раньше оба значения читались parseInt без проверки: «abc» давало NaN, и
+  // задержка не наступала никогда (count >= NaN всегда ложно) — опечатка в
+  // настройках молча выключала защиту от подбора (Р4-07).
+  LOGIN_MAX_FAILED_ATTEMPTS: boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 }),
+  LOGIN_LOCKOUT_MINUTES: boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 }),
+  LOGIN_ACCOUNT_MAX_DELAY_SECONDS: boundedInt('LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 60, { min: 1, max: 3600 }),
+  // Суточный предел неверных проверок пароля на учётную запись (требование
+  // владельца, sec5): три раздельные корзины за скользящие 24 часа, чтобы один
+  // класс не съедал бюджет другого — вход с незнакомых адресов (U), вход со
+  // знакомых (F), смена пароля (P). Итого ≤ U+F+P ≈ 20/сутки. Исчерпанная
+  // корзина отклоняет вход без проверки пароля (429). Считается только
+  // подтверждённая неудача; журнал переживает перезапуск (login_failure_log).
+  // 0 у любой — корзина выключена (по умолчанию все включены); минимум 1.
+  LOGIN_DAILY_FAILURES_UNFAMILIAR: boundedInt('LOGIN_DAILY_FAILURES_UNFAMILIAR', 5, { min: 0, max: 100000 }),
+  LOGIN_DAILY_FAILURES_FAMILIAR: boundedInt('LOGIN_DAILY_FAILURES_FAMILIAR', 10, { min: 0, max: 100000 }),
+  PASSWORD_CHANGE_DAILY_FAILURES: boundedInt('PASSWORD_CHANGE_DAILY_FAILURES', 5, { min: 0, max: 100000 }),
+  // Одновременных проверок пароля с одного адреса. Для адреса, незнакомого ни
+  // одной учётной записи, — жёстко мало (не даёт занять очередь хэшей); для
+  // адреса офиса (знакомого хотя бы одному) — щедро (проверка раунда 4, I-C).
+  LOGIN_INFLIGHT_PER_IP: boundedInt('LOGIN_INFLIGHT_PER_IP', 20, { min: 1, max: 200 }),
+  LOGIN_INFLIGHT_UNFAMILIAR: boundedInt('LOGIN_INFLIGHT_UNFAMILIAR', 3, { min: 1, max: 50 }),
+  // Сколько расчётов хэша пароля (scrypt, ~128 МиБ каждый) идут одновременно;
+  // остальные ждут в короткой очереди, переполненная очередь — отказ 503.
+  // Без предела поток попыток входа занимал все потоки libuv (на них же
+  // чтение и запись файлов) и поднимал память на 128 МиБ за каждый (Р4-03).
+  PASSWORD_HASH_CONCURRENCY: boundedInt('PASSWORD_HASH_CONCURRENCY', 2, { min: 1, max: 16 }),
+  // Общий потолок анонимных запросов к /api и /health с одного адреса (сети
+  // /64 для IPv6) в минуту. Дешёвые публичные GET (сведения о сервере,
+  // /health) из-под него исключены — иначе утренний запуск офиса за одним NAT
+  // (сотни клиентов, токены за ночь истекли) упирался бы в него (проверка
+  // раунда 4, ПР-I1). 0 — выключено; иначе не меньше 600.
+  ANON_RATE_LIMIT_PER_MINUTE: resolveAnonCeiling(),
+  // Объём загрузок вложений на одного сотрудника за час (окно отсчитывается
+  // от первой загрузки), МБ;
+  // 0 — без предела (Р4-11).
+  UPLOAD_MAX_MB_PER_HOUR: boundedInt('UPLOAD_MAX_MB_PER_HOUR', 2048, { min: 0, max: 1000000 }),
+  // Ниже этого запаса свободного места (МБ) на томе загрузок сервер не
+  // принимает файл: иначе запись базы переписки в тот же том может оборваться
+  // на переполнении (проверка раунда 4, M2). 0 — проверку выключить.
+  UPLOAD_MIN_FREE_DISK_MB: boundedInt('UPLOAD_MIN_FREE_DISK_MB', 1024, { min: 0, max: 10000000 }),
   // Секрет устройства (вход без пароля) не вечен: не подтверждённый повторным
   // входом по паролю дольше этого срока перестаёт действовать сам. Без этого
   // предела украденная копия localStorage работала бы бессрочно (аудит,
@@ -212,6 +288,10 @@ module.exports = {
   // всего офиса не должен забить канал и диск сервера.
   UPDATES_MAX_CONCURRENT_DOWNLOADS: positiveInt(process.env.UPDATES_MAX_CONCURRENT_DOWNLOADS, 20),
   UPDATES_MAX_FILE_MB: positiveInt(process.env.UPDATES_MAX_FILE_MB, 600),
+  // Высокий потолок запросов автообновления на адрес (сеть /64) в минуту —
+  // чтобы вместить весь офис за одним NAT; у каждой установки, кроме того, свой
+  // предел по install-id (проверка раунда 4, M7). Через boundedInt (M6).
+  UPDATES_MAX_REQ_PER_MIN_PER_IP: boundedInt('UPDATES_MAX_REQ_PER_MIN_PER_IP', 6000, { min: 60, max: 10000000 }),
 
   SERVER_VERSION: '2026.1.0-pro'
 };

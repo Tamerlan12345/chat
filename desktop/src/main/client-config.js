@@ -4,7 +4,7 @@
 // В собранной сборке адрес сервера был зашит константой, а переменные
 // окружения там намеренно не читаются (см. server-url.js). Серверу в
 // локальной сети нужен свой адрес — он берётся из политики реестра
-// HKLM\SOFTWARE\Policies\OpenMyChat Enterprise (значения ServerUrl,
+// HKLM\SOFTWARE\Policies\CentyChat (значения ServerUrl,
 // UpdatesEnabled, UpdateChannel). Её пишет installer/configure-client.ps1
 // или групповая политика домена.
 //
@@ -25,7 +25,10 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { isAllowedServerUrl, resolveServerUrl } = require('./server-url');
 
-const POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise';
+// Ключ появился в выпуске 1.1.0 вместе с переименованием в CentyChat —
+// прежнего ключа «OpenMyChat Enterprise» ни одна выпущенная версия не читала,
+// поэтому и запасного чтения старого имени нет.
+const POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\CentyChat';
 const POLICY_VALUES = Object.freeze({
   serverUrl: 'ServerUrl',
   updatesEnabled: 'UpdatesEnabled',
@@ -160,7 +163,7 @@ function parseDword(data) {
 }
 
 /**
- * Читает политику машины HKLM\SOFTWARE\Policies\OpenMyChat Enterprise:
+ * Читает политику машины HKLM\SOFTWARE\Policies\CentyChat:
  *   ServerUrl      REG_SZ     https://… (без имени и пароля)
  *   UpdatesEnabled REG_DWORD  0 — обновления выключены, 1 — включены
  *   UpdateChannel  REG_SZ     stable | beta

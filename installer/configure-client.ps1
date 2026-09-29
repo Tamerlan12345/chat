@@ -1,6 +1,6 @@
 ﻿#Requires -RunAsAdministrator
-# Настраивает машину для OpenMyChat Enterprise: пишет политику реестра
-# HKLM\SOFTWARE\Policies\OpenMyChat Enterprise, которую собранное приложение
+# Настраивает машину для CentyChat: пишет политику реестра
+# HKLM\SOFTWARE\Policies\CentyChat, которую собранное приложение
 # читает при старте (desktop/src/main/client-config.js):
 #   ServerUrl      REG_SZ     адрес сервера компании, только https://
 #   UpdatesEnabled REG_DWORD  1 - обновления включены, 0 - выключены
@@ -35,7 +35,7 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$PolicyKey = 'HKLM:\SOFTWARE\Policies\OpenMyChat Enterprise'
+$PolicyKey = 'HKLM:\SOFTWARE\Policies\CentyChat'
 
 if ($DisableUpdates -and $EnableUpdates) {
     Write-Host "ОТКАЗ: -DisableUpdates и -EnableUpdates вместе не имеют смысла - укажите один." -ForegroundColor Red
@@ -108,4 +108,4 @@ foreach ($name in @('ServerUrl', 'UpdatesEnabled', 'UpdateChannel')) {
     Write-Host ("  {0,-15} {1}" -f $name, $value)
 }
 Write-Host ""
-Write-Host "Готово. Перезапустите OpenMyChat Enterprise на этой машине, чтобы изменения применились." -ForegroundColor Green
+Write-Host "Готово. Перезапустите CentyChat на этой машине, чтобы изменения применились." -ForegroundColor Green

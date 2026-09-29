@@ -8,6 +8,13 @@ const { freshBoot } = require('./helpers/boot');
 // оказались в базе — теперь в той, где им и место: учётные записи хранятся
 // отдельно от переписки.
 
+// Порог пары адрес+логин ниже суточной корзины U (5, sec5): при значениях по
+// умолчанию (10 > 5) корзина срабатывает раньше, и блокировку пары отсюда не
+// достать — а тест ниже проверяет именно её (раунд 3, находка №12). Совместная
+// работа обоих пределов — в login-bruteforce.test.js. Задаётся до первого
+// require: конфигурация читает окружение один раз.
+process.env.LOGIN_MAX_FAILED_ATTEMPTS = '3';
+
 const UserService = require('../src/services/user.service');
 const OrgService = require('../src/services/org.service');
 const AuthService = require('../src/services/auth.service');

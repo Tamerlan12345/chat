@@ -22,7 +22,9 @@ RUN npm ci --omit=dev
 FROM node:24-alpine AS runtime
 
 # Dedicated unprivileged user — the process never needs root once files are
-# in place, and the base image otherwise defaults to running as root.
+# in place, and the base image otherwise defaults to running as root. The
+# user name predates the CentyChat rename; it is an internal identifier that
+# nobody sees, so it stays "mychat".
 RUN addgroup -S mychat && adduser -S mychat -G mychat
 
 WORKDIR /app/server

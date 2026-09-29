@@ -272,7 +272,17 @@ class DbStudioService {
     // Столбец locked_until в схеме остался, но больше ничем не заполняется —
     // читать его здесь означало бы показывать администратору вечно нулевую
     // (или, на старой базе, безнадёжно устаревшую) цифру.
-    const lockedAccounts = AuthService.countLockedAccounts();
+    // Плюс сотрудники, исчерпавшие суточную корзину неверных паролей (sec5): им
+    // вход (с незнакомых адресов, со знакомых или смена пароля) закрыт до конца
+    // окна 24 ч или сброса пароля — для администратора это тоже «заблокирован».
+    // Объединение по логину — без двойного счёта.
+    const locked = new Set(AuthService.lockedUsernames());
+    try {
+      for (const name of await require('./login-throttle.service').exhaustedUsernames()) locked.add(name);
+    } catch {
+      /* журнала ещё нет (очень старая база) — показываем то, что есть */
+    }
+    const lockedAccounts = locked.size;
 
     return {
       engine: config.IDENTITY_DRIVER === 'postgres' ? 'PostgreSQL' : 'SQLite (PostgreSQL не настроен)',

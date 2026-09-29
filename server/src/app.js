@@ -5,8 +5,9 @@ const fs = require('node:fs');
 const config = require('./config');
 const apiRouter = require('./api');
 const { isReady } = require('./bootstrap');
-const { getClientIp, isIpAllowed } = require('./services/ip-access.service');
+const { getClientIp, isIpAllowed, rateLimitIpKey } = require('./services/ip-access.service');
 const AuthService = require('./services/auth.service');
+const { checkRateLimit } = require('./services/rate-limiter');
 
 const app = express();
 
@@ -53,6 +54,59 @@ function renderAccessDeniedPage(ip) {
 </body></html>`;
 }
 
+// Security headers (defense in depth — this SPA is also reachable from any
+// plain browser on the LAN via the static-file fallback below, not just
+// through the Electron shell). Стоят первыми: раньше они шли после проверки
+// адреса и готовности, и страница отказа по IP и ответ 503 «сервер
+// запускается» уходили без единого заголовка защиты (аудит, раунд 4, Р4-15).
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // Ресурсы сервера не встраиваются чужими сайтами (<img>, <script> с другого
+  // сайта). same-site, а не same-origin: интерфейс в разработке (vite на
+  // localhost:5173) — тот же сайт, что и сервер на localhost:2004.
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // Отдельный процесс браузера для этого источника и запрет старых
+  // междоменных политик Flash/PDF (crossdomain.xml).
+  res.setHeader('Origin-Agent-Cluster', '?1');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  // Политика содержимого для интерфейса. Любая будущая уязвимость XSS
+  // упрётся в неё: чужой скрипт не загрузится, данные не уйдут на чужой адрес,
+  // страницу нельзя встроить. blob: — для обработчика звука (AudioWorklet) и
+  // картинок переписки; 'unsafe-inline' только для стилей — React задаёт
+  // style у элементов. Действует на все ответы, включая API и файлы (у
+  // скачивания вложений она ещё строже — sandbox, см. api/index.js).
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; '));
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=()');
+  // Ответы API несут личные данные и токены — ни браузер, ни промежуточный
+  // кэш не должны их сохранять. Путь сравнивается в нижнем регистре:
+  // маршрутизация Express нечувствительна к регистру, и «/API/…» доходил бы
+  // до тех же обработчиков, но мимо no-store (проверка раунда 4, ПР-I1).
+  if (req.path.toLowerCase().startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
+  // и не пойдут по http даже по подменённой ссылке.
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 // Network-level access gate — runs before EVERYTHING else (CORS, static
 // files, the API router, even /health), so a disallowed IP gets a flat 403
 // and nothing else: no login page, no version info, no route to try next.
@@ -88,6 +142,39 @@ app.use((req, res, next) => {
   res.status(503).json({ error: 'Сервер запускается, повторите через несколько секунд' });
 });
 
+// Общий потолок анонимных запросов к API с одного адреса (сети /64 для
+// IPv6). Дорогие анонимные действия — вход, регистрация, «стук» устройства —
+// ограничены каждое своим пределом; этот — последний рубеж от простого
+// потока запросов с одного источника (аудит, раунд 4, находка Р4-12). Запрос
+// с действительным по подписи токеном сюда не считается — это работающий
+// сотрудник, а не аноним; проверка подписи — один HMAC, без базы. Предел
+// щедрый: офис за одним NAT при запуске делает несколько анонимных запросов
+// на человека (сведения о сервере, «стук», вход).
+// Дешёвые публичные GET, которые отдаются из памяти без обращения к базе:
+// клиент запускается и опрашивает их у всех сотрудников разом. Из потолка
+// исключены — их флуд стоит только обработки HTTP, а вход/регистрация/«стук»
+// ограничены каждый своим пределом (проверка раунда 4, ПР-I1).
+// /api/settings/departments НЕ исключён: он делает запрос к базе (в отличие от
+// settings/info и /health, отвечающих из памяти), поэтому остаётся под
+// потолком; сам ответ вдобавок кэшируется на 30 с (проверка раунда 4, M6).
+const ANON_CEILING_EXEMPT = new Set(['/health', '/api/settings/info']);
+app.use((req, res, next) => {
+  const limit = config.ANON_RATE_LIMIT_PER_MINUTE;
+  if (!limit) return next();
+  const path = req.path.toLowerCase();
+  if (!path.startsWith('/api/') && path !== '/health') return next();
+  if (req.method === 'GET' && ANON_CEILING_EXEMPT.has(path)) return next();
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ') && AuthService.verifyToken(authHeader.substring(7))) {
+    return next();
+  }
+  if (checkRateLimit(`anon:${rateLimitIpKey(getClientIp(req))}`, { maxAttempts: limit, windowMs: 60000 })) {
+    return next();
+  }
+  res.set('Retry-After', '60');
+  return res.status(429).json({ error: 'Слишком много запросов с этого адреса. Повторите через минуту.' });
+});
+
 // Интерфейс загружается с этого же сервера, и его запросы — того же
 // происхождения, CORS им не нужен. Отражение любого Origin разрешало чужому
 // сайту, открытому сотрудником в офисе, обращаться к API из разрешённой сети
@@ -109,46 +196,6 @@ const smallJson = express.json({ limit: '256kb' });
 const largeJson = express.json({ limit: '5mb' });
 app.use((req, res, next) => (LARGE_BODY_PATHS.has(req.path) ? largeJson : smallJson)(req, res, next));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-
-// Security headers (defense in depth — this SPA is also reachable from any
-// plain browser on the LAN via the static-file fallback below, not just
-// through the Electron shell). Deliberately does NOT set a Content-Security-
-// Policy or restrict Permissions-Policy camera/microphone: the app relies on
-// WebRTC calls and remote-desktop screen capture, and a strict connect-src/
-// media policy would break peer connections that aren't same-origin.
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('X-DNS-Prefetch-Control', 'off');
-  // Политика содержимого для интерфейса. Любая будущая уязвимость XSS
-  // упрётся в неё: чужой скрипт не загрузится, данные не уйдут на чужой адрес,
-  // страницу нельзя встроить. blob: — для обработчика звука (AudioWorklet) и
-  // картинок переписки; 'unsafe-inline' только для стилей — React задаёт
-  // style у элементов.
-  res.setHeader('Content-Security-Policy', [
-    "default-src 'self'",
-    "script-src 'self' blob:",
-    "worker-src 'self' blob:",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "media-src 'self' blob:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'"
-  ].join('; '));
-  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=()');
-  // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
-  // и не пойдут по http даже по подменённой ссылке.
-  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-  next();
-});
 
 // Logging
 app.use((req, res, next) => {

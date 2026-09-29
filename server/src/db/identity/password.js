@@ -1,7 +1,53 @@
 const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 
-const scrypt = promisify(crypto.scrypt);
+const rawScrypt = promisify(crypto.scrypt);
+
+// Одновременно считается не больше PASSWORD_HASH_CONCURRENCY хэшей (по
+// умолчанию 2), остальные ждут в очереди. Каждый расчёт при N=2^17 — около
+// 128 МиБ памяти и заметная доля секунды процессора в потоке libuv; этих
+// потоков по умолчанию четыре, и на них же идёт чтение и запись файлов. Поток
+// попыток входа без этого предела занимал их все: вложения и обновления
+// переставали отдаваться, память росла на 128 МиБ за каждый параллельный
+// расчёт (аудит, раунд 4, находка Р4-03). Очередь короткая: переполненная —
+// отказ сразу (код PASSWORD_HASH_BUSY → 503), а не ожидание в минуты.
+const HASH_QUEUE_MAX = 100;
+let hashActive = 0;
+const hashWaiters = [];
+
+function hashConcurrency() {
+  // Читается при каждом вызове, а не один раз: config загружается раньше
+  // этого модуля не всегда (скрипты восстановления, тесты).
+  try {
+    return require('../../config').PASSWORD_HASH_CONCURRENCY || 2;
+  } catch {
+    return 2;
+  }
+}
+
+function busyError() {
+  const err = new Error('Сервер занят проверкой паролей — повторите через несколько секунд');
+  err.code = 'PASSWORD_HASH_BUSY';
+  return err;
+}
+
+async function scrypt(...args) {
+  if (hashActive >= hashConcurrency()) {
+    if (hashWaiters.length >= HASH_QUEUE_MAX) throw busyError();
+    await new Promise((resolve) => hashWaiters.push(resolve));
+  } else {
+    hashActive += 1;
+  }
+  try {
+    return await rawScrypt(...args);
+  } finally {
+    // Место передаётся следующему в очереди напрямую, без уменьшения счётчика:
+    // иначе между освобождением и пробуждением его мог бы занять третий.
+    const next = hashWaiters.shift();
+    if (next) next();
+    else hashActive -= 1;
+  }
+}
 
 // Параметры вывода ключа. Прежний код звал crypto.scryptSync со значениями по
 // умолчанию (N=16384) и, что важнее, делал это синхронно: на время вычисления
@@ -138,8 +184,15 @@ function assertPassword(password) {
   }
 }
 
+// Для тестов: сколько расчётов идёт и ждёт прямо сейчас.
+function hashLoad() {
+  return { active: hashActive, waiting: hashWaiters.length };
+}
+
 module.exports = {
   hashPassword,
   verifyPassword,
+  hashLoad,
+  HASH_QUEUE_MAX,
   CURRENT_PARAMS: CURRENT
 };

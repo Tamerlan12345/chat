@@ -60,6 +60,12 @@ async function bootstrap() {
     await pruneStaleDevices();
     await require('./updates/client-installs').pruneClientInstalls();
 
+    // Наполнить индекс «знакомых» адресов из базы, пока не пошли запросы: после
+    // перезапуска адрес офиса должен считаться знакомым ещё до первого входа —
+    // иначе утренний наплыв упёрся бы в жёсткий предел для незнакомых адресов
+    // (третий раунд проверки, пункт 3).
+    await require('./services/trusted-sources.service').primeReverseIndex();
+
     finalizeIdentitySplit(chatDb);
 
     // Никто не может быть «в сети» сразу после запуска: сокетов ещё нет.

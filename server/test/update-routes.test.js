@@ -16,6 +16,10 @@ process.env.UPDATES_DIR = UPDATES_DIR;
 process.env.UPDATES_MAX_FILE_MB = '1';
 process.env.UPDATES_MAX_CONCURRENT_DOWNLOADS = '3';
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
+// Проверка раунда 4 (M7): предел частоты обновлений теперь по установке плюс
+// высокий потолок на адрес. Здесь потолок на адрес занижен, чтобы проверить
+// его немногими запросами; в бою по умолчанию 6000/мин, чтобы вместить офис.
+process.env.UPDATES_MAX_REQ_PER_MIN_PER_IP = '120';
 
 const { freshBoot, closeAll } = require('./helpers/boot');
 
@@ -315,7 +319,7 @@ test('неизвестное имя и обход пути → 404', async () =>
   const paths = [
     '/updates/stable/release.json',
     '/updates/stable/latest.json',
-    '/updates/stable/OpenMyChat-Enterprise-Setup-9.9.9.exe',
+    '/updates/stable/CentyChat-Setup-9.9.9.exe',
     '/updates/stable/..%2F..%2F..%2Fpackage.json',
     '/updates/stable/..%2Freleases%2F1.2.0%2Frelease.json',
     '/updates/stable/..%5C..%5Cpackage.json',
@@ -551,4 +555,30 @@ test('policy.json при исчерпанном (тем же) счётчике �
   await installRecorder.idle();
   const row = await identity.get('SELECT install_id FROM client_installs WHERE install_id = $1', [id]);
   assert.ok(!row, 'запись должна была быть пропущена при исчерпанной частоте');
+});
+
+// Ссылки в policy.json строятся по именам файлов, под которыми выпуск
+// сохранён, а не по шаблону имени текущей сборки: выпуск под прежним именем
+// (до переименования в CentyChat) или любым другим получает рабочую ссылку —
+// та же, что раздаёт маршрут /:channel/:file по индексу release.json.
+test('downloadUrls: ссылки — по сохранённым именам файлов выпуска', () => {
+  const { downloadUrls } = require('../src/updates/router');
+  const legacy = {
+    version: '1.2.0',
+    files: [
+      { name: 'OpenMyChat-Enterprise-Setup-1.2.0.exe', kind: 'setup' },
+      { name: 'OpenMyChat-Enterprise-Setup-1.2.0.exe.blockmap', kind: 'blockmap' },
+      { name: 'OpenMyChat-Enterprise-Portable-1.2.0.exe', kind: 'portable' }
+    ]
+  };
+  assert.deepStrictEqual(downloadUrls('stable', legacy), {
+    setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe',
+    portableUrl: '/updates/stable/OpenMyChat-Enterprise-Portable-1.2.0.exe'
+  });
+  const noPortable = { version: '1.3.0-beta.1', files: [{ name: 'Custom Setup 1.3.0.exe', kind: 'setup' }] };
+  assert.deepStrictEqual(downloadUrls('beta', noPortable), {
+    setupUrl: '/updates/beta/Custom%20Setup%201.3.0.exe',
+    portableUrl: null
+  });
+  assert.deepStrictEqual(downloadUrls('stable', null), { setupUrl: null, portableUrl: null });
 });
