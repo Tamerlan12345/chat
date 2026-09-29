@@ -4,6 +4,7 @@ import { useInlineToast } from './InlineToast';
 import Icon from './Icon';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
+import UpdatesAdmin from './UpdatesAdmin';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
 
 // Ключи настроек, которыми владеет раздел «Безопасность».
@@ -66,6 +67,20 @@ export default function AdminUserModal({
   const [oneTimePassword, setOneTimePassword] = useState(null);
   const [savingUser, setSavingUser] = useState(false);
   const [formError, setFormError] = useState('');
+  // Подвал раньше показывал жёсткую строку «2025.3.1» — ни сервера, ни этого
+  // компьютера она не касалась. getAppInfo() есть только у оболочки Задачи 9
+  // и новее и только у главного окна; у старой оболочки и здесь ничего не
+  // будет — подвал тогда покажет только версию сервера.
+  const [clientVersion, setClientVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (window.electronAPI?.getAppInfo) {
+      window.electronAPI.getAppInfo()
+        .then((info) => { if (!cancelled && info && typeof info.version === 'string') setClientVersion(info.version); })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, []);
   const [annSubmitting, setAnnSubmitting] = useState(false);
   const focusHandledRef = useRef(null);
 
@@ -1192,6 +1207,13 @@ export default function AdminUserModal({
                   </button>
 
                   <button
+                    className={`admin-nav-item ${activeTab === 'updates' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('updates')}
+                  >
+                    <Icon name="download" size={16} /> <span>Обновления</span>
+                  </button>
+
+                  <button
                     className={`admin-nav-item ${activeTab === 'licenses' ? 'active' : ''}`}
                     onClick={() => setActiveTab('licenses')}
                   >
@@ -1204,7 +1226,7 @@ export default function AdminUserModal({
             <div className="admin-sidebar-footer">
               <div><strong>Порт чата:</strong> 2004 TCP</div>
               <div><strong>Статус:</strong> <span style={{ color: 'light-dark(#16a34a, #81eea9)' }}>● Активен</span></div>
-              <div><strong>Версия:</strong> 2025.3.1</div>
+              <div><strong>Версия:</strong> сервер {serverInfo?.version || '—'} · клиент {clientVersion || '—'}</div>
             </div>
           </div>
 
@@ -2761,6 +2783,12 @@ export default function AdminUserModal({
                   onAlertAcknowledged={onSecurityAlertAcknowledged}
                   showToast={showToast}
                 />
+              </div>
+            )}
+
+            {activeTab === 'updates' && superAdmin && (
+              <div className="admin-tab-pane">
+                <UpdatesAdmin serverUrl={serverUrl} showToast={showToast} />
               </div>
             )}
 

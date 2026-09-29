@@ -52,9 +52,9 @@ class DeviceService {
 
     if (pairing) {
       await db.run(
-        `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired'
-         WHERE device_id = $3`,
-        [now, cleanIp, cleanDeviceId]
+        `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired', client_version = $3
+         WHERE device_id = $4`,
+        [now, cleanIp, cleanClientVersion, cleanDeviceId]
       );
 
       // Номер устройства видят администраторы, и угадать его несложно — сам по

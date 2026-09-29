@@ -354,6 +354,67 @@ test('device_name длиной 10000 символов обрезается до 
   }
 });
 
+// ── Задача 10 (интерфейс автообновления): версия клиента живая ────────────
+//
+// Раньше уже привязанное устройство обновляло в pending_devices только
+// last_knock_at/ip_address/status при каждом «стуке» — client_version
+// оставался тем, что было записано при самом первом (ещё не привязанном)
+// обращении. Консоль «Обновления» (fleet.byVersion) показывала бы старую
+// версию сколько угодно долго после того, как клиент обновился.
+
+test('повторный knock уже привязанного устройства обновляет client_version в pending_devices', async () => {
+  const deviceId = 'dev-clientversion-1';
+  const secret = randomSecret();
+
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: people.ivanov.id, adminUser: people.admin });
+  await DeviceService.claimDeviceSecret({ userId: people.ivanov.id, device_id: deviceId, device_secret: secret });
+
+  // Первый knock уже был неявно (bindDevice не пишет client_version), поэтому
+  // строка в pending_devices у этого устройства ещё не существует. Заводим
+  // её так, как реально сделал бы первый анонимный «стук» со старой версией.
+  await identity.run(
+    `INSERT INTO pending_devices (device_id, device_name, ip_address, platform, client_version, status, first_knock_at, last_knock_at)
+     VALUES ($1, $2, $3, $4, $5, 'paired', $6, $6)`,
+    [deviceId, 'ПК', '127.0.0.1', 'Windows', '1.0.0', new Date().toISOString()]
+  );
+
+  const knock = await DeviceService.knock({
+    device_id: deviceId,
+    device_secret: secret,
+    ip_address: '127.0.0.1',
+    client_version: '1.2.0'
+  });
+  assert.strictEqual(knock.status, 'paired');
+
+  const row = await identity.get('SELECT client_version FROM pending_devices WHERE device_id = $1', [deviceId]);
+  assert.strictEqual(row.client_version, '1.2.0', 'client_version обязан обновиться и на уже привязанном устройстве');
+});
+
+test('client_version у привязанного устройства обрезается тем же пределом (32 символа), что и у ещё не привязанного', async () => {
+  const deviceId = 'dev-clientversion-cap';
+  const secret = randomSecret();
+
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: people.ivanov.id, adminUser: people.admin });
+  await DeviceService.claimDeviceSecret({ userId: people.ivanov.id, device_id: deviceId, device_secret: secret });
+  await identity.run(
+    `INSERT INTO pending_devices (device_id, device_name, ip_address, platform, client_version, status, first_knock_at, last_knock_at)
+     VALUES ($1, $2, $3, $4, $5, 'paired', $6, $6)`,
+    [deviceId, 'ПК', '127.0.0.1', 'Windows', '1.0.0', new Date().toISOString()]
+  );
+
+  const longVersion = '9'.repeat(10000);
+  const knock = await DeviceService.knock({
+    device_id: deviceId,
+    device_secret: secret,
+    ip_address: '127.0.0.1',
+    client_version: longVersion
+  });
+  assert.strictEqual(knock.status, 'paired');
+
+  const row = await identity.get('SELECT client_version FROM pending_devices WHERE device_id = $1', [deviceId]);
+  assert.ok(row.client_version.length <= 32, `client_version в базе длиной ${row.client_version.length}, ожидалось ≤32`);
+});
+
 // ── Находка №1 (продолжение): token_version не для контурных администраторов ─
 
 test('GET /api/admin/users: контурный администратор не видит token_version, суперадминистратор — видит', async () => {
