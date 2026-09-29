@@ -9,8 +9,10 @@ const { freshBoot, closeAll } = require('./helpers/boot');
 // Главный принцип: переполнение ограничителей и подбор НЕ должны запирать вход
 // сотрудникам, которых не атакуют, а офис за одним NAT не должен спотыкаться о
 // пределы штатным трафиком.
-//   Р4-01/ПР-I4 — задержка по учётной записи; знакомый адрес не задерживается;
-//                 очередь у каждого адреса своя (атакующий не съедает окно);
+//   sec5 — суточный предел неверных проверок пароля на учётную запись: U=5
+//          (незнакомые адреса), F=10 (знакомые), P=5 (смена пароля), ≤20 в сутки,
+//          переживает перезапуск; «стук» устройства не затронут;
+//   Р4-01/ПР-I4 — персональная задержка источника (вторичный слой);
 //   Р4-02 — ключи по сети /64;
 //   ПР-01 — карта ограничителя переполнена → вытеснение, не отказ (fail open);
 //   ПР-02 — «в полёте» попытки не считаются неудачами; офис за NAT входит;
@@ -21,8 +23,11 @@ const { freshBoot, closeAll } = require('./helpers/boot');
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
 process.env.TRUSTED_PROXY_IPS = '127.0.0.1';
 process.env.LOGIN_MAX_FAILED_ATTEMPTS = '3';
-process.env.LOGIN_ACCOUNT_SOFT_LIMIT = '5';
 process.env.LOGIN_ACCOUNT_MAX_DELAY_SECONDS = '2';
+// Суточные корзины (sec5): U=5, F=10, P=5.
+process.env.LOGIN_DAILY_FAILURES_UNFAMILIAR = '5';
+process.env.LOGIN_DAILY_FAILURES_FAMILIAR = '10';
+process.env.PASSWORD_CHANGE_DAILY_FAILURES = '5';
 
 let baseUrl;
 let server;
@@ -271,201 +276,326 @@ test('HTTP: пробелы вокруг логина делят один счё�
   assert.strictEqual(elsewhere.status, 200, elsewhere.text);
 });
 
-// ── Задержка по учётной записи и её честные гарантии (ПР-I4) ────────────────
+// ── Суточные корзины неудач U/F/P (требование владельца, sec5) ──────────────
 
-test('под распределённым подбором знакомый адрес всегда входит (гарантия доступности)', async () => {
-  const u = await makeUser();
-  const homeIp = '203.0.113.200';
-  assert.ok((await AuthService.login(u.username, u.password, { ip: homeIp })).token, 'адрес стал знакомым');
-  // Подбор с множества адресов доводит учётную запись до включённой задержки и
-  // может вычерпать общее ведро токенов (незнакомый адрес тогда подождёт).
-  for (let i = 0; i < 20; i++) await AuthService.login(u.username, 'догадка', { ip: `192.0.2.${i + 1}` }).catch(() => {});
-  // Знакомый адрес входит сразу, сколько бы ни шёл подбор и что бы ни было с
-  // ведром — это и есть твёрдая гарантия (I-A).
-  assert.ok((await AuthService.login(u.username, u.password, { ip: homeIp })).token, 'знакомый адрес не задержан');
-});
+// Проверка допуска без попытки: билет сразу возвращается нейтральным исходом,
+// иначе он держал бы слот «в полёте» (п.1 проверки sec5) и влиял на следующие.
+function peekAdmit(name, opts) {
+  const a = LoginThrottle.admit(name, opts);
+  if (a.ok) LoginThrottle.settle(a.ticket, 'neutral', { now: opts.now });
+  return a;
+}
 
-test('распределённый подбор одной учётной записи ограничен ~750 догадками в сутки при любом числе адресов (I-A, воспроизведение j на реальном модуле)', () => {
-  const config = require('../src/config');
-  const bound = config.LOGIN_ACCOUNT_SOFT_LIMIT + 10 + config.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR * 24;
-  const run = (N) => {
-    LoginThrottle.resetThrottle();
-    const start = 1e12;
-    const end = start + 24 * 3600e3;
-    const next = new Array(N).fill(start);
-    let guesses = 0;
-    for (;;) {
-      let i = 0;
-      for (let k = 1; k < N; k++) if (next[k] < next[i]) i = k;
-      const now = next[i];
-      if (now > end) break;
-      const a = LoginThrottle.admit('victim', { ipKey: `ip${i}`, now });
-      if (!a.ok) { next[i] = now + a.retryAfterMs; continue; }
-      LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
-      guesses += 1;
-      next[i] = now + 301;
+// Хелпер: сколько раз подряд admit пропускает (settle=failure), пока корзина
+// класса не исчерпается. Работает на реальном модуле с внедрёнными часами.
+function guessesUntilBlocked(name, mkOpts, { start = 1e12, stepMs = 400, maxIter = 500 } = {}) {
+  let now = start;
+  let guesses = 0;
+  let lastRefusal = null;
+  for (let i = 0; i < maxIter; i++) {
+    const a = LoginThrottle.admit(name, { ...mkOpts(i), now });
+    if (!a.ok) {
+      lastRefusal = a;
+      if (a.reason === 'daily') break;
+      now += a.retryAfterMs + 1; // персональная задержка источника — переждать
+      continue;
     }
-    return guesses;
-  };
+    LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
+    guesses += 1;
+    now += stepMs;
+  }
+  return { guesses, lastRefusal };
+}
+
+test('U: распределённый подбор с незнакомых адресов ограничен LOGIN_DAILY_FAILURES_UNFAMILIAR при любом N (воспроизведение j)', () => {
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
   for (const N of [1, 10, 100]) {
-    const g = run(N);
-    assert.ok(g <= bound + 50, `N=${N}: ${g} догадок/сутки должно быть в пределах ~${bound}`);
-  }
-  LoginThrottle.resetThrottle();
-});
-
-test('пульсирующий подбор (всплеск-тишина-всплеск) НЕ обходит предел: ≤ ~750/сутки (третий раунд, п.2, воспроизведение j2)', () => {
-  const config = require('../src/config');
-  const bound = config.LOGIN_ACCOUNT_SOFT_LIMIT + config.LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR * 24;
-  const quietMs = config.LOGIN_LOCKOUT_MINUTES * 60000;
-  const run = (N) => {
     LoginThrottle.resetThrottle();
-    let now = 1e12;
-    const end = now + 86400e3;
-    let guesses = 0;
-    let ipIdx = 0;
-    while (now < end) {
-      // Всплеск: бьём, пока подряд не откажут 3N раз.
-      let refusedInRow = 0;
-      while (refusedInRow < 3 * N && now < end) {
-        const ip = 'ip' + (ipIdx++ % N);
-        const a = LoginThrottle.admit('victim', { ipKey: ip, now });
-        if (!a.ok) { refusedInRow += 1; now += 50; continue; }
-        refusedInRow = 0;
-        LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
-        now += 301;
-        guesses += 1;
-      }
-      now += quietMs; // тишина — окно неудач обнуляется, но ведро НЕ пополняется рывком
+    const { guesses, lastRefusal } = guessesUntilBlocked('victim', (i) => ({ ipKey: `2001:db8:${i % N}::1` }));
+    assert.strictEqual(guesses, lim, `N=${N}: ровно ${lim} догадок с незнакомых адресов`);
+    assert.strictEqual(lastRefusal.reason, 'daily');
+    assert.strictEqual(lastRefusal.cls, 'U');
+  }
+  LoginThrottle.resetThrottle();
+});
+
+test('U: пульсирующий подбор (всплеск-тишина-всплеск) НЕ обходит суточный предел', () => {
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
+  const quietMs = require('../src/config').LOGIN_LOCKOUT_MINUTES * 60000;
+  LoginThrottle.resetThrottle();
+  let now = 1e12;
+  const end = now + 86400e3;
+  let guesses = 0;
+  let ipIdx = 0;
+  while (now < end) {
+    let refusedInRow = 0;
+    while (refusedInRow < 10 && now < end) {
+      const a = LoginThrottle.admit('victim', { ipKey: `2001:db8:${ipIdx++ % 50}::1`, now });
+      if (!a.ok) { refusedInRow += 1; now += 60; continue; }
+      LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 });
+      guesses += 1; now += 400;
     }
-    return guesses;
-  };
-  for (const N of [3, 10, 100]) {
-    const g = run(N);
-    assert.ok(g <= bound + 60, `пульс N=${N}: ${g} догадок/сутки должно быть в пределах ~${bound}`);
+    now += quietMs; // тишина — счётчик пары обнуляется, но суточное окно скользит
   }
+  assert.ok(guesses <= lim, `пульс: ${guesses} догадок за сутки ≤ ${lim}`);
   LoginThrottle.resetThrottle();
 });
 
-test('login-throttle: успех/нейтраль/BUSY возвращают токен ведра, тратит только неудача (I-A)', () => {
+test('F: подбор со знакомых адресов ограничен LOGIN_DAILY_FAILURES_FAMILIAR', () => {
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_FAMILIAR;
   LoginThrottle.resetThrottle();
-  const name = 'refund.acct';
-  let now = 7_000_000;
-  // Ведро консультируется всегда для незнакомых. Много нейтральных исходов
-  // (например, BUSY) не вычерпывают его: токен берётся и тут же возвращается.
-  for (let i = 0; i < 200; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.2.0.${i % 7}`, now });
-    now += 1;
-    assert.strictEqual(a.ok, true, `нейтральная попытка ${i} должна допускаться`);
+  const { guesses, lastRefusal } = guessesUntilBlocked('victim', () => ({ ipKey: '10.0.0.1', trusted: true }));
+  assert.strictEqual(guesses, lim, `ровно ${lim} догадок со знакомых адресов`);
+  assert.strictEqual(lastRefusal.cls, 'F');
+  LoginThrottle.resetThrottle();
+});
+
+test('U и F — раздельные корзины: одна не съедает другую (в сумме ≤ U+F)', () => {
+  const cfg = require('../src/config');
+  LoginThrottle.resetThrottle();
+  const u = guessesUntilBlocked('victim', () => ({ ipKey: '2001:db8:1::1' }));
+  const f = guessesUntilBlocked('victim', () => ({ ipKey: '10.0.0.1', trusted: true }));
+  assert.strictEqual(u.guesses, cfg.LOGIN_DAILY_FAILURES_UNFAMILIAR);
+  assert.strictEqual(f.guesses, cfg.LOGIN_DAILY_FAILURES_FAMILIAR);
+  // Знакомый вход по-прежнему исчерпал ровно F, несмотря на уже исчерпанный U.
+  LoginThrottle.resetThrottle();
+});
+
+test('только подтверждённая неудача тратит бюджет: нейтральные исходы (BUSY) — нет', () => {
+  LoginThrottle.resetThrottle();
+  const name = 'neutral.acct';
+  let now = 2e12;
+  for (let i = 0; i < 100; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `2001:db8:${i % 7}::9`, now });
+    assert.strictEqual(a.ok, true, `нейтральная попытка ${i} допускается`);
     LoginThrottle.settle(a.ticket, 'neutral', { now });
-  }
-  // Тратит только подтверждённая неудача: cap = softLimit неудач исчерпывают ведро.
-  const soft = require('../src/config').LOGIN_ACCOUNT_SOFT_LIMIT;
-  for (let i = 0; i < soft; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.4.0.${i}`, now });
     now += 1;
-    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
   }
-  const drained = LoginThrottle.admit(name, { ipKey: '10.9.9.9', now });
-  assert.strictEqual(drained.ok, false, 'после softLimit неудач ведро исчерпано');
-  assert.strictEqual(drained.reason, 'account');
-  // Знакомый источник при этом не затронут.
-  assert.strictEqual(LoginThrottle.admit(name, { ipKey: '10.9.9.9', trusted: true, now }).ok, true);
+  assert.strictEqual(LoginThrottle.dailyCount(name, 'U', now), 0, 'нейтральные исходы не наполнили корзину');
   LoginThrottle.resetThrottle();
 });
 
-test('login-throttle: сброс состояния учётной записи (сброс пароля админом) снимает задержку', () => {
+test('успех сбрасывает ТОЛЬКО свою корзину: удачный вход со знакомого адреса не чистит U', () => {
+  LoginThrottle.resetThrottle();
+  const name = 'own.class';
+  let now = 3e12;
+  // Немного неудач с незнакомых адресов (U растёт, но не исчерпан).
+  for (let i = 0; i < 3; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `2001:db8:c${i}::1`, now });
+    LoginThrottle.settle(a.ticket, 'failure', { now }); now += 1;
+  }
+  assert.strictEqual(LoginThrottle.dailyCount(name, 'U', now), 3);
+  // Удачный вход со ЗНАКОМОГО адреса (класс F) — чистит F, но не U.
+  const a = LoginThrottle.admit(name, { ipKey: '10.0.0.1', trusted: true, now });
+  LoginThrottle.settle(a.ticket, 'success', { now });
+  assert.strictEqual(LoginThrottle.dailyCount(name, 'U', now), 3, 'U не должен обнулиться офисным входом');
+  LoginThrottle.resetThrottle();
+});
+
+test('окно скользит: спустя 24 ч одна попытка освобождается', () => {
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
+  LoginThrottle.resetThrottle();
+  const name = 'sliding';
+  const first = 4e12;
+  let now = first;
+  for (let i = 0; i < lim; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `2001:db8:d${i}::1`, now });
+    LoginThrottle.settle(a.ticket, 'failure', { now }); now += 3600e3; // по одной в час
+  }
+  assert.strictEqual(peekAdmit(name, { ipKey: '2001:db8:ff::1', now }).ok, false, 'исчерпано');
+  // Ровно через 24 ч после ПЕРВОЙ неудачи она выходит из окна — освобождается
+  // одна попытка (остальные ещё в окне).
+  const later = first + 24 * 3600e3 + 1;
+  assert.strictEqual(LoginThrottle.dailyCount(name, 'U', later), lim - 1, 'ровно одна неудача вышла из окна');
+  assert.strictEqual(peekAdmit(name, { ipKey: '2001:db8:ff::1', now: later }).ok, true, 'после суток окно сдвинулось');
+  LoginThrottle.resetThrottle();
+});
+
+test('clearAccount снимает все корзины учётной записи', () => {
   LoginThrottle.resetThrottle();
   const name = 'recover.acct';
-  let now = 8_000_000;
-  for (let i = 0; i < 40; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `10.3.0.${i % 3}`, now });
-    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
-    now += 1;
+  let now = 5e12;
+  // Исчерпать U.
+  for (let i = 0; i < 10; i++) {
+    const a = LoginThrottle.admit(name, { ipKey: `2001:db8:e${i}::1`, now });
+    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now }); now += 1;
   }
-  // Один из адресов атаки сейчас под персональной задержкой.
-  const before = LoginThrottle.admit(name, { ipKey: '10.3.0.0', now });
-  assert.strictEqual(before.ok, false, 'до сброса адрес под задержкой');
+  assert.strictEqual(peekAdmit(name, { ipKey: '2001:db8:eff::1', now }).ok, false);
   LoginThrottle.clearAccount(name);
-  const afterReset = LoginThrottle.admit(name, { ipKey: '10.3.0.0', now });
-  assert.strictEqual(afterReset.ok, true, 'после сброса состояния — вход свободен');
+  assert.strictEqual(peekAdmit(name, { ipKey: '2001:db8:eff::1', now }).ok, true, 'после сброса — свободно');
   LoginThrottle.resetThrottle();
 });
 
-test('login-throttle (детерминированно): повтор одного источника упирается в персональную задержку; знакомый — никогда', () => {
+test('персональная задержка источника — вторичный слой: включается при распределённом подборе, не от единичной опечатки', () => {
+  const cfg = require('../src/config');
+  const engageAt = cfg.LOGIN_MAX_FAILED_ATTEMPTS + 1;
+  assert.ok(engageAt <= cfg.LOGIN_DAILY_FAILURES_UNFAMILIAR, 'тест-окружение: порог включения не выше суточной корзины');
   LoginThrottle.resetThrottle();
-  const name = 'unit.victim';
-  let now = 5_000_000;
-  // Повторные неудачи с ОДНОГО адреса: сперва проходят (пока в ведре есть
-  // токены), затем этот источник упирается в персональную задержку или в
-  // исчерпанное ведро — в любом случае получает отказ с retryAfterMs.
-  let refused = null;
-  for (let i = 0; i < 12 && !refused; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: '10.0.0.7', now });
-    if (a.ok) { LoginThrottle.settle(a.ticket, 'failure', { now: now + 300 }); now += 400; }
-    else refused = a;
+  const name = 'delay.acct';
+  let now = 6e12;
+  // Единичная ошибка источника НЕ включает задержку (офис/опечатка).
+  const one = LoginThrottle.admit(name, { ipKey: '2001:db8:a0::1', now });
+  LoginThrottle.settle(one.ticket, 'failure', { now });
+  now += 10;
+  assert.strictEqual(peekAdmit(name, { ipKey: '2001:db8:a0::1', now }).ok, true, 'после одной ошибки повтор не задержан');
+  // Доводим учётную запись до порога включения распределённым подбором.
+  let last = null;
+  for (let i = 1; i < engageAt; i++) {
+    const ip = `2001:db8:a${i}::1`;
+    const a = LoginThrottle.admit(name, { ipKey: ip, now });
+    if (a.ok) { LoginThrottle.settle(a.ticket, 'failure', { now }); last = ip; }
+    now += 10;
   }
-  assert.ok(refused, 'повторяющийся источник в итоге получает отказ');
-  assert.ok(refused.retryAfterMs > 0, 'с указанием, когда повторить');
-  // Знакомый источник не задерживается никогда, что бы ни творилось.
-  assert.strictEqual(LoginThrottle.admit(name, { ipKey: '10.0.0.7', trusted: true, now }).ok, true);
-  LoginThrottle.resetThrottle();
-});
-
-test('знакомый сотрудник входит всегда, сколько бы ни шёл подбор с чужих адресов (воспроизведение h; знакомый = trusted)', () => {
-  LoginThrottle.resetThrottle();
-  const name = 'victim';
-  let now = 1_000_000;
-  // Атакующий доводит учётную запись до задержки со своих адресов.
-  for (let i = 0; i < 40; i++) {
-    const a = LoginThrottle.admit(name, { ipKey: `203.0.113.${i % 5}`, now });
-    if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now });
-    now += 50;
-  }
-  let userTries = 0;
-  let userWins = 0;
-  let attackerNext = now;
-  let userNext = now;
-  const end = now + 10 * 60000;
-  while (Math.min(attackerNext, userNext) <= end) {
-    const t = Math.min(attackerNext, userNext);
-    if (attackerNext <= userNext) {
-      const a = LoginThrottle.admit(name, { ipKey: `203.0.113.${Math.floor(Math.random() * 5)}`, now: t });
-      if (a.ok) { LoginThrottle.settle(a.ticket, 'failure', { now: t + 300 }); attackerNext = t + 300; }
-      else attackerNext = t + a.retryAfterMs + 5;
-    } else {
-      userTries += 1;
-      // Сотрудник с рабочего места — знакомый адрес (trusted): вход гарантирован.
-      const a = LoginThrottle.admit(name, { ipKey: '198.51.100.9', trusted: true, now: t });
-      if (a.ok) { userWins += 1; LoginThrottle.settle(a.ticket, 'success', { now: t + 300 }); }
-      userNext = t + 5000 + Math.floor(Math.random() * 10000);
-    }
-  }
-  assert.ok(userWins === userTries && userTries > 0, `знакомый сотрудник входит всегда: ${userWins}/${userTries}`);
+  // Теперь тот же источник, что только что ошибся, при немедленном повторе ждёт.
+  const repeat = peekAdmit(name, { ipKey: last, now });
+  assert.strictEqual(repeat.ok, false, 'во включённом состоянии повтор того же источника задержан');
+  assert.strictEqual(repeat.reason, 'delay');
+  assert.ok(repeat.retryAfterMs > 0);
   LoginThrottle.resetThrottle();
 });
 
-test('login-throttle: переполнение карты вытесняет и НЕ отказывает новому логину (fail open)', () => {
-  LoginThrottle.resetThrottle({ maxEntries: 2 });
-  try {
-    for (const name of ['full-a', 'full-b']) {
-      for (let i = 0; i < 10; i++) {
-        const a = LoginThrottle.admit(name, { ipKey: '203.0.113.1', now: 1000 + i * 10000 });
-        if (a.ok) LoginThrottle.settle(a.ticket, 'failure', { now: 1000 + i * 10000 });
-      }
-    }
-    // Новый логин при заполненной карте — не задержан (fail open).
-    assert.strictEqual(LoginThrottle.admit('full-new', { ipKey: '198.51.100.5', now: 1000 + 10 * 10000 }).ok, true);
-  } finally {
-    LoginThrottle.resetThrottle();
-  }
-});
+// ── HTTP: суточные корзины по-настоящему (с базой и персистентностью) ────────
 
-test('задержка не срабатывает от ошибок одного сотрудника с одного адреса', async () => {
+test('HTTP: U исчерпывается на 6-й попытке, верный пароль тоже отклоняется (429)', async () => {
   const u = await makeUser();
-  const ip = '198.51.100.40';
-  for (let i = 0; i < 3; i++) await AuthService.login(u.username, 'опечатка', { ip }).catch(() => {});
-  assert.ok((await AuthService.login(u.username, u.password, { ip: '198.51.100.41' })).token);
+  let checked = 0;
+  let blocked = 0;
+  for (let i = 0; i < 8; i++) {
+    const res = await api('POST', '/api/auth/login', { ip: `2001:db8:600:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+    if (res.status === 400) checked += 1;
+    if (res.status === 429) blocked += 1;
+  }
+  assert.strictEqual(checked, 5, 'проверено ровно 5 паролей (U=5)');
+  assert.ok(blocked >= 3, 'дальше — 429');
+  // Верный пароль с нового незнакомого адреса тоже отклонён без проверки.
+  const correct = await api('POST', '/api/auth/login', { ip: '2001:db8:6ff::1', body: { username: u.username, password: u.password } });
+  assert.strictEqual(correct.status, 429, correct.text);
+  assert.strictEqual(correct.json.code, 'ACCOUNT_THROTTLED');
+});
+
+test('HTTP: суточная корзина переживает перезапуск (журнал в базе)', async () => {
+  const u = await makeUser();
+  for (let i = 0; i < 5; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:700:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  // Строки записаны в базу.
+  const rows = await identity.all('SELECT class FROM login_failure_log WHERE user_id = $1', [u.id]);
+  assert.ok(rows.length >= 5 && rows.every((r) => r.class === 'U'), `в журнале ${rows.length} строк U`);
+  // Имитация перезапуска: очищаем ТОЛЬКО память модуля, база остаётся.
+  LoginThrottle.resetThrottle();
+  await LoginThrottle.ensureLoaded(u.id, u.username);
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'U'), 5, 'после перезапуска корзина восстановлена из базы');
+  const res = await api('POST', '/api/auth/login', { ip: '2001:db8:7ff::1', body: { username: u.username, password: u.password } });
+  assert.strictEqual(res.status, 429, 'корректный пароль всё ещё отклонён после перезапуска');
+});
+
+test('HTTP: сброс пароля администратором снимает все три корзины (U, F, P)', async () => {
+  const u = await makeUser();
+  // U — исчерпываем подбором с незнакомых адресов.
+  for (let i = 0; i < 6; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:800:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  // F и P — досеиваем прямо в журнал, чтобы проверить очистку всех трёх классов.
+  const nowIso = new Date().toISOString();
+  await identity.run('INSERT INTO login_failure_log (user_id, class, at) VALUES ($1, $2, $3)', [u.id, 'F', nowIso]);
+  await identity.run('INSERT INTO login_failure_log (user_id, class, at) VALUES ($1, $2, $3)', [u.id, 'P', nowIso]);
+  const before = await identity.all('SELECT DISTINCT class FROM login_failure_log WHERE user_id = $1', [u.id]);
+  assert.deepStrictEqual(before.map((r) => r.class).sort(), ['F', 'P', 'U'], 'в журнале есть все три класса');
+  assert.strictEqual((await api('POST', '/api/auth/login', { ip: '2001:db8:8ff::1', body: { username: u.username, password: u.password } })).status, 429);
+  await UserService.adminResetPassword(u.id, 'Новый-Админ-Пароль-9');
+  const rows = await identity.all('SELECT class FROM login_failure_log WHERE user_id = $1', [u.id]);
+  assert.strictEqual(rows.length, 0, 'сброс пароля очистил журнал неудач всех классов');
+  // С новым паролем сотрудник входит с любого адреса (must_change при сбросе — ок).
+  const res = await api('POST', '/api/auth/login', { ip: '2001:db8:8ee::1', body: { username: u.username, password: 'Новый-Админ-Пароль-9' } });
+  assert.strictEqual(res.status, 200, res.text);
+});
+
+test('офис за одним NAT: множество верных входов подряд не расходуют суточную корзину', { timeout: 90000 }, async () => {
+  const u = await makeUser();
+  await loginRetry503Only(u.username, u.password, '198.51.100.42'); // адрес офиса становится знакомым
+  for (let i = 0; i < 12; i++) {
+    const res = await loginRetry503Only(u.username, u.password, '198.51.100.42');
+    assert.strictEqual(res.status, 200, `вход ${i}: ${res.text}`);
+  }
+});
+
+test('суточный потолок ≤ 20: пульсирующий U + инсайдерский F + смена P в сумме не больше U+F+P', () => {
+  const cfg = require('../src/config');
+  LoginThrottle.resetThrottle();
+  const name = 'ceiling.acct';
+  // U — пульсирующий распределённый подбор (всплеск-тишина-всплеск).
+  let uChecks = 0;
+  {
+    let now = 9e12; const end = now + 86400e3; let idx = 0;
+    while (now < end) {
+      let refused = 0;
+      while (refused < 20 && now < end) {
+        const a = LoginThrottle.admit(name, { ipKey: `2001:db8:f${idx++ % 40}::1`, now });
+        if (!a.ok) { refused += 1; now += 60; continue; }
+        LoginThrottle.settle(a.ticket, 'failure', { now: now + 200 }); uChecks += 1; now += 400;
+      }
+      now += cfg.LOGIN_LOCKOUT_MINUTES * 60000;
+    }
+  }
+  // F — инсайдер со знакомого адреса.
+  let fChecks = 0;
+  {
+    let now = 9e12;
+    for (let i = 0; i < 40; i++) {
+      const a = LoginThrottle.admit(name, { ipKey: '10.0.0.5', trusted: true, now });
+      if (a.ok) { LoginThrottle.settle(a.ticket, 'failure', { now }); fChecks += 1; }
+      now += 1;
+    }
+  }
+  assert.strictEqual(uChecks, cfg.LOGIN_DAILY_FAILURES_UNFAMILIAR, `U=${uChecks}`);
+  assert.strictEqual(fChecks, cfg.LOGIN_DAILY_FAILURES_FAMILIAR, `F=${fChecks}`);
+  // P — независимая корзина (проверяется отдельным тестом смены пароля).
+  const total = uChecks + fChecks + cfg.PASSWORD_CHANGE_DAILY_FAILURES;
+  assert.ok(total <= 20, `суммарный суточный потолок ${total} ≤ 20`);
+  LoginThrottle.resetThrottle();
+});
+
+test('привязанное устройство («стук») входит даже при исчерпанной суточной корзине', async () => {
+  const DeviceService = require('../src/services/device.service');
+  const u = await makeUser();
+  const deviceId = `bf-knock-${userSeq}`;
+  const secret = crypto.randomBytes(32).toString('base64url'); // 256 бит, 43 символа
+  await DeviceService.bindDevice({ device_id: deviceId, user_id: u.id });
+  const claimed = await DeviceService.claimDeviceSecret({ userId: u.id, device_id: deviceId, device_secret: secret });
+  assert.strictEqual(claimed.claimed, true);
+  // Исчерпываем корзину U подбором с незнакомых адресов.
+  for (let i = 0; i < 8; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:a00:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  // Вход по паролю с нового незнакомого адреса теперь отклонён.
+  const byPassword = await api('POST', '/api/auth/login', { ip: '2001:db8:aff::1', body: { username: u.username, password: u.password } });
+  assert.strictEqual(byPassword.status, 429, byPassword.text);
+  // Но «стук» привязанного устройства идёт мимо этой защиты и выдаёт токен.
+  const knock = await DeviceService.knock({ device_id: deviceId, device_secret: secret, ip_address: '2001:db8:aff::1' });
+  assert.strictEqual(knock.status, 'paired', JSON.stringify(knock));
+  assert.ok(knock.token, 'стук выдал токен, несмотря на исчерпанную корзину входа по паролю');
+});
+
+test('посторонний, исчерпавший U, не мешает входу со знакомого адреса; панель считает учётную запись заблокированной', async () => {
+  const DbStudioService = require('../src/services/db-studio.service');
+  const u = await makeUser();
+  const office = '198.51.100.44';
+  assert.strictEqual((await loginRetry503Only(u.username, u.password, office)).status, 200, 'адрес офиса стал знакомым');
+  const before = (await DbStudioService.getIdentityStats()).lockedAccounts;
+  for (let i = 0; i < 8; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:d00:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  assert.strictEqual((await api('POST', '/api/auth/login', { ip: '2001:db8:dff::1', body: { username: u.username, password: u.password } })).status, 429,
+    'с нового адреса — 429');
+  const fromOffice = await loginRetry503Only(u.username, u.password, office);
+  assert.strictEqual(fromOffice.status, 200, `из офиса вход работает: ${fromOffice.text}`);
+  // Запись в журнал — без ожидания; даём ей дойти до базы.
+  let after = before;
+  for (let t = 0; t < 40 && after <= before; t++) {
+    after = (await DbStudioService.getIdentityStats()).lockedAccounts;
+    if (after <= before) await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.strictEqual(after, before + 1, 'исчерпавший суточную корзину виден в панели как заблокированный');
 });
 
 // ── Оракул перечисления закрыт (ПР-03, воспроизведение f) ───────────────────
@@ -514,6 +644,238 @@ test('смена пароля: 5 неверных текущих паролей 
     if (res.status === 429) limited = true;
   }
   assert.ok(limited, 'после 5 неверных текущих паролей — 429');
+});
+
+test('P: не больше PASSWORD_CHANGE_DAILY_FAILURES проверок текущего пароля за сутки — короткие окна и перезапуск их не обнуляют', async () => {
+  const limiter = require('../src/services/rate-limiter');
+  const cfg = require('../src/config');
+  const u = await makeUser();
+  const token = AuthService.generateToken(await UserService.getUserById(u.id));
+  const change = (oldPassword) => {
+    // Имитируем, что короткие окна (5 в минуту и 5 за LOGIN_LOCKOUT_MINUTES) уже прошли.
+    limiter.resetLimit(`pwchange:${u.id}`);
+    limiter.resetLimit(`pwchange-fail:${u.id}`);
+    return api('POST', '/api/users/password', { token, ip: '198.51.100.73', body: { oldPassword, newPassword: 'Суточный-Пароль-Семь-7' } });
+  };
+  let checked = 0;
+  for (let i = 0; i < 12; i++) {
+    const res = await change(`wrong-${i}`);
+    if (res.status !== 429) checked += 1;
+  }
+  assert.strictEqual(checked, cfg.PASSWORD_CHANGE_DAILY_FAILURES, `проверено текущих паролей: ${checked}`);
+  // Перезапуск: память модуля пуста, журнал неудач — в базе.
+  LoginThrottle.resetThrottle();
+  const right = await change(u.password);
+  assert.strictEqual(right.status, 429, 'верный текущий пароль тоже отклонён без проверки');
+  assert.strictEqual(right.json.code, 'ACCOUNT_THROTTLED');
+});
+
+test('удачная самостоятельная смена пароля чистит только P, но не U (иначе смена дарила бы подбору свежие догадки)', async () => {
+  const u = await makeUser();
+  for (let i = 0; i < 5; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:b00:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  const token = AuthService.generateToken(await UserService.getUserById(u.id));
+  const newPassword = 'Свой-Новый-Пароль-4';
+  await api('POST', '/api/users/password', { token, ip: '198.51.100.74', body: { oldPassword: 'wrong-x', newPassword } });
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'P'), 1);
+  const ok = await api('POST', '/api/users/password', { token, ip: '198.51.100.74', body: { oldPassword: u.password, newPassword } });
+  assert.strictEqual(ok.status, 200, ok.text);
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'P'), 0, 'P очищена');
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'U'), 5, 'U не тронута');
+  // Даже новым паролем с незнакомого адреса — всё ещё 429 до конца окна.
+  const res = await api('POST', '/api/auth/login', { ip: '2001:db8:bff::1', body: { username: u.username, password: newPassword } });
+  assert.strictEqual(res.status, 429, res.text);
+});
+
+test('исчерпание корзины: событие в журнале аудита и оповещение центра безопасности с учётной записью и классом', async () => {
+  const SecurityMonitor = require('../src/services/security-monitor.service');
+  const u = await makeUser();
+  for (let i = 0; i < 6; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:c00:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  let hit = null;
+  for (let t = 0; t < 60 && !hit; t++) {
+    const alerts = await SecurityMonitor.listAlerts({ limit: 200 });
+    hit = alerts.find((a) => a.rule === 'login_daily_budget_exhausted' && Number(a.details.userId) === Number(u.id));
+    if (!hit) await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(hit, 'оповещение поднято');
+  assert.strictEqual(hit.details.class, 'U');
+  const audit = await identity.all("SELECT details_json FROM audit_logs WHERE action = 'login_daily_budget_exhausted' AND user_id = $1", [u.id]);
+  assert.strictEqual(audit.length, 1, 'одно событие на переход в «исчерпано»');
+});
+
+// ── Проверка sec5: параллельные попытки, варианты написания, аварийный сброс ──
+
+test('параллельно (сервис): допускается не больше предела попыток U, F и P, остальные — «ждите» (п.1 проверки sec5)', () => {
+  const cfg = require('../src/config');
+  for (const [cls, lim, opts] of [
+    ['U', cfg.LOGIN_DAILY_FAILURES_UNFAMILIAR, (i) => ({ ipKey: `2001:db8:e1:${i}::1` })],
+    ['F', cfg.LOGIN_DAILY_FAILURES_FAMILIAR, () => ({ ipKey: '10.0.0.1', trusted: true })],
+    ['P', cfg.PASSWORD_CHANGE_DAILY_FAILURES, () => ({ cls: 'P' })]
+  ]) {
+    LoginThrottle.resetThrottle();
+    const now = 7e12;
+    // 30 одновременных попыток: ни одна ещё не завершилась.
+    const admissions = Array.from({ length: 30 }, (_, i) => LoginThrottle.admit('burst.acct', { ...opts(i), now }));
+    const admitted = admissions.filter((a) => a.ok);
+    assert.strictEqual(admitted.length, lim, `${cls}: допущено ${admitted.length}, предел ${lim}`);
+    assert.ok(admissions.filter((a) => !a.ok).every((a) => a.reason === 'pending'), `${cls}: остальным — «ждите исхода»`);
+    for (const a of admitted) LoginThrottle.settle(a.ticket, 'failure', { now });
+    assert.strictEqual(LoginThrottle.dailyCount('burst.acct', cls, now), lim);
+    assert.strictEqual(LoginThrottle.admit('burst.acct', { ...opts(99), now }).reason, 'daily', `${cls}: дальше — исчерпано`);
+    assert.strictEqual(LoginThrottle.inflightTotal(), 0, `${cls}: слоты возвращены`);
+  }
+  LoginThrottle.resetThrottle();
+});
+
+test('параллельно (сервис): нейтральный исход и успех возвращают слот — законный вход не упирается в «ждите»', () => {
+  LoginThrottle.resetThrottle();
+  const now = 7.1e12;
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
+  for (let round = 0; round < 3 * lim; round++) {
+    const a = LoginThrottle.admit('slot.acct', { ipKey: `2001:db8:e2:${round}::1`, now });
+    assert.strictEqual(a.ok, true, `попытка ${round}`);
+    LoginThrottle.settle(a.ticket, round % 2 ? 'neutral' : 'success', { now });
+    LoginThrottle.settle(a.ticket, 'failure', { now }); // повторный settle того же билета игнорируется
+  }
+  assert.strictEqual(LoginThrottle.dailyCount('slot.acct', 'U', now), 0);
+  assert.strictEqual(LoginThrottle.inflightTotal(), 0);
+  LoginThrottle.resetThrottle();
+});
+
+test('HTTP: 30 одновременных неверных паролей с 10 незнакомых адресов — ровно 5 проверок, остальные 429 (воспроизведение s5-bounds, п.1)', async () => {
+  const u = await makeUser();
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
+  const burst = await Promise.all(Array.from({ length: 30 }, (_, i) =>
+    api('POST', '/api/auth/login', { ip: `203.0.113.${110 + (i % 10)}`, body: { username: u.username, password: `guess-${i}` } })));
+  const codes = burst.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {});
+  assert.strictEqual(codes[400] || 0, lim, `проверено паролей: ${JSON.stringify(codes)}`);
+  assert.strictEqual((codes[429] || 0) + (codes[503] || 0), 30 - lim, JSON.stringify(codes));
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'U'), lim);
+  const correct = await api('POST', '/api/auth/login', { ip: '203.0.113.200', body: { username: u.username, password: u.password } });
+  assert.strictEqual(correct.status, 429, 'верный пароль после пачки — 429');
+  assert.strictEqual(LoginThrottle.inflightTotal(), 0, 'ни один слот не потерян');
+});
+
+test('HTTP: 30 одновременных неверных паролей со знакомого адреса — не больше F проверок', async () => {
+  const u = await makeUser();
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_FAMILIAR;
+  const office = '198.51.100.46';
+  assert.strictEqual((await loginRetry503Only(u.username, u.password, office)).status, 200);
+  const burst = await Promise.all(Array.from({ length: 30 }, (_, i) =>
+    api('POST', '/api/auth/login', { ip: office, body: { username: u.username, password: `f-guess-${i}` } })));
+  const checked = burst.filter((r) => r.status === 400).length;
+  assert.ok(checked <= lim, `проверено ${checked} > ${lim}`);
+  assert.ok(LoginThrottle.dailyCount(u.username, 'F') <= lim);
+  assert.strictEqual(LoginThrottle.inflightTotal(), 0, 'ни один слот не потерян');
+});
+
+test('HTTP: параллельные неверные текущие пароли при смене — не больше P проверок, слоты возвращаются', async () => {
+  const u = await makeUser();
+  const lim = require('../src/config').PASSWORD_CHANGE_DAILY_FAILURES;
+  const token = AuthService.generateToken(await UserService.getUserById(u.id));
+  const burst = await Promise.all(Array.from({ length: 12 }, (_, i) =>
+    api('POST', '/api/users/password', { token, ip: '198.51.100.75', body: { oldPassword: `wrong-${i}`, newPassword: 'Параллельный-Пароль-6' } })));
+  const checked = burst.filter((r) => r.status !== 429 && r.status !== 503).length;
+  assert.ok(checked <= lim, `проверено ${checked} > ${lim}`);
+  assert.ok(LoginThrottle.dailyCount(u.username, 'P') <= lim);
+  assert.strictEqual(LoginThrottle.inflightTotal(), 0, 'ни один слот не потерян');
+});
+
+test('варианты написания (регистр, пробелы, NFKC) после исчерпания: существующий и несуществующий логин неотличимы (воспроизведение s5-bounds, п.2)', async () => {
+  const real = await makeUser();
+  const ghost = `ghost_${crypto.randomBytes(3).toString('hex')}`;
+  const variants = (name) => [name.toUpperCase(), ` ${name} `, name.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)), name];
+  const probe = async (name, net) => {
+    const out = [];
+    // Исчерпываем корзину: часть — точным написанием, часть — вариантом.
+    for (let i = 0; i < 5; i++) {
+      const as = i % 2 ? name.toUpperCase() : name;
+      const r = await api('POST', '/api/auth/login', { ip: `2001:db8:${net}:${i}::1`, body: { username: as, password: `w${i}` } });
+      out.push(`${r.status}:${r.json?.code || ''}`);
+    }
+    for (const [j, v] of variants(name).entries()) {
+      const r = await api('POST', '/api/auth/login', { ip: `2001:db8:${net}:f${j}::1`, body: { username: v, password: 'w-next' } });
+      out.push(`${r.status}:${r.json?.code || ''}`);
+    }
+    return out;
+  };
+  const a = await probe(real.username, 'e3');
+  const b = await probe(ghost, 'e4');
+  assert.deepStrictEqual(a, b, `существующий ${JSON.stringify(a)} против несуществующего ${JSON.stringify(b)}`);
+  assert.ok(a.slice(5).every((x) => x.startsWith('429')), 'после исчерпания любое написание — 429');
+});
+
+test('ADMIN_PASSWORD_RESET (аварийный сброс при запуске) снимает суточные корзины (воспроизведение s5-phase2, п.3)', async () => {
+  const u = await makeUser();
+  for (let i = 0; i < 6; i++) {
+    await api('POST', '/api/auth/login', { ip: `2001:db8:e5:${i}::1`, body: { username: u.username, password: 'не-тот' } });
+  }
+  const countRows = async () => Number((await identity.get('SELECT COUNT(*) AS n FROM login_failure_log WHERE user_id = $1', [u.id])).n);
+  for (let t = 0; t < 40 && (await countRows()) < 5; t++) await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(await countRows(), 5, 'журнал записан');
+  // «Перезапуск» с переменной: память процесса пуста, сброс выполняется при запуске.
+  LoginThrottle.resetThrottle();
+  const saved = { user: process.env.ADMIN_PASSWORD_RESET_USER, pw: process.env.ADMIN_PASSWORD_RESET };
+  process.env.ADMIN_PASSWORD_RESET_USER = u.username;
+  process.env.ADMIN_PASSWORD_RESET = 'Аварийный-Пароль-2026';
+  try {
+    await require('../src/db/identity')._applyEmergencyAdminReset(identity);
+  } finally {
+    if (saved.user === undefined) delete process.env.ADMIN_PASSWORD_RESET_USER; else process.env.ADMIN_PASSWORD_RESET_USER = saved.user;
+    if (saved.pw === undefined) delete process.env.ADMIN_PASSWORD_RESET; else process.env.ADMIN_PASSWORD_RESET = saved.pw;
+  }
+  assert.strictEqual(await countRows(), 0, 'аварийный сброс очистил журнал неудач');
+  const res = await api('POST', '/api/auth/login', { ip: '2001:db8:e5:ff::1', body: { username: u.username, password: 'Аварийный-Пароль-2026' } });
+  assert.strictEqual(res.status, 200, `новый пароль с незнакомого адреса входит: ${res.text}`);
+});
+
+test('новичок без единого знакомого адреса: опечатки из офиса идут в корзину F, а не U (п.4 проверки sec5)', async () => {
+  const colleague = await makeUser();
+  const office = '198.51.100.47';
+  assert.strictEqual((await loginRetry503Only(colleague.username, colleague.password, office)).status, 200, 'офис знаком коллеге');
+  const newcomer = await makeUser();
+  for (let i = 0; i < 2; i++) {
+    await api('POST', '/api/auth/login', { ip: office, body: { username: newcomer.username, password: `опечатка-${i}` } });
+  }
+  assert.strictEqual(LoginThrottle.dailyCount(newcomer.username, 'F'), 2, 'у новичка офисные опечатки — F');
+  assert.strictEqual(LoginThrottle.dailyCount(newcomer.username, 'U'), 0);
+  // Устоявшийся сотрудник со своим знакомым адресом (не этим офисом) — по-прежнему U.
+  const remote = await makeUser();
+  assert.strictEqual((await loginRetry503Only(remote.username, remote.password, '198.51.100.48')).status, 200);
+  await api('POST', '/api/auth/login', { ip: office, body: { username: remote.username, password: 'опечатка' } });
+  assert.strictEqual(LoginThrottle.dailyCount(remote.username, 'U'), 1, 'устоявшемуся правило не расширяется');
+  // Новичок с того же офиса затем входит верным паролем.
+  const ok = await loginRetry503Only(newcomer.username, newcomer.password, office);
+  assert.strictEqual(ok.status, 200, ok.text);
+});
+
+test('журнал неудач: две неудачи в одну миллисекунду не склеиваются, обрезка по id не оставляет лишних (п.5 проверки sec5)', async () => {
+  const u = await makeUser();
+  const lim = require('../src/config').LOGIN_DAILY_FAILURES_UNFAMILIAR;
+  const countRows = async () => Number((await identity.get("SELECT COUNT(*) AS n FROM login_failure_log WHERE user_id = $1 AND class = 'U'", [u.id])).n);
+  const t = Date.now();
+  for (let i = 0; i < 2; i++) {
+    const a = LoginThrottle.admit(u.username, { ipKey: `2001:db8:e6:${i}::1`, userId: u.id, now: t });
+    LoginThrottle.settle(a.ticket, 'failure', { now: t }); // одна и та же миллисекунда
+  }
+  for (let k = 0; k < 40 && (await countRows()) < 2; k++) await new Promise((r) => setTimeout(r, 50));
+  LoginThrottle.resetThrottle();
+  await LoginThrottle.ensureLoaded(u.id, u.username);
+  assert.strictEqual(LoginThrottle.dailyCount(u.username, 'U'), 2, 'после перезагрузки из базы — обе неудачи');
+  // Лишние строки с совпадающим временем: обрезка до предела — по суррогатному id.
+  const iso = new Date(t).toISOString();
+  for (let i = 0; i < lim + 3; i++) {
+    await identity.run('INSERT INTO login_failure_log (user_id, class, at) VALUES ($1, $2, $3)', [u.id, 'U', iso]);
+  }
+  LoginThrottle.resetThrottle();
+  const a = LoginThrottle.admit(u.username, { ipKey: '2001:db8:e6:ff::1', userId: u.id, now: t + 1 });
+  LoginThrottle.settle(a.ticket, 'failure', { now: t + 1 });
+  for (let k = 0; k < 40 && (await countRows()) > lim; k++) await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(await countRows(), lim, 'в журнале не больше предела строк');
+  LoginThrottle.resetThrottle();
 });
 
 // ── Выравнивание по времени (Р4-09) ────────────────────────────────────────

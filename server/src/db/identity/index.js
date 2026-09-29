@@ -602,6 +602,16 @@ async function applyEmergencyAdminReset(target) {
     [encoded, now, user.id]
   );
 
+  // Суточные корзины неверных паролей (sec5) переживают перезапуск — без этой
+  // очистки администратор с НОВЫМ паролем всё равно получал бы 429 до конца
+  // окна 24 ч (проверка sec5, п.3). Память процесса при запуске и так пуста.
+  // Сбой здесь не должен срывать восстановление доступа — только предупреждение.
+  try {
+    await target.run('DELETE FROM login_failure_log WHERE user_id = $1', [user.id]);
+  } catch (err) {
+    console.warn(`[Recovery] журнал неудачных входов не очищен: ${err.message}`);
+  }
+
   await target.run(
     `INSERT INTO server_settings (key, value, updated_at) VALUES ('last_admin_password_reset', $1, $2)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
@@ -623,5 +633,7 @@ module.exports = {
   ROLE_SUPERADMIN,
   ROLE_EMPLOYEE,
   ROLE_SCOPED_ADMIN,
-  COMPANY_NAME
+  COMPANY_NAME,
+  // Для тестов: аварийный сброс без перезапуска процесса.
+  _applyEmergencyAdminReset: applyEmergencyAdminReset
 };
