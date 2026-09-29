@@ -12,20 +12,104 @@
 #
 # Запуск (из папки desktop, после npm run dist и подписи):
 #   npm run publish:update
-#   npm run publish:update -- -Server https://chat.company.kz -Token <admin-token>
+#   $env:MYCHAT_UPDATE_TOKEN = '<токен супер-администратора>'
+#   npm run publish:update -- -Server https://chat.company.kz [-Notes "Что нового"]
+# Токен лучше передавать переменной MYCHAT_UPDATE_TOKEN: параметр -Token
+# остаётся в истории PowerShell и виден в списке процессов.
 
 param(
     [string]$Server,
-    [string]$Token
+    [string]$Token,
+    [string]$Notes
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 . (Join-Path $PSScriptRoot 'signing-common.ps1')
 
-# Публикуется только Setup, подписанный закреплённым сертификатом
-# (отпечаток 0EB61614FC390FCD11BDF8DBFD40BE62EE10862A, см. signing-common.ps1
-# — Get-MyChatExpectedThumbprint/Test-MyChatSignature ниже сверяют именно его).
+# Публикуется только Setup, подписанный закреплённым сертификатом — тем же,
+# что закреплён в клиенте (desktop/src/main/update-verify.js,
+# PINNED_THUMBPRINTS). Переопределение отпечатка из signing-common.ps1
+# (переменная для тестовой подписи) здесь намеренно не действует: выпуск,
+# подписанный другим сертификатом, клиенты всё равно отвергнут
+# (signature-foreign) — лучше узнать об этом до раздачи.
+$PinnedThumbprint = '0EB61614FC390FCD11BDF8DBFD40BE62EE10862A'
+
+# Файлы выпуска → поля multipart. Имена полей — ровно те, что принимает
+# сервер (server/src/updates/admin-router.js, UPLOAD_FIELDS): yml, setup,
+# blockmap, portable. README.txt — только для человека и на сервер не уходит
+# (сервер принимает не больше четырёх файлов).
+function Get-MyChatUploadParts {
+    param(
+        [Parameter(Mandatory)][string]$UpdateDir,
+        [Parameter(Mandatory)][string]$SetupName,
+        [Parameter(Mandatory)][string]$PortableName
+    )
+    $parts = [ordered]@{
+        yml      = (Join-Path $UpdateDir 'latest.yml')
+        setup    = (Join-Path $UpdateDir $SetupName)
+        blockmap = (Join-Path $UpdateDir "$SetupName.blockmap")
+        portable = (Join-Path $UpdateDir $PortableName)
+    }
+    return $parts
+}
+
+# Загрузка выпуска: POST /api/admin/updates/releases. Файлы идут потоком
+# (StreamContent), а не ReadAllBytes: установщик весит сотни мегабайт.
+# Токен уходит только заголовком Authorization и нигде не печатается.
+function Send-MyChatRelease {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Parts,
+        [string]$Notes
+    )
+    # Windows PowerShell 5.1 (.NET Framework) по умолчанию может предложить
+    # серверу только TLS 1.0/1.1, которые современный прокси отвергает.
+    $protocols = [Net.SecurityProtocolType]::Tls12
+    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') {
+        $protocols = $protocols -bor [Net.SecurityProtocolType]'Tls13'
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $protocols
+
+    Add-Type -AssemblyName System.Net.Http
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $content = New-Object System.Net.Http.MultipartFormDataContent
+    $streams = New-Object System.Collections.Generic.List[System.IO.Stream]
+    try {
+        $client.Timeout = [TimeSpan]::FromMinutes(30)
+        $client.DefaultRequestHeaders.Authorization =
+            New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
+
+        foreach ($field in $Parts.Keys) {
+            $path = $Parts[$field]
+            $stream = [System.IO.File]::OpenRead($path)
+            $streams.Add($stream)
+            $part = New-Object System.Net.Http.StreamContent($stream)
+            $part.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue('application/octet-stream')
+            $content.Add($part, $field, [System.IO.Path]::GetFileName($path))
+        }
+        if ($Notes) {
+            $content.Add((New-Object System.Net.Http.StringContent($Notes, [System.Text.Encoding]::UTF8)), 'notes')
+        }
+
+        $response = $client.PostAsync($Uri, $content).GetAwaiter().GetResult()
+        $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        return [pscustomobject]@{
+            Ok     = [bool]$response.IsSuccessStatusCode
+            Status = [int]$response.StatusCode
+            Reason = $response.ReasonPhrase
+            Body   = $body
+        }
+    }
+    finally {
+        $content.Dispose()
+        foreach ($s in $streams) { $s.Dispose() }
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
 
 $DesktopDir = Split-Path -Parent $PSScriptRoot
 $ReleaseDir = Join-Path $DesktopDir 'release'
@@ -77,8 +161,9 @@ foreach ($required in @($SetupPath, $BlockmapPath, $PortablePath)) {
 # Подпись Setup обязана быть закреплённым сертификатом — иначе клиенты с
 # verifyUpdateCodeSignature=true всё равно откажутся ставить обновление, но
 # лучше узнать об этом здесь, а не после раздачи по всей сети.
-if (-not (Test-MyChatSignature $SetupPath)) {
-    Write-Host "$setupName не подписан закреплённым сертификатом (отпечаток $(Get-MyChatExpectedThumbprint))." -ForegroundColor Red
+$setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupPath
+if (-not ($setupSignature.SignerCertificate -and $setupSignature.SignerCertificate.Thumbprint -eq $PinnedThumbprint)) {
+    Write-Host "$setupName не подписан закреплённым сертификатом (отпечаток $PinnedThumbprint)." -ForegroundColor Red
     Write-Host "Подпишите: npm run sign (или соберите заново — хук подписи при npm run dist)." -ForegroundColor Yellow
     exit 1
 }
@@ -113,7 +198,8 @@ Write-Host ""
 # Пакет выпуска — то, что раздаётся серверу целиком: latest.yml + сами файлы
 # (blockmap нужен для дифференциальной докачки, portable — для тех, кто
 # автообновление не использует, но проверяет версию вручную).
-$UpdateDir = Join-Path $ReleaseDir "update-$version"
+$UpdateDirName = "update-$version"
+$UpdateDir = Join-Path $ReleaseDir $UpdateDirName
 if (Test-Path -LiteralPath $UpdateDir) {
     Remove-Item -LiteralPath $UpdateDir -Recurse -Force
 }
@@ -134,15 +220,22 @@ $readme = @"
   $setupName.blockmap — блок-карта для дифференциальной докачки
   $PortableName          — portable-сборка (без автообновления)
 
-Раздача администратором:
-  1. Перетащите эту папку целиком в консоль администратора
-     (Автообновление → Выпуски → Импорт из папки), либо
-  2. Скопируйте содержимое в data/updates/inbox/ на сервере — сервер
-     подхватит выпуск при следующем обходе inbox.
+Раздача администратором (консоль — вкладка «Обновления», только
+супер-администратор):
+  1. Раздел «Загрузить релиз»: выберите latest.yml, установщик, blockmap и
+     portable из этой папки (README.txt не нужен) — или сразу
+     npm run publish:update -- -Server https://<сервер> с токеном в
+     переменной MYCHAT_UPDATE_TOKEN.
+  2. Либо скопируйте эту папку ЦЕЛИКОМ подпапкой в data/updates/inbox/ на
+     сервере — получится data/updates/inbox/$UpdateDirName/latest.yml и т. д.
+     (файлы прямо в inbox/ сервер не видит). Затем в разделе «Папка inbox»
+     нажмите «Импортировать». Для больших выпусков этот путь надёжнее
+     загрузки через браузер.
 
-Откат: предыдущий выпуск остаётся в консоли администратора и может быть
-назначен политикой обновления повторно (ProductVersion сверяется всегда,
-понижение версии запрещено по умолчанию — allowDowngrade=false).
+Откат: только вперёд. Выпуск с номером ниже установленного клиенты не
+ставят (allowDowngrade=false, ProductVersion сверяется всегда). Если выпуск
+оказался плохим — соберите и опубликуйте СЛЕДУЮЩУЮ версию с исправлением или
+прежним содержимым (docs/автообновление.md, раздел «Откат»).
 "@
 [System.IO.File]::WriteAllText((Join-Path $UpdateDir 'README.txt'), $readme, (New-Object System.Text.UTF8Encoding($false)))
 
@@ -151,54 +244,42 @@ Write-Host "  $setupName"
 Write-Host "  $setupName.blockmap"
 Write-Host "  $PortableName"
 Write-Host "  latest.yml"
-Write-Host "  README.txt"
+Write-Host "  README.txt (только для администратора, на сервер не загружается)"
 Write-Host ""
 
 if (-not $Server) {
-    Write-Host "Сервер не указан (-Server https://... -Token ...)." -ForegroundColor Yellow
-    Write-Host "Перетащите папку $UpdateDir в консоль администратора" -ForegroundColor Yellow
-    Write-Host "или скопируйте её содержимое в data/updates/inbox/ на сервере." -ForegroundColor Yellow
+    Write-Host "Сервер не указан (-Server https://..., токен — в `$env:MYCHAT_UPDATE_TOKEN)." -ForegroundColor Yellow
+    Write-Host "Загрузите файлы в консоли администратора: вкладка «Обновления» → «Загрузить релиз»," -ForegroundColor Yellow
+    Write-Host "или скопируйте папку целиком в data/updates/inbox/$UpdateDirName/ на сервере" -ForegroundColor Yellow
+    Write-Host "и нажмите «Импортировать» в разделе «Папка inbox» той же вкладки." -ForegroundColor Yellow
     exit 0
 }
 
-if (-not $Token) {
-    Write-Host "-Server указан без -Token — загрузка требует токена администратора." -ForegroundColor Red
-    exit 1
-}
 if ($Server -notmatch '^https://') {
     Write-Host "-Server должен быть https (обновления по http не публикуются)." -ForegroundColor Red
     exit 1
 }
 
+$effectiveToken = $Token
+if ($effectiveToken) {
+    Write-Host "Токен передан параметром -Token: он остаётся в истории PowerShell. Лучше `$env:MYCHAT_UPDATE_TOKEN." -ForegroundColor Yellow
+} else {
+    $effectiveToken = $env:MYCHAT_UPDATE_TOKEN
+}
+if (-not $effectiveToken) {
+    Write-Host "Нет токена супер-администратора: задайте `$env:MYCHAT_UPDATE_TOKEN (или -Token)." -ForegroundColor Red
+    exit 1
+}
+
+$parts = Get-MyChatUploadParts -UpdateDir $UpdateDir -SetupName $setupName -PortableName $PortableName
+$uri = "$($Server.TrimEnd('/'))/api/admin/updates/releases"
 Write-Host "Загружаю выпуск на $Server ..." -ForegroundColor Cyan
-Add-Type -AssemblyName System.Net.Http
-$handler = New-Object System.Net.Http.HttpClientHandler
-$client = New-Object System.Net.Http.HttpClient($handler)
-try {
-    $client.Timeout = [TimeSpan]::FromMinutes(15)
-    $client.DefaultRequestHeaders.Authorization =
-        New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
+$result = Send-MyChatRelease -Uri $uri -Token $effectiveToken -Parts $parts -Notes $Notes
 
-    $content = New-Object System.Net.Http.MultipartFormDataContent
-    $content.Add((New-Object System.Net.Http.StringContent($version)), 'version')
-    Get-ChildItem -LiteralPath $UpdateDir -File | ForEach-Object {
-        $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
-        $fileContent = New-Object System.Net.Http.ByteArrayContent(, $bytes)
-        $content.Add($fileContent, 'files', $_.Name)
-    }
-
-    $uri = "$($Server.TrimEnd('/'))/api/admin/updates/releases"
-    $response = $client.PostAsync($uri, $content).GetAwaiter().GetResult()
-    $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-
-    if (-not $response.IsSuccessStatusCode) {
-        Write-Host "Сервер отказал: $([int]$response.StatusCode) $($response.ReasonPhrase)" -ForegroundColor Red
-        if ($body) { Write-Host $body -ForegroundColor Red }
-        exit 1
-    }
-    Write-Host "Выпуск $version опубликован на $Server" -ForegroundColor Green
+if (-not $result.Ok) {
+    Write-Host "Сервер отказал: $($result.Status) $($result.Reason)" -ForegroundColor Red
+    if ($result.Body) { Write-Host $result.Body -ForegroundColor Red }
+    exit 1
 }
-finally {
-    $client.Dispose()
-    $handler.Dispose()
-}
+Write-Host "Выпуск $version опубликован на $Server" -ForegroundColor Green
+Write-Host "Раздача начнётся после того, как вы назначите его целью канала в разделе «Политика раздачи»." -ForegroundColor Cyan
