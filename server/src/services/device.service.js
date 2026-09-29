@@ -119,7 +119,7 @@ class DeviceService {
       // Успешный «стук» — тоже подтверждение личности: адрес становится
       // знакомым, чтобы задержка входа по паролю под атакой не задевала
       // сотрудника с его обычного рабочего места (проверка раунда 4, ПР-I4).
-      require('./trusted-sources.service').recordAsync(pairing.user_id, rateLimitIpKey(cleanIp));
+      require('./trusted-sources.service').recordAsync(pairing.user_id, rateLimitIpKey(cleanIp), { allowCreate: true });
       return {
         status: 'paired',
         auto_matched: false,

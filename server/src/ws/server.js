@@ -539,10 +539,10 @@ class WsServer {
       }
       this.userSockets.get(user.id).add(ws);
 
-      // Успешная авторизация по WebSocket — подтверждение личности: адрес
-      // становится знакомым, чтобы задержка входа по паролю под атакой не
-      // задевала сотрудника с его обычного места (проверка раунда 4, ПР-I4).
-      require('../services/trusted-sources.service').recordAsync(user.id, ws.ipKey || rateLimitIpKey(ws.remoteIp));
+      // Авторизация по WebSocket лишь ОБНОВЛЯЕТ уже знакомый адрес, но не
+      // заводит новый: подпись токена — не предъявление секрета, а украденный
+      // живой токен не должен сажать адрес атакующего в «знакомые» (I-2).
+      require('../services/trusted-sources.service').recordAsync(user.id, ws.ipKey || rateLimitIpKey(ws.remoteIp), { allowCreate: false });
 
       // Только что подключился — значит, за компьютером. «Не беспокоить»,
       // включённое раньше, остаётся.

@@ -2,46 +2,64 @@
 //
 // Задержка входа по учётной записи под распределённым подбором не должна
 // задевать настоящего сотрудника с его обычного адреса (проверка раунда 4,
-// ПР-I4). «Обычный» — это адрес (сеть /64), с которого он уже проходил
-// проверку личности: вход по паролю, «стук» устройства, продление токена,
-// подключение WebSocket. Раньше такие адреса помнились только в памяти
-// (терялись при перезапуске) и только для входа по паролю (last_login_ip);
-// поэтому после перезапуска или у сотрудника, входящего «стуком», знакомых
-// адресов не было вовсе, и под атакой он попадал под задержку.
+// ПР-I4). «Обычный» — адрес (сеть /64), с которого он уже проходил проверку
+// личности. Хранятся в таблице trusted_login_sources.
 //
-// Здесь адреса хранятся в таблице trusted_login_sources и обновляются при
-// ЛЮБОМ подтверждённом действии. Запись в базу — не чаще раза в час на пару
-// (сотрудник, адрес): утренний вход всего офиса не должен превращаться в поток
-// запросов к базе. В памяти держится «горячий» кэш, чтобы проверка на входе
-// не ходила в базу на каждый запрос.
+// КТО может ЗАВЕСТИ знакомый адрес (проверка раунда 4, I-2): только вход по
+// паролю или «стук» привязанного устройства — то есть предъявление секрета,
+// которого у постороннего нет. Продление токена и авторизация WebSocket могут
+// лишь ОБНОВИТЬ уже известный адрес, но не завести новый: иначе украденный
+// живой токен позволил бы посадить в «знакомые» до восьми адресов атакующего.
+// Сверх того — суточный предел на число НОВЫХ адресов у одного сотрудника.
+//
+// Запись в базу дедуплицируется (не чаще раза в час на пару «сотрудник+адрес»),
+// но по-настоящему НОВЫЙ адрес пишется сразу.
 
 const { identity, isIdentityReady } = require('../db/identity');
 
 const MAX_PER_USER = 8;
+const MAX_NEW_PER_DAY = 5; // сколько новых адресов сотрудник может завести за сутки
 const TTL_MS = 60 * 86400000; // 60 дней
-const REWRITE_MS = 60 * 60000; // не чаще раза в час писать в базу
+const REWRITE_MS = 60 * 60000; // не чаще раза в час обновлять существующий в базе
 const MAX_DEDUP_KEYS = 50000;
+const MAX_FAMILIAR_IPS = 20000;
 
 const cache = new Map(); // userId -> Map(ipKey -> lastSeenMs)
-const loaded = new Set(); // userId, уже подгруженные из базы
+const loading = new Map(); // userId -> Promise (защита от гонки загрузки, I-2)
 const lastWrite = new Map(); // `${userId}|${ipKey}` -> ms последней записи в базу
+const newToday = new Map(); // userId -> { day, count } — суточный предел новых адресов
+const familiarIps = new Map(); // ipKey -> последний раз замечен: знаком хотя бы одной учётной записи (I-C)
+let reverseLoaded = false;
+let reverseLoading = null;
 
-async function ensureLoaded(userId) {
-  if (loaded.has(userId) || !isIdentityReady()) return;
-  loaded.add(userId);
-  try {
-    const rows = await identity().all(
-      'SELECT ip_key, last_seen_at FROM trusted_login_sources WHERE user_id = $1',
-      [Number(userId)]
-    );
-    const m = new Map();
-    for (const r of rows) m.set(r.ip_key, new Date(r.last_seen_at).getTime());
-    cache.set(Number(userId), m);
-  } catch {
-    // На очень старой базе таблицы может ещё не быть — не критично: знакомые
-    // адреса просто восстановятся при следующем подтверждённом действии.
-    loaded.delete(userId);
-  }
+// Загрузка адресов сотрудника из базы. Гонка закрыта: конкурентные вызовы ждут
+// одно обещание; результат СЛИВАЕТСЯ с тем, что уже успел записать record(), а
+// не затирает его (I-2). Флаг «загружено» = наличие записи в cache.
+function ensureLoaded(userId) {
+  const uid = Number(userId);
+  if (cache.has(uid) || !isIdentityReady()) return Promise.resolve();
+  if (loading.has(uid)) return loading.get(uid);
+  const p = (async () => {
+    try {
+      const rows = await identity().all(
+        'SELECT ip_key, last_seen_at FROM trusted_login_sources WHERE user_id = $1',
+        [uid]
+      );
+      const m = cache.get(uid) || new Map();
+      for (const r of rows) {
+        if (!m.has(r.ip_key)) m.set(r.ip_key, new Date(r.last_seen_at).getTime());
+        touchFamiliar(r.ip_key);
+      }
+      cache.set(uid, m);
+    } catch {
+      // На очень старой базе таблицы может ещё не быть — знакомые адреса
+      // восстановятся при следующем подтверждённом действии.
+    } finally {
+      loading.delete(uid);
+    }
+  })();
+  loading.set(uid, p);
+  return p;
 }
 
 async function isTrusted(userId, ipKey) {
@@ -51,8 +69,65 @@ async function isTrusted(userId, ipKey) {
   return Boolean(at && Date.now() - at < TTL_MS);
 }
 
-// Отметить адрес знакомым. Обновляет кэш всегда, базу — не чаще REWRITE_MS.
-async function record(userId, ipKey) {
+function touchFamiliar(ipKey) {
+  if (!ipKey) return;
+  familiarIps.delete(ipKey);
+  familiarIps.set(ipKey, Date.now());
+  if (familiarIps.size > MAX_FAMILIAR_IPS) familiarIps.delete(familiarIps.keys().next().value);
+}
+
+// Загрузка обратного индекса «адрес знаком хотя бы одной учётной записи» —
+// один SELECT DISTINCT, лениво и один раз. Пока не загрузился, отвечаем по
+// тому, что уже накоплено в памяти (растёт при каждом record/ensureLoaded).
+function loadReverseIndex() {
+  if (reverseLoaded || !isIdentityReady()) return Promise.resolve();
+  if (reverseLoading) return reverseLoading;
+  reverseLoading = (async () => {
+    try {
+      const rows = await identity().all('SELECT DISTINCT ip_key FROM trusted_login_sources');
+      for (const r of rows) touchFamiliar(r.ip_key);
+      reverseLoaded = true;
+    } catch {
+      /* нет таблицы — обратный индекс наполнится по ходу работы */
+    } finally {
+      reverseLoading = null;
+    }
+  })();
+  return reverseLoading;
+}
+
+// Знаком ли адрес хотя бы одной учётной записи. Ответ намеренно «щедрый»:
+// адрес попадает сюда только после успешного входа по паролю или «стука»
+// (посторонний без учётных данных туда не попадёт), поэтому небольшая
+// устарелость безопасна — используется лишь для выбора щедрого предела
+// одновременных проверок пароля (I-C).
+function isFamiliarToAnyoneSync(ipKey) {
+  return Boolean(ipKey && familiarIps.has(ipKey));
+}
+async function primeReverseIndex() {
+  await loadReverseIndex();
+}
+
+function overDailyNewCap(uid, now) {
+  const day = Math.floor(now / 86400000);
+  const rec = newToday.get(uid);
+  if (!rec || rec.day !== day) return false;
+  return rec.count >= MAX_NEW_PER_DAY;
+}
+function bumpDailyNew(uid, now) {
+  const day = Math.floor(now / 86400000);
+  const rec = newToday.get(uid);
+  if (!rec || rec.day !== day) newToday.set(uid, { day, count: 1 });
+  else rec.count += 1;
+}
+
+/**
+ * Отметить адрес знакомым.
+ * @param {{ allowCreate?: boolean }} opts allowCreate=true — вход по паролю или
+ *   «стук» устройства (можно завести новый адрес); false — продление/WebSocket
+ *   (можно только обновить уже известный).
+ */
+async function record(userId, ipKey, { allowCreate = false } = {}) {
   if (!userId || !ipKey || !isIdentityReady()) return;
   await ensureLoaded(userId);
   const uid = Number(userId);
@@ -63,14 +138,21 @@ async function record(userId, ipKey) {
     m = new Map();
     cache.set(uid, m);
   }
+  const isNew = !m.has(ipKey);
+  if (isNew && !allowCreate) return; // продление/WebSocket не заводят новых адресов (I-2)
+  if (isNew && overDailyNewCap(uid, now)) return; // суточный предел новых адресов (I-2)
+
   m.delete(ipKey);
   m.set(ipKey, now);
   while (m.size > MAX_PER_USER) m.delete(m.keys().next().value);
+  touchFamiliar(ipKey);
 
   const wkey = `${uid}|${ipKey}`;
-  if (now - (lastWrite.get(wkey) || 0) < REWRITE_MS) return; // дедуп записи в базу
-  if (lastWrite.size > MAX_DEDUP_KEYS) lastWrite.clear(); // дедуп — лишь оптимизация
+  // Существующий адрес пишем в базу не чаще раза в час; новый — сразу.
+  if (!isNew && now - (lastWrite.get(wkey) || 0) < REWRITE_MS) return;
+  if (lastWrite.size > MAX_DEDUP_KEYS) lastWrite.clear();
   lastWrite.set(wkey, now);
+  if (isNew) bumpDailyNew(uid, now);
 
   try {
     await identity().run(
@@ -78,8 +160,6 @@ async function record(userId, ipKey) {
        ON CONFLICT (user_id, ip_key) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at`,
       [uid, ipKey, new Date(now).toISOString()]
     );
-    // Подрезаем до последних MAX_PER_USER, чтобы таблица не росла на каждого,
-    // кто изредка входит из новых мест.
     await identity().run(
       `DELETE FROM trusted_login_sources
        WHERE user_id = $1 AND ip_key NOT IN (
@@ -88,22 +168,25 @@ async function record(userId, ipKey) {
       [uid, MAX_PER_USER]
     );
   } catch (err) {
-    lastWrite.delete(wkey); // не записалось — позволим попробовать снова
+    lastWrite.delete(wkey);
     console.warn('[TrustedSources] не удалось запомнить адрес:', err.message);
   }
 }
 
-// Записать, ничего не ожидая (для мест, где задержка ответа нежелательна:
-// «стук», продление, WebSocket).
-function recordAsync(userId, ipKey) {
-  record(userId, ipKey).catch(() => {});
+// Записать, ничего не ожидая (для мест, где задержка ответа нежелательна).
+function recordAsync(userId, ipKey, opts) {
+  record(userId, ipKey, opts).catch(() => {});
 }
 
 // Для тестов.
 function _reset() {
   cache.clear();
-  loaded.clear();
+  loading.clear();
   lastWrite.clear();
+  newToday.clear();
+  familiarIps.clear();
+  reverseLoaded = false;
+  reverseLoading = null;
 }
 
-module.exports = { isTrusted, record, recordAsync, _reset };
+module.exports = { isTrusted, record, recordAsync, isFamiliarToAnyoneSync, primeReverseIndex, _reset };

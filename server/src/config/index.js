@@ -217,6 +217,17 @@ module.exports = {
   // между попытками сотрудник с незнакомого адреса, пока идёт подбор.
   LOGIN_ACCOUNT_SOFT_LIMIT: LOGIN_THRESHOLDS.soft,
   LOGIN_ACCOUNT_MAX_DELAY_SECONDS: boundedInt('LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 60, { min: 1, max: 3600 }),
+  // Общее для учётной записи «ведро» токенов для НЕзнакомых источников, когда
+  // защита включена: ёмкость 10, пополнение столько токенов в час. Отсюда
+  // верхняя граница подбора одной учётной записи со скольких угодно адресов —
+  // ≈ порог + 10 + значение·24 ≈ 750 догадок в сутки (проверка раунда 4, I-A).
+  // 0 — ведро выключено (только персональная задержка источника).
+  LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR: boundedInt('LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR', 30, { min: 0, max: 100000 }),
+  // Одновременных проверок пароля с одного адреса. Для адреса, незнакомого ни
+  // одной учётной записи, — жёстко мало (не даёт занять очередь хэшей); для
+  // адреса офиса (знакомого хотя бы одному) — щедро (проверка раунда 4, I-C).
+  LOGIN_INFLIGHT_PER_IP: boundedInt('LOGIN_INFLIGHT_PER_IP', 20, { min: 1, max: 200 }),
+  LOGIN_INFLIGHT_UNFAMILIAR: boundedInt('LOGIN_INFLIGHT_UNFAMILIAR', 3, { min: 1, max: 50 }),
   // Сколько расчётов хэша пароля (scrypt, ~128 МиБ каждый) идут одновременно;
   // остальные ждут в короткой очереди, переполненная очередь — отказ 503.
   // Без предела поток попыток входа занимал все потоки libuv (на них же
@@ -299,6 +310,10 @@ module.exports = {
   // всего офиса не должен забить канал и диск сервера.
   UPDATES_MAX_CONCURRENT_DOWNLOADS: positiveInt(process.env.UPDATES_MAX_CONCURRENT_DOWNLOADS, 20),
   UPDATES_MAX_FILE_MB: positiveInt(process.env.UPDATES_MAX_FILE_MB, 600),
+  // Высокий потолок запросов автообновления на адрес (сеть /64) в минуту —
+  // чтобы вместить весь офис за одним NAT; у каждой установки, кроме того, свой
+  // предел по install-id (проверка раунда 4, M7). Через boundedInt (M6).
+  UPDATES_MAX_REQ_PER_MIN_PER_IP: boundedInt('UPDATES_MAX_REQ_PER_MIN_PER_IP', 6000, { min: 60, max: 10000000 }),
 
   SERVER_VERSION: '2026.1.0-pro'
 };

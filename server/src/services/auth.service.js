@@ -100,11 +100,16 @@ async function padToFullVerify(password, startedAt) {
   if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
 }
 
-function throttledError(retryAfterMs) {
-  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+function throttledError({ retryAfterMs, reason }) {
+  const seconds = Math.max(1, Math.ceil((Number(retryAfterMs) || 1000) / 1000));
   // Текст не говорит, существует ли логин: задержка ведётся по имени и
-  // одинаково наступает и для несуществующих.
-  const err = new Error(`Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`);
+  // одинаково наступает и для несуществующих. При исчерпании общего ведра
+  // токенов учётной записи (идёт подбор именно её) сотруднику с нового места
+  // подсказываем безопасный путь — рабочий компьютер или администратор (I-A).
+  const message = reason === 'account'
+    ? 'Слишком много попыток входа под этим логином с разных адресов. Войдите с рабочего компьютера или обратитесь к администратору.'
+    : `Слишком много неудачных попыток входа под этим логином. Повторите через ${seconds} с.`;
+  const err = new Error(message);
   err.code = 'ACCOUNT_THROTTLED';
   err.retryAfterSeconds = seconds;
   return err;
@@ -367,7 +372,7 @@ class AuthService {
     // имени), и отвечает одинаково быстро — без scrypt.
     const trusted = await isTrustedSource(row, ipKey);
     const admission = LoginThrottle.admit(nameKey, { ipKey, trusted });
-    if (!admission.ok) throw throttledError(admission.retryAfterMs);
+    if (!admission.ok) throw throttledError(admission);
     if (admission.engaged) {
       require('./audit.service').log({
         userId: row?.id ?? null,
@@ -476,8 +481,9 @@ class AuthService {
     // адрес запоминается как знакомый — с него задержки больше не будет.
     resetLimit(loginLockKey(ip, nameKey), { scope: 'name' });
     LoginThrottle.rememberSuccess(nameKey, ipKey);
-    // Адрес удачного входа — знакомый и после перезапуска (ПР-I4).
-    require('./trusted-sources.service').recordAsync(row.id, ipKey);
+    // Адрес удачного входа по паролю — знакомый и после перезапуска; вход по
+    // паролю вправе завести новый знакомый адрес (ПР-I4, I-2).
+    require('./trusted-sources.service').recordAsync(row.id, ipKey, { allowCreate: true });
 
     const user = await UserService.getUserById(row.id);
     return { user, token: this.generateToken(user) };

@@ -354,6 +354,7 @@ class UserService {
   static async setPassword(userId, newPassword, { mustChange = false } = {}) {
     const encoded = await hashPassword(newPassword);
     const now = new Date().toISOString();
+    const row = await identity().get('SELECT username FROM users WHERE id = $1', [Number(userId)]);
     await identity().run(
       `UPDATE users
        SET password_hash = $1, salt = NULL, must_change_password = $2,
@@ -362,6 +363,11 @@ class UserService {
        WHERE id = $4`,
       [encoded, mustChange ? 1 : 0, now, Number(userId)]
     );
+    // Смена/сброс пароля снимает наказание задержкой с учётной записи: старые
+    // догадки уже неактуальны, а сотрудник должен снова входить откуда угодно
+    // (проверка раунда 4, I-A, путь восстановления). Сброс администратором
+    // проходит здесь же (adminResetPassword → setPassword).
+    if (row?.username) require('./login-throttle.service').clearAccount(row.username);
   }
 
   static async setMustChangePassword(userId, required) {
@@ -573,47 +579,65 @@ const COMMON_PASSWORDS = new Set([
 const SEASON_YEAR = /^(summer|winter|spring|autumn|fall|лето|зима|весна|осень)[\s._-]?\d{2,4}[!.]?$/;
 
 // Основа (stem) очевидно слабых паролей: их обыгрывают регистром, цифрами,
-// разделителями и знаками (Centychat1, Centras@2026, centy.chat1, Password1!,
-// Qwerty123!). Точного списка не хватало — проверка раунда 4 (ПР-I5) прошла
-// два десятка таких вариантов. Сверяем по буквам пароля (без цифр, точек и
-// знаков), в двух режимах:
+// разделителями, знаками и заменой букв похожими символами. Точного списка не
+// хватало (проверка раунда 4, ПР-I5, I-6). Сверка идёт по нескольким «буквенным
+// формам» пароля — см. candidateForms:
 //
-//   BRAND_STEMS — марка и продукт компании (кириллица, латиница и набор не в
-//     той раскладке). Их отсекаем по НАЧАЛУ строки: «centrasins»,
-//     «centrasinsurance» — тоже подбор вокруг «centras». Слова эти достаточно
-//     необычные, чтобы префикс не задел нормальный пароль.
-//   WORD_STEMS — обычные словарные основы (password, пароль, qwerty…). Их
-//     отсекаем только когда ВСЕ буквы пароля и есть эта основа (то есть пароль
-//     — это основа плюс цифры/знаки): иначе «парольдлятеста» или «passwordbook»
-//     — вполне годные длинные фразы — отвергались бы зря.
+//   BRAND_STEMS — марка, продукт и род деятельности компании (кириллица,
+//     латиница, набор не в той раскладке). Отсекаются по ВХОЖДЕНИЮ (contains):
+//     «MyCentras2026», «WelcomeCentras1» — тоже вокруг марки. Основы длинные и
+//     характерные, поэтому вхождение не задевает обычные пароли. Голых «centy»
+//     и «mychat» здесь нет намеренно — иначе «Centymeter…», «mychatter…»
+//     отвергались бы зря (I-6).
+//   WORD_STEMS — обычные словарные основы (password, пароль, qwerty…).
+//     Отсекаются только при ПОЛНОМ совпадении с буквенной формой (основа плюс
+//     цифры/знаки), иначе «парольдлятеста», «passwordbook» отвергались бы зря.
 const BRAND_STEMS = [
-  'centychat', 'centy', 'сентичат',
+  'centychat', 'сентичат',
   'centras', 'sentras', 'сентрас', 'ctynhfc', // ctynhfc = «сентрас» в латинской раскладке
-  'centrasinsurance', 'centrasins',
-  'mychat', 'openmychat', 'мойчат'
+  'centrasinsurance', 'centrasins', 'openmychat', 'мойчат',
+  'insurance', 'иншуранс'
 ];
 const WORD_STEMS = [
   'password', 'пароль', 'qwerty', 'qwertz', 'йцукен', 'gfhjkm', // gfhjkm = «пароль» в латинской раскладке
   'welcome', 'letmein', 'changeme', 'iloveyou', 'administrator'
 ];
 
-// Латинские буквы, которыми подменяют кириллические (гомоглифы): «Lето»,
-// «cен트рас». Приводим к кириллице ТОЛЬКО для сверки с основой — на хранение и
-// проверку пароля это не влияет.
-const CONFUSABLES = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', l: 'л', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у' };
+// Замена цифр и знаков на буквы (leetspeak): «P@ssw0rd», «C3ntras», «Pa$$word».
+const LEET = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '@': 'a', '5': 's', '$': 's', '7': 't' };
+// Латиница ↔ кириллица (гомоглифы): «Lето», «сentras». Сводим В ОБЕ стороны —
+// проверяем и латинскую, и кириллическую форму (I-6). Только для сверки с
+// основой; на хранение и проверку пароля не влияет.
+const LAT2CYR = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', l: 'л', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у' };
+const CYR2LAT = Object.fromEntries(Object.entries(LAT2CYR).map(([lat, cyr]) => [cyr, lat]));
 
-function lettersOnly(text) {
-  return [...text.normalize('NFKC').toLowerCase()].filter((ch) => /\p{L}/u.test(ch)).join('');
+function mapChars(text, table) {
+  return [...text].map((ch) => table[ch] || ch).join('');
 }
-function deconfuse(text) {
-  return [...text].map((ch) => CONFUSABLES[ch] || ch).join('');
+function lettersOnly(text) {
+  return [...text].filter((ch) => /\p{L}/u.test(ch)).join('');
+}
+
+// Набор буквенных форм пароля для сверки с основами. Две базы: как есть (ловит
+// цифры между буквами: «q1w2e3r4t5y6» → «qwerty») и с leet-заменой в «ядре»
+// без хвоста из знаков/цифр (ловит «P@ssw0rd2026» → «password»). Каждая — ещё и
+// в кириллической и латинской свёртке гомоглифов.
+function candidateForms(password) {
+  const base = String(password).normalize('NFKC').toLowerCase();
+  const core = base.replace(/[^\p{L}]+$/u, ''); // без хвоста из цифр/знаков
+  const forms = new Set();
+  for (const src of [lettersOnly(base), lettersOnly(mapChars(core, LEET))]) {
+    if (!src) continue;
+    forms.add(src);
+    forms.add(mapChars(src, CYR2LAT)); // кириллица → латиница
+    forms.add(mapChars(src, LAT2CYR)); // латиница → кириллица
+  }
+  return [...forms];
 }
 function matchesBannedStem(password) {
-  const letters = lettersOnly(password);
-  if (!letters) return false;
-  const variants = [letters, deconfuse(letters)];
-  if (BRAND_STEMS.some((stem) => variants.some((v) => v.startsWith(stem)))) return true;
-  return WORD_STEMS.some((stem) => variants.some((v) => v === stem));
+  const forms = candidateForms(password);
+  if (BRAND_STEMS.some((stem) => forms.some((f) => f.includes(stem)))) return true;
+  return WORD_STEMS.some((stem) => forms.some((f) => f === stem));
 }
 
 // Временный пароль для передачи сотруднику из рук в руки. Алфавит без символов,
@@ -660,10 +684,12 @@ function assertPasswordPolicy(password, { username = null, allowWeakInitial = fa
     throw new Error('Пароль слишком длинный');
   }
   const lower = normalized.toLowerCase();
-  const deconfusedLower = deconfuse(lower);
+  // «Лето2026», «Lето2026» (латинская L вместо Л): свёртка гомоглифов к
+  // кириллице для проверки времени года.
+  const seasonFolded = mapChars(lower, LAT2CYR);
   if (
     WEAK.has(lower) || COMMON_PASSWORDS.has(lower) ||
-    SEASON_YEAR.test(lower) || SEASON_YEAR.test(deconfusedLower) ||
+    SEASON_YEAR.test(lower) || SEASON_YEAR.test(seasonFolded) ||
     matchesBannedStem(password)
   ) {
     throw new Error('Такой пароль слишком простой — подберите другой');

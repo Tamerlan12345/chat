@@ -92,6 +92,14 @@ function isRateLimited(key, { maxAttempts = 5, windowMs = 60000, scope = 'defaul
   return bucket.count >= maxAttempts;
 }
 
+// Текущее число в окне (0, если ключа нет). Нужно, чтобы учитывать «в полёте»
+// попытки в проверке предела и не давать одному адресу проскочить его пачкой
+// одновременных запросов (проверка раунда 4, M6).
+function peekCount(key, { windowMs = 60000, scope = 'default' } = {}) {
+  const bucket = currentBucket(mapFor(scope), key, windowMs);
+  return bucket ? bucket.count : 0;
+}
+
 function registerFailure(key, { windowMs = 60000, maxAttempts, scope = 'default' } = {}) {
   const now = Date.now();
   const map = mapFor(scope);
@@ -144,6 +152,7 @@ setInterval(() => pruneStaleBuckets(), 5 * 60000).unref();
 module.exports = {
   checkRateLimit,
   isRateLimited,
+  peekCount,
   registerFailure,
   resetLimit,
   pruneStaleBuckets,
