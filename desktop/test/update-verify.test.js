@@ -98,16 +98,21 @@ test('путь экранируется: одинарная кавычка уд�
   assert.match(script, /Thumbprint/);
 });
 
-test('команды — с именем модуля, модули — из $PSHOME, версия — из .NET', () => {
+test('команды — с именем модуля, модули — из $PSHOME, без методов .NET (ConstrainedLanguage)', () => {
   const script = buildPsCommand('C:\\t\\setup.exe');
-  assert.match(script, /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature -LiteralPath/);
+  assert.match(script, /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature -LiteralPath 'C:\\t\\setup\.exe'/);
+  assert.match(script, /\(Microsoft\.PowerShell\.Management\\Get-Item -LiteralPath 'C:\\t\\setup\.exe'\)\.VersionInfo/);
   assert.match(script, /\| Microsoft\.PowerShell\.Utility\\ConvertTo-Json -Compress/);
-  assert.match(script, /Microsoft\.PowerShell\.Core\\Import-Module -Name \(\$PSHOME \+ '\\Modules\\Microsoft\.PowerShell\.Security\\Microsoft\.PowerShell\.Security\.psd1'\)/);
-  assert.match(script, /Microsoft\.PowerShell\.Core\\Import-Module -Name \(\$PSHOME \+ '\\Modules\\Microsoft\.PowerShell\.Utility\\Microsoft\.PowerShell\.Utility\.psd1'\)/);
-  assert.match(script, /\[System\.Diagnostics\.FileVersionInfo\]::GetVersionInfo\('C:\\t\\setup\.exe'\)/);
+  for (const m of ['Security', 'Management', 'Utility']) {
+    const re = new RegExp(`Microsoft\\.PowerShell\\.Core\\\\Import-Module -Name \\(\\$PSHOME \\+ '\\\\Modules\\\\Microsoft\\.PowerShell\\.${m}\\\\Microsoft\\.PowerShell\\.${m}\\.psd1'\\)`);
+    assert.match(script, re, m);
+  }
   // Ни одной команды без имени модуля: её мог бы подменить модуль-двойник.
   const bare = script.split('\n').filter((line) => /(^|[\s(|=])(Get-AuthenticodeSignature|ConvertTo-Json|Get-Item|Import-Module|Join-Path)\b/.test(line.replace(/Microsoft\.PowerShell\.\w+\\/g, 'Q\\')));
   assert.deepStrictEqual(bare, []);
+  // Вызовы статических методов типов .NET режим ConstrainedLanguage запрещает.
+  assert.doesNotMatch(script, /\]::/);
+  assert.doesNotMatch(script, /New-Object|Add-Type/);
 });
 
 test('окружение PowerShell — только корень системы и системный PSModulePath', () => {
@@ -226,6 +231,44 @@ test('живой PowerShell: модуль-двойник в PSModulePath пол�
     else process.env.PSModulePath = savedPath;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// На машинах с AppLocker/WDAC PowerShell работает в режиме ConstrainedLanguage.
+// Здесь он включается первой строкой скрипта (тестовая обёртка вокруг
+// настоящего run): проверка должна дать обычный вердикт по подписанному
+// системному файлу, а не signature-check-failed.
+test('живой PowerShell в режиме ConstrainedLanguage: проверка работает', { skip: process.platform !== 'win32', timeout: 60_000 }, async () => {
+  const { execFile } = require('node:child_process');
+  const { trustedSystemRoot } = require('../src/main/client-config');
+  const CLM = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n";
+  const decode = (b64) => Buffer.from(b64, 'base64').toString('utf16le');
+  const encode = (s) => Buffer.from(s, 'utf16le').toString('base64');
+  const outputs = [];
+  const clmRun = (exe, args, { timeout, env }) => new Promise((resolve, reject) => {
+    const i = args.indexOf('-EncodedCommand');
+    const wrapped = [...args.slice(0, i + 1), encode(CLM + decode(args[i + 1])), ...args.slice(i + 2)];
+    execFile(exe, wrapped, { timeout, env, windowsHide: true, encoding: 'utf8' }, (err, stdout) => {
+      outputs.push({ err, stdout });
+      if (err) reject(err);
+      else resolve({ stdout });
+    });
+  });
+
+  const root = trustedSystemRoot();
+  const target = path.join(root, 'System32', 'notepad.exe');
+
+  // Обёртка действительно включает ограниченный режим: прежний вызов
+  // [System.Diagnostics.FileVersionInfo]::GetVersionInfo в нём падает.
+  await assert.rejects(
+    clmRun(powershellPath(root), psArgs(`[System.Diagnostics.FileVersionInfo]::GetVersionInfo('${target}').ProductVersion`), { timeout: 30_000, env: psEnv(root) })
+  );
+  outputs.length = 0;
+
+  const result = await verifyInstaller(target, { expectedVersion: '1.2.0', currentVersion: '1.1.0', systemRoot: root, run: clmRun });
+  assert.strictEqual(result, 'signature-foreign', JSON.stringify(outputs.map((o) => o.err ? String(o.err.message).slice(0, 300) : o.stdout)));
+  const report = JSON.parse(outputs[0].stdout);
+  assert.strictEqual(report.Status, 'Valid');
+  assert.match(report.VersionInfo.ProductVersion, /^\d+\.\d+/, 'версия файла прочитана и в ограниченном режиме');
 });
 
 test('verifyInstaller: переменная SystemRoot не выбирает, какой PowerShell запустить', async () => {

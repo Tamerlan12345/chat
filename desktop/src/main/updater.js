@@ -452,8 +452,10 @@ class UpdateController {
     this.setState({ status: 'downloading', offeredVersion: version || this.state.offeredVersion, progress: 0, error: null });
   }
 
-  // electron-updater 6.8.9 посылает это событие дважды подряд — второе
-  // приходит, пока первое ещё проверяет файл.
+  // electron-updater 6.8.9 посылает это событие один раз на каждое
+  // завершённое скачивание (BaseUpdater.executeDownload → done). Обработчик
+  // всё равно выдерживает повтор, пришедший, пока предыдущий ещё проверяет
+  // файл: второй проверки и второго уведомления не будет.
   onDownloaded(info) {
     if (this.state.status === 'downloaded' || this.downloadedCheck) return this.downloadedCheck || undefined;
     // Сразу, до проверки: electron-updater вслед за этим событием регистрирует
@@ -489,10 +491,14 @@ class UpdateController {
     this.downloadedFile = file;
     if (this.autoUpdater) {
       this.autoUpdater.autoInstallOnAppQuit = true;
-      // Пока флаг был снят, addQuitHandler мог отказаться регистрировать
-      // обработчик выхода; повторный вызов безопасен (quitHandlerAdded).
+      // Пока флаг был снят, addQuitHandler отказался регистрировать
+      // обработчик выхода, так что регистрирует его теперь только этот вызов;
+      // повторный вызов безопасен (quitHandlerAdded). Метод внутренний — его
+      // наличие в установленной версии сверяет тест (updater.test.js).
       if (typeof this.autoUpdater.addQuitHandler === 'function') {
-        try { this.autoUpdater.addQuitHandler(); } catch (err) { this.deps.log(`updates: addQuitHandler failed: ${err.message}`); }
+        try { this.autoUpdater.addQuitHandler(); } catch (err) { this.deps.log(`обновления: addQuitHandler упал: ${err.message}`); }
+      } else {
+        this.deps.log('ВНИМАНИЕ, обновления: в electron-updater нет addQuitHandler — при выходе обновление не установится, только по «Перезапустить и обновить»');
       }
     }
     this.clearCheckTimer();

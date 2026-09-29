@@ -37,13 +37,16 @@ function powershellPath(systemRoot) {
   return `${safeSystemRoot(systemRoot)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
-// Окружение PowerShell — только это, без унаследованного от приложения.
-// В унаследованном PSModulePath первой идёт папка «Документы\WindowsPowerShell\
-// Modules» (и сотрудник может дописать туда что угодно через HKCU\Environment):
-// модуль Microsoft.PowerShell.Security из неё подменил бы
-// Get-AuthenticodeSignature, и поддельный установщик прошёл бы как «Valid».
-// С таким PSModulePath PowerShell 5.1 добавляет к нему лишь
-// «Program Files\WindowsPowerShell\Modules», куда пишут только администраторы.
+// Окружение PowerShell задаётся явно, а не наследуется от приложения
+// (Node/libuv на Windows всё равно добавит служебные переменные вроде PATH,
+// TEMP, USERPROFILE — дело не в них). Главное — PSModulePath: в
+// унаследованном первой идёт папка «Документы\WindowsPowerShell\Modules» (и
+// сотрудник может дописать туда что угодно через HKCU\Environment), модуль
+// Microsoft.PowerShell.Security из неё подменил бы Get-AuthenticodeSignature,
+// и поддельный установщик прошёл бы как «Valid». С таким PSModulePath
+// PowerShell 5.1 добавляет к нему лишь «Program Files\WindowsPowerShell\
+// Modules», куда пишут только администраторы; вдобавок все команды в
+// скрипте вызываются с именем модуля, а модули грузятся из $PSHOME.
 function psEnv(systemRoot) {
   const root = safeSystemRoot(systemRoot);
   return {
@@ -61,9 +64,16 @@ function psQuote(value) {
 
 // Модули, чьи команды нужны проверке, загружаются явно из папки самого
 // PowerShell ($PSHOME), а команды вызываются с именем модуля: даже модуль с
-// тем же именем раньше по PSModulePath их не подменит. Версия файла берётся
-// прямо из .NET (FileVersionInfo) — без Get-Item и его модуля.
-const PS_MODULES = ['Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Utility'];
+// тем же именем раньше по PSModulePath их не подменит.
+//
+// Скрипт обязан работать в режиме ConstrainedLanguage (AppLocker/WDAC на
+// корпоративных машинах): там запрещены вызовы методов «не основных» типов
+// .NET, например [System.Diagnostics.FileVersionInfo]::GetVersionInfo(), —
+// скрипт падал бы, и каждое обновление отклонялось бы. Поэтому только
+// командлеты, свойства и приведения к [string]; версия файла — через
+// Get-Item (FileInfo.VersionInfo из $PSHOME\types.ps1xml — то же
+// GetVersionInfo, но разрешённое).
+const PS_MODULES = ['Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility'];
 
 function buildPsCommand(file) {
   const p = psQuote(file);
@@ -75,7 +85,7 @@ function buildPsCommand(file) {
       (m) => `Microsoft.PowerShell.Core\\Import-Module -Name ($PSHOME + '\\Modules\\${m}\\${m}.psd1')`
     ),
     `$s = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath ${p}`,
-    `$v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo(${p})`,
+    `$v = (Microsoft.PowerShell.Management\\Get-Item -LiteralPath ${p}).VersionInfo`,
     '$c = $null',
     'if ($s.SignerCertificate) { $c = @{ Thumbprint = [string]$s.SignerCertificate.Thumbprint } }',
     '@{ Status = [string]$s.Status; SignerCertificate = $c; VersionInfo = @{ ProductVersion = [string]$v.ProductVersion } } | Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress'

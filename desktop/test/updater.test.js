@@ -332,7 +332,7 @@ test('события electron-updater → состояние, интерфейс
   assert.strictEqual(h.controller.getState().progress, 43);
 
   u.emit('update-downloaded', DOWNLOADED);
-  u.emit('update-downloaded', DOWNLOADED); // electron-updater шлёт дважды
+  u.emit('update-downloaded', DOWNLOADED); // повтор события ничего не удваивает
   await tick();
   s = h.controller.getState();
   assert.strictEqual(s.status, 'downloaded');
@@ -544,8 +544,8 @@ async function downloaded(opts = {}) {
   h.controller.start();
   await h.timers.fire();
   h.autoUpdater.emit('update-available', { version: '1.2.0' });
-  // electron-updater 6.8.9 посылает update-downloaded дважды подряд
-  // (AppUpdater.dispatchUpdateDownloaded) — обработчик обязан это выдержать.
+  // Повторное событие (electron-updater 6.8.9 шлёт одно на скачивание, но
+  // обработчик обязан выдержать и повтор) — проверка и уведомление одни.
   h.autoUpdater.emit('update-downloaded', DOWNLOADED);
   h.autoUpdater.emit('update-downloaded', DOWNLOADED);
   await tick();
@@ -764,6 +764,46 @@ test('пока идёт проверка скачанного файла, уст
     assert.strictEqual(h.controller.getState().status, answer ? 'error' : 'downloaded');
     assert.strictEqual(h.calls.addQuitHandler, answer ? 0 : 1, 'обработчик выхода регистрируется после проверки');
   }
+});
+
+test('без addQuitHandler в библиотеке — предупреждение в журнале, а не тишина', async () => {
+  const h = harness();
+  delete h.autoUpdater.addQuitHandler;
+  h.controller.start();
+  await h.timers.fire();
+  h.autoUpdater.emit('update-available', { version: '1.2.0' });
+  h.autoUpdater.emit('update-downloaded', DOWNLOADED);
+  await tick();
+  assert.strictEqual(h.controller.getState().status, 'downloaded');
+  assert.ok(h.calls.logs.some((m) => /ВНИМАНИЕ.*addQuitHandler/.test(m)), h.calls.logs.join('\n'));
+});
+
+// Порядок внутри настоящего electron-updater, на который опирается
+// onDownloaded: событие update-downloaded уходит синхронно ДО
+// addQuitHandler, тот не регистрирует обработчик при снятом флаге, а сам
+// обработчик читает флаг в момент выхода. Сменится — тест упадёт при
+// обновлении библиотеки, а не установка при выходе молча.
+test('настоящий electron-updater: addQuitHandler есть, порядок событий прежний', () => {
+  const { BaseUpdater } = require('electron-updater/out/BaseUpdater');
+  const { AppUpdater } = require('electron-updater/out/AppUpdater');
+  assert.strictEqual(typeof BaseUpdater.prototype.addQuitHandler, 'function');
+  assert.strictEqual(typeof BaseUpdater.prototype.quitAndInstall, 'function');
+  assert.ok(Object.getOwnPropertyDescriptor(BaseUpdater.prototype, 'installerPath')?.get, 'installerPath — геттер');
+
+  const base = BaseUpdater.prototype.executeDownload.toString();
+  const dispatchAt = base.indexOf('this.dispatchUpdateDownloaded(');
+  const addAt = base.indexOf('this.addQuitHandler()');
+  assert.ok(dispatchAt > 0 && addAt > dispatchAt, 'done: сначала событие, потом addQuitHandler');
+
+  const dispatch = AppUpdater.prototype.dispatchUpdateDownloaded.toString();
+  assert.match(dispatch, /this\.emit\(/, 'событие синхронное (EventEmitter.emit)');
+
+  const add = BaseUpdater.prototype.addQuitHandler.toString();
+  const guard = add.indexOf('!this.autoInstallOnAppQuit');
+  const onQuit = add.indexOf('onQuit(');
+  assert.ok(guard > 0 && guard < onQuit, 'при снятом флаге обработчик не регистрируется');
+  assert.ok(add.indexOf('!this.autoInstallOnAppQuit', onQuit) > onQuit, 'флаг читается и в момент выхода');
+  assert.match(add, /quitHandlerAdded/, 'повторный вызов безопасен');
 });
 
 test('обязательное: таймер сработал во время установки из трея, та упёрлась в сеанс — ожидание продолжается', async () => {
