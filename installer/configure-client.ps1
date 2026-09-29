@@ -1,209 +1,94 @@
 ﻿#Requires -RunAsAdministrator
-# Настраивает машину для автообновления OpenMyChat Enterprise: пишет
-# %ProgramData%\OpenMyChat Enterprise\client.json, который собранное
-# приложение читает при старте (desktop/src/main/client-config.js) -
-# адрес сервера и канал обновлений, без переменных окружения и без
-# пользовательского файла (см. docs/superpowers/specs/2026-09-28-autoupdate-design.md,
-# раздел «Клиентский файл машины»).
+# Настраивает машину для OpenMyChat Enterprise: пишет политику реестра
+# HKLM\SOFTWARE\Policies\OpenMyChat Enterprise, которую собранное приложение
+# читает при старте (desktop/src/main/client-config.js):
+#   ServerUrl      REG_SZ     адрес сервера компании, только https://
+#   UpdatesEnabled REG_DWORD  1 - обновления включены, 0 - выключены
+#   UpdateChannel  REG_SZ     stable | beta
+# См. docs/автообновление.md и docs/superpowers/specs/2026-09-28-autoupdate-design.md,
+# раздел «Политика машины».
 #
-# Почему нужны права администратора
-# ----------------------------------
-# ProgramData общий на всех пользователей компьютера, а client.json задаёт,
-# на какой сервер ходит приложение и включено ли автообновление. Если бы
-# любой пользователь мог его переписать, он мог бы перенаправить чужой
-# клиент на подложный сервер или тихо выключить проверку подписи
-# обновлений у себя. Поэтому каталог создаётся с ACL, где обычные
-# пользователи (S-1-5-32-545) могут только читать и выполнять (RX), а
-# писать могут лишь администраторы (S-1-5-32-544) и система (S-1-5-18).
+# Почему реестр, а не файл
+# ------------------------
+# Раньше настройка лежала в %ProgramData%\OpenMyChat Enterprise\client.json.
+# В ProgramData по умолчанию любой пользователь может создать папку и стать
+# её владельцем: на ПК, где этот скрипт ещё не запускали, сотрудник мог
+# положить туда свой файл и увести приложение всех остальных пользователей
+# ПК на чужой сервер. Ключ HKLM\SOFTWARE\Policies пишут только
+# администраторы, на любой машине и без подготовки; его же раскладывает
+# групповая политика домена (Group Policy Preferences -> Registry) - тогда
+# этот скрипт не нужен вовсе. Файл client.json приложение больше не читает.
 #
-# Каталог мог существовать до этого скрипта (там же лежит policy.json от
-# rd-consent.js) и мог быть создан обычным пользователем - тогда владелец
-# каталога он, и владелец может переписать ACL себе обратно, каким бы
-# строгим он ни был. Поэтому сначала переносим владение на администраторов
-# (/setowner /T - и каталог, и всё, что уже внутри), потом ставим ACL с /T,
-# чтобы он докатился и до уже лежащих файлов, а не только до новых. И
-# отдельно, уже после записи client.json, закрепляем ACL на самом файле и
-# проверяем результат Get-Acl - не полагаясь на то, что /T каталога
-# идеально дотянулся до файла, который мы только что перезаписали.
-#
-# Запуск:
-#   configure-client.ps1 -ServerUrl https://chat.company.kz [-Channel stable|beta] [-DisableUpdates]
+# Запуск (от администратора):
+#   configure-client.ps1 -ServerUrl https://chat.company.kz [-Channel stable|beta] [-DisableUpdates | -EnableUpdates]
 #   настроить-клиент.bat (тот же скрипт, для тех, кто не любит PowerShell)
+# Без -ServerUrl уже записанный адрес не меняется; без -Channel - канал.
 
 param(
     [string]$ServerUrl,
     [ValidateSet('stable', 'beta')]
     [string]$Channel,
-    [switch]$DisableUpdates
+    [switch]$DisableUpdates,
+    [switch]$EnableUpdates
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Get-MyChatDangerousAcl — отдельным файлом, а не функцией здесь же, чтобы
-# её можно было прогнать напрямую в тесте (реальный Get-Acl на реальном
-# файле), а не только проверить текстом.
-. (Join-Path $PSScriptRoot 'acl-guard.ps1')
+$PolicyKey = 'HKLM:\SOFTWARE\Policies\OpenMyChat Enterprise'
 
-# Явная проверка https - та же, что и в isAllowedServerUrl на клиенте
-# (desktop/src/main/server-url.js): адрес без TLS означает, что и сам чат, и
-# обновления ходят открытым текстом, а мы полагаемся на https для того,
-# чтобы клиент вообще мог доверять серверу.
-if ($ServerUrl -and $ServerUrl -notmatch '^https://') {
-    Write-Host "ОТКАЗ: -ServerUrl должен начинаться с https:// (получено: $ServerUrl)" -ForegroundColor Red
-    Write-Host "Обновления и синхронизация по http не поддерживаются - см. docs/автообновление.md." -ForegroundColor Yellow
+if ($DisableUpdates -and $EnableUpdates) {
+    Write-Host "ОТКАЗ: -DisableUpdates и -EnableUpdates вместе не имеют смысла - укажите один." -ForegroundColor Red
     exit 2
 }
 
-# Запускает icacls и сверяет $LASTEXITCODE - icacls не бросает исключение
-# при ошибке (это внешний процесс), поэтому без явной проверки скрипт
-# продолжил бы работу с ACL, которую на самом деле не удалось поставить.
-function Invoke-MyChatIcacls {
-    param(
-        [Parameter(Mandatory)]
-        [string[]]$IcaclsArgs,
-        [Parameter(Mandatory)]
-        [string]$FailureMessage
-    )
-    $output = & icacls @IcaclsArgs 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host $FailureMessage -ForegroundColor Red
-        Write-Host ($output -join "`n") -ForegroundColor Red
-        exit 1
-    }
-    return $output
-}
-
-$ConfigDir = Join-Path $env:ProgramData 'OpenMyChat Enterprise'
-$ConfigPath = Join-Path $ConfigDir 'client.json'
-
-if (-not (Test-Path -LiteralPath $ConfigDir)) {
-    New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
-}
-
-# Владелец - на администраторов, рекурсивно (каталог и всё, что уже
-# внутри): иначе прежний владелец-непривилегированный пользователь мог бы
-# в любой момент переписать ACL, который мы сейчас поставим, себе обратно.
-Invoke-MyChatIcacls -IcaclsArgs @($ConfigDir, '/setowner', '*S-1-5-32-544', '/T', '/C') `
-    -FailureMessage "Не удалось назначить владельца для $ConfigDir"
-
-# Сбрасываем унаследованные права и ставим ровно три записи: Администраторы
-# и SYSTEM - полный доступ, обычные пользователи - только чтение и
-# выполнение. /inheritance:r отключает наследование от %ProgramData%,
-# иначе туда попали бы более широкие права, унаследованные сверху. /T -
-# рекурсивно, на все файлы, что уже лежат в каталоге (например,
-# policy.json от rd-consent.js или client.json от предыдущего запуска), а
-# не только на сам каталог и будущие файлы.
-Invoke-MyChatIcacls -IcaclsArgs @(
-        $ConfigDir,
-        '/inheritance:r',
-        '/grant:r',
-        '*S-1-5-32-544:(OI)(CI)F',
-        '*S-1-5-18:(OI)(CI)F',
-        '*S-1-5-32-545:(OI)(CI)RX',
-        '/T',
-        '/C'
-    ) -FailureMessage "Не удалось настроить права доступа на $ConfigDir"
-
-Write-Host "Права доступа на $ConfigDir настроены (администраторы и SYSTEM - полный доступ, остальные - только чтение)." -ForegroundColor Green
-
-# Сливаем с уже существующим файлом, а не перезаписываем его целиком: на
-# машине мог быть, например, ключ, добавленный вручную ИТ-отделом или
-# будущей версией клиента, который этот скрипт ещё не знает. Такие ключи
-# сохраняются как есть - и на верхнем уровне, и внутри "updates".
-$existing = $null
-if (Test-Path -LiteralPath $ConfigPath) {
-    try {
-        $raw = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.Encoding]::UTF8)
-        if ($raw) { $existing = $raw | ConvertFrom-Json }
-    } catch {
-        Write-Host "Существующий client.json повреждён и будет пересоздан: $($_.Exception.Message)" -ForegroundColor Yellow
-        $existing = $null
-    }
-    # ConvertFrom-Json может вернуть массив или простое значение (число,
-    # строку, $true) для файла вида "[1,2]" или "5" - это валидный JSON, но
-    # не объект с ключами. .PSObject.Properties у такого значения либо
-    # пуст, либо не то, что ожидается - считаем это порчей файла, а не
-    # набором неизвестных ключей для слияния.
-    if ($existing -and -not ($existing -is [System.Management.Automation.PSCustomObject])) {
-        Write-Host "Существующий client.json - не объект JSON (массив или значение), будет пересоздан." -ForegroundColor Yellow
-        $existing = $null
-    }
-}
-
-# ConvertFrom-Json даёт PSCustomObject - собираем обычный Hashtable, чтобы
-# было удобно проверять и дописывать ключи, включая неизвестные скрипту.
-$result = [ordered]@{}
-if ($existing) {
-    foreach ($prop in $existing.PSObject.Properties) {
-        $result[$prop.Name] = $prop.Value
-    }
-}
-
+# Та же проверка, что и в isAllowedServerUrl на клиенте
+# (desktop/src/main/server-url.js): только https и без имени/пароля в адресе.
+# Адрес без TLS означает, что и сам чат, и обновления ходят открытым текстом;
+# учётные данные в адресе попали бы в журналы. Клиент такой адрес всё равно
+# отклонит - лучше отказать здесь, чем молча оставить машину на старом адресе.
 if ($ServerUrl) {
-    $result['serverUrl'] = $ServerUrl
-} elseif (-not $result.Contains('serverUrl')) {
-    $result['serverUrl'] = $null
-}
-
-$existingUpdates = [ordered]@{}
-if ($result.Contains('updates') -and $result['updates']) {
-    # Тот же случай, что и с $existing выше: значение "updates" в
-    # повреждённом или подделанном файле может оказаться строкой, числом
-    # или массивом - тогда это не объект настроек, а мусор, который не
-    # нужно (и нельзя) перебирать через .PSObject.Properties.
-    if ($result['updates'] -is [System.Management.Automation.PSCustomObject]) {
-        foreach ($prop in $result['updates'].PSObject.Properties) {
-            $existingUpdates[$prop.Name] = $prop.Value
-        }
-    } else {
-        Write-Host "Существующий ключ updates в client.json - не объект JSON, будет пересоздан." -ForegroundColor Yellow
+    $parsed = $null
+    $isUrl = [Uri]::TryCreate($ServerUrl, [UriKind]::Absolute, [ref]$parsed)
+    if (-not $isUrl -or $ServerUrl -notmatch '^https://' -or $parsed.Scheme -ne 'https' -or $parsed.UserInfo) {
+        Write-Host "ОТКАЗ: -ServerUrl должен быть адресом https:// без имени и пароля (получено: $ServerUrl)" -ForegroundColor Red
+        Write-Host "Обновления и синхронизация по http не поддерживаются - см. docs/автообновление.md." -ForegroundColor Yellow
+        exit 2
     }
 }
-if (-not $existingUpdates.Contains('enabled')) { $existingUpdates['enabled'] = $true }
-if (-not $existingUpdates.Contains('channel')) { $existingUpdates['channel'] = 'stable' }
 
-if ($Channel) { $existingUpdates['channel'] = $Channel }
-if ($DisableUpdates) { $existingUpdates['enabled'] = $false }
-
-$result['updates'] = $existingUpdates
-
-$json = $result | ConvertTo-Json -Depth 10
-
-# UTF-8 без BOM: собранное приложение читает файл через node:fs, и BOM в
-# начале JSON ломает JSON.parse ("Unexpected token"). New-Item/Set-Content
-# в Windows PowerShell 5.1 по умолчанию пишут BOM - поэтому запись только
-# через File.WriteAllText с явной кодировкой без BOM.
-[System.IO.File]::WriteAllText($ConfigPath, $json, (New-Object System.Text.UTF8Encoding $false))
-
-# ACL каталога с /T должен был докатиться и до client.json, но файл только
-# что перезаписан - WriteAllText не трогает существующий ACL записи, но
-# лишняя проверка здесь дешева, а её отсутствие означало бы, что мы просто
-# верим, что каталожный /T отработал без сюрпризов (антивирус, блокировка
-# файла другим процессом, гонка). Закрепляем ACL явно на файле и проверяем
-# результат - если у кого-то постороннего всё ещё есть запись, это отказ,
-# а не предупреждение: смысл всего скрипта в том, что этот файл нельзя
-# переписать без прав администратора.
-Invoke-MyChatIcacls -IcaclsArgs @(
-        $ConfigPath,
-        '/inheritance:r',
-        '/grant:r',
-        '*S-1-5-32-544:F',
-        '*S-1-5-18:F',
-        '*S-1-5-32-545:RX'
-    ) -FailureMessage "Не удалось настроить права доступа на $ConfigPath"
-
-$dangerousAcl = Get-MyChatDangerousAcl -Path $ConfigPath
-if ($dangerousAcl.Count -gt 0) {
-    Write-Host "ОТКАЗ: после настройки ACL право на запись в $ConfigPath всё ещё есть у постороннего:" -ForegroundColor Red
-    $dangerousAcl | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-    Write-Host "client.json удалён не был, но доверять ему нельзя - проверьте ACL вручную (Get-Acl)." -ForegroundColor Yellow
-    exit 1
+# New-Item -Force на уже существующем ключе реестра пересоздаёт его и стирает
+# значения, заданные раньше (или групповой политикой) - поэтому только если
+# ключа ещё нет.
+if (-not (Test-Path -LiteralPath $PolicyKey)) {
+    New-Item -Path $PolicyKey -Force | Out-Null
 }
-Write-Host "Права на $ConfigPath проверены: запись есть только у администраторов и SYSTEM." -ForegroundColor Green
 
+# Каждое значение пишется только если его передали: запуск с одним
+# -DisableUpdates не должен затирать адрес сервера, записанный раньше.
+if ($ServerUrl) {
+    New-ItemProperty -LiteralPath $PolicyKey -Name ServerUrl -PropertyType String -Value $ServerUrl -Force | Out-Null
+}
+if ($Channel) {
+    New-ItemProperty -LiteralPath $PolicyKey -Name UpdateChannel -PropertyType String -Value $Channel -Force | Out-Null
+}
+
+$current = Get-ItemProperty -LiteralPath $PolicyKey
+if ($DisableUpdates) {
+    New-ItemProperty -LiteralPath $PolicyKey -Name UpdatesEnabled -PropertyType DWord -Value 0 -Force | Out-Null
+} elseif ($EnableUpdates -or $null -eq $current.UpdatesEnabled) {
+    # Нет значения - клиент и так считает обновления включёнными; пишем 1
+    # явно, чтобы в реестре было видно, что машина настроена.
+    New-ItemProperty -LiteralPath $PolicyKey -Name UpdatesEnabled -PropertyType DWord -Value 1 -Force | Out-Null
+}
+
+$current = Get-ItemProperty -LiteralPath $PolicyKey
 Write-Host ""
-Write-Host "Записан $ConfigPath :" -ForegroundColor Cyan
-Write-Host $json
+Write-Host "Политика $PolicyKey :" -ForegroundColor Cyan
+foreach ($name in @('ServerUrl', 'UpdatesEnabled', 'UpdateChannel')) {
+    $value = $current.$name
+    if ($null -eq $value) { $value = '(не задано - значение по умолчанию)' }
+    Write-Host ("  {0,-15} {1}" -f $name, $value)
+}
 Write-Host ""
 Write-Host "Готово. Перезапустите OpenMyChat Enterprise на этой машине, чтобы изменения применились." -ForegroundColor Green

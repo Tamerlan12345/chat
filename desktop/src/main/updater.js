@@ -220,7 +220,7 @@ class UpdateController {
     }
     if (!this.enabled) {
       this.setState({ status: 'disabled' });
-      this.deps.log('updates: disabled on this machine (client.json)');
+      this.deps.log('updates: disabled on this machine (policy UpdatesEnabled=0)');
       return;
     }
     if (!this.baseUrl) {

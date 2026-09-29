@@ -3,24 +3,34 @@
 //
 // В собранной сборке адрес сервера был зашит константой, а переменные
 // окружения там намеренно не читаются (см. server-url.js). Серверу в
-// локальной сети нужен свой адрес — он берётся из
-// %ProgramData%\OpenMyChat Enterprise\client.json. Папку создаёт
-// installer/configure-client.ps1 с правами «пишут только администраторы»:
-// файл в профиле пользователя или переменная окружения позволили бы любой
-// программе сотрудника увести приложение со всеми его возможностями на чужой
-// сервер.
+// локальной сети нужен свой адрес — он берётся из политики реестра
+// HKLM\SOFTWARE\Policies\OpenMyChat Enterprise (значения ServerUrl,
+// UpdatesEnabled, UpdateChannel). Её пишет installer/configure-client.ps1
+// или групповая политика домена.
 //
-// Файл не обязателен. Любая ошибка в нём — файл (или его часть)
-// игнорируется, причина уходит в журнал: приложение, которое не запускается
-// из-за опечатки в конфигурации, хуже приложения со старым адресом.
+// Почему реестр, а не файл в ProgramData. Раньше настройка лежала в
+// %ProgramData%\OpenMyChat Enterprise\client.json. Но в ProgramData по
+// умолчанию любой пользователь может создать папку и стать её владельцем:
+// на ПК, где configure-client.ps1 ещё не запускали, сотрудник клал туда свой
+// client.json — и приложение всех остальных пользователей этого ПК уходило
+// на его сервер (пароли, удалённый доступ, выключенные обновления). Ключ
+// HKLM\SOFTWARE\Policies пишут только администраторы — на любой машине, без
+// предварительной подготовки. client.json собранная сборка не читает вовсе.
+//
+// Политика не обязательна. Ошибка в значении — это значение игнорируется,
+// причина уходит в журнал: приложение, которое не запускается из-за опечатки
+// в настройке, хуже приложения со старым адресом.
 
 const fs = require('node:fs');
-const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { isAllowedServerUrl, resolveServerUrl } = require('./server-url');
 
-const CONFIG_DIR_NAME = 'OpenMyChat Enterprise';
-const CONFIG_FILE_NAME = 'client.json';
+const POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\OpenMyChat Enterprise';
+const POLICY_VALUES = Object.freeze({
+  serverUrl: 'ServerUrl',
+  updatesEnabled: 'UpdatesEnabled',
+  updateChannel: 'UpdateChannel'
+});
 const CHANNELS = Object.freeze(['stable', 'beta']);
 const DEFAULT_SYSTEM_ROOT = 'C:\\Windows';
 const DEFAULT_PROGRAM_DATA = 'C:\\ProgramData';
@@ -39,11 +49,6 @@ function isLocalDirPath(value) {
     && !value.split('\\').some((part) => part === '..' || part === '.');
 }
 
-function clientConfigPath(programData) {
-  if (typeof programData !== 'string' || !programData) return null;
-  return path.win32.join(programData, CONFIG_DIR_NAME, CONFIG_FILE_NAME);
-}
-
 function trustedSystemRoot({ realpath = (p) => fs.realpathSync.native(p) } = {}) {
   try {
     const resolved = String(realpath(KERNEL_SYSTEM_ROOT)).replace(/^\\\\\?\\/, '').replace(/\\+$/, '');
@@ -53,14 +58,23 @@ function trustedSystemRoot({ realpath = (p) => fs.realpathSync.native(p) } = {})
   }
 }
 
-// Вывод «reg.exe query <ключ> /v <имя>»: строка «    имя    REG_SZ    значение».
-function parseRegValue(stdout, name) {
+// Вывод «reg.exe query <ключ> [/v <имя>]»: строки «    имя    ТИП    значение».
+// Имена значений в реестре регистронезависимы.
+// → { type: 'REG_SZ'|'REG_DWORD'|…, data: строка как её напечатал reg.exe } | null
+function parseRegEntry(stdout, name) {
   const lines = String(stdout || '').split(/\r?\n/);
+  const wanted = String(name).toLowerCase();
   for (const line of lines) {
-    const m = line.match(/^\s+(\S.*?)\s{2,}(REG_SZ|REG_EXPAND_SZ)\s{2,}(.*?)\s*$/);
-    if (m && m[1].toLowerCase() === String(name).toLowerCase()) return m[3];
+    const m = line.match(/^\s+(\S.*?)\s{2,}(REG_[A-Z_]+)(?:\s{2,}(.*?))?\s*$/);
+    if (m && m[1].toLowerCase() === wanted) return { type: m[2], data: m[3] || '' };
   }
   return null;
+}
+
+// Строковое значение (REG_SZ или REG_EXPAND_SZ) — как для ProfileList.
+function parseRegValue(stdout, name) {
+  const entry = parseRegEntry(stdout, name);
+  return entry && (entry.type === 'REG_SZ' || entry.type === 'REG_EXPAND_SZ') ? entry.data : null;
 }
 
 // «%SystemDrive%\ProgramData» из реестра → «C:\ProgramData». Раскрываются
@@ -76,8 +90,10 @@ function expandSystemPath(raw, systemRoot) {
   return isLocalDirPath(expanded) ? expanded.replace(/\\+$/, '') : null;
 }
 
+// name = null — все значения ключа одним запуском reg.exe.
 function defaultRegQuery(exe, key, name) {
-  return execFileSync(exe, ['query', key, '/v', name], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+  const args = name ? ['query', key, '/v', name] : ['query', key];
+  return execFileSync(exe, args, { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function sameDir(a, b) {
@@ -86,15 +102,16 @@ function sameDir(a, b) {
 }
 
 /**
- * Папки Windows, от которых зависит доверие: где лежит client.json
- * (ProgramData) и откуда запускать PowerShell (корень системы).
+ * Папки Windows, от которых зависит доверие: откуда запускать reg.exe и
+ * PowerShell (корень системы) и где лежит policy.json удалённого доступа
+ * (ProgramData, см. rd-consent.js).
  *
  * В собранной сборке переменные окружения здесь не читаются: пользовательская
- * переменная (HKCU\Environment) перекрывает системную, и
- * «ProgramData=Q:\ProgramData» вместе с subst Q: на папку профиля увела бы
- * приложение на любой https-сервер, а «SystemRoot» подсунула бы поддельный
- * powershell.exe, печатающий «Valid». Корень системы берётся из ядра
- * (\SystemRoot), ProgramData — из HKLM\…\ProfileList (пишет только
+ * переменная (HKCU\Environment) перекрывает системную, и «SystemRoot»
+ * подсунула бы поддельный reg.exe с чужим адресом сервера или powershell.exe,
+ * печатающий «Valid», а «ProgramData=Q:\ProgramData» вместе с subst Q: на
+ * папку профиля сняла бы запрет удалённого доступа. Корень системы берётся из
+ * ядра (\SystemRoot), ProgramData — из HKLM\…\ProfileList (пишет только
  * администратор) через reg.exe из того же корня. Не вышло — C:\Windows и
  * C:\ProgramData. В разработке — как раньше, из окружения.
  * → { systemRoot, programData, problems: [строки для журнала] }
@@ -137,123 +154,123 @@ function resolveSystemDirs({ isPackaged, env = {}, realpath, regQuery = defaultR
   return { systemRoot, programData, problems };
 }
 
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+// REG_DWORD reg.exe печатает как «0x1».
+function parseDword(data) {
+  return /^0x[0-9a-f]{1,8}$/i.test(String(data)) ? Number.parseInt(data, 16) : null;
 }
 
 /**
- * Читает client.json машины.
- * → { serverUrl|null, updates: { enabled, channel }, source: 'programdata'|'none', problems: [строки для журнала] }
+ * Читает политику машины HKLM\SOFTWARE\Policies\OpenMyChat Enterprise:
+ *   ServerUrl      REG_SZ     https://… (без имени и пароля)
+ *   UpdatesEnabled REG_DWORD  0 — обновления выключены, 1 — включены
+ *   UpdateChannel  REG_SZ     stable | beta
+ * Значение другого типа не принимается. reg.exe — из доверенного корня
+ * системы (resolveSystemDirs), не из PATH и не из переменной SystemRoot.
+ * → { serverUrl|null, updates: { enabled, channel }, source: 'hklm-policy'|'default', problems: [строки для журнала] }
  * В разработке обновления выключены всегда: electron-updater там всё равно
  * не работает, а запросы к боевому серверу из рабочей копии ни к чему.
  */
-function readClientConfig({ programData, readFile, isPackaged } = {}) {
+function readClientConfig({ systemRoot, isPackaged, regQuery = defaultRegQuery } = {}) {
   const result = {
     serverUrl: null,
     updates: { enabled: Boolean(isPackaged), channel: 'stable' },
-    source: 'none',
+    source: 'default',
     problems: []
   };
-
-  const file = clientConfigPath(programData);
-  if (!file) {
-    result.problems.push('папка ProgramData не определена — client.json не читается');
+  const finish = () => {
+    if (!isPackaged) result.updates.enabled = false;
     return result;
+  };
+
+  if (!isLocalDirPath(systemRoot)) {
+    result.problems.push('корень Windows не определён — политика машины не читается, адрес сервера по умолчанию');
+    return finish();
   }
 
-  let text;
+  let stdout;
   try {
-    text = String(readFile(file));
+    stdout = regQuery(`${systemRoot.replace(/\\+$/, '')}\\System32\\reg.exe`, POLICY_KEY, null);
   } catch (err) {
+    // reg.exe на отсутствующий ключ отвечает кодом 1 — обычный случай для
+    // машины, которую ИТ не настраивал.
     result.problems.push(
-      err && err.code === 'ENOENT'
-        ? `${file} не найден — адрес сервера по умолчанию`
-        : `${file} не прочитан (${err && (err.code || err.message)}) — файл пропущен`
+      err && err.status === 1
+        ? `политика ${POLICY_KEY} не задана — адрес сервера по умолчанию`
+        : `политика ${POLICY_KEY} не прочитана (${err && (err.code || err.status || err.message)}) — адрес сервера по умолчанию`
     );
-    return result;
+    return finish();
   }
+  result.source = 'hklm-policy';
 
-  let raw;
-  try {
-    // PowerShell 5.1 (Set-Content -Encoding UTF8) пишет BOM.
-    raw = JSON.parse(text.replace(/^\uFEFF/, ''));
-  } catch {
-    result.problems.push(`${file}: не JSON — файл пропущен`);
-    return result;
-  }
-  if (!isPlainObject(raw)) {
-    result.problems.push(`${file}: ожидался объект JSON — файл пропущен`);
-    return result;
-  }
-  result.source = 'programdata';
-
-  if (raw.serverUrl !== undefined) {
-    if (typeof raw.serverUrl === 'string' && isAllowedServerUrl(raw.serverUrl, { isPackaged: true })) {
-      result.serverUrl = raw.serverUrl;
+  const url = parseRegEntry(stdout, POLICY_VALUES.serverUrl);
+  if (url) {
+    if (url.type !== 'REG_SZ') {
+      result.problems.push(`${POLICY_VALUES.serverUrl}: ожидался REG_SZ, а не ${url.type} — адрес сервера по умолчанию`);
+    } else if (isAllowedServerUrl(url.data, { isPackaged: true })) {
+      result.serverUrl = url.data;
     } else {
-      // Сам адрес в журнал не пишется целиком: в нём могли оказаться учётные данные.
-      result.problems.push('serverUrl отклонён: нужен адрес https:// без имени и пароля');
+      // Сам адрес в журнал не пишется: в нём могли оказаться учётные данные.
+      result.problems.push(`${POLICY_VALUES.serverUrl} отклонён: нужен адрес https:// без имени и пароля`);
     }
   }
 
-  const updates = raw.updates;
-  if (updates !== undefined && !isPlainObject(updates)) {
-    result.problems.push('updates: ожидался объект — значения по умолчанию');
-  } else if (updates) {
-    if (updates.enabled !== undefined) {
-      if (typeof updates.enabled !== 'boolean') {
-        // Выключатель с опечаткой («"false"») — скорее всего, хотели выключить.
-        result.problems.push('updates.enabled: ожидалось true или false — обновления выключены');
-        result.updates.enabled = false;
-      } else if (updates.enabled === false) {
-        result.updates.enabled = false;
-      }
-    }
-    if (updates.channel !== undefined) {
-      if (CHANNELS.includes(updates.channel)) {
-        result.updates.channel = updates.channel;
-      } else {
-        result.problems.push(`updates.channel: неизвестный канал ${JSON.stringify(String(updates.channel)).slice(0, 40)} — stable`);
-      }
+  const enabled = parseRegEntry(stdout, POLICY_VALUES.updatesEnabled);
+  if (enabled) {
+    const value = enabled.type === 'REG_DWORD' ? parseDword(enabled.data) : null;
+    if (value === 0) {
+      result.updates.enabled = false;
+    } else if (value !== 1) {
+      // Выключатель с опечаткой (строка «0», число 2) — скорее всего, хотели
+      // выключить.
+      result.problems.push(`${POLICY_VALUES.updatesEnabled}: ожидался REG_DWORD 0 или 1 — обновления выключены`);
+      result.updates.enabled = false;
     }
   }
 
-  if (!isPackaged) result.updates.enabled = false;
-  return result;
+  const channel = parseRegEntry(stdout, POLICY_VALUES.updateChannel);
+  if (channel) {
+    if (channel.type === 'REG_SZ' && CHANNELS.includes(channel.data)) {
+      result.updates.channel = channel.data;
+    } else {
+      result.problems.push(`${POLICY_VALUES.updateChannel}: ожидался REG_SZ stable или beta (${channel.type} ${JSON.stringify(channel.data).slice(0, 40)}) — stable`);
+    }
+  }
+
+  return finish();
 }
 
 /**
  * Адрес сервера, который загружает приложение.
- * Собранная сборка: client.json → зашитая константа (переменные окружения не
- * читаются). Разработка: как раньше — переменные окружения, затем client.json,
- * затем константа.
- * → { url, source: 'env'|'client.json'|'default', ignored }
+ * Собранная сборка: политика HKLM → зашитая константа (переменные окружения
+ * не читаются). Разработка: как раньше — переменные окружения, затем
+ * политика, затем константа.
+ * → { url, source: 'env'|'hklm-policy'|'default', ignored }
  */
 function resolveEffectiveServerUrl({ config, hardDefault, isPackaged, env = {} } = {}) {
-  const fromFile = config && typeof config.serverUrl === 'string' ? config.serverUrl : null;
+  const fromPolicy = config && typeof config.serverUrl === 'string' ? config.serverUrl : null;
   if (isPackaged) {
-    return fromFile
-      ? { url: fromFile, source: 'client.json', ignored: null }
+    return fromPolicy
+      ? { url: fromPolicy, source: 'hklm-policy', ignored: null }
       : { url: hardDefault, source: 'default', ignored: null };
   }
-  const fallback = fromFile || hardDefault;
+  const fallback = fromPolicy || hardDefault;
   const choice = resolveServerUrl({ isPackaged: false, env, defaultUrl: fallback });
   const fromEnv = choice.url !== fallback || Boolean((env.VITE_DEV_SERVER_URL || env.MYCHAT_SERVER_URL) && !choice.ignored);
   return {
     url: choice.url,
-    source: fromEnv ? 'env' : fromFile ? 'client.json' : 'default',
+    source: fromEnv ? 'env' : fromPolicy ? 'hklm-policy' : 'default',
     ignored: choice.ignored
   };
 }
 
 module.exports = {
-  CONFIG_DIR_NAME,
-  CONFIG_FILE_NAME,
+  POLICY_KEY,
+  POLICY_VALUES,
   CHANNELS,
   DEFAULT_SYSTEM_ROOT,
   DEFAULT_PROGRAM_DATA,
-  clientConfigPath,
   trustedSystemRoot,
+  parseRegEntry,
   parseRegValue,
   expandSystemPath,
   resolveSystemDirs,

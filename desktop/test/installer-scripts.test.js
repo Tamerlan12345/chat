@@ -17,40 +17,40 @@ function readText(absPath) {
   return fs.readFileSync(absPath, 'utf8');
 }
 
-test('configure-client.ps1 — требует прав администратора, ACL, UTF-8 без BOM, проверку https', () => {
+// Код без строк-комментариев: упоминание client.json в пояснении допустимо,
+// в коде — нет.
+function codeLines(text) {
+  return text.split(/\r?\n/).filter((line) => !/^\s*#/.test(line)).join('\n');
+}
+
+test('configure-client.ps1 — требует прав администратора, пишет политику HKLM, проверяет https', () => {
   const text = readText(path.join(INSTALLER_DIR, 'configure-client.ps1'));
-  assert.match(text, /RunAsAdministrator/, 'должен требовать права администратора (#Requires -RunAsAdministrator)');
-  assert.ok(text.includes('/inheritance:r'), 'ACL должен сбрасывать наследование (/inheritance:r)');
+  assert.match(text, /^﻿?#Requires -RunAsAdministrator/m, 'должен требовать права администратора (#Requires -RunAsAdministrator)');
   assert.ok(
-    text.includes('S-1-5-32-545:(OI)(CI)RX'),
-    'ACL должен включать группу "Пользователи" (S-1-5-32-545) только на чтение и выполнение'
+    text.includes("$PolicyKey = 'HKLM:\\SOFTWARE\\Policies\\OpenMyChat Enterprise'"),
+    'политика машины — в HKLM:\\SOFTWARE\\Policies\\OpenMyChat Enterprise (пишут только администраторы)'
   );
-  assert.ok(text.includes('UTF8Encoding $false'), 'client.json должен писаться в UTF-8 без BOM');
+  assert.match(text, /New-ItemProperty[^\n]*-Name ServerUrl[^\n]*-PropertyType String/, 'ServerUrl — REG_SZ');
+  assert.match(text, /New-ItemProperty[^\n]*-Name UpdateChannel[^\n]*-PropertyType String/, 'UpdateChannel — REG_SZ');
+  assert.match(text, /New-ItemProperty[^\n]*-Name UpdatesEnabled[^\n]*-PropertyType DWord/, 'UpdatesEnabled — REG_DWORD');
   assert.match(text, /https:\/\//, 'должен проверять, что адрес сервера начинается с https://');
+  assert.match(text, /UserInfo/, 'адрес с именем и паролем должен отклоняться');
 });
 
-test('configure-client.ps1 — переносит владение и распространяет ACL на уже существующие файлы (/setowner, /T), проверяет итоговый ACL файла', () => {
-  const text = readText(path.join(INSTALLER_DIR, 'configure-client.ps1'));
-  assert.match(
-    text,
-    /\/setowner/,
-    'должен переносить владение каталогом на администраторов (/setowner) — иначе прежний владелец-непривилегированный пользователь может переписать ACL обратно'
-  );
-  assert.match(
-    text,
-    /\/T/,
-    'ACL должен распространяться на уже существующие в каталоге файлы (/T), а не только на новые'
-  );
-  assert.match(
-    text,
-    /Get-Acl/,
-    'после записи client.json ACL файла должен быть проверен (Get-Acl), а не только выставлен вслепую'
-  );
-  assert.match(
-    text,
-    /LASTEXITCODE/,
-    'каждый вызов icacls должен проверяться на успех через $LASTEXITCODE'
-  );
+test('configure-client.ps1 — client.json больше не пишет', () => {
+  const code = codeLines(readText(path.join(INSTALLER_DIR, 'configure-client.ps1')));
+  assert.ok(!/client\.json/i.test(code), 'client.json не должен упоминаться в коде скрипта');
+  assert.ok(!/ProgramData/i.test(code), 'скрипт не должен трогать ProgramData');
+  assert.ok(!/WriteAllText|Set-Content|Out-File|icacls/i.test(code), 'скрипт не пишет файлы и не меняет ACL файлов');
+  assert.ok(!fs.existsSync(path.join(INSTALLER_DIR, 'acl-guard.ps1')), 'acl-guard.ps1 больше не нужен');
+});
+
+test('install.ps1 и настроить-клиент.bat — говорят о политике реестра, а не о client.json', () => {
+  for (const name of ['install.ps1', 'настроить-клиент.bat']) {
+    const text = readText(path.join(INSTALLER_DIR, name));
+    assert.ok(!/client\.json/i.test(text), `${name} не должен упоминать client.json`);
+    assert.match(text, /Policies\\OpenMyChat Enterprise/, `${name} должен называть ключ политики`);
+  }
 });
 
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {
@@ -64,6 +64,10 @@ test('install.ps1 — принимает параметры ServerUrl и Channel
   const text = readText(path.join(INSTALLER_DIR, 'install.ps1'));
   assert.match(text, /\$ServerUrl/, 'должен принимать параметр -ServerUrl');
   assert.match(text, /\$Channel/, 'должен принимать параметр -Channel');
+  // Splatting массива передал бы строку '-ServerUrl' позиционным значением —
+  // configure-client.ps1 получил бы ServerUrl='-ServerUrl' и отказал.
+  assert.match(text, /\$configArgs = @\{\}/, 'параметры configure-client.ps1 — хэш-таблицей');
+  assert.ok(!/\$configArgs \+= @\(/.test(text), 'не массивом');
 });
 
 test('docs/автообновление.md — существует и описывает выключатель и публикацию', () => {

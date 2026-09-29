@@ -6,15 +6,17 @@ echo ================================================================
 echo   Настройка клиента: адрес сервера и канал обновлений
 echo ================================================================
 echo.
-echo Пишет %%ProgramData%%\OpenMyChat Enterprise\client.json - его читает
-echo собранный клиент при старте (адрес сервера, включены ли обновления,
-echo канал stable/beta). Требуются права администратора.
+echo Пишет политику реестра HKLM\SOFTWARE\Policies\OpenMyChat Enterprise -
+echo её читает собранный клиент при старте (адрес сервера, включены ли
+echo обновления, канал stable/beta). Требуются права администратора.
 echo.
-echo Примеры запуска из PowerShell (этот bat без параметров запросит
-echo только запись текущих/пустых значений):
-echo   configure-client.ps1 -ServerUrl https://chat.company.kz
-echo   configure-client.ps1 -ServerUrl https://chat.company.kz -Channel beta
-echo   configure-client.ps1 -DisableUpdates
+echo Примеры запуска (параметры передаются скрипту как есть; без параметров
+echo скрипт ничего не меняет, кроме UpdatesEnabled=1, если его ещё нет, и
+echo показывает текущую политику):
+echo   настроить-клиент.bat -ServerUrl https://chat.company.kz
+echo   настроить-клиент.bat -ServerUrl https://chat.company.kz -Channel beta
+echo   настроить-клиент.bat -DisableUpdates
+echo   настроить-клиент.bat -EnableUpdates
 echo.
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0configure-client.ps1" %*
