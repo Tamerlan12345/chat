@@ -152,25 +152,6 @@ function resolveAnonCeiling() {
   return n;
 }
 
-// Порог задержки по учётной записи (LOGIN_ACCOUNT_SOFT_LIMIT) обязан быть выше
-// предела «адрес + логин» (LOGIN_MAX_FAILED_ATTEMPTS): иначе один сотрудник,
-// ошибающийся паролем со своего же адреса, доходил бы до задержки по учётной
-// записи раньше, чем до обычной блокировки пары адрес+логин (M5). Если задан
-// не так — предупреждение и оба к значениям по умолчанию.
-function resolveLoginThresholds() {
-  const maxFailed = boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 });
-  const lockout = boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 });
-  let soft = boundedInt('LOGIN_ACCOUNT_SOFT_LIMIT', 20, { min: 2, max: 10000 });
-  if (soft <= maxFailed) {
-    console.warn(
-      `[Config] LOGIN_ACCOUNT_SOFT_LIMIT (${soft}) должен быть больше LOGIN_MAX_FAILED_ATTEMPTS (${maxFailed}); ` +
-        'использую 20 и 10 по умолчанию.'
-    );
-    return { maxFailed: 10, lockout, soft: 20 };
-  }
-  return { maxFailed, lockout, soft };
-}
-const LOGIN_THRESHOLDS = resolveLoginThresholds();
 
 module.exports = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 2004,
@@ -207,23 +188,19 @@ module.exports = {
   // Раньше оба значения читались parseInt без проверки: «abc» давало NaN, и
   // задержка не наступала никогда (count >= NaN всегда ложно) — опечатка в
   // настройках молча выключала защиту от подбора (Р4-07).
-  LOGIN_MAX_FAILED_ATTEMPTS: LOGIN_THRESHOLDS.maxFailed,
-  LOGIN_LOCKOUT_MINUTES: LOGIN_THRESHOLDS.lockout,
-  // Задержка по учётной записи независимо от адреса (подбор с многих адресов
-  // сразу) — см. services/login-throttle.service.js. Порог — сколько неудач со
-  // всех адресов вместе допускается за LOGIN_LOCKOUT_MINUTES без задержки;
-  // обязан быть выше предела «адрес + логин» (проверяется в
-  // resolveLoginThresholds). Потолок задержки — сколько, в худшем случае, ждёт
-  // между попытками сотрудник с незнакомого адреса, пока идёт подбор.
-  LOGIN_ACCOUNT_SOFT_LIMIT: LOGIN_THRESHOLDS.soft,
+  LOGIN_MAX_FAILED_ATTEMPTS: boundedInt('LOGIN_MAX_FAILED_ATTEMPTS', 10, { min: 1, max: 1000 }),
+  LOGIN_LOCKOUT_MINUTES: boundedInt('LOGIN_LOCKOUT_MINUTES', 15, { min: 1, max: 1440 }),
   LOGIN_ACCOUNT_MAX_DELAY_SECONDS: boundedInt('LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 60, { min: 1, max: 3600 }),
-  // Общее для учётной записи «ведро» токенов для НЕзнакомых источников
-  // (проверяется при каждой их попытке): ёмкость = мягкий порог (20),
-  // пополнение столько токенов в час. Отсюда верхняя граница подбора одной
-  // учётной записи со скольких угодно адресов — ≈ 20 + значение·24 ≈ 740
-  // догадок в сутки, в том числе при «пульсирующем» подборе (раунд 4, I-A).
-  // 0 — ведро выключено (только персональная задержка источника).
-  LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR: boundedInt('LOGIN_ACCOUNT_UNFAMILIAR_PER_HOUR', 30, { min: 0, max: 100000 }),
+  // Суточный предел неверных проверок пароля на учётную запись (требование
+  // владельца, sec5): три раздельные корзины за скользящие 24 часа, чтобы один
+  // класс не съедал бюджет другого — вход с незнакомых адресов (U), вход со
+  // знакомых (F), смена пароля (P). Итого ≤ U+F+P ≈ 20/сутки. Исчерпанная
+  // корзина отклоняет вход без проверки пароля (429). Считается только
+  // подтверждённая неудача; журнал переживает перезапуск (login_failure_log).
+  // 0 у любой — корзина выключена (по умолчанию все включены); минимум 1.
+  LOGIN_DAILY_FAILURES_UNFAMILIAR: boundedInt('LOGIN_DAILY_FAILURES_UNFAMILIAR', 5, { min: 0, max: 100000 }),
+  LOGIN_DAILY_FAILURES_FAMILIAR: boundedInt('LOGIN_DAILY_FAILURES_FAMILIAR', 10, { min: 0, max: 100000 }),
+  PASSWORD_CHANGE_DAILY_FAILURES: boundedInt('PASSWORD_CHANGE_DAILY_FAILURES', 5, { min: 0, max: 100000 }),
   // Одновременных проверок пароля с одного адреса. Для адреса, незнакомого ни
   // одной учётной записи, — жёстко мало (не даёт занять очередь хэшей); для
   // адреса офиса (знакомого хотя бы одному) — щедро (проверка раунда 4, I-C).

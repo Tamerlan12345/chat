@@ -160,6 +160,18 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_trusted_sources_user ON trusted_login_sources(user_id);
+
+    -- Журнал неудачных проверок пароля для суточного предела (требование
+    -- владельца, sec5). Классы: 'U' — вход с незнакомого адреса, 'F' — со
+    -- знакомого, 'P' — неверный текущий пароль при смене. Строки старше 24 ч и
+    -- сверх предела на (сотрудник, класс) вычищаются. Переживает перезапуск.
+    CREATE TABLE IF NOT EXISTS login_failure_log (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      class TEXT NOT NULL,
+      at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_login_failure_user ON login_failure_log(user_id, class, at);
   `,
 
   sqlite: `
@@ -305,6 +317,15 @@ const DDL = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_trusted_sources_user ON trusted_login_sources(user_id);
+
+    -- Журнал неудачных проверок пароля — см. комментарий в диалекте postgres выше.
+    CREATE TABLE IF NOT EXISTS login_failure_log (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      class TEXT NOT NULL,
+      at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_login_failure_user ON login_failure_log(user_id, class, at);
   `
 };
 

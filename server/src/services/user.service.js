@@ -317,7 +317,11 @@ class UserService {
       throw new Error('Новый пароль должен отличаться от текущего');
     }
 
-    await this.setPassword(userId, newPassword, { mustChange: false });
+    // Самостоятельная смена снимает только корзину P (неверный текущий пароль
+    // при смене), но НЕ корзины входа U/F: иначе каждая смена пароля владельцем
+    // дарила бы постороннему, исчерпавшему U, свежие догадки (sec5).
+    await this.setPassword(userId, newPassword, { mustChange: false, clearLoginBudgets: false });
+    require('./login-throttle.service').clearPasswordChange(userId);
     return true;
   }
 
@@ -351,7 +355,7 @@ class UserService {
    * пароля, после которой чужая сессия продолжает работать, защищает только
    * на словах.
    */
-  static async setPassword(userId, newPassword, { mustChange = false } = {}) {
+  static async setPassword(userId, newPassword, { mustChange = false, clearLoginBudgets = true } = {}) {
     const encoded = await hashPassword(newPassword);
     const now = new Date().toISOString();
     const row = await identity().get('SELECT username FROM users WHERE id = $1', [Number(userId)]);
@@ -363,11 +367,14 @@ class UserService {
        WHERE id = $4`,
       [encoded, mustChange ? 1 : 0, now, Number(userId)]
     );
-    // Смена/сброс пароля снимает наказание задержкой с учётной записи: старые
-    // догадки уже неактуальны, а сотрудник должен снова входить откуда угодно
-    // (проверка раунда 4, I-A, путь восстановления). Сброс администратором
-    // проходит здесь же (adminResetPassword → setPassword).
-    if (row?.username) require('./login-throttle.service').clearAccount(row.username);
+    // Сброс пароля администратором снимает наказание с учётной записи целиком
+    // (все три суточные корзины U/F/P и персональные задержки): администратор
+    // сам решил, что сотрудник должен снова входить откуда угодно. userId нужен,
+    // чтобы вычистить и персистентный журнал login_failure_log (sec5).
+    // Самостоятельная смена (changePassword) передаёт clearLoginBudgets: false.
+    if (clearLoginBudgets) {
+      require('./login-throttle.service').clearAccount(row?.username, { userId });
+    }
   }
 
   static async setMustChangePassword(userId, required) {

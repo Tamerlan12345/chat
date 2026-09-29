@@ -98,13 +98,20 @@ class SecurityMonitor {
         }
         return;
       }
-      // Включилась задержка по учётной записи: неудачи идут с нескольких
-      // адресов сразу — картина распределённого подбора (login-throttle.service.js).
-      case 'login_account_throttled': {
-        const name = String(d.username || '').toLowerCase();
-        if (shouldAlert(`login_throttled:${name}`)) {
-          this.raise('login_bruteforce_distributed', 'high', 'Подбор пароля к одной учётной записи с нескольких адресов', {
-            username: name, ip
+      // Исчерпана суточная корзина неверных попыток (login-throttle.service.js,
+      // sec5): U — вход с незнакомых адресов, F — со знакомых, P — неверный
+      // текущий пароль при смене. Дальше вход/смена этого класса отклоняются до
+      // конца окна 24 ч или сброса пароля администратором — повод посмотреть.
+      case 'login_daily_budget_exhausted': {
+        const cls = ['U', 'F', 'P'].includes(d.class) ? d.class : '?';
+        if (shouldAlert(`login_daily:${userId}:${cls}`)) {
+          const titles = {
+            U: 'Исчерпан суточный лимит неверных попыток входа с незнакомых адресов',
+            F: 'Исчерпан суточный лимит неверных попыток входа со знакомых адресов',
+            P: 'Исчерпан суточный лимит неверных попыток ввести текущий пароль при смене'
+          };
+          this.raise('login_daily_budget_exhausted', 'high', titles[cls] || 'Исчерпан суточный лимит неверных попыток входа', {
+            userId, class: cls, limit: d.limit
           });
         }
         return;

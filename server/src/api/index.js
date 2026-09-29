@@ -17,7 +17,8 @@ const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
 const TrustedSources = require('../services/trusted-sources.service');
 const { getClientIp, rateLimitIpKey } = require('../services/ip-access.service');
-const { canonicalUsername } = require('../services/login-throttle.service');
+const LoginThrottle = require('../services/login-throttle.service');
+const { canonicalUsername } = LoginThrottle;
 const { getDatabase } = require('../db');
 const { identity } = require('../db/identity');
 const AuditService = require('../services/audit.service');
@@ -641,6 +642,15 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
       res.set('Retry-After', String(jitterSeconds(30)));
       return res.status(429).json({ error: 'Слишком много неверных попыток ввести текущий пароль. Повторите позже.' });
     }
+    // Суточная корзина P (не больше PASSWORD_CHANGE_DAILY_FAILURES неверных
+    // текущих паролей в сутки на сотрудника) — переживает перезапуск (sec5).
+    // Короткий предел выше остаётся как защита от всплеска в минуту.
+    await LoginThrottle.ensureLoaded(req.user.id);
+    const pwDaily = LoginThrottle.passwordChangeStatus(req.user.id);
+    if (pwDaily.blocked) {
+      res.set('Retry-After', String(Math.min(3600, Math.ceil(pwDaily.retryAfterMs / 1000))));
+      return res.status(429).json({ error: 'Слишком много неверных попыток сменить пароль за сутки. Обратитесь к администратору.', code: 'ACCOUNT_THROTTLED' });
+    }
     // Смена пароля тоже считает scrypt — тот же предел одновременных проверок
     // на адрес, что и вход (I-C, общий): один источник не занимает очередь.
     const ipKey = rateLimitIpKey(getClientIp(req));
@@ -655,6 +665,7 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     } catch (err) {
       if (err.code === 'OLD_PASSWORD_INVALID') {
         registerFailure(failKey, failLimit);
+        LoginThrottle.recordPasswordChangeFailure(req.user.id);
         AuditService.log({ userId: req.user.id, action: 'password_change_failed', ip: getClientIp(req) });
       }
       if (err.code === 'PASSWORD_HASH_BUSY') {
@@ -665,7 +676,7 @@ router.post('/users/password', requireAuth, route(async (req, res) => {
     } finally {
       releaseHashSlot(ipKey, familiar);
     }
-    resetLimit(failKey);
+    resetLimit(failKey); // корзину P удачная смена чистит сама (UserService.changePassword)
     AuditService.log({ userId: req.user.id, action: 'password_changed', ip: getClientIp(req) });
     // Старый токен отозван, но открытые соединения авторизовались им раньше.
     // Без разрыва тот, кто украл токен, продолжал бы писать от имени сотрудника.
