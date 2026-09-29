@@ -29,6 +29,12 @@
 # ярлыку запускалась бы прежняя версия. Данные сотрудника лежат не здесь, а в
 # %APPDATA%\mychat-desktop, и этот скрипт их не трогает.
 #
+# Если приложение уже стоит через Setup.exe, скрипт отказывается ставить
+# вторую копию и предлагает обновить его установщиком. Обратный случай
+# (Setup.exe поверх копии 1.0.0) разбирает сам установщик, см.
+# desktop/build/installer.nsh. Проверки папок, закрытие приложения и удаление -
+# в copy-install-common.ps1 (его подключают и install.ps1, и uninstall.ps1).
+#
 # -ServerUrl/-Channel - необязательные параметры этого скрипта: если заданы,
 # он настраивает машину (политика реестра HKLM\SOFTWARE\Policies\CentyChat)
 # через configure-client.ps1 - но это требует прав администратора, которых у
@@ -70,15 +76,54 @@ if (-not $SourceDir) {
     exit 1
 }
 
+$CommonScript = Join-Path $ScriptDir 'copy-install-common.ps1'
+if (-not (Test-Path -LiteralPath $CommonScript)) {
+    Write-Host "Не найден $CommonScript - положите его рядом с install.ps1 (он входит в папку installer)." -ForegroundColor Red
+    exit 1
+}
+. $CommonScript
+
+# Если приложение уже стоит через Setup.exe (это видно по записи NSIS в
+# реестре), вторую копию рядом не ставим: у них общий профиль сотрудника, и
+# запущенной оказалась бы только одна - какая, решал бы случай. Поверх папки
+# NSIS тоже не пишем: её деинсталлятор и автообновление рассчитывают на свои
+# файлы. Обновлять такую установку - установщиком Setup.exe.
+$NsisDir = Get-CentyChatNsisInstall
+if ($NsisDir) {
+    Write-Host "CentyChat уже установлен на этом компьютере установщиком Setup.exe:" -ForegroundColor Red
+    Write-Host "  $NsisDir" -ForegroundColor Red
+    Write-Host "Установка «копией» рядом не выполняется - получились бы две копии приложения." -ForegroundColor Yellow
+    Write-Host "Обновите его установщиком CentyChat-Setup-<версия>.exe (или дождитесь автообновления)." -ForegroundColor Yellow
+    Write-Host "Если Setup.exe на этом компьютере запустить нельзя, сначала удалите приложение" -ForegroundColor Yellow
+    Write-Host "через «Установку и удаление программ», затем запустите install.bat снова." -ForegroundColor Yellow
+    exit 1
+}
+
 # Новая установка - в Programs\CentyChat; уже стоящая «копией» (в том числе
-# прежняя, в Programs\OpenMyChat Enterprise) обновляется в своей папке.
-$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\CentyChat'
+# прежняя, в Programs\OpenMyChat Enterprise) обновляется в своей папке. Адрес
+# из реестра принимается, только если это папка приложения в
+# %LOCALAPPDATA%\Programs (Test-CentyChatCopyDir): uninstall.ps1 удаляет её
+# целиком, и неверный адрес в записи не должен стать поводом стереть чужое.
+$ProgramsRoot = Join-Path $env:LOCALAPPDATA 'Programs'
+$InstallDir = Join-Path $ProgramsRoot 'CentyChat'
 $PreviousDir = (Get-ItemProperty -LiteralPath $UninstallKey -ErrorAction SilentlyContinue).InstallLocation
-if ($PreviousDir -and (Test-Path -LiteralPath $PreviousDir -PathType Container)) {
-    $InstallDir = $PreviousDir
+if ($PreviousDir) {
+    if (Test-CentyChatCopyDir -Path $PreviousDir -ProgramsRoot $ProgramsRoot) {
+        $InstallDir = [IO.Path]::GetFullPath($PreviousDir).TrimEnd('\')
+    } else {
+        Write-Host "Запись прежней установки указывает на «$PreviousDir» - это не папка приложения, она не используется." -ForegroundColor Yellow
+    }
 }
 
 Write-Host "Устанавливаю CentyChat в:`n  $InstallDir" -ForegroundColor Cyan
+
+# Запущенное из этой папки приложение закрывается до копирования, как это
+# делает и Setup.exe: иначе копирование оборвётся на занятых файлах.
+if ((Test-Path -LiteralPath $InstallDir) -and -not (Stop-CentyChatCopyApp -Dir $InstallDir)) {
+    Write-Host "Приложение в $InstallDir не закрывается - закройте его вручную и запустите установку снова." -ForegroundColor Red
+    exit 1
+}
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Path (Join-Path $SourceDir '*') -Destination $InstallDir -Recurse -Force
 
@@ -130,7 +175,16 @@ Set-ItemProperty -Path $UninstallKey -Name 'InstallLocation' -Value $InstallDir
 Set-ItemProperty -Path $UninstallKey -Name 'UninstallString' -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\uninstall.ps1`""
 Set-ItemProperty -Path $UninstallKey -Name 'NoModify' -Value 1 -Type DWord
 Set-ItemProperty -Path $UninstallKey -Name 'NoRepair' -Value 1 -Type DWord
-Copy-Item -Path (Join-Path $ScriptDir 'uninstall.ps1') -Destination $InstallDir -Force -ErrorAction SilentlyContinue
+Copy-Item -LiteralPath (Join-Path $ScriptDir 'uninstall.ps1') -Destination $InstallDir -Force
+Copy-Item -LiteralPath $CommonScript -Destination $InstallDir -Force
+
+# Автозапуск (значение с именем AppUserModelId, его пишет само приложение):
+# если он был включён, он указывал на прежний exe. Приложение поправит путь
+# при следующем запуске, но до него вход в Windows запускал бы удалённый файл.
+$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+if ((Get-ItemProperty -LiteralPath $RunKey -ErrorAction SilentlyContinue).'com.openmychat.desktop') {
+    Set-ItemProperty -LiteralPath $RunKey -Name 'com.openmychat.desktop' -Value "`"$ExePath`" --autostart"
+}
 
 Write-Host "`nГотово! Ярлык создан на рабочем столе и в меню Пуск." -ForegroundColor Green
 
