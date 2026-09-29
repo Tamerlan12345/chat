@@ -507,8 +507,8 @@ export default function ChatView({
                 className="classic-msg-hover-actions"
                 style={{
                   position: 'absolute', top: 0, right: 0, display: 'flex', gap: 2,
-                  background: 'var(--bg-panel, light-dark(#fff, #2a2d31))', borderRadius: 6,
-                  border: '1px solid var(--border-color, light-dark(#e2e8f0, #3a3f44))', zIndex: 2
+                  background: 'var(--bg-panel)', borderRadius: 6,
+                  border: '1px solid var(--border-color)', zIndex: 2
                 }}
               >
                 {editAllowed && (
