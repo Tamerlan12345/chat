@@ -20,21 +20,39 @@ function squeeze(text) {
 }
 
 /**
- * bannerFor(state, { legacyShell }) → null | { tone, text, action }.
+ * bannerFor(state, { legacyShell, legacy }) → null | { tone, text, action, dismissible? }.
  *
  * tone — 'info' | 'warn' | 'error'.
  * action — null | { kind: 'install' | 'download' | 'check', label }.
+ * dismissible — баннер можно скрыть до перезапуска приложения (только
+ * необязательное обновление старой оболочки).
  *
  * legacyShell — у window.electronAPI нет getUpdateState (оболочка 1.0.0,
  * парк до автообновления): она не умеет проверять и ставить обновления сама,
- * баннер только указывает на страницу загрузки.
+ * баннер только указывает на установщик. legacy — что об этом сказал сервер
+ * (legacyUpdateFromPolicy) и скрыл ли сотрудник баннер:
+ * { downloadUrl, version, mandatory, dismissed }. Без ссылки баннера нет:
+ * «Установите новую версию» при выключенных обновлениях или без выпуска
+ * только мешало бы всему старому парку, а кнопке нечего было бы открыть.
  */
-export function bannerFor(state, { legacyShell = false } = {}) {
+export function bannerFor(state, { legacyShell = false, legacy = null } = {}) {
   if (legacyShell) {
+    if (!legacy || typeof legacy.downloadUrl !== 'string' || !legacy.downloadUrl) return null;
+    const version = typeof legacy.version === 'string' ? legacy.version : '';
+    if (legacy.mandatory) {
+      return {
+        tone: 'warn',
+        text: squeeze(`Обязательное обновление ${version}: установите новую версию приложения`),
+        action: { kind: 'download', label: 'Скачать' },
+        dismissible: false
+      };
+    }
+    if (legacy.dismissed) return null;
     return {
-      tone: 'warn',
-      text: 'Установите новую версию приложения',
-      action: { kind: 'download', label: 'Скачать' }
+      tone: 'info',
+      text: squeeze(`Установите новую версию приложения ${version}`),
+      action: { kind: 'download', label: 'Скачать' },
+      dismissible: true
     };
   }
 
@@ -71,12 +89,14 @@ export function bannerFor(state, { legacyShell = false } = {}) {
         action: status === 'available' && downloadUrl ? { kind: 'download', label: 'Скачать' } : null
       };
     }
-    const pct = typeof progress === 'number' && Number.isFinite(progress) ? progress : 0;
-    const text = squeeze(`Загружается обновление ${version} (${pct}%)`);
+    // Ссылка на скачивание есть только у видов установки, которые сами не
+    // обновляются (portable, copy, nsis-machine): им ничего не «загружается» —
+    // сотрудник скачивает установщик сам.
     if (status === 'available' && downloadUrl) {
-      return { tone: 'info', text, action: { kind: 'download', label: 'Скачать' } };
+      return { tone: 'info', text: squeeze(`Доступна версия ${version}`), action: { kind: 'download', label: 'Скачать' } };
     }
-    return { tone: 'info', text, action: null };
+    const pct = typeof progress === 'number' && Number.isFinite(progress) ? progress : 0;
+    return { tone: 'info', text: squeeze(`Загружается обновление ${version} (${pct}%)`), action: null };
   }
 
   if (status === 'downloaded') {
@@ -122,4 +142,66 @@ export function resolveLegacyDownloadUrl(setupUrl, serverUrl) {
     return null;
   }
   return resolved.protocol === 'https:' && resolved.origin === origin ? resolved.toString() : null;
+}
+
+// Версия и вид установки, от имени которых старая оболочка спрашивает
+// policy.json. Без версии сервер не может применить minVersion (обновление
+// никогда не становится обязательным), а без installId клиент попадает в
+// последнюю корзину раздачи — ссылку получает только при 100 %.
+export const LEGACY_SHELL_VERSION = '1.0.0';
+export const LEGACY_SHELL_KIND = 'copy';
+
+/**
+ * legacyPolicyRequest(serverUrl) → { url, headers } — запрос /updates/policy.json
+ * из интерфейса старой оболочки.
+ */
+export function legacyPolicyRequest(serverUrl) {
+  return {
+    url: `${String(serverUrl || '').replace(/\/+$/, '')}/updates/policy.json`,
+    headers: {
+      'X-MyChat-Client-Version': LEGACY_SHELL_VERSION,
+      'X-MyChat-Install-Kind': LEGACY_SHELL_KIND
+    }
+  };
+}
+
+/**
+ * legacyUpdateFromPolicy(policy, serverUrl) → null | { downloadUrl, version, mandatory }.
+ *
+ * Ответ /updates/policy.json → что показать старой оболочке. mandatory —
+ * решение сервера (версия 1.0.0 ниже minVersion), интерфейс его не
+ * пересчитывает. Выключенные обновления, нет выпуска или ссылка не с того же
+ * https-источника — null.
+ */
+export function legacyUpdateFromPolicy(policy, serverUrl) {
+  if (!policy || typeof policy !== 'object' || policy.enabled !== true) return null;
+  const downloadUrl = resolveLegacyDownloadUrl(policy.setupUrl, serverUrl);
+  if (!downloadUrl) return null;
+  return {
+    downloadUrl,
+    version: typeof policy.offeredVersion === 'string' ? policy.offeredVersion : '',
+    mandatory: policy.mandatory === true
+  };
+}
+
+// «Скрыть до перезапуска»: sessionStorage живёт, пока открыто окно
+// приложения. Хранится версия — следующий выпуск показывается снова.
+// Хранилище может быть недоступно (политика, переполнение) — тогда баннер
+// просто не скрывается надолго, но и не ломает страницу.
+const LEGACY_DISMISS_KEY = 'mychat-legacy-update-dismissed';
+
+export function isLegacyBannerDismissed(storage, version) {
+  try {
+    return Boolean(storage) && storage.getItem(LEGACY_DISMISS_KEY) === String(version || '');
+  } catch {
+    return false;
+  }
+}
+
+export function rememberLegacyBannerDismissed(storage, version) {
+  try {
+    if (storage) storage.setItem(LEGACY_DISMISS_KEY, String(version || ''));
+  } catch {
+    // Не запомнили — баннер скрыт только до перезагрузки страницы.
+  }
 }

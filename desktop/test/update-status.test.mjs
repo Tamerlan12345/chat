@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { bannerFor, resolveLegacyDownloadUrl } from '../src/renderer/src/lib/update-status.mjs';
+import {
+  bannerFor,
+  resolveLegacyDownloadUrl,
+  legacyPolicyRequest,
+  legacyUpdateFromPolicy,
+  isLegacyBannerDismissed,
+  rememberLegacyBannerDismissed
+} from '../src/renderer/src/lib/update-status.mjs';
 
 // Задача 10 плана «безопасность раунд 3, автообновление, интерфейс»:
 // bannerFor переводит состояние обновителя (desktop/src/main/updater.js) в
@@ -111,14 +118,107 @@ test('error: временные ошибки (сеть, sha512, http-5xx) — б
   }
 });
 
-test('legacyShell — «Установите новую версию приложения» с кнопкой «Скачать», независимо от state', () => {
-  const b = bannerFor(null, { legacyShell: true });
-  assert.strictEqual(b.tone, 'warn');
-  assert.strictEqual(b.text, 'Установите новую версию приложения');
-  assert.deepStrictEqual(b.action, { kind: 'download', label: 'Скачать' });
+// ── Финальное ревью, п.4: notify-виды не «загружают» обновление ──────────
 
-  const b2 = bannerFor(state({ status: 'idle' }), { legacyShell: true });
-  assert.deepStrictEqual(b2, b);
+test('available с downloadUrl (portable/copy/nsis-machine) — «Доступна версия X», а не «Загружается (0%)»', () => {
+  for (const kind of ['portable', 'copy', 'nsis-machine']) {
+    const b = bannerFor(
+      state({ status: 'available', kind, offeredVersion: '1.3.0', progress: null, downloadUrl: 'https://s/updates/stable/x.exe' }),
+      {}
+    );
+    assert.strictEqual(b.tone, 'info', kind);
+    assert.strictEqual(b.text, 'Доступна версия 1.3.0', kind);
+    assert.doesNotMatch(b.text, /Загружается|%/, kind);
+    assert.deepStrictEqual(b.action, { kind: 'download', label: 'Скачать' }, kind);
+  }
+});
+
+test('available без downloadUrl (nsis, скачивание начинается) — по-прежнему «Загружается обновление X (0%)»', () => {
+  const b = bannerFor(state({ status: 'available', kind: 'nsis', offeredVersion: '1.3.0' }), {});
+  assert.strictEqual(b.text, 'Загружается обновление 1.3.0 (0%)');
+  assert.strictEqual(b.action, null);
+});
+
+// ── Финальное ревью, п.3: оболочка 1.0.0 ─────────────────────────────────
+//
+// Раньше баннер «Установите новую версию» показывался на всём старом парке
+// всегда — даже при UPDATES_DISABLED и без выпуска, а «Скачать» отвечало, что
+// ссылки нет. Теперь баннер — только когда сервер дал ссылку.
+
+const LEGACY_URL = 'https://chat.example.com/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe';
+
+test('legacyShell без ссылки на установщик — баннера нет (ни при каком state)', () => {
+  assert.strictEqual(bannerFor(null, { legacyShell: true }), null);
+  assert.strictEqual(bannerFor(state({ status: 'idle' }), { legacyShell: true }), null);
+  assert.strictEqual(bannerFor(null, { legacyShell: true, legacy: null }), null);
+  assert.strictEqual(bannerFor(null, { legacyShell: true, legacy: { downloadUrl: null, mandatory: true } }), null);
+});
+
+test('legacyShell со ссылкой — «Установите новую версию» с кнопкой «Скачать», можно скрыть', () => {
+  const b = bannerFor(null, { legacyShell: true, legacy: { downloadUrl: LEGACY_URL, version: '1.2.0', mandatory: false } });
+  assert.strictEqual(b.tone, 'info');
+  assert.match(b.text, /Установите новую версию приложения/);
+  assert.match(b.text, /1\.2\.0/);
+  assert.deepStrictEqual(b.action, { kind: 'download', label: 'Скачать' });
+  assert.strictEqual(b.dismissible, true);
+
+  const hidden = bannerFor(null, { legacyShell: true, legacy: { downloadUrl: LEGACY_URL, version: '1.2.0', mandatory: false, dismissed: true } });
+  assert.strictEqual(hidden, null, 'скрытый до перезапуска баннер не возвращается');
+});
+
+test('legacyShell, обязательное обновление — тон warn, скрыть нельзя, скрытие не действует', () => {
+  const b = bannerFor(null, { legacyShell: true, legacy: { downloadUrl: LEGACY_URL, version: '1.2.0', mandatory: true, dismissed: true } });
+  assert.strictEqual(b.tone, 'warn');
+  assert.match(b.text, /Обязательное обновление/);
+  assert.deepStrictEqual(b.action, { kind: 'download', label: 'Скачать' });
+  assert.strictEqual(b.dismissible, false);
+});
+
+test('legacyPolicyRequest — запрос policy.json от имени версии 1.0.0, установка «копией»', () => {
+  const req = legacyPolicyRequest('https://chat.example.com');
+  assert.strictEqual(req.url, 'https://chat.example.com/updates/policy.json');
+  assert.deepStrictEqual(req.headers, { 'X-MyChat-Client-Version': '1.0.0', 'X-MyChat-Install-Kind': 'copy' });
+});
+
+test('legacyUpdateFromPolicy — ссылка только из того же https-источника; mandatory — решение сервера по minVersion', () => {
+  const SERVER_URL = 'https://chat.example.com';
+  // Сервер получил X-MyChat-Client-Version: 1.0.0 и minVersion 1.1.0 → mandatory.
+  const mandatory = legacyUpdateFromPolicy({
+    enabled: true,
+    offeredVersion: '1.2.0',
+    mandatory: true,
+    minVersion: '1.1.0',
+    setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe'
+  }, SERVER_URL);
+  assert.deepStrictEqual(mandatory, { downloadUrl: LEGACY_URL, version: '1.2.0', mandatory: true });
+  const b = bannerFor(null, { legacyShell: true, legacy: mandatory });
+  assert.match(b.text, /Обязательное обновление/);
+
+  const optional = legacyUpdateFromPolicy({ enabled: true, offeredVersion: '1.2.0', mandatory: false, minVersion: null, setupUrl: '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe' }, SERVER_URL);
+  assert.strictEqual(optional.mandatory, false);
+
+  // Выключено (UPDATES_DISABLED или политика), выпуска нет, ссылка чужая — ничего.
+  assert.strictEqual(legacyUpdateFromPolicy({ enabled: false, offeredVersion: null, setupUrl: null }, SERVER_URL), null);
+  assert.strictEqual(legacyUpdateFromPolicy({ enabled: true, offeredVersion: null, setupUrl: null }, SERVER_URL), null);
+  assert.strictEqual(legacyUpdateFromPolicy({ enabled: false, offeredVersion: '1.2.0', setupUrl: '/updates/stable/x.exe' }, SERVER_URL), null);
+  assert.strictEqual(legacyUpdateFromPolicy({ enabled: true, offeredVersion: '1.2.0', setupUrl: 'https://evil.example/x.exe' }, SERVER_URL), null);
+  assert.strictEqual(legacyUpdateFromPolicy(null, SERVER_URL), null);
+  assert.strictEqual(legacyUpdateFromPolicy('мусор', SERVER_URL), null);
+});
+
+test('скрытие баннера оболочки 1.0.0 — в sessionStorage по версии, ошибки хранилища не мешают', () => {
+  const store = new Map();
+  const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  assert.strictEqual(isLegacyBannerDismissed(storage, '1.2.0'), false);
+  rememberLegacyBannerDismissed(storage, '1.2.0');
+  assert.strictEqual(isLegacyBannerDismissed(storage, '1.2.0'), true);
+  assert.strictEqual(isLegacyBannerDismissed(storage, '1.3.0'), false, 'новая версия показывается снова');
+
+  const broken = { getItem: () => { throw new Error('SecurityError'); }, setItem: () => { throw new Error('QuotaExceeded'); } };
+  assert.strictEqual(isLegacyBannerDismissed(broken, '1.2.0'), false);
+  assert.doesNotThrow(() => rememberLegacyBannerDismissed(broken, '1.2.0'));
+  assert.strictEqual(isLegacyBannerDismissed(null, '1.2.0'), false);
+  assert.doesNotThrow(() => rememberLegacyBannerDismissed(undefined, '1.2.0'));
 });
 
 // ── resolveLegacyDownloadUrl (фикс раунда 1) ───────────────────────────────
