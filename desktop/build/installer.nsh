@@ -30,12 +30,15 @@
 ; через Setup.exe нет, а запись копии указывает на её папку (та же проверка,
 ; что Test-CentyChatCopyDir в installer/copy-install-common.ps1: прямая
 ; подпапка %LOCALAPPDATA%\Programs, не ссылка, в ней CentyChat.exe или
-; «OpenMyChat Enterprise.exe»), копия — хоть 1.0.0, хоть уже обновлённая
-; новым install.ps1 — убирается в customInstall: закрывается запущенное из её
-; папки приложение (иначе новая версия упёрлась бы в блокировку единственного
-; экземпляра — профиль у них общий), папка удаляется, а запись и прежние
-; ярлыки — только после того, как папки не стало. Не удалось освободить
-; папку — копия остаётся как была, вместе с записью: её можно удалить штатно.
+; «OpenMyChat Enterprise.exe», нет деинсталлятора NSIS), копия — хоть 1.0.0,
+; хоть уже обновлённая новым install.ps1 — убирается в customInstall:
+; закрывается запущенное из её папки приложение (иначе новая версия упёрлась
+; бы в блокировку единственного экземпляра — профиль у них общий), папка
+; удаляется, а запись и прежние ярлыки — только после того, как папки не
+; стало. Не удалось освободить папку (или вместе с ней «уехала» эта
+; установка — та же папка, записанная иначе) — копия остаётся как была,
+; вместе с записью: её можно удалить штатно. Если установка поставлена в саму
+; папку копии (/S /D=...), убираются прежний exe, ярлыки и запись копии.
 ; Подробности — docs/автообновление.md, раздел 8.
 ;
 ; Автозапуск: деинсталлятор 1.0.0 удаляет значение автозапуска при любом
@@ -62,6 +65,8 @@
 !define /ifndef CENTY_LEGACY_DESKTOP_LNK "$DESKTOP\OpenMyChat Enterprise.lnk"
 !define /ifndef CENTY_LEGACY_MENU_LNK "$SMPROGRAMS\OpenMyChat Enterprise.lnk"
 !define /ifndef CENTY_LEGACY_UNINSTALLER "Uninstall OpenMyChat Enterprise.exe"
+!define /ifndef CENTY_RUNONCE_KEY "Software\Microsoft\Windows\CurrentVersion\RunOnce"
+!define /ifndef CENTY_POWERSHELL "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
 
 !ifndef BUILD_UNINSTALLER
   ; InstallLocation прежней установки через Setup.exe (HKCU или HKLM).
@@ -125,9 +130,41 @@
 ; ли папка, — код выхода PowerShell этого не говорит.
 !macro centyStopCopyApp
   System::Call 'kernel32::SetEnvironmentVariable(t "CENTY_COPY_DIR", t "$centyCopyDir")'
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:CENTY_COPY_DIR.TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$d, 'OrdinalIgnoreCase') } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }; exit 0"`
+  nsExec::Exec `"${CENTY_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:CENTY_COPY_DIR.TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$d, 'OrdinalIgnoreCase') } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }; exit 0"`
   Pop $R0
   Sleep 1000
+!macroend
+
+; RESULT = 1, если в строке STR есть символ CHAR. RESULT — не $5, $6, $7.
+!macro centyHasChar _STR _CHAR _RESULT
+  Push $7
+  Push $6
+  Push $5
+  StrCpy ${_RESULT} 0
+  StrLen $7 "${_STR}"
+  StrCpy $6 0
+  ${while} $6 < $7
+    StrCpy $5 "${_STR}" 1 $6
+    ${if} $5 == "${_CHAR}"
+      StrCpy ${_RESULT} 1
+      ${break}
+    ${endIf}
+    IntOp $6 $6 + 1
+  ${endWhile}
+  Pop $5
+  Pop $6
+  Pop $7
+!macroend
+
+; Удаляет папку $R3 (переименованную копию) через rmdir /s из cmd: не RMDir
+; /r — тот заходит в точки соединения (junction) и стёр бы то, на что они
+; указывают (проверено тестом installer-nsh); rmdir /s удаляет саму ссылку.
+; Путь — из переменной окружения, в кавычках, так что особые символы cmd в
+; нём безопасны.
+!macro centyRmdirTrash
+  System::Call 'kernel32::SetEnvironmentVariable(t "CENTY_COPY_TRASH", t "$R3")'
+  nsExec::Exec `"$SYSDIR\cmd.exe" /d /c rmdir /s /q "%CENTY_COPY_TRASH%"`
+  Pop $R0
 !macroend
 
 ; Запасной путь, если процессы не закрылись (PowerShell заблокирован
@@ -179,6 +216,13 @@
     ${andIfNot} ${FileExists} "$centyCopyDir\${CENTY_LEGACY_EXE}\*.*"
       StrCpy $R2 "1"
     ${endIf}
+    ; Деинсталлятор NSIS в папке — это папка установки через Setup.exe (в том
+    ; числе эта же, записанная иначе: короткое имя 8.3, путь через точку
+    ; соединения), а не копия. Её не трогаем.
+    ${if} ${FileExists} "$centyCopyDir\${UNINSTALL_FILENAME}"
+    ${orIf} ${FileExists} "$centyCopyDir\${CENTY_LEGACY_UNINSTALLER}"
+      StrCpy $R2 ""
+    ${endIf}
     ${if} $R0 == "${CENTY_COPY_PROGRAMS_DIR}"
     ${andIf} $R1 == 0
     ${andIf} $R2 == "1"
@@ -193,32 +237,57 @@
 
   ${if} $centyCopyState == "separate"
     !insertmacro centyStopCopyApp
-    ; Всё или ничего: папка сначала переименовывается — это удаётся, только
-    ; если ни один процесс не держит в ней файлов (запущенный exe, текущая
-    ; папка процесса). Не удалось и после taskkill — копия не тронута.
+    ; Всё или ничего. Папка переименовывается — это не удаётся, если процесс
+    ; держит в ней файл без права на удаление (например, его текущая папка
+    ; внутри). Запущенный exe переименованию не мешает, поэтому в
+    ; переименованной папке сначала удаляются exe: не удалились — приложение
+    ; ещё работает, папка возвращается на место. Не вышло и после taskkill —
+    ; копия остаётся как была.
     StrCpy $R3 "$centyCopyDir~centychat-remove"
     ${if} ${FileExists} "$R3\*.*"
-      System::Call 'kernel32::SetEnvironmentVariable(t "CENTY_COPY_TRASH", t "$R3")'
-      nsExec::Exec `"$SYSDIR\cmd.exe" /d /c rmdir /s /q "%CENTY_COPY_TRASH%"`
-      Pop $R0
+      !insertmacro centyRmdirTrash
     ${endIf}
-    ClearErrors
-    Rename "$centyCopyDir" "$R3"
-    ${if} ${Errors}
-      !insertmacro centyTaskkillApp
+    StrCpy $centyCopyState "kept"
+    StrCpy $R2 "first"
+    ${do}
       ClearErrors
       Rename "$centyCopyDir" "$R3"
-    ${endIf}
-    ${if} ${Errors}
-      StrCpy $centyCopyState "kept"
-    ${else}
-      ; Не RMDir /r: он заходит в точки соединения (junction) и стёр бы то,
-      ; на что они указывают (проверено тестом installer-nsh). rmdir /s из
-      ; cmd удаляет саму ссылку, а не её цель; путь — из переменной
-      ; окружения, в кавычках, так что особые символы cmd в нём безопасны.
-      System::Call 'kernel32::SetEnvironmentVariable(t "CENTY_COPY_TRASH", t "$R3")'
-      nsExec::Exec `"$SYSDIR\cmd.exe" /d /c rmdir /s /q "%CENTY_COPY_TRASH%"`
-      Pop $R0
+      ${ifNot} ${Errors}
+        ${ifNot} ${FileExists} "$appExe"
+          ; Вместе с копией «уехала» и эта установка: это одна и та же
+          ; папка, записанная по-разному (короткое имя 8.3, путь через
+          ; точку соединения). Возвращаем и больше ничего не трогаем.
+          Rename "$R3" "$centyCopyDir"
+          ${exitDo}
+        ${endIf}
+        Delete "$R3\${CENTY_EXE}"
+        Delete "$R3\${CENTY_LEGACY_EXE}"
+        ${ifNot} ${FileExists} "$R3\${CENTY_EXE}"
+        ${andIfNot} ${FileExists} "$R3\${CENTY_LEGACY_EXE}"
+          StrCpy $centyCopyState "separate"
+          ${exitDo}
+        ${endIf}
+        Rename "$R3" "$centyCopyDir"
+      ${endIf}
+      ${if} $R2 != "first"
+        ${exitDo}
+      ${endIf}
+      StrCpy $R2 "retry"
+      !insertmacro centyTaskkillApp
+    ${loop}
+
+    ${if} $centyCopyState == "separate"
+      !insertmacro centyRmdirTrash
+      ; Что-то в папке ещё открыто (например, антивирусом) — удалить её при
+      ; следующем входе в Windows. Не MoveFileEx(DELAY_UNTIL_REBOOT): ему нужны
+      ; права администратора, а установка — на пользователя. Путь со знаком
+      ; % не записываем: cmd подставил бы в него переменные окружения.
+      ${if} ${FileExists} "$R3\*.*"
+        !insertmacro centyHasChar "$R3" "%" $R0
+        ${if} $R0 == 0
+          WriteRegStr HKCU "${CENTY_RUNONCE_KEY}" "CentyChatCopyCleanup" '"$SYSDIR\cmd.exe" /d /c rmdir /s /q "$R3"'
+        ${endIf}
+      ${endIf}
     ${endIf}
   ${elseIf} $centyCopyState == "nested"
     ; Новая установка внутри папки копии (сотрудник выбрал её в окне выбора
@@ -268,8 +337,22 @@
       ${orIfNot} ${FileExists} "$R0\uninstall.ps1"
         DeleteRegKey HKCU "${CENTY_COPY_ARP_KEY}"
         ${if} $R0 == $INSTDIR
+          ; Установка поверх копии в её же папке (например, /S /D= на папку
+          ; копии 1.0.0). Запущенную копию закрыл шаблон (CHECK_APP_RUNNING
+          ; по $INSTDIR); прежний exe иначе остался бы рядом с новым
+          ; app.asar и не запустился бы (проверка целостности asar), а
+          ; ярлыки и закрепление вели бы на него.
           Delete "$INSTDIR\uninstall.ps1"
           Delete "$INSTDIR\copy-install-common.ps1"
+          Delete "$INSTDIR\${CENTY_LEGACY_EXE}"
+          ${if} ${FileExists} "${CENTY_LEGACY_DESKTOP_LNK}"
+            WinShell::UninstShortcut "${CENTY_LEGACY_DESKTOP_LNK}"
+            Delete "${CENTY_LEGACY_DESKTOP_LNK}"
+          ${endIf}
+          ${if} ${FileExists} "${CENTY_LEGACY_MENU_LNK}"
+            WinShell::UninstShortcut "${CENTY_LEGACY_MENU_LNK}"
+            Delete "${CENTY_LEGACY_MENU_LNK}"
+          ${endIf}
         ${endIf}
       ${endIf}
     ${endIf}

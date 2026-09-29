@@ -62,7 +62,8 @@ const REG_ROOT = `Software\\CentyChatNshTest-${crypto.randomBytes(4).toString('h
 const KEYS = {
   install: `${REG_ROOT}\\Install`,
   run: `${REG_ROOT}\\Run`,
-  arp: `${REG_ROOT}\\CopyArp`
+  arp: `${REG_ROOT}\\CopyArp`,
+  runOnce: `${REG_ROOT}\\RunOnce`
 };
 const AUMID = 'com.openmychat.desktop';
 
@@ -79,7 +80,7 @@ const paths = () => ({
   outside: path.join(sandbox, 'outside')
 });
 
-function harness({ uninstaller, outFile }) {
+function harness({ uninstaller, outFile, powershell }) {
   const p = paths();
   return [
     'Unicode true',
@@ -98,6 +99,10 @@ function harness({ uninstaller, outFile }) {
     `!define CENTY_COPY_PROGRAMS_DIR "${p.programs}"`,
     `!define CENTY_LEGACY_DESKTOP_LNK "${p.desktopLnk}"`,
     `!define CENTY_LEGACY_MENU_LNK "${p.menuLnk}"`,
+    `!define CENTY_RUNONCE_KEY "${KEYS.runOnce}"`,
+    // В сборке его задаёт common.nsh шаблона: «Uninstall ${PRODUCT_FILENAME}.exe».
+    '!define UNINSTALL_FILENAME "Uninstall CentyChat.exe"',
+    powershell ? `!define CENTY_POWERSHELL "${powershell}"` : '',
     uninstaller ? '!define BUILD_UNINSTALLER' : '',
     `!include "${NSH}"`,
     // В сборке electron-builder LogicLib и FileFunc подключаются после
@@ -131,18 +136,26 @@ function harness({ uninstaller, outFile }) {
           '  FileOpen $0 $appExe w',
           '  FileWrite $0 "new"',
           '  FileClose $0',
+          // Как в сборке, рядом с exe — деинсталлятор NSIS; --no-uninstaller его не кладёт.
+          '  ${GetParameters} $1',
+          '  ClearErrors',
+          '  ${GetOptions} $1 "--no-uninstaller" $2',
+          '  ${If} ${Errors}',
+          '    FileOpen $0 "$INSTDIR\\${UNINSTALL_FILENAME}" w',
+          '    FileWrite $0 "uninstaller"',
+          '    FileClose $0',
+          '  ${EndIf}',
           '  !insertmacro customInstall',
           'SectionEnd'
         ])
   ].join('\r\n');
 }
 
-function compile(uninstaller) {
-  const name = uninstaller ? 'un' : 'in';
+function compile(uninstaller, { name = uninstaller ? 'un' : 'in', powershell } = {}) {
   const script = path.join(sandbox, `${name}.nsi`);
   const outFile = path.join(sandbox, `${name}.exe`);
   // makensis читает сценарий с BOM как UTF-8.
-  fs.writeFileSync(script, '\uFEFF' + harness({ uninstaller, outFile }), 'utf8');
+  fs.writeFileSync(script, '\uFEFF' + harness({ uninstaller, outFile, powershell }), 'utf8');
   const r = spawnSync(MAKENSIS, ['-WX', '-V2', script], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
   return { ...r, outFile };
 }
@@ -227,16 +240,29 @@ async function withProcesses(children, fn) {
   }
 }
 
-function runInstaller(installDir) {
+function runInstaller(installDir, { exe = installerExe, extra = [], env } = {}) {
   // /D= — последним и без кавычек даже с пробелами, как требует NSIS; Node
   // иначе взял бы весь аргумент в кавычки, и NSIS его бы не узнал.
-  const r = spawnSync(installerExe, ['/S', `/D=${installDir}`], {
+  const r = spawnSync(exe, ['/S', ...extra, `/D=${installDir}`], {
     windowsVerbatimArguments: true,
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 120000
+    timeout: 120000,
+    env: env ? { ...process.env, ...env } : process.env
   });
   assert.strictEqual(r.status, 0, `установщик завершился с кодом ${r.status}`);
+}
+
+// Установщик, у которого закрытие по пути (PowerShell) не срабатывает — как
+// при заблокированном PowerShell.
+let noPsExe = null;
+function noPowerShellInstaller() {
+  if (!noPsExe) {
+    const built = compile(false, { name: 'nops', powershell: path.join(sandbox, 'no-such', 'powershell.exe') });
+    assert.strictEqual(built.status, 0, `${built.stdout}\n${built.stderr}`);
+    noPsExe = built.outFile;
+  }
+  return noPsExe;
 }
 
 const leftovers = () => fs.readdirSync(paths().programs).filter((n) => n.includes('~centychat-remove'));
@@ -438,4 +464,109 @@ test('копия не в Programs или в папке-ссылке — чужа
   assert.ok(fs.existsSync(path.join(target, 'CentyChat.exe')), 'цель ссылки цела');
   assert.ok(fs.existsSync(linked), 'сама ссылка тоже');
   assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), linked);
+});
+
+// ── Жёсткие случаи из повторного ревью ─────────────────────────────────────
+
+function junction(link, target) {
+  const r = spawnSync('cmd.exe', ['/c', 'mklink', '/J', link, target], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+}
+
+test('та же папка, записанная иначе (через точку соединения), — установка не удаляет саму себя', { skip: SKIP }, () => {
+  resetSandbox();
+  const p = paths();
+  makeCopy(p.legacy);
+  const alias = path.join(sandbox, 'Local', 'Alias');
+  junction(alias, p.programs);
+  const viaAlias = path.join(alias, 'OpenMyChat Enterprise');
+  // Без деинсталлятора NSIS рядом — срабатывает проверка «новый exe на месте
+  // после переименования»; с ним — копия с деинсталлятором NSIS не трогается вовсе.
+  for (const extra of [['--no-uninstaller'], []]) {
+    runInstaller(viaAlias, { extra });
+    assert.ok(fs.existsSync(path.join(p.legacy, 'CentyChat.exe')), `новая установка на месте (${extra})`);
+    assert.ok(fs.existsSync(path.join(p.legacy, 'OpenMyChat Enterprise.exe')), 'копия не тронута');
+    assert.ok(fs.existsSync(path.join(p.legacy, 'uninstall.ps1')));
+    assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), p.legacy);
+    assert.ok(fs.existsSync(p.desktopLnk) && fs.existsSync(p.menuLnk));
+    assert.deepStrictEqual(leftovers(), []);
+  }
+});
+
+test('PowerShell не сработал: запущенный exe не мешает переименовать папку, но не даёт удалить себя — taskkill, и копия убрана', { skip: SKIP }, async () => {
+  resetSandbox();
+  const p = paths();
+  const exe = makeCopy(p.legacy, { exe: 'CentyChat.exe' });
+  // Текущая папка процесса — вне копии: переименовать её папку он не мешает.
+  const app = start(exe, { cwd: sandbox });
+  await withProcesses([app], () => {
+    runInstaller(p.fresh, { exe: noPowerShellInstaller() });
+    assert.ok(!isRunning(app.pid), 'закрыт запасным путём');
+  });
+  assert.ok(!fs.existsSync(p.legacy));
+  assert.deepStrictEqual(leftovers(), []);
+  assert.ok(!regKeyExists(KEYS.arp));
+});
+
+test('exe копии запущен и не закрывается ничем — папка возвращается на место, копия остаётся как была', { skip: SKIP }, async () => {
+  resetSandbox();
+  const p = paths();
+  const exe = makeCopy(p.legacy, { exe: 'CentyChat.exe' });
+  const app = start(exe, { cwd: sandbox });
+  // Закрытие по пути не срабатывает (как с заблокированным PowerShell), а
+  // taskkill ищет процессы другого пользователя — как если бы приложение
+  // было запущено от имени администратора. Без проверки exe после
+  // переименования rmdir удалил бы всё, кроме exe, вместе с записью.
+  await withProcesses([app], () => {
+    runInstaller(p.fresh, { exe: noPowerShellInstaller(), env: { USERNAME: 'centychat-test-nobody' } });
+    assert.ok(isRunning(app.pid), 'процесс не закрыт');
+  });
+  for (const name of ['CentyChat.exe', 'uninstall.ps1', 'copy-install-common.ps1', path.join('resources', 'app.asar')]) {
+    assert.ok(fs.existsSync(path.join(p.legacy, name)), `${name} на месте`);
+  }
+  assert.deepStrictEqual(leftovers(), []);
+  assert.strictEqual(regGet(KEYS.arp, 'InstallLocation'), p.legacy, 'запись копии на месте');
+  assert.ok(fs.existsSync(path.join(p.desktop, 'CentyChat.lnk')));
+});
+
+test('/S /D= на папку копии 1.0.0: прежний exe, ярлыки и запись копии убраны', { skip: SKIP }, () => {
+  resetSandbox();
+  const p = paths();
+  const exe = makeCopy(p.legacy);
+  regSet(KEYS.run, AUMID, `"${exe}" --autostart`);
+
+  runInstaller(p.legacy);
+
+  assert.ok(fs.existsSync(path.join(p.legacy, 'CentyChat.exe')));
+  assert.ok(!fs.existsSync(exe), 'прежний exe рядом с новым app.asar не остаётся');
+  assert.ok(!fs.existsSync(p.desktopLnk) && !fs.existsSync(p.menuLnk), 'ярлыки 1.0.0 удалены');
+  assert.ok(!regKeyExists(KEYS.arp));
+  assert.ok(!fs.existsSync(path.join(p.legacy, 'uninstall.ps1')));
+  assert.ok(!fs.existsSync(path.join(p.legacy, 'copy-install-common.ps1')));
+  assert.strictEqual(regGet(KEYS.run, AUMID), `"${path.join(p.legacy, 'CentyChat.exe')}" --autostart`);
+});
+
+test('переименованную папку не удалось удалить до конца — удаление при следующем входе (RunOnce)', { skip: SKIP }, async () => {
+  resetSandbox();
+  const p = paths();
+  makeCopy(p.legacy, { exe: 'CentyChat.exe' });
+  // Внутри копии работает посторонний exe (не приложение): переименовать
+  // папку он не мешает, удалить её до конца, пока он жив, — нельзя.
+  const helper = path.join(p.legacy, 'resources', 'helper.exe');
+  fs.copyFileSync(PING, helper);
+  const running = start(helper, { cwd: sandbox });
+  const trash = `${p.legacy}~centychat-remove`;
+  await withProcesses([running], () => runInstaller(p.fresh, { exe: noPowerShellInstaller() }));
+  assert.ok(!fs.existsSync(p.legacy), 'копия убрана');
+  assert.ok(!regKeyExists(KEYS.arp));
+  assert.ok(fs.existsSync(trash), 'остаток переименованной папки');
+  const command = regGet(KEYS.runOnce, 'CentyChatCopyCleanup');
+  assert.ok(command, 'удаление запланировано на следующий вход');
+  assert.match(command, /^"[^"]*[\\/]cmd\.exe" \/d \/c rmdir \/s \/q "(.*)"$/i);
+  assert.strictEqual(command.match(/rmdir \/s \/q "(.*)"$/)[1], trash);
+  // Та же команда, что выполнит Windows при входе, — удаляет остаток.
+  await new Promise((r) => setTimeout(r, 300));
+  const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { windowsVerbatimArguments: true, encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(!fs.existsSync(trash));
 });

@@ -120,14 +120,24 @@ test('переименование: установка «копией» убир
   const nsh = fs.readFileSync(path.join(DESKTOP_DIR, 'build', 'installer.nsh'), 'utf8');
   assert.match(nsh, /!define \/ifndef CENTY_COPY_PROGRAMS_DIR "\$LOCALAPPDATA\\Programs"/, 'копия — только прямая подпапка Programs, как в Test-CentyChatCopyDir');
   assert.match(nsh, /!macro customInit\b[^]*INSTALL_REGISTRY_KEY[^]*CENTY_COPY_ARP_KEY[^]*!macroend/, 'копия ищется, только если нет установки через Setup.exe');
-  // Сначала переименование (удаётся, только если папку никто не держит),
-  // потом удаление; запись копии — после.
+  // Копия с деинсталлятором NSIS — это папка Setup.exe, не копия.
+  assert.match(nsh, /\$\{if\} \$\{FileExists\} "\$centyCopyDir\\\$\{UNINSTALL_FILENAME\}"/);
+  // Сначала переименование (удаётся, только если папку никто не держит без
+  // права на удаление), затем проверки: новая установка не «уехала» вместе с
+  // папкой, exe копии удалились (не запущены); только потом удаление папки и
+  // записи копии.
   const body = nsh.slice(nsh.indexOf('!macro customInstall'), nsh.indexOf('!macro customUnInstall'));
-  const renameAt = body.indexOf('Rename "$centyCopyDir" "$R3"');
-  const rmdirAt = body.indexOf('rmdir /s /q "%CENTY_COPY_TRASH%"', renameAt);
-  const arpAt = body.indexOf('DeleteRegKey HKCU "${CENTY_COPY_ARP_KEY}"');
-  assert.ok(renameAt > 0 && rmdirAt > renameAt && arpAt > rmdirAt, 'переименование → удаление папки → удаление записи');
-  assert.match(body, /taskkill \/F \/IM "\$\{CENTY_EXE\}"/, 'запасной путь закрытия');
+  const at = (s, from = 0) => body.indexOf(s, from);
+  const renameAt = at('Rename "$centyCopyDir" "$R3"');
+  const appExeAt = at('${ifNot} ${FileExists} "$appExe"', renameAt);
+  const exeDeleteAt = at('Delete "$R3\\${CENTY_EXE}"', appExeAt);
+  const rmdirAt = at('!insertmacro centyRmdirTrash', exeDeleteAt);
+  const arpAt = at('DeleteRegKey HKCU "${CENTY_COPY_ARP_KEY}"', rmdirAt);
+  assert.ok(renameAt > 0 && appExeAt > renameAt && exeDeleteAt > appExeAt && rmdirAt > exeDeleteAt && arpAt > rmdirAt,
+    'переименование → своя установка на месте → exe копии удалены → удаление папки → удаление записи');
+  assert.match(nsh, /!macro centyRmdirTrash[^]*rmdir \/s \/q "%CENTY_COPY_TRASH%"[^]*!macroend/);
+  assert.match(nsh, /!macro centyTaskkillApp[^]*taskkill \/F \/IM "\$\{CENTY_EXE\}"[^]*!macroend/, 'запасной путь закрытия');
+  assert.match(body, /WriteRegStr HKCU "\$\{CENTY_RUNONCE_KEY\}" "CentyChatCopyCleanup"/, 'недоудалённый остаток — при следующем входе');
   assert.ok(!/^\s*RMDir \/r/m.test(nsh), 'RMDir /r проходит по точкам соединения');
   assert.match(nsh, /WriteRegStr HKCU "\$\{CENTY_RUN_KEY\}" "\$\{CENTY_AUMID\}" '"\$appExe" --autostart'/);
 });
