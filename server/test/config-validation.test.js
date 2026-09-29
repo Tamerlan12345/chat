@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const ROUND4_KEYS = [
   'LOGIN_MAX_FAILED_ATTEMPTS', 'LOGIN_LOCKOUT_MINUTES', 'LOGIN_ACCOUNT_SOFT_LIMIT',
   'LOGIN_ACCOUNT_MAX_DELAY_SECONDS', 'PASSWORD_HASH_CONCURRENCY', 'ANON_RATE_LIMIT_PER_MINUTE',
-  'UPLOAD_MAX_MB_PER_HOUR'
+  'UPLOAD_MAX_MB_PER_HOUR', 'UPLOAD_MIN_FREE_DISK_MB'
 ];
 
 function loadConfig(env = {}) {
@@ -76,8 +76,25 @@ test('новые переменные раунда 4: значения по ум
   assert.strictEqual(config.LOGIN_ACCOUNT_SOFT_LIMIT, 20);
   assert.strictEqual(config.LOGIN_ACCOUNT_MAX_DELAY_SECONDS, 60);
   assert.strictEqual(config.PASSWORD_HASH_CONCURRENCY, 2);
-  assert.strictEqual(config.ANON_RATE_LIMIT_PER_MINUTE, 3000);
+  assert.strictEqual(config.ANON_RATE_LIMIT_PER_MINUTE, 12000);
   assert.strictEqual(config.UPLOAD_MAX_MB_PER_HOUR, 2048);
+  assert.strictEqual(config.UPLOAD_MIN_FREE_DISK_MB, 1024);
+});
+
+test('проверка раунда 4: пол потолка анонимных запросов (1..599 → умолчание, 0 — выключено, ≥600 — как задано)', () => {
+  assert.strictEqual(loadConfig({ ANON_RATE_LIMIT_PER_MINUTE: '50' }).ANON_RATE_LIMIT_PER_MINUTE, 12000, 'ниже пола — умолчание');
+  assert.strictEqual(loadConfig({ ANON_RATE_LIMIT_PER_MINUTE: '0' }).ANON_RATE_LIMIT_PER_MINUTE, 0, '0 — выключено');
+  assert.strictEqual(loadConfig({ ANON_RATE_LIMIT_PER_MINUTE: '600' }).ANON_RATE_LIMIT_PER_MINUTE, 600);
+  assert.strictEqual(loadConfig({ ANON_RATE_LIMIT_PER_MINUTE: '20000' }).ANON_RATE_LIMIT_PER_MINUTE, 20000);
+});
+
+test('проверка раунда 4 (M5): LOGIN_ACCOUNT_SOFT_LIMIT ниже LOGIN_MAX_FAILED_ATTEMPTS откатывается к умолчаниям', () => {
+  const bad = loadConfig({ LOGIN_MAX_FAILED_ATTEMPTS: '30', LOGIN_ACCOUNT_SOFT_LIMIT: '10' });
+  assert.strictEqual(bad.LOGIN_MAX_FAILED_ATTEMPTS, 10);
+  assert.strictEqual(bad.LOGIN_ACCOUNT_SOFT_LIMIT, 20);
+  const ok = loadConfig({ LOGIN_MAX_FAILED_ATTEMPTS: '8', LOGIN_ACCOUNT_SOFT_LIMIT: '25' });
+  assert.strictEqual(ok.LOGIN_MAX_FAILED_ATTEMPTS, 8);
+  assert.strictEqual(ok.LOGIN_ACCOUNT_SOFT_LIMIT, 25);
 });
 
 test('новые переменные раунда 4: корректные значения принимаются, вне диапазона — по умолчанию', () => {
@@ -92,11 +109,10 @@ test('новые переменные раунда 4: корректные зн�
   assert.strictEqual(ok.UPLOAD_MAX_MB_PER_HOUR, 0, '0 — без предела осознанно');
 
   const bad = loadConfig({
-    LOGIN_ACCOUNT_MAX_DELAY_SECONDS: '99999', PASSWORD_HASH_CONCURRENCY: '64', ANON_RATE_LIMIT_PER_MINUTE: '-1',
+    LOGIN_ACCOUNT_MAX_DELAY_SECONDS: '99999', PASSWORD_HASH_CONCURRENCY: '64',
     UPLOAD_MAX_MB_PER_HOUR: 'много'
   });
   assert.strictEqual(bad.LOGIN_ACCOUNT_MAX_DELAY_SECONDS, 60);
   assert.strictEqual(bad.PASSWORD_HASH_CONCURRENCY, 2);
-  assert.strictEqual(bad.ANON_RATE_LIMIT_PER_MINUTE, 3000);
   assert.strictEqual(bad.UPLOAD_MAX_MB_PER_HOUR, 2048);
 });

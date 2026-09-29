@@ -22,7 +22,9 @@ const { freshBoot, closeAll } = require('./helpers/boot');
 
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
 process.env.TRUSTED_PROXY_IPS = '127.0.0.1';
-process.env.ANON_RATE_LIMIT_PER_MINUTE = '40';
+// Пол потолка — 600 (значения ниже отклоняются к умолчанию); берём ровно пол,
+// чтобы порог проверялся разумным числом запросов.
+process.env.ANON_RATE_LIMIT_PER_MINUTE = '600';
 process.env.UPLOAD_MAX_MB_PER_HOUR = '1';
 
 let baseUrl;
@@ -111,20 +113,38 @@ test('страница отказа по адресу тоже несёт заг
 
 // ── Общий потолок анонимных запросов (Р4-12) ────────────────────────────────
 
-test('анонимные запросы с одного адреса упираются в потолок; сотрудник с токеном — нет', async () => {
+test('потолок анонимных запросов ловит непубличный маршрут; /API в другом регистре тоже считается (case-bypass закрыт)', async () => {
   const ip = '198.51.100.2';
   let limited = null;
-  for (let i = 0; i < 45 && !limited; i++) {
-    const res = await api('GET', '/api/settings/info', { ip });
+  // /api/users анониму — 401, но проходит через middleware потолка. Часть шлём
+  // в верхнем регистре: маршрутизация Express нечувствительна к регистру, и
+  // «/API/...» раньше проходил мимо потолка (воспроизведение e-case-bypass).
+  for (let i = 0; i < 640 && limited === null; i++) {
+    const path = i % 2 ? '/api/users' : '/API/users';
+    const res = await api('GET', path, { ip });
     if (res.status === 429) limited = i;
   }
-  assert.strictEqual(limited, 40, 'сорок первый анонимный запрос — 429');
+  assert.ok(limited !== null && limited >= 600 && limited <= 610, `потолок ~600 (сработал на ${limited})`);
 
-  const withToken = await api('GET', '/api/settings/info', { ip, token: people.w4_alice.token });
-  assert.strictEqual(withToken.status, 200, 'запрос с действительным токеном не считается анонимным');
+  // Другой адрес — свой счёт.
+  assert.notStrictEqual((await api('GET', '/api/users', { ip: '198.51.100.3' })).status, 429);
+});
 
-  const otherIp = await api('GET', '/api/settings/info', { ip: '198.51.100.3' });
-  assert.strictEqual(otherIp.status, 200, 'другой адрес — свой счёт');
+test('дешёвые публичные GET (/api/settings/info, /health) не считаются в потолок; токен-запрос — тоже', async () => {
+  const ip = '198.51.100.4';
+  for (let i = 0; i < 620; i++) {
+    const res = await api('GET', i % 2 ? '/api/settings/info' : '/health', { ip });
+    assert.strictEqual(res.status, 200, `${i}: ${res.status}`);
+  }
+  // Запрос с действующим токеном не анонимный — в потолок не идёт.
+  for (let i = 0; i < 5; i++) {
+    assert.strictEqual((await api('GET', '/api/users', { ip, token: people.w4_alice.token })).status, 200);
+  }
+});
+
+test('/API/... в верхнем регистре получает Cache-Control: no-store (case-bypass закрыт)', async () => {
+  const res = await api('GET', '/API/settings/info', { ip: '198.51.100.5' });
+  assert.strictEqual(res.headers.get('cache-control'), 'no-store');
 });
 
 // ── Вложения (Р4-11, Р4-14) ────────────────────────────────────────────────
@@ -251,6 +271,39 @@ test('knock с IPv6 сохраняет адрес целиком, а не пос
   assert.strictEqual(res.status, 200, res.text);
   const row = await identity.get('SELECT ip_address FROM pending_devices WHERE device_id = $1', ['v6-device-001']);
   assert.strictEqual(row.ip_address, '2001:db8:4:5::abcd');
+});
+
+// ── Знакомые адреса входа переживают перезапуск (ПР-I4) ─────────────────────
+
+test('знакомый адрес: записывается в trusted_login_sources, читается после сброса кэша и создаётся «стуком»', async () => {
+  const TrustedSources = require('../src/services/trusted-sources.service');
+  const uid = people.w4_carol.id;
+  await TrustedSources.record(uid, '203.0.113.150');
+  const row = await identity.get('SELECT ip_key FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.150']);
+  assert.ok(row, 'адрес записан в таблицу');
+  // Имитация перезапуска: кэш в памяти сброшен, знакомость читается из базы.
+  TrustedSources._reset();
+  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.150'), true, 'знакомость пережила сброс кэша');
+  assert.strictEqual(await TrustedSources.isTrusted(uid, '203.0.113.199'), false, 'незнакомый адрес — не знакомый');
+
+  // Успешный «стук» привязанного устройства тоже делает адрес знакомым.
+  const now = new Date().toISOString();
+  await identity.run(
+    `INSERT INTO device_pairings (device_id, user_id, paired_at, is_active, secret_hash, secret_token_version, secret_user_id, secret_expires_at, secret_auth_time)
+     VALUES ($1, $2, $3, 1, $4, $5, $2, $6, $3)`,
+    ['ts-dev-1', uid, now, require('node:crypto').createHash('sha256').update('S'.repeat(43)).digest('hex'),
+     (await identity.get('SELECT token_version FROM users WHERE id = $1', [uid])).token_version,
+     new Date(Date.now() + 30 * 86400000).toISOString()]
+  );
+  const secret = 'S'.repeat(43);
+  const knock = await api('POST', '/api/auth/knock', { ip: '203.0.113.151', body: { device_id: 'ts-dev-1', device_secret: secret } });
+  // Секрет-заглушка вряд ли совпадёт по хэшу — но даже статус login_required не
+  // важен: проверяем именно запись знакомого адреса при совпадении. Здесь хэш
+  // сходится (тот же 'S'*43), поэтому статус paired.
+  assert.strictEqual(knock.status, 200, knock.text);
+  await new Promise((r) => setTimeout(r, 50)); // recordAsync
+  const knocked = await identity.get('SELECT ip_key FROM trusted_login_sources WHERE user_id = $1 AND ip_key = $2', [uid, '203.0.113.151']);
+  assert.ok(knocked, '«стук» записал знакомый адрес');
 });
 
 // ── Администрирование (Р4-18, Р4-20) ───────────────────────────────────────
