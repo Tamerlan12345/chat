@@ -68,6 +68,23 @@ test('правило брандмауэра — только домен/част
   }
 });
 
+// Установщик называется OpenMyChat-Enterprise-Setup-<версия>.exe
+// (build.nsis.artifactName); старое имя без версии в подсказках вводит в
+// заблуждение.
+const UNVERSIONED_ARTIFACT = /OpenMyChat-Enterprise-(Setup|Portable)\.exe/;
+
+test('установщик и документация не называют файлы без версии', () => {
+  const files = fs.readdirSync(INSTALLER_DIR)
+    .filter((name) => /\.(ps1|bat|txt|vbs)$/i.test(name))
+    .map((name) => path.join(INSTALLER_DIR, name))
+    .concat([path.join(DOCS_DIR, 'аудит-и-улучшения.md'), path.join(DOCS_DIR, 'автообновление.md')]);
+  for (const file of files) {
+    const text = readText(file);
+    assert.ok(!UNVERSIONED_ARTIFACT.test(text), `${path.basename(file)}: имя установщика без версии`);
+  }
+  assert.match(readText(path.join(INSTALLER_DIR, 'SHA256SUMS.txt')), /OpenMyChat-Enterprise-Setup-\d+\.\d+\.\d+\.exe/);
+});
+
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {
   const batPath = path.join(INSTALLER_DIR, 'настроить-клиент.bat');
   assert.ok(fs.existsSync(batPath), 'должен существовать installer/настроить-клиент.bat');
