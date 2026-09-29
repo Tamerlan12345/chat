@@ -285,3 +285,54 @@ test('согласие оператора привязано к окну, сеа
   grants.forgetWebContents(5);
   assert.strictEqual(grants.operatorAllowed(5, 'rd-1'), false, 'окно ушло со страницы');
 });
+
+// ── Раздел electron-updater: только https и только сервер обновлений ───────
+
+test('фильтр раздела updater: https того же источника проходит, остальное — нет', () => {
+  const { isUpdaterRequestAllowed } = require('../src/main/update-policy');
+  const UPD = 'https://chat.centras.local';
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/stable/latest.yml', UPD), true);
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/stable/OpenMyChat-Enterprise-Setup-1.2.0.exe?x=1', UPD), true);
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/updates/policy.json?channel=stable', UPD), true);
+  assert.strictEqual(isUpdaterRequestAllowed('http://chat.centras.local/updates/stable/latest.yml', UPD), false, 'http');
+  assert.strictEqual(isUpdaterRequestAllowed('https://evil.com/setup.exe', UPD), false, 'чужой источник');
+  assert.strictEqual(isUpdaterRequestAllowed('https://chat.centras.local.evil.com/x', UPD), false);
+  assert.strictEqual(isUpdaterRequestAllowed('https://chat.centras.local:8443/x', UPD), false, 'другой порт');
+  assert.strictEqual(isUpdaterRequestAllowed('https://updates.invalid/openmychat/latest.yml', UPD), false, 'заглушка из app-update.yml');
+  assert.strictEqual(isUpdaterRequestAllowed('file:///C:/Windows/calc.exe', UPD), false);
+  assert.strictEqual(isUpdaterRequestAllowed('ws://chat.centras.local/', UPD), false);
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/x', null), false, 'без адреса обновлений — ничего');
+  assert.strictEqual(isUpdaterRequestAllowed(UPD + '/x', 'http://chat.centras.local'), false, 'http-источник обновлений не принимается');
+  assert.strictEqual(isUpdaterRequestAllowed('not a url', UPD), false);
+});
+
+test('main.js ставит фильтр на раздел electron-updater до создания UpdateController', () => {
+  const fs = require('node:fs');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  const guardAt = main.indexOf("fromPartition('electron-updater'");
+  assert.ok(guardAt > 0, 'раздел electron-updater получен в main.js');
+  const guard = main.slice(guardAt, guardAt + 800);
+  assert.match(guard, /onBeforeRequest/);
+  assert.match(guard, /isUpdaterRequestAllowed/);
+  const controllerAt = main.indexOf('new UpdateController(');
+  assert.ok(controllerAt > 0, 'UpdateController создаётся');
+  const whenReady = main.slice(main.indexOf('app.whenReady()'));
+  assert.ok(whenReady.indexOf('installUpdaterSessionGuard(') > 0, 'фильтр ставится при старте');
+  assert.ok(
+    whenReady.indexOf('installUpdaterSessionGuard(') < whenReady.indexOf('startUpdater('),
+    'фильтр — раньше запуска обновлений'
+  );
+});
+
+test('IPC обновлений — только из главного окна, адрес скачивания — из состояния main', () => {
+  const fs = require('node:fs');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  for (const channel of ['update-get-state', 'update-check', 'update-install', 'update-open-download', 'get-app-info']) {
+    const at = main.indexOf(`ipcMain.handle('${channel}'`);
+    assert.ok(at > 0, channel);
+    const body = main.slice(at, at + 400);
+    assert.match(body, /isFromServerPage\(event, \{ mainWindowOnly: true \}\)/, channel);
+  }
+  const open = main.slice(main.indexOf("ipcMain.handle('update-open-download'"));
+  assert.match(open.slice(0, 400), /\(event\)\s*=>/, 'адрес от страницы не принимается вовсе');
+});
