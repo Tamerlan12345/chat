@@ -16,6 +16,7 @@ const config = require('../config');
 const WINDOW_MS = 10 * 60 * 1000;
 const DEDUP_MS = 30 * 60 * 1000;
 
+const MAX_KEYS = 5000;
 const counters = new Map(); // ключ -> массив отметок времени
 const lastAlertAt = new Map(); // ключ дедупликации -> время
 
@@ -34,11 +35,16 @@ const SECURITY_SETTING_KEYS = new Set([
 function bump(key, now = Date.now()) {
   const list = (counters.get(key) || []).filter((t) => now - t < WINDOW_MS);
   list.push(now);
+  counters.delete(key); // свежий ключ — в конец очереди на забывание
   counters.set(key, list);
-  if (counters.size > 5000) {
+  if (counters.size > MAX_KEYS) {
     for (const [k, v] of counters) {
       if (!v.length || now - v[v.length - 1] > WINDOW_MS) counters.delete(k);
     }
+    // Все ключи свежие (поток неудач с множества адресов или логинов) —
+    // забываются самые давние: раньше карта в этом случае росла без предела
+    // (аудит, раунд 4, находка Р4-21).
+    while (counters.size > MAX_KEYS) counters.delete(counters.keys().next().value);
   }
   return list.length;
 }
@@ -46,7 +52,16 @@ function bump(key, now = Date.now()) {
 function shouldAlert(dedupKey, now = Date.now()) {
   const last = lastAlertAt.get(dedupKey);
   if (last && now - last < DEDUP_MS) return false;
+  lastAlertAt.delete(dedupKey);
   lastAlertAt.set(dedupKey, now);
+  // Отметки старше окна дедупликации ничего не подавляют — им место только
+  // в памяти, и то ненадолго.
+  if (lastAlertAt.size > MAX_KEYS) {
+    for (const [k, at] of lastAlertAt) {
+      if (now - at >= DEDUP_MS) lastAlertAt.delete(k);
+    }
+    while (lastAlertAt.size > MAX_KEYS) lastAlertAt.delete(lastAlertAt.keys().next().value);
+  }
   return true;
 }
 
@@ -79,6 +94,17 @@ class SecurityMonitor {
         if (total >= 100 && shouldAlert('login_failed:all')) {
           this.raise('login_failures_mass', 'critical', 'Массовые неудачные входы', {
             attempts: total, windowMinutes: WINDOW_MS / 60000
+          });
+        }
+        return;
+      }
+      // Включилась задержка по учётной записи: неудачи идут с нескольких
+      // адресов сразу — картина распределённого подбора (login-throttle.service.js).
+      case 'login_account_throttled': {
+        const name = String(d.username || '').toLowerCase();
+        if (shouldAlert(`login_throttled:${name}`)) {
+          this.raise('login_bruteforce_distributed', 'high', 'Подбор пароля к одной учётной записи с нескольких адресов', {
+            username: name, ip
           });
         }
         return;
@@ -146,6 +172,11 @@ class SecurityMonitor {
 
   // Неудачные входы через WebSocket не пишутся в журнал поштучно (их может быть
   // много), но всплеск — повод для оповещения.
+  // Для тестов: сколько ключей держат счётчики в памяти.
+  static counterStats() {
+    return { counters: counters.size, lastAlertAt: lastAlertAt.size, max: MAX_KEYS };
+  }
+
   static recordWsAuthFailure(ip) {
     const count = bump(`ws_auth:${ip}`);
     if (count >= 30 && shouldAlert(`ws_auth:${ip}`)) {

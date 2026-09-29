@@ -16,6 +16,10 @@ process.env.UPDATES_DIR = UPDATES_DIR;
 process.env.UPDATES_MAX_FILE_MB = '1';
 process.env.UPDATES_MAX_CONCURRENT_DOWNLOADS = '3';
 process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
+// Проверка раунда 4 (M7): предел частоты обновлений теперь по установке плюс
+// высокий потолок на адрес. Здесь потолок на адрес занижен, чтобы проверить
+// его немногими запросами; в бою по умолчанию 6000/мин, чтобы вместить офис.
+process.env.UPDATES_MAX_REQ_PER_MIN_PER_IP = '120';
 
 const { freshBoot, closeAll } = require('./helpers/boot');
 

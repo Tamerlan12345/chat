@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
 import { BrandLockup, BRAND_C_PATH } from './BrandMark';
+import { postLoginWithRetry } from '../lib/login-retry.mjs';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MIN_PASSWORD_LENGTH = 8;
 const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
@@ -77,6 +80,10 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pendingMessage, setPendingMessage] = useState('');
+  // Автоповтор входа при перегрузке сервера (503): пока идёт пауза, поля входа
+  // остаются доступными — правка любого из них отменяет повтор (задача 4).
+  const [retryNote, setRetryNote] = useState('');
+  const cancelRetryRef = useRef(false);
   // Почему человек снова на экране входа: сеанс отозван, пароль сброшен
   // администратором. Без объяснения выброс на вход выглядел как сбой.
   const [notice] = useState(() => {
@@ -157,6 +164,8 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
     setLoading(true);
     setError('');
+    setRetryNote('');
+    cancelRetryRef.current = false;
 
     const cleanUrl = serverUrl.replace(/\/+$/, '');
     // Пароль по открытому каналу не отправляется.
@@ -167,16 +176,23 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
 
     try {
-      const res = await fetch(`${cleanUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.trim(),
-          password
-        })
+      // Сервер под наплывом входов отвечает 503 (LOGIN_BUSY/PASSWORD_HASH_BUSY)
+      // с Retry-After — это не отказ, а просьба повторить. Повторяем до двух
+      // раз, соблюдая Retry-After (пауза не дольше ~5 с), с видимым статусом.
+      const { res, data, cancelled } = await postLoginWithRetry({
+        fetchImpl: fetch,
+        sleep,
+        url: `${cleanUrl}/api/auth/login`,
+        body: { username: username.trim(), password },
+        budgetMs: 45000,
+        onRetry: (attempt) => setRetryNote(`Сервер занят, повторяю вход… (попытка ${attempt})`),
+        shouldCancel: () => cancelRetryRef.current
       });
-
-      const data = await readJson(res);
+      setRetryNote('');
+      if (cancelled) {
+        setError('Повтор входа отменён — нажмите «Войти», когда будете готовы');
+        return;
+      }
 
       if (!res.ok || !data.token) {
         throw new Error(describeFailure(res, data, 'Не удалось войти'));
@@ -193,6 +209,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
 
       onLoginSuccess(data.user, data.token, cleanUrl);
     } catch (err) {
+      setRetryNote('');
       setError(
         err instanceof TypeError
           ? 'Нет связи с сервером — проверьте сеть и повторите'
@@ -380,10 +397,10 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                   type="text"
                   className="form-input"
                   value={username}
-                  onChange={e => setUsername(e.target.value)}
+                  onChange={e => { setUsername(e.target.value); if (retryNote) cancelRetryRef.current = true; }}
                   placeholder="Введите ваш логин"
                   autoComplete="username"
-                  disabled={loading}
+                  disabled={loading && !retryNote}
                   autoFocus
                   required
                 />
@@ -396,12 +413,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                   type="password"
                   className="form-input"
                   value={password}
-                  onChange={e => setPassword(e.target.value)}
+                  onChange={e => { setPassword(e.target.value); if (retryNote) cancelRetryRef.current = true; }}
                   onKeyUp={trackCapsLock}
                   onKeyDown={trackCapsLock}
                   placeholder="Введите ваш пароль"
                   autoComplete="current-password"
-                  disabled={loading}
+                  disabled={loading && !retryNote}
                   required
                 />
                 {capsLock && (
@@ -423,12 +440,15 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 </label>
               </div>
 
+              {retryNote && (
+                <div className="form-hint is-warning" role="status">{retryNote}</div>
+              )}
               <button
                 type="submit"
                 className="btn btn-primary btn-block login-submit-btn"
                 disabled={loading || checkingServer}
               >
-                {loading ? 'Входим…' : 'Войти'}
+                {retryNote ? 'Сервер занят, повторяю…' : loading ? 'Входим…' : 'Войти'}
               </button>
             </form>
           ) : (

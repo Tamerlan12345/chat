@@ -33,6 +33,46 @@ function normalizeIp(raw) {
   return value.replace(/^.*:/, '');
 }
 
+// Разворачивает IPv6 в восемь 16-битных групп: «2001:db8::1» → [0x2001, 0xdb8,
+// 0, 0, 0, 0, 0, 1]. Хвост IPv4 («64:ff9b::1.2.3.4») превращается в две
+// группы. Зона («fe80::1%eth0») отбрасывается. null — если это не IPv6.
+function expandIpv6(value) {
+  const net = require('node:net');
+  const bare = String(value).split('%')[0];
+  if (!net.isIPv6(bare)) return null;
+  let text = bare.toLowerCase();
+  const v4 = text.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number);
+    text = text.slice(0, v4.index) + `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail] = text.split('::');
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = tail !== undefined && tail ? tail.split(':') : [];
+  const missing = 8 - headGroups.length - tailGroups.length;
+  const groups = tail !== undefined
+    ? [...headGroups, ...Array(Math.max(missing, 0)).fill('0'), ...tailGroups]
+    : headGroups;
+  if (groups.length !== 8) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+// Ключ ограничителя частоты по адресу. IPv4 — сам адрес. IPv6 — сеть /64:
+// провайдер выдаёт одному абоненту (и любой VPS получает) как минимум /64, то
+// есть 2^64 адресов, и счётчик «на адрес» обходился бы простой сменой
+// адреса внутри своей же сети перед каждой попыткой (аудит, раунд 4, находка
+// Р4-02). Офис за IPv6 при этом ведёт себя ровно как офис за одним IPv4 NAT —
+// пределы и так подобраны под этот случай.
+//
+// Только для ключей ограничителей: списки доступа, журнал и отображение
+// администратору по-прежнему получают полный адрес (getClientIp).
+function rateLimitIpKey(ip) {
+  const value = normalizeIp(ip);
+  const groups = expandIpv6(value);
+  if (!groups) return value || 'unknown';
+  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(':')}::/64`;
+}
+
 function ipToInt(ip) {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return null;
@@ -123,4 +163,4 @@ function isIpAllowed(ip) {
   return matchesAny(ip, config.ALLOWED_CLIENT_IPS);
 }
 
-module.exports = { normalizeIp, getClientIp, isIpAllowed, matchesAny };
+module.exports = { normalizeIp, getClientIp, isIpAllowed, matchesAny, rateLimitIpKey };
