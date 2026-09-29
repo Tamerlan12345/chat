@@ -2599,6 +2599,10 @@ input, textarea, button, select {
 }
 
 .call-panel {
+  /* Панель звонка тёмная в обеих темах — кольцо фокуса светлое и здесь.
+     --focus-outline повторён: в :root он вычислен из корневого цвета. */
+  --focus-color: #b0a9ff;
+  --focus-outline: 2px solid #b0a9ff;
   position: fixed;
   right: 20px;
   bottom: 20px;

@@ -2798,7 +2798,11 @@ export default function App() {
 
       {inlineRdViewer && (
         <div className="modal-backdrop">
-          <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {/* Окно просмотра тёмное в любой теме: светлое индиго кольца фокуса
+              на нём почти не видно (2,6:1), поэтому здесь своё, светлое.
+              --focus-outline задаётся заново: в :root он уже вычислен из
+              корневого --focus-color и наследуется готовым. */}
+          <div style={{ width: '100vw', height: '100vh', background: '#0f172a', overflow: 'hidden', display: 'flex', flexDirection: 'column', '--focus-color': '#b0a9ff', '--focus-outline': '2px solid #b0a9ff' }}>
             <div style={{ padding: '8px 16px', background: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff' }}>
               <span>Удаленный рабочий стол: {inlineRdViewer.targetUser?.full_name}</span>
               <button className="btn btn-sm btn-secondary" onClick={endRdViewerSession}>Закрыть</button>
