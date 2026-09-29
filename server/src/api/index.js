@@ -10,6 +10,8 @@ const AnnouncementService = require('../services/announcement.service');
 const SettingsService = require('../services/settings.service');
 const DbStudioService = require('../services/db-studio.service');
 const FileService = require('../services/file.service');
+const FilePolicyService = require('../services/file-policy.service');
+const createFilePolicyRouter = require('../files/policy-router');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, registerFailure } = require('../services/rate-limiter');
@@ -44,13 +46,44 @@ function sanitizeIceServers(list) {
 }
 
 // Проверка значений, от которых зависит безопасность: мусор в них ломал бы
-// либо защиту, либо саму функцию.
-const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_)/;
+// либо защиту, либо саму функцию. update_policy и file_policy сюда же — у них отдельные,
+// проверяемые маршруты (/api/admin/updates, /api/admin/file-policy), а не общий
+// PUT /api/admin/settings, где список расширений никак не валидируется.
+const INTERNAL_SETTING = /^(last_admin_password_reset|audit_chain_|update_policy|file_policy)/;
 function publicSettings(all) {
   return Object.fromEntries(Object.entries(all || {}).filter(([key]) => !INTERNAL_SETTING.test(key)));
 }
 
+// Все ключи прав, которые где-либо проверяются в коде сервера
+// (`grep permissions\. server/src`) плюс те, что заводятся у ролей чистой
+// установки (server/src/db/identity/index.js, BASE_ROLES). PUT /admin/roles/:id
+// раньше сохранял JSON.stringify(permissions) как есть — опечатка в ключе
+// молча превращалась в бессмысленное право (аудит, находка №18).
+const KNOWN_PERMISSION_KEYS = new Set([
+  'is_admin', 'is_scoped_admin',
+  'can_manage_users', 'can_manage_structure', 'can_manage_db',
+  'can_broadcast', 'can_call', 'can_remote_control',
+  'can_create_channels', 'can_upload_files'
+]);
+
+function assertKnownPermissions(permissions) {
+  for (const [key, value] of Object.entries(permissions)) {
+    if (!KNOWN_PERMISSION_KEYS.has(key)) {
+      throw new Error(`Неизвестное право: ${key}`);
+    }
+    if (typeof value !== 'boolean') {
+      throw new Error(`Право ${key} должно быть true или false`);
+    }
+  }
+}
+
 const BOOLEAN_SETTINGS = new Set(['remote_desktop_enabled', 'security_alerts_telegram', 'allow_registration']);
+// Окна правки/удаления сообщений (MessageService.editMessage/deleteMessage):
+// только целое число минут -1..MAX_MESSAGE_WINDOW_MINUTES. Раньше любая
+// строка проходила как есть — пустое поле в админ-панели сохранялось как ''
+// и на чтении Number('') === 0 означало «без ограничения», то есть пустое
+// значение молча снимало защиту (находка ревью раунда 1).
+const MESSAGE_WINDOW_SETTINGS = new Set(['message_edit_window_minutes', 'message_delete_window_minutes']);
 function validateSettingsUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Не переданы настройки');
   const clean = {};
@@ -61,6 +94,14 @@ function validateSettingsUpdate(body) {
       const normalized = String(value);
       if (normalized !== 'true' && normalized !== 'false') throw new Error(`Настройка ${key} принимает true или false`);
       clean[key] = normalized;
+    } else if (MESSAGE_WINDOW_SETTINGS.has(key)) {
+      if (!MessageService.isValidMessageWindowValue(value)) {
+        throw new Error(
+          `Настройка ${key} принимает целое число минут от -1 до ${MessageService.MAX_MESSAGE_WINDOW_MINUTES} ` +
+          '(−1 — действие выключено, 0 — без ограничения)'
+        );
+      }
+      clean[key] = String(Number(String(value).trim()));
     } else if (key === 'rd_ice_servers') {
       if (value === '' || value === null) {
         clean[key] = '[]';
@@ -98,7 +139,11 @@ const route = (handler) => (req, res, next) =>
 
 // Маршруты, доступные сотруднику с must_change_password = 1: ровно столько,
 // чтобы понять, кто он, и сменить пароль. Всё остальное отвечает 403.
-const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password', '/auth/logout', '/auth/refresh']);
+// /auth/device/unbind: сотрудник с обязательной сменой пароля тоже должен
+// выйти начисто. Без него секрет устройства такому сотруднику отвязать было
+// нечем — запрос молча получал 403, а не ошибку сети, и оставался незамечен
+// клиентом (см. handleLogout / unbindDeviceOnServer в desktop/App.jsx).
+const PASSWORD_CHANGE_ALLOWLIST = new Set(['/auth/me', '/users/password', '/auth/logout', '/auth/refresh', '/auth/device/unbind']);
 
 const requireAuth = route(async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -199,7 +244,12 @@ async function assertWithinAdminScope(actor, { targetUserId = null, payload = nu
         throw new Error('Выбранное подразделение вне вашей зоны ответственности');
       }
     }
-    if (payload.admin_scope_dept_id) {
+    // Находка №2 (дефект A): раньше проверялось только truthy-значение, и
+    // {admin_scope_dept_id: null} на собственной записи проходило — так
+    // администратор подразделения сам снимал с себя ограничение области, и
+    // следующий его токен уже был без неё. Теперь отказывает сам факт
+    // присутствия ключа в теле, при любом значении, включая null.
+    if ('admin_scope_dept_id' in payload) {
       throw new Error('Назначать администраторов подразделений может только суперадминистратор');
     }
     if (payload.role_id !== undefined && payload.role_id !== null) {
@@ -236,6 +286,9 @@ router.post('/auth/knock', route(async (req, res) => {
     const result = await DeviceService.knock({
       device_id, device_secret, device_name, ip_address: remoteIp, platform, client_version
     });
+    if (result.status === 'too_many_pending') {
+      return res.status(429).json({ error: result.message });
+    }
     if (result.status === 'paired') {
       AuditService.log({ userId: result.user.id, action: 'device_login', ip: remoteIp, details: { deviceId: String(device_id) } });
     }
@@ -243,6 +296,20 @@ router.post('/auth/knock', route(async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+// «Выход» на клиенте: устройство больше не должно входить без пароля этим
+// секретом. Снимает только секрет своей же привязки — ни существование, ни
+// принадлежность чужого device_id этот маршрут не подтверждает и не меняет
+// (аудит, находка №9: секрет переживал логаут, пока unbind не убирал его и
+// на сервере, а не только флагом в localStorage клиента).
+router.post('/auth/device/unbind', requireAuth, route(async (req, res) => {
+  const { device_id } = req.body || {};
+  const result = await DeviceService.unbindSecret(device_id, req.user.id);
+  if (result.unbound) {
+    AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
+  }
+  res.json({ ok: true });
 }));
 
 // Вход по паролю на привязанном устройстве выдаёт ему секрет для следующих
@@ -342,8 +409,25 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
 
 // Выход отзывает именно этот токен: раньше «выйти» значило только забыть токен
 // на своём компьютере, а скопированный продолжал работать неделю.
+//
+// Отвязка секрета устройства сделана ЧАСТЬЮ этого же запроса, а не отдельным
+// вызовом клиента после него: если бы клиент сперва звал /auth/logout (токен
+// отзывается — jti в чёрном списке), а потом отдельно /api/auth/device/unbind
+// с тем же токеном, второй запрос отвечал бы 401 ещё до того, как дошёл бы до
+// DeviceService, и секрет остался бы действующим — ровно то, что находка №9
+// должна была закрыть. Здесь порядок внутри одного обработчика не важен:
+// req.user уже разрешён requireAuth до какой-либо отзыва.
 router.post('/auth/logout', requireAuth, route(async (req, res) => {
   await AuthService.revokeToken(req.tokenPayload);
+
+  const { device_id } = req.body || {};
+  if (device_id) {
+    const unbound = await DeviceService.unbindSecret(device_id, req.user.id);
+    if (unbound.unbound) {
+      AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
+    }
+  }
+
   AuditService.log({ userId: req.user.id, action: 'logout', ip: getClientIp(req) });
   wsServer.disconnectSocketsWithToken(req.rawToken, 'Выход из системы');
   res.json({ success: true });
@@ -450,7 +534,7 @@ router.put('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(asy
       wsServer.disconnectUser(targetId, 'Права учётной записи изменены — войдите заново');
     }
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
-    res.json(updated);
+    res.json(UserService.hideAdminOnlyFields(updated, req.user));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -598,6 +682,7 @@ router.put('/admin/roles/:id', requireAuth, requireAdmin, route(async (req, res)
     if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
       return res.status(400).json({ error: 'Не переданы права роли' });
     }
+    assertKnownPermissions(permissions);
 
     const db = identity();
     const roleId = Number(req.params.id);
@@ -818,6 +903,9 @@ router.put('/admin/settings', requireAuth, requireAdmin, route(async (req, res) 
     res.status(400).json({ error: err.message });
   }
 }));
+
+// ── ОБНОВЛЕНИЯ КЛИЕНТА ── только главный администратор (см. updates/admin-router.js)
+router.use('/admin/updates', requireAuth, requireAdmin, require('../updates/admin-router'));
 
 // ── ЦЕНТР БЕЗОПАСНОСТИ ──
 // Только главный администратор: состояние защиты, оповещения, журнал.
@@ -1085,43 +1173,87 @@ router.get('/announcements', requireAuth, route(async (req, res) => {
 
 router.post('/announcements', requireAuth, route(async (req, res) => {
   try {
-    if (!req.user.permissions.can_broadcast && !req.user.permissions.is_admin) {
+    // Находка №4: раньше проверялся is_admin, а его несёт и администратор
+    // подразделения — с can_broadcast:false он всё равно рассылал
+    // распоряжения «от компании» кому угодно. isSuperAdmin() исключает
+    // контурных администраторов, как и везде в этом файле.
+    if (!isSuperAdmin(req.user) && !req.user.permissions.can_broadcast) {
       return res.status(403).json({ error: 'Нет прав на отправку массовых оповещений' });
     }
     // Автор — всегда тот, кто отправил. Раньше author_id из тела запроса
     // перекрывал настоящего, и распоряжение уходило «от директора».
     const ann = await AnnouncementService.createAnnouncement({ ...(req.body || {}), author_id: req.user.id });
     AuditService.log({ userId: req.user.id, action: 'announcement_created', ip: getClientIp(req), details: { announcementId: ann?.id } });
-    wsServer.broadcast({ type: 'new_announcement', announcement: ann });
+    if (ann.target_type === 'all') {
+      wsServer.broadcast({ type: 'new_announcement', announcement: ann });
+    } else {
+      // Находка №3: адресное оповещение раньше уходило полным текстом всем —
+      // видимость по цели проверялась только при чтении REST-списком, а не
+      // при живой рассылке. Теперь текст получают только получатели и автор.
+      const recipientIds = new Set(await AnnouncementService.getRecipientIds(ann));
+      recipientIds.add(Number(ann.author_id));
+      for (const userId of recipientIds) {
+        wsServer.sendToUser(userId, { type: 'new_announcement', announcement: ann });
+      }
+    }
     res.status(201).json(ann);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }));
 
-router.post('/announcements/:id/acknowledge', requireAuth, (req, res) => {
+router.post('/announcements/:id/acknowledge', requireAuth, route(async (req, res) => {
   try {
     const ip = getClientIp(req) || '127.0.0.1';
+    // Находка №10: раньше принимался ack на любой id, даже несуществующий
+    // или не адресованный этому сотруднику — журнал ознакомления переставал
+    // быть надёжным. Теперь оба условия проверяются до записи.
+    const announcement = await AnnouncementService.getAnnouncementById(req.params.id);
+    if (!announcement) {
+      return res.status(404).json({ error: 'Оповещение не найдено' });
+    }
+    if (!(await AnnouncementService.isVisibleTo(announcement.id, req.user.id, announcement))) {
+      return res.status(403).json({ error: 'Оповещение не адресовано вам' });
+    }
     const result = AnnouncementService.acknowledgeAnnouncement(req.params.id, req.user.id, ip);
-    wsServer.broadcast({
-      type: 'announcement_acknowledged',
-      announcementId: req.params.id,
-      userId: req.user.id,
-      userName: req.user.full_name
-    });
+    // Только реальным получателям и автору — не всей компании (та же логика
+    // видимости, что и при создании).
+    const recipientIds = new Set(await AnnouncementService.getRecipientIds(announcement));
+    recipientIds.add(Number(announcement.author_id));
+    for (const userId of recipientIds) {
+      wsServer.sendToUser(userId, {
+        type: 'announcement_acknowledged',
+        announcementId: req.params.id,
+        userId: req.user.id,
+        userName: req.user.full_name
+      });
+    }
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 router.get('/announcements/:id/audit', requireAuth, route(async (req, res) => {
   try {
     // Кто и когда ознакомился — сведения для тех, кто рассылает распоряжения,
     // а не для всех сотрудников.
     const permissions = req.user.permissions || {};
-    if (!permissions.is_admin && !permissions.can_broadcast) {
+    // Находка №4: то же самое смешение is_admin/can_broadcast, что и в
+    // создании оповещения — контурный администратор без can_broadcast не
+    // должен читать журнал (IP и адреса всех сотрудников компании).
+    if (!isSuperAdmin(req.user) && !permissions.can_broadcast) {
       return res.status(403).json({ error: 'Журнал ознакомления доступен только администраторам' });
+    }
+    // Контурный администратор с правом на рассылку видит журнал только
+    // собственных оповещений — иначе он читает адреса и IP всех сотрудников
+    // компании по чужому распоряжению.
+    if (isScopedAdmin(req.user)) {
+      const owned = await AnnouncementService.getAnnouncementById(req.params.id);
+      if (!owned) return res.status(404).json({ error: 'Оповещение не найдено' });
+      if (Number(owned.author_id) !== Number(req.user.id)) {
+        return res.status(403).json({ error: 'Журнал доступен только для оповещений, отправленных вами' });
+      }
     }
     res.json(await AnnouncementService.getAnnouncementAudit(req.params.id));
   } catch (err) {
@@ -1136,6 +1268,12 @@ router.get('/settings/info', route(async (req, res) => {
     server_name: settings.server_name || 'OpenMyChat Enterprise Server',
     company_name: settings.company_name || 'Корпоративная сеть',
     allow_registration: settings.allow_registration === 'true',
+    // Окна правки/удаления сообщений: клиенту нужно знать их, чтобы не
+    // показывать «Изменить»/«Удалить» там, где сервер их всё равно отклонит.
+    // Сама проверка остаётся на сервере (MessageService.editMessage/deleteMessage) —
+    // здесь только то, что нужно для скрытия пункта меню.
+    message_edit_window_minutes: settings.message_edit_window_minutes || '60',
+    message_delete_window_minutes: settings.message_delete_window_minutes || '60',
     version: config.SERVER_VERSION
   });
 }));
@@ -1249,7 +1387,17 @@ router.post('/channels', requireAuth, (req, res) => {
       return res.status(403).json({ error: 'Создание каналов не разрешено для вашей роли' });
     }
     const channel = MessageService.createChannel(name, topic, type, req.user.id);
-    wsServer.broadcast({ type: 'channel_created', channel });
+
+    if (channel.type === 'private') {
+      // Находка №11: приватный канал рассылался всем сокетам целиком (имя,
+      // тема) — посторонние узнавали о его существовании. Теперь только
+      // тем, кто уже состоит в нём с момента создания.
+      for (const memberId of MessageService.getChannelMemberIds(channel.id)) {
+        wsServer.sendToUser(memberId, { type: 'channel_created', channel });
+      }
+    } else {
+      wsServer.broadcast({ type: 'channel_created', channel });
+    }
     res.status(201).json(channel);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1326,8 +1474,23 @@ router.post('/files/upload', requireAuth, requireUploadPermission, route(acceptU
       mimeType: req.file.mimetype
     }));
   } catch (err) {
+    // Фильтр типов файлов (FileService.saveUploadedFile → FilePolicyService)
+    // отмечает свой отказ полем statusCode — остальные ошибки сохранения
+    // остаются обычным 400 без подробностей о причине.
+    if (err.statusCode === 415) {
+      return res.status(415).json({ error: err.message, code: err.code });
+    }
     res.status(400).json({ error: 'Файл не сохранён' });
   }
+}));
+
+// Действующий для вызывающего список разрешённых расширений — клиент
+// использует его для предпроверки при выборе файла (accept у <input> и
+// понятная ошибка до отправки), не дожидаясь отказа сервера постфактум.
+router.get('/files/policy', requireAuth, route(async (req, res) => {
+  const policy = await FilePolicyService.getPolicy();
+  const allowed = await FilePolicyService.effectiveAllowed(req.user.id);
+  res.json({ enabled: policy.enabled, allowed });
 }));
 
 router.get('/files/download/:id', requireAuth, (req, res) => {
@@ -1349,6 +1512,10 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
 router.get('/files/recent', requireAuth, route(async (req, res) => {
   res.json(await FileService.getRecentFiles(req.user.id));
 }));
+
+// Администрирование фильтра типов файлов — отдельный подроутер
+// (server/src/files/policy-router.js), чтобы не разрастать этот файл.
+router.use('/admin/file-policy', createFilePolicyRouter({ requireAuth, requireAdmin, getClientIp }));
 
 // ── 9. СТУДИЯ БАЗЫ ДАННЫХ ──
 // Работает только с базой переписки: учётные записи лежат в другом хранилище и
@@ -1498,7 +1665,8 @@ router.post('/admin/org/batch-import', requireAuth, requireAdminOrScopedAdmin, r
     const result = await OrgParserService.applyImport({
       parsedData: parsed,
       defaultPassword: defaultPassword || UserService.generateTempPassword(),
-      adminScopeDeptId: req.user.admin_scope_dept_id
+      adminScopeDeptId: req.user.admin_scope_dept_id,
+      actorIsScopedAdmin: isScopedAdmin(req.user)
     });
     AuditService.log({
       userId: req.user.id,

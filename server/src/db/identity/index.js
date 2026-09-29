@@ -46,7 +46,8 @@ async function initIdentity(legacyDb = null) {
   const isEmpty = Number(existing?.n || 0) === 0;
 
   if (isEmpty) {
-    const source = findImportSource({ dialect: driver.dialect, legacyDb });
+    const skipInfo = {};
+    const source = findImportSource({ dialect: driver.dialect, legacyDb, skipInfo });
     if (source) {
       try {
         await importFromLegacy(driver, source.db, source.label);
@@ -59,9 +60,22 @@ async function initIdentity(legacyDb = null) {
       // здесь «чистую установку» значило бы молча лишить компанию всех
       // сотрудников и завести администратора с общеизвестным паролем поверх
       // рабочих данных. Лучше не подняться и объяснить почему.
+      //
+      // Резервный файл мог при этом реально лежать на диске, но быть
+      // пропущен именно из-за отсутствия IDENTITY_AUTO_IMPORT (см. цикл в
+      // findImportSource) — в этом случае сообщение обязано назвать ИМЕННО
+      // этот флаг. Раньше оно называло только IDENTITY_ALLOW_EMPTY_BOOTSTRAP,
+      // и следуя ему оператор создал бы чистую установку поверх пропущенного,
+      // но существующего резервного файла с рабочими данными (аудит ревью,
+      // находка №21).
+      const autoImportHint = skipInfo.skippedAutoImport
+        ? 'Резервный файл найден на диске, но пропущен без IDENTITY_AUTO_IMPORT=true — если перенос ' +
+          'нужен именно из него, задайте этот флаг. '
+        : '';
       throw new Error(
         'Хранилище учётных записей пустое, а переписка в базе уже есть — это не новая установка. ' +
           'Сервер не будет создавать администратора с паролем по умолчанию поверх рабочих данных. ' +
+          autoImportHint +
           'Проверьте DATABASE_URL: он должен указывать на базу с сотрудниками. ' +
           'Если учётные записи действительно нужно завести заново, задайте IDENTITY_ALLOW_EMPTY_BOOTSTRAP=true.'
       );
@@ -112,19 +126,32 @@ function legacyHasUsers(legacyDb) {
  * вместо живых данных. Поэтому для PostgreSQL первым проверяется identity.db,
  * затем прежняя общая база, последним — снимок, сделанный перед разделением.
  *
+ * @param {object} [skipInfo] Заполняется по ссылке: skippedAutoImport = true,
+ *        если хотя бы один резервный файл был пропущен именно из-за
+ *        отсутствия IDENTITY_AUTO_IMPORT (initIdentity называет флаг в тексте
+ *        фатальной ошибки только тогда — иначе оператор не узнал бы, что дело
+ *        именно в нём, а не в отсутствующем DATABASE_URL).
  * @returns {{ db: object, label: string, close: () => void } | null}
  */
-function findImportSource({ dialect, legacyDb = null }) {
+function findImportSource({ dialect, legacyDb = null, skipInfo = null }) {
   const candidates = [];
+  // fromStaleFile: кандидаты, читаемые с диска отдельным файлом, а не из уже
+  // открытой базы переписки этого же запуска. Именно они — тот риск из
+  // находки №16: если рабочее хранилище опустело по ошибке (опечатка в
+  // DATABASE_URL, ещё не поднявшийся PostgreSQL), сервер раньше молча
+  // подставлял вместо чистой установки чужие пароли и устройства из старой
+  // копии. legacyDb (прежняя общая база) в их число не входит — это не
+  // резервная копия, а прямой перенос при штатном первом разделении баз.
   if (dialect === 'postgres') {
-    candidates.push({ label: 'запасное хранилище data/identity.db', path: config.IDENTITY_DB_PATH });
+    candidates.push({ label: 'запасное хранилище data/identity.db', path: config.IDENTITY_DB_PATH, fromStaleFile: true });
   }
   if (legacyDb) {
     candidates.push({ label: 'прежняя общая база data/mychat.db', db: legacyDb });
   }
   candidates.push({
     label: 'снимок data/pre-identity-split.db',
-    path: path.join(config.DATA_DIR, 'pre-identity-split.db')
+    path: path.join(config.DATA_DIR, 'pre-identity-split.db'),
+    fromStaleFile: true
   });
 
   for (const candidate of candidates) {
@@ -132,6 +159,15 @@ function findImportSource({ dialect, legacyDb = null }) {
     let opened = false;
     if (!db) {
       if (!fs.existsSync(candidate.path)) continue;
+      if (candidate.fromStaleFile && !config.IDENTITY_AUTO_IMPORT) {
+        console.warn(
+          `[Identity] ${candidate.label} найден на диске, но автоимпорт из резервных файлов выключен ` +
+            '(IDENTITY_AUTO_IMPORT не задан) — источник пропущен. Если перенос нужен намеренно, ' +
+            'задайте IDENTITY_AUTO_IMPORT=true (аудит, находка №16).'
+        );
+        if (skipInfo) skipInfo.skippedAutoImport = true;
+        continue;
+      }
       try {
         db = new DatabaseSync(candidate.path);
         opened = true;

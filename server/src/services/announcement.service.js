@@ -82,6 +82,55 @@ class AnnouncementService {
     return this.attachAuthors(visible);
   }
 
+  /**
+   * Кому реально адресовано оповещение — та же логика видимости, что в
+   * getAnnouncementsForUser (там — «список для сотрудника», здесь —
+   * «сотрудники для оповещения»), нужна и для адресной WS-рассылки
+   * (находка №3), и для проверки при подтверждении (находка №10).
+   */
+  static async getRecipientIds(announcement) {
+    if (announcement.target_type === 'all') {
+      const rows = await identity().all(
+        `SELECT id FROM users WHERE is_active = 1 AND approval_status = 'approved'`
+      );
+      return rows.map((r) => Number(r.id));
+    }
+
+    let targets = [];
+    try {
+      targets = JSON.parse(announcement.target_ids_json || '[]').map(Number);
+    } catch {
+      targets = [];
+    }
+    if (!targets.length) return [];
+
+    if (announcement.target_type === 'users') {
+      return targets;
+    }
+    if (announcement.target_type === 'departments') {
+      const placeholders = targets.map((_, i) => `$${i + 1}`).join(',');
+      const rows = await identity().all(
+        `SELECT id FROM users WHERE department_id IN (${placeholders})`,
+        targets
+      );
+      return rows.map((r) => Number(r.id));
+    }
+    return [];
+  }
+
+  /**
+   * Адресовано ли конкретному сотруднику. announcement можно передать заранее
+   * загруженным — подтверждение уже проверило существование отдельным
+   * запросом и не должно читать оповещение из базы второй раз.
+   */
+  static async isVisibleTo(announcementId, userId, announcement = null) {
+    const ann = announcement || (await this.getAnnouncementById(announcementId));
+    if (!ann) return false;
+    if (ann.target_type === 'all') return true;
+    const recipients = await this.getRecipientIds(ann);
+    return recipients.includes(Number(userId));
+  }
+
   static acknowledgeAnnouncement(announcementId, userId, ipAddress = '127.0.0.1') {
     const now = new Date().toISOString();
     getDatabase()

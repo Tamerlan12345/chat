@@ -6,6 +6,7 @@ const config = require('./config');
 const apiRouter = require('./api');
 const { isReady } = require('./bootstrap');
 const { getClientIp, isIpAllowed } = require('./services/ip-access.service');
+const AuthService = require('./services/auth.service');
 
 const app = express();
 
@@ -157,14 +158,42 @@ app.use((req, res, next) => {
   next();
 });
 
+// Автообновление настольного клиента: после IP-фильтра и проверки готовности,
+// но раньше статики с её фильтром по User-Agent — electron-updater ходит своим
+// сеансом, и его запрос не должен получить index.html или отказ фильтра.
+app.use('/updates', require('./updates/router'));
+
 // API Routes
 app.use('/api', apiRouter);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Health check endpoint. Анонимному запросу — только состояние: версия
+// сервера, движок хранилища учётных записей и время работы — это уже сведения
+// о развёртывании, а сюда достаёт кто угодно в разрешённой сети, ещё до
+// входа (план 3.6, аудит, находка №18). Подробности отдаются только с
+// действующим токеном супер-администратора.
+app.get('/health', async (req, res) => {
   const ready = isReady();
-  res.status(ready ? 200 : 503).json({
-    status: ready ? 'ok' : 'starting',
+  if (!ready) {
+    // Хранилище ещё поднимается — проверять токен не на чем, а «starting»
+    // само по себе подробностей не несёт.
+    return res.status(503).json({ status: 'starting' });
+  }
+
+  let privileged = false;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const user = await AuthService.resolveSession(authHeader.substring(7));
+      privileged = Boolean(user?.permissions?.is_admin) && !user.permissions?.is_scoped_admin;
+    } catch {
+      privileged = false;
+    }
+  }
+
+  if (!privileged) return res.status(200).json({ status: 'ok' });
+
+  res.status(200).json({
+    status: 'ok',
     version: config.SERVER_VERSION,
     identityStore: config.IDENTITY_DRIVER === 'postgres' ? 'postgres' : 'sqlite',
     uptimeSeconds: Math.floor(process.uptime()),

@@ -16,7 +16,11 @@ function checkRateLimit(key, { maxAttempts = 5, windowMs = 60000 } = {}) {
   const bucket = currentBucket(key, windowMs);
 
   if (!bucket) {
-    buckets.set(key, { count: 1, windowStart: now });
+    // windowMs хранится вместе с бакетом — иначе периодическая очистка ниже не
+    // знает, сколько именно этому ключу положено жить, и либо снимает долгие
+    // блокировки (вход, LOGIN_LOCKOUT_MINUTES) раньше срока, либо не чистит
+    // короткие вовсе (находка ревью: cleanup всегда считала 10 минут).
+    buckets.set(key, { count: 1, windowStart: now, windowMs });
     return true;
   }
 
@@ -39,16 +43,30 @@ function isRateLimited(key, { maxAttempts = 5, windowMs = 60000 } = {}) {
 
 function registerFailure(key, { windowMs = 60000 } = {}) {
   const bucket = currentBucket(key, windowMs);
-  if (!bucket) buckets.set(key, { count: 1, windowStart: Date.now() });
+  if (!bucket) buckets.set(key, { count: 1, windowStart: Date.now(), windowMs });
   else bucket.count += 1;
 }
 
-// Periodic cleanup so the map doesn't grow unbounded with stale IPs/usernames.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of buckets.entries()) {
-    if (now - bucket.windowStart > 10 * 60000) buckets.delete(key);
-  }
-}, 5 * 60000).unref();
+// Успешное действие (например, вход) должно снимать уже накопленные неудачи
+// по этому же ключу — иначе они продолжают копиться к следующей блокировке,
+// хотя подбора не было ни секунды.
+function resetLimit(key) {
+  buckets.delete(key);
+}
 
-module.exports = { checkRateLimit, isRateLimited, registerFailure };
+// Бакет старше собственного окна уже не действует (currentBucket и так вернёт
+// null для него на следующей проверке) — очистка лишь освобождает память и не
+// имеет права закончиться раньше этого срока. Раньше здесь был фиксированный
+// предел в 10 минут для всех ключей разом, и он снимал более долгие блокировки
+// (например, 15-минутную по LOGIN_LOCKOUT_MINUTES) на пять минут раньше срока.
+function pruneStaleBuckets(now = Date.now()) {
+  for (const [key, bucket] of buckets.entries()) {
+    const ttl = bucket.windowMs || 10 * 60000;
+    if (now - bucket.windowStart >= ttl) buckets.delete(key);
+  }
+}
+
+// Periodic cleanup so the map doesn't grow unbounded with stale IPs/usernames.
+setInterval(() => pruneStaleBuckets(), 5 * 60000).unref();
+
+module.exports = { checkRateLimit, isRateLimited, registerFailure, resetLimit, pruneStaleBuckets };

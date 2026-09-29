@@ -287,7 +287,7 @@ class OrgParserService {
   /**
    * Apply parsed hierarchy and users into database
    */
-  static async applyImport({ parsedData, defaultPassword = null, adminScopeDeptId = null }) {
+  static async applyImport({ parsedData, defaultPassword = null, adminScopeDeptId = null, actorIsScopedAdmin = false }) {
     // Общего пароля по умолчанию больше нет: он случайный на каждый импорт, а
     // заданный администратором проходит политику паролей.
     const UserService = require('./user.service');
@@ -315,6 +315,16 @@ class OrgParserService {
       ? new Set(await OrgService.getSubtreeDepartmentIds(adminScopeDeptId))
       : null;
 
+    // Находка №2 (дефект B): раньше scoped-админ без назначенной области
+    // (adminScopeDeptId = null) получал ровно тот же inScopeIds = null, что и
+    // суперадминистратор, — импорт переставал что-либо ограничивать и правил
+    // компанию целиком. actorIsScopedAdmin отличает «это не администратор
+    // подразделения» от «администратору подразделения не назначена область»:
+    // второй случай — отказ раньше, чем создана хоть одна строка.
+    if (actorIsScopedAdmin && !inScopeIds) {
+      throw new Error('Администратору не назначено подразделение — импорт недоступен');
+    }
+
     let createdDepts = 0;
     let createdUsers = 0;
     let updatedUsers = 0;
@@ -326,8 +336,20 @@ class OrgParserService {
 
       if (inScopeIds) {
         if (!d.parent_path) {
-          // Scoped admin can't create new top-level/company departments.
-          skippedOutOfScope++;
+          // Scoped admin can't create a new top-level/company department —
+          // but every parsed path starts with one segment (parts.length===1
+          // in org-parser _buildResult), so blanket-skipping it would also
+          // cascade-skip everything below, leaving pathIdMap permanently
+          // empty and the whole import a no-op. Matching an EXISTING
+          // top-level department that's already inside this admin's scope
+          // (e.g. their own scope root, which may itself have no parent) is
+          // safe — only *creating* a brand new one stays forbidden.
+          const existingRoot = findExisting(d.name, null);
+          if (!existingRoot || !inScopeIds.has(existingRoot.id)) {
+            skippedOutOfScope++;
+            continue;
+          }
+          pathIdMap[d.full_path] = existingRoot.id;
           continue;
         }
         if (parentId === undefined || !inScopeIds.has(parentId)) {
@@ -372,23 +394,41 @@ class OrgParserService {
 
     for (const emp of employees) {
       const deptId = emp.department_path ? pathIdMap[emp.department_path] : null;
+      const deptResolved = deptId !== null && deptId !== undefined;
 
-      if (inScopeIds && (deptId === undefined || deptId === null || !inScopeIds.has(deptId))) {
-        skippedOutOfScope++;
-        continue;
-      }
-
+      // Существующего сотрудника ищем ДО проверки deptId: строка без
+      // department_path («отдел не меняется») не должна отказывать в
+      // обновлении уже состоящего в области человека — раньше это тоже
+      // считалось выходом за границу и не давало обновить ни одной строки.
       const existingUser = await db.get(
         'SELECT id, department_id FROM users WHERE username = $1 OR (full_name = $2 AND is_active = 1)',
         [emp.username, emp.full_name]
       );
 
       if (existingUser) {
-        if (inScopeIds && (!existingUser.department_id || !inScopeIds.has(Number(existingUser.department_id)))) {
-          // Existing employee currently sits outside this admin's scope —
-          // don't let a batch import move them under a different manager's control.
-          skippedOutOfScope++;
-          continue;
+        if (inScopeIds) {
+          if (!existingUser.department_id || !inScopeIds.has(Number(existingUser.department_id))) {
+            // Existing employee currently sits outside this admin's scope —
+            // don't let a batch import move them under a different manager's control.
+            skippedOutOfScope++;
+            continue;
+          }
+          if (deptResolved && !inScopeIds.has(deptId)) {
+            // Строка явно пытается перевести сотрудника в отдел вне области —
+            // не даём импорту вывести его из-под контроля другого начальника.
+            skippedOutOfScope++;
+            continue;
+          }
+          // Находка №2 (дефект B): у assertWithinAdminScope (api/index.js)
+          // есть точно такая же защита для обычного редактирования — у
+          // импорта её не было, и групповая загрузка была обходным путём
+          // задеть учётку с админскими правами, до которой обычный маршрут
+          // редактирования не дотягивался.
+          const existingFull = await UserService.getUserById(existingUser.id);
+          if (existingFull?.permissions?.is_admin || existingFull?.permissions?.is_scoped_admin) {
+            skippedOutOfScope++;
+            continue;
+          }
         }
         await db.run(
           `UPDATE users
@@ -407,6 +447,14 @@ class OrgParserService {
         );
         updatedUsers++;
       } else {
+        // Новый сотрудник — в отличие от обновления, тут нет «текущего
+        // отдела» для проверки, поэтому область обязана определяться самой
+        // строкой импорта: без разрешённого department_path заводить
+        // сотрудника некуда (и нечем ограничить).
+        if (inScopeIds && (!deptResolved || !inScopeIds.has(deptId))) {
+          skippedOutOfScope++;
+          continue;
+        }
         const res = await db.run(
           `INSERT INTO users (username, password_hash, salt, full_name, email, phone, job_title,
                               department_id, role_id, bound_ip, extension, company, created_at,

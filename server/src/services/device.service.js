@@ -4,6 +4,22 @@ const AuthService = require('./auth.service');
 const UserService = require('./user.service');
 const OrgService = require('./org.service');
 const wsServer = require('../ws/server');
+const config = require('../config');
+const { checkRateLimit } = require('./rate-limiter');
+
+// Аудит, находка №8: анонимный knock не должен раздувать очередь без предела
+// и заваливать администраторов уведомлением на каждый «стук».
+const PENDING_DEVICES_MAX_PER_IP = 20;
+const PENDING_DEVICES_MAX_TOTAL = 5000;
+const KNOCK_BROADCAST_THROTTLE_MS = 10000;
+
+// Длины полей, которые присылает клиент до какой-либо проверки личности —
+// без предела запись в базе росла бы вместе с телом запроса.
+function capLength(value, max, fallback = null) {
+  if (value === undefined || value === null) return fallback;
+  const str = String(value);
+  return str.length > max ? str.slice(0, max) : str;
+}
 
 class DeviceService {
   /**
@@ -15,46 +31,90 @@ class DeviceService {
       throw new Error('device_id обязателен для регистрации узла');
     }
 
+    const cleanDeviceId = capLength(device_id, 128);
+    const cleanDeviceName = capLength(device_name, 128, null) || 'ПК сотрудника';
+    const cleanPlatform = capLength(platform, 64, null) || 'Windows';
+    const cleanClientVersion = capLength(client_version, 32, null) || '1.0.0';
+
     const db = identity();
     const now = new Date().toISOString();
     const cleanIp = String(ip_address || '127.0.0.1').replace(/^.*:/, '');
 
     const pairing = await db.get(
-      `SELECT p.device_id, p.user_id, p.secret_hash, p.secret_token_version,
+      `SELECT p.device_id, p.user_id, p.secret_hash, p.secret_token_version, p.secret_user_id,
+              p.secret_expires_at, p.secret_auth_time,
               u.is_active, u.approval_status, u.token_version
        FROM device_pairings p
        JOIN users u ON u.id = p.user_id
        WHERE p.device_id = $1 AND p.is_active = 1`,
-      [String(device_id)]
+      [cleanDeviceId]
     );
 
     if (pairing) {
       await db.run(
-        `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired'
-         WHERE device_id = $3`,
-        [now, cleanIp, String(device_id)]
+        `UPDATE pending_devices SET last_knock_at = $1, ip_address = $2, status = 'paired', client_version = $3
+         WHERE device_id = $4`,
+        [now, cleanIp, cleanClientVersion, cleanDeviceId]
       );
 
       // Номер устройства видят администраторы, и угадать его несложно — сам по
       // себе он не пропуск. Токен выдаётся только тому, кто предъявил секрет,
       // полученный этим устройством при входе по паролю, и только пока пароль
-      // с тех пор не менялся (поколение токенов то же).
+      // с тех пор не менялся (поколение токенов то же), секрет claim'ил именно
+      // текущий владелец записи (secret_user_id === user_id — иначе
+      // перепривязка устройства другому сотруднику наследовала бы чужой вход,
+      // аудит находка №1) и секрет ещё не истёк (находка №9).
+      const secretExpired =
+        pairing.secret_expires_at !== null &&
+        pairing.secret_expires_at !== undefined &&
+        new Date(pairing.secret_expires_at).getTime() <= Date.now();
+
+      // secret_expires_at (DEVICE_SECRET_TTL_DAYS, по умолчанию 30 дней) и
+      // SESSION_MAX_DAYS (по умолчанию тоже 30, но настраивается отдельно и
+      // независимо) — два разных предела. Токен, который выдаст knock, несёт
+      // auth_time = secret_auth_time, и verifyToken отклонит его сам, как
+      // только secret_auth_time старше SESSION_MAX_DAYS, — даже если секрет
+      // формально ещё не истёк. Без этой проверки здесь knock отвечал бы
+      // 'paired' с токеном, который тут же отклонит следующий же запрос:
+      // клиент получает 401 → forceLogout → перезагрузка → knock заново — вход
+      // без пароля превращается в бесконечный цикл перезагрузок (находка
+      // ревью №9в). Проверяется только когда secret_auth_time вообще есть —
+      // для записей без него (перенесённых до этой доработки) generateToken
+      // сам подставит текущее время, и ограничение здесь неприменимо.
+      const sessionExpired =
+        Boolean(pairing.secret_auth_time) &&
+        (Math.floor(new Date(pairing.secret_auth_time).getTime() / 1000) + AuthService.sessionMaxSeconds()) * 1000 <
+          Date.now();
+
       const trusted =
         pairing.is_active &&
         pairing.approval_status === 'approved' &&
         secretMatches(device_secret, pairing.secret_hash) &&
-        Number(pairing.secret_token_version) === Number(pairing.token_version || 1);
+        Number(pairing.secret_token_version) === Number(pairing.token_version || 1) &&
+        pairing.secret_user_id !== null &&
+        pairing.secret_user_id !== undefined &&
+        Number(pairing.secret_user_id) === Number(pairing.user_id) &&
+        !secretExpired &&
+        !sessionExpired;
 
       if (!trusted) {
         return { status: 'login_required', message: 'Войдите по паролю — устройство запомнит вход.' };
       }
 
       const user = await UserService.getUserById(pairing.user_id);
+      // auth_time переносится из момента claim (входа по паролю), а не
+      // выставляется заново на каждый вход по устройству — иначе
+      // SESSION_MAX_DAYS никогда бы не наступал для клиентов, входящих по
+      // секрету (находка №9). Для записей без secret_auth_time (перенесённые
+      // до этой доработки) generateToken сам подставит текущее время.
+      const authTime = pairing.secret_auth_time
+        ? Math.floor(new Date(pairing.secret_auth_time).getTime() / 1000)
+        : null;
       return {
         status: 'paired',
         auto_matched: false,
         user,
-        token: AuthService.generateToken(user, { amr: 'device' })
+        token: AuthService.generateToken(user, { amr: 'device', authTime })
       };
     }
 
@@ -62,6 +122,35 @@ class DeviceService {
     // сотрудника, без единого действия администратора. За корпоративным NAT
     // это означало «кто угодно из офиса — это Иванов». Сопоставление по адресу
     // осталось только как отдельное действие администратора (autoMatchByIp).
+
+    // Предел действует только на НОВЫЕ идентификаторы устройств: повторный
+    // «стук» уже известного device_id обновляет свою же строку через
+    // ON CONFLICT ниже и не должен упираться в предел вместе с настоящими
+    // новыми узлами.
+    const alreadyPending = await db.get('SELECT device_id FROM pending_devices WHERE device_id = $1', [
+      cleanDeviceId
+    ]);
+    if (!alreadyPending) {
+      // Только СТРОКИ СО СТАТУСОМ 'pending' считаются к пределу — иначе за
+      // корпоративным NAT/прокси 20 уже привязанных компьютеров (status =
+      // 'paired', пересобираемых при каждом их же «стуке» строкой выше)
+      // навсегда закрывали бы очередь для любого нового устройства с того же
+      // адреса, и paired-строки эту очередь никогда бы не покидали (находка
+      // ревью №1).
+      const [perIpCount, totalCount] = await Promise.all([
+        db.get(`SELECT COUNT(*) AS c FROM pending_devices WHERE ip_address = $1 AND status = 'pending'`, [cleanIp]),
+        db.get(`SELECT COUNT(*) AS c FROM pending_devices WHERE status = 'pending'`)
+      ]);
+      if (
+        Number(perIpCount?.c || 0) >= PENDING_DEVICES_MAX_PER_IP ||
+        Number(totalCount?.c || 0) >= PENDING_DEVICES_MAX_TOTAL
+      ) {
+        return {
+          status: 'too_many_pending',
+          message: 'Слишком много неподтверждённых устройств. Обратитесь к администратору.'
+        };
+      }
+    }
 
     await db.run(
       `INSERT INTO pending_devices (device_id, device_name, ip_address, platform, client_version,
@@ -74,35 +163,32 @@ class DeviceService {
          client_version = COALESCE(EXCLUDED.client_version, pending_devices.client_version),
          last_knock_at = EXCLUDED.last_knock_at,
          status = CASE WHEN pending_devices.status = 'paired' THEN 'paired' ELSE 'pending' END`,
-      [
-        String(device_id),
-        device_name || 'ПК сотрудника',
-        cleanIp,
-        platform || 'Windows',
-        client_version || '1.0.0',
-        now
-      ]
+      [cleanDeviceId, cleanDeviceName, cleanIp, cleanPlatform, cleanClientVersion, now]
     );
 
-    try {
-      wsServer.broadcastToAdmins({
-        type: 'device_knock_received',
-        device: {
-          device_id,
-          device_name: device_name || 'ПК сотрудника',
-          ip_address: cleanIp,
-          platform: platform || 'Windows',
-          last_knock_at: now
-        }
-      });
-    } catch {
-      /* некому слушать — не повод отказывать устройству */
+    // Не чаще раза в 10 секунд на IP: без предела каждый из тысяч возможных
+    // «стуков» с одного адреса будил бы администраторов заново (находка №8).
+    if (checkRateLimit(`knock-broadcast:${cleanIp}`, { maxAttempts: 1, windowMs: KNOCK_BROADCAST_THROTTLE_MS })) {
+      try {
+        wsServer.broadcastToAdmins({
+          type: 'device_knock_received',
+          device: {
+            device_id: cleanDeviceId,
+            device_name: cleanDeviceName,
+            ip_address: cleanIp,
+            platform: cleanPlatform,
+            last_knock_at: now
+          }
+        });
+      } catch {
+        /* некому слушать — не повод отказывать устройству */
+      }
     }
 
     return {
       status: 'pending',
-      device_id,
-      device_name: device_name || 'ПК сотрудника',
+      device_id: cleanDeviceId,
+      device_name: cleanDeviceName,
       ip_address: cleanIp,
       message: 'Узел зарегистрирован в очереди. Ожидается связывание администратором.'
     };
@@ -178,6 +264,11 @@ class DeviceService {
       finalDeviceName = pending?.device_name || null;
     }
 
+    // Секрет обнуляется при КАЖДОЙ привязке, не только когда владелец
+    // действительно меняется: цена лишнего обнуления — заново claim'нуть
+    // секрет — намного меньше цены унаследованного чужого входа (аудит,
+    // находка №1). secret_expires_at и secret_auth_time чистятся вместе с
+    // ним — без хэша они не имеют смысла.
     await db.run(
       `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
        VALUES ($1, $2, $3, $4, $5, 1)
@@ -186,7 +277,12 @@ class DeviceService {
          ip_address = COALESCE(EXCLUDED.ip_address, device_pairings.ip_address),
          device_name = COALESCE(EXCLUDED.device_name, device_pairings.device_name),
          paired_at = EXCLUDED.paired_at,
-         is_active = 1`,
+         is_active = 1,
+         secret_hash = NULL,
+         secret_token_version = NULL,
+         secret_user_id = NULL,
+         secret_expires_at = NULL,
+         secret_auth_time = NULL`,
       [String(device_id), Number(user_id), ip_address || null, finalDeviceName || 'ПК сотрудника', now]
     );
 
@@ -235,13 +331,22 @@ class DeviceService {
     for (const match of matches) {
       if (scopeDeptIds && !scopeDeptIds.includes(Number(match.department_id))) continue;
 
+      // Тот же довод, что и в bindDevice: обнулять секрет при каждой
+      // привязке, а не только при смене владельца — иначе перепривязка на
+      // прежнего же пользователя оставляет лазейку разбирать значение по
+      // побочным эффектам.
       await db.run(
         `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
          VALUES ($1, $2, $3, $4, $5, 1)
          ON CONFLICT (device_id) DO UPDATE SET
            user_id = EXCLUDED.user_id,
            paired_at = EXCLUDED.paired_at,
-           is_active = 1`,
+           is_active = 1,
+           secret_hash = NULL,
+           secret_token_version = NULL,
+           secret_user_id = NULL,
+           secret_expires_at = NULL,
+           secret_auth_time = NULL`,
         [match.device_id, match.user_id, match.ip_address, match.device_name, now]
       );
 
@@ -276,11 +381,50 @@ class DeviceService {
     );
     if (!pairing || Number(pairing.user_id) !== Number(userId)) return { claimed: false };
     const user = await db.get('SELECT token_version FROM users WHERE id = $1', [Number(userId)]);
+
+    // secret_user_id фиксирует, КТО claim'ил секрет — knock потом сверяет его
+    // с текущим владельцем записи, а не только хэш (находка №1).
+    // secret_expires_at — секрет не вечен (находка №9, по умолчанию 30 дней,
+    // DEVICE_SECRET_TTL_DAYS). secret_auth_time — момент этого входа по
+    // паролю: его, а не время самого knock, понесёт токен по устройству,
+    // иначе SESSION_MAX_DAYS не действовал бы на вход без пароля.
+    const claimedAt = new Date();
+    const expiresAt = new Date(claimedAt.getTime() + config.DEVICE_SECRET_TTL_DAYS * 86400000);
     await db.run(
-      'UPDATE device_pairings SET secret_hash = $1, secret_token_version = $2 WHERE device_id = $3',
-      [hashSecret(device_secret), Number(user?.token_version || 1), String(device_id)]
+      `UPDATE device_pairings
+       SET secret_hash = $1, secret_token_version = $2, secret_user_id = $3,
+           secret_expires_at = $4, secret_auth_time = $5
+       WHERE device_id = $6`,
+      [
+        hashSecret(device_secret),
+        Number(user?.token_version || 1),
+        Number(userId),
+        expiresAt.toISOString(),
+        claimedAt.toISOString(),
+        String(device_id)
+      ]
     );
     return { claimed: true };
+  }
+
+  /**
+   * «Выход» на клиенте: устройство больше не должно входить без пароля с этой
+   * записи. В отличие от административного unbindDevice (полностью снимает
+   * пару device↔user), здесь снимается только секрет — привязку к сотруднику
+   * может отменить только администратор. Пара (device_id, userId) не
+   * совпадает — ничего не меняется и ответ вызывающему всё равно "успех": так
+   * запрос не подтверждает и не опровергает существование чужой привязки.
+   */
+  static async unbindSecret(device_id, userId) {
+    if (!device_id) return { unbound: false };
+    const result = await identity().run(
+      `UPDATE device_pairings
+       SET secret_hash = NULL, secret_token_version = NULL, secret_user_id = NULL,
+           secret_expires_at = NULL, secret_auth_time = NULL
+       WHERE device_id = $1 AND user_id = $2`,
+      [String(device_id), Number(userId)]
+    );
+    return { unbound: Number(result?.changes || 0) > 0 };
   }
 
   static async getPairingOwner(device_id) {

@@ -4,6 +4,7 @@ const { hashPassword, verifyPassword } = require('../db/identity/password');
 const { getDatabase } = require('../db');
 const UserService = require('./user.service');
 const config = require('../config');
+const { isRateLimited, registerFailure, resetLimit } = require('./rate-limiter');
 
 // Одно сообщение на все отказы, включая временную блокировку: отдельный
 // текст о блокировке выдавал, что такой логин существует.
@@ -39,6 +40,39 @@ function dummyHash() {
     dummyHashPromise = hashPassword(crypto.randomBytes(18).toString('base64url'));
   }
   return dummyHashPromise;
+}
+
+// Ключ ограничителя входа — конкретный адрес и конкретный логин, не учётная
+// запись сама по себе (см. registerFailedAttempt/login).
+function loginLockKey(ip, username) {
+  return `login-lock:${ip || 'unknown'}:${String(username || '').trim().toLowerCase()}`;
+}
+function loginLockOptions() {
+  return { maxAttempts: config.LOGIN_MAX_FAILED_ATTEMPTS, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
+}
+
+// «Сколько учётных записей сейчас заблокировано» для панели администратора
+// (DbStudioService.getIdentityStats) — по логину, а не по паре адрес+логин: с
+// точки зрения администратора важно «этим логином сейчас нельзя войти хотя бы
+// с одного места», а не сколько разных адресов его атакуют. Отдельная карта,
+// а не разбор ключей ограничителя (loginLockKey): логин панель администратора
+// не проверяет на двоеточия при создании (UserService.createUser их не
+// запрещает), а адрес бывает IPv6 с двоеточиями внутри — по одной строке их
+// было бы не различить.
+const lockedUsernamesUntil = new Map(); // логин в нижнем регистре -> когда снимется
+
+function markUsernameLocked(username, windowMs) {
+  lockedUsernamesUntil.set(String(username || '').trim().toLowerCase(), Date.now() + windowMs);
+}
+
+// Живой снимок, не кэш: устаревшие записи вычищаются здесь же, при каждом
+// обращении — отдельного таймера ради нечастой статистики заводить незачем.
+function countLockedUsernames() {
+  const now = Date.now();
+  for (const [name, until] of lockedUsernamesUntil) {
+    if (until <= now) lockedUsernamesUntil.delete(name);
+  }
+  return lockedUsernamesUntil.size;
 }
 
 class AuthService {
@@ -107,10 +141,15 @@ class AuthService {
 
       const nowMs = Date.now();
       // Токены прежнего формата хранили срок в миллисекундах и жили неделю.
-      // Принимаются до своего срока, чтобы обновление сервера не выбросило всех
-      // разом; новых таких не выдаётся.
+      // Принимались до своего срока, чтобы обновление сервера не выбросило всех
+      // разом — но они также обходят проверки iss/aud/auth_time ниже, которым
+      // подчиняются все новые токены. LEGACY_TOKEN_CUTOFF — жёсткая дата, после
+      // которой такой токен не принимается, даже если его exp ещё впереди:
+      // владельцу придётся войти заново (аудит, находка №17). Новых токенов
+      // этого формата не выдаётся уже давно.
       if (payload.exp > 1e11) {
         if (payload.exp < nowMs) return null;
+        if (nowMs >= new Date(config.LEGACY_TOKEN_CUTOFF).getTime()) return null;
         payload.legacy = true;
         return payload;
       }
@@ -204,7 +243,7 @@ class AuthService {
     const db = identity();
     const row = await db.get(
       `SELECT u.id, u.username, u.password_hash, u.salt, u.is_active, u.approval_status,
-              u.failed_login_count, u.locked_until, u.token_version
+              u.token_version
        FROM users u WHERE u.username = $1`,
       [String(username || '').trim()]
     );
@@ -218,15 +257,21 @@ class AuthService {
       throw new Error(INVALID_CREDENTIALS);
     }
 
-    const now = Date.now();
-    if (row.locked_until && new Date(row.locked_until).getTime() > now) {
+    // Блокировка — по паре адрес+логин, а не по учётной записи целиком: иначе
+    // подбор пароля к «admin» с одного адреса запирал бы вход этим логином
+    // для всей компании, включая настоящего владельца с любого другого места
+    // (аудит, находка №12; план 1.7 — задержка по IP+имени вместо жёсткой
+    // блокировки). Ключ в памяти процесса, как и остальные ограничители —
+    // после перезапуска отсчёт начинается заново, что для временной задержки
+    // приемлемо.
+    if (isRateLimited(loginLockKey(ip, row.username), loginLockOptions())) {
       await verifyPassword(password, await dummyHash()).catch(() => {});
       throw new Error(INVALID_CREDENTIALS);
     }
 
     const { ok, needsRehash } = await verifyPassword(password, row.password_hash, row.salt);
     if (!ok) {
-      await this.registerFailedAttempt(row);
+      await this.registerFailedAttempt(row, ip);
       throw new Error(INVALID_CREDENTIALS);
     }
 
@@ -261,39 +306,53 @@ class AuthService {
     await db.run(
       `UPDATE users
        SET status = 'online', last_seen = $1, last_login_at = $1, last_login_ip = $2,
-           failed_login_count = 0, locked_until = NULL,
            must_change_password = CASE WHEN $4 = 1 THEN 1 ELSE must_change_password END
        WHERE id = $3`,
       [nowIso, ip, row.id, weak ? 1 : 0]
     );
+
+    // Успешный вход снимает накопленные неудачи по этой же паре адрес+логин —
+    // иначе они продолжают копиться к следующей блокировке, хотя подбора не
+    // было ни секунды (аудит ревью, находка №19).
+    resetLimit(loginLockKey(ip, row.username));
 
     const user = await UserService.getUserById(row.id);
     return { user, token: this.generateToken(user) };
   }
 
   /**
-   * Счётчик неудачных попыток живёт в базе, а не в памяти процесса: иначе
-   * перезапуск сервера или смена адреса возобновляют подбор с нуля. После
-   * порога учётная запись запирается на короткий срок — достаточный, чтобы
-   * подбор стал бессмысленным, и слишком короткий, чтобы им травить коллегу.
+   * Счётчик неудачных попыток живёт в памяти процесса, по паре адрес+логин, а
+   * не по учётной записи в базе (см. комментарий в login()). После порога эта
+   * пара временно не пускает ко входу — достаточно долго, чтобы подбор стал
+   * бессмысленным, и не трогая ни владельца с другого места, ни коллегу,
+   * которого атакующий этим же логином не запирает нигде, кроме своего адреса.
    */
-  static async registerFailedAttempt(row) {
-    const attempts = Number(row.failed_login_count || 0) + 1;
-    const reachedLimit = attempts >= config.LOGIN_MAX_FAILED_ATTEMPTS;
-    const lockedUntil = reachedLimit
-      ? new Date(Date.now() + config.LOGIN_LOCKOUT_MINUTES * 60000).toISOString()
-      : null;
+  static async registerFailedAttempt(row, ip) {
+    const key = loginLockKey(ip, row.username);
+    const opts = loginLockOptions();
+    const wasLocked = isRateLimited(key, opts);
+    registerFailure(key, opts);
+    if (wasLocked) return; // уже заблокирован этой парой — событие не повторяется
 
-    await identity().run(
-      `UPDATE users SET failed_login_count = $1, locked_until = COALESCE($2, locked_until) WHERE id = $3`,
-      [reachedLimit ? 0 : attempts, lockedUntil, row.id]
-    );
+    if (isRateLimited(key, opts)) {
+      // Порог только что достигнут для этой пары адрес+логин.
+      markUsernameLocked(row.username, opts.windowMs);
 
-    if (reachedLimit) {
-      require('./audit.service').log({ userId: row.id, action: 'account_locked', details: { minutes: config.LOGIN_LOCKOUT_MINUTES } });
+      // В центр безопасности событие уходит только для учётной записи
+      // администратора: рядовой сотрудник, несколько раз ошибившийся паролем,
+      // тревоги поднимать не должен (план 1.7, аудит, находка №12).
+      const account = await UserService.getUserById(row.id);
+      if (account?.permissions?.is_admin || account?.permissions?.is_scoped_admin) {
+        require('./audit.service').log({
+          userId: row.id,
+          action: 'account_locked',
+          ip,
+          details: { minutes: config.LOGIN_LOCKOUT_MINUTES, username: row.username }
+        });
+      }
       console.warn(
-        `[Auth] Учётная запись "${row.username}" заблокирована на ${config.LOGIN_LOCKOUT_MINUTES} мин. ` +
-          `после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток входа.`
+        `[Auth] Вход в учётную запись "${row.username}" с адреса ${ip || 'неизвестно'} заблокирован на ` +
+          `${config.LOGIN_LOCKOUT_MINUTES} мин. после ${config.LOGIN_MAX_FAILED_ATTEMPTS} неудачных попыток.`
       );
     }
   }
@@ -311,6 +370,14 @@ class AuthService {
       throw new Error('Логин может состоять из латинских букв, цифр, точки, дефиса и подчёркивания (3–64 символа)');
     }
     UserService.assertPasswordPolicy(password);
+    // Самостоятельная регистрация доступна без входа — те же пределы формата
+    // и длины, что и у администратора, редактирующего чужой профиль (аудит,
+    // находка №5): без них анонимная заявка засоряла бы оргструктуру и ленту
+    // сообщений именем на десятки килобайт или фишинговым email/телефоном.
+    UserService.assertFieldLength(full_name, 'ФИО');
+    UserService.assertFieldLength(job_title, 'Должность');
+    UserService.assertEmail(email);
+    UserService.assertPhone(phone);
 
     const existing = await db.get('SELECT id FROM users WHERE username = $1', [login]);
     if (existing) {
@@ -382,6 +449,22 @@ class AuthService {
 
   static getUserById(id) {
     return UserService.getUserById(id);
+  }
+
+  // Для панели администратора (DbStudioService.getIdentityStats) — см.
+  // countLockedUsernames выше.
+  static countLockedAccounts() {
+    return countLockedUsernames();
+  }
+
+  // Та же граница, что verifyToken применяет к auth_time токена, — но нужна и
+  // ДО выпуска токена (DeviceService.knock, находка №9в): секрет устройства
+  // может быть ещё не истёкшим (DEVICE_SECRET_TTL_DAYS, по умолчанию 30 дней),
+  // а токен по нему — уже родиться отклонённым, если SESSION_MAX_DAYS короче.
+  // Общая функция вместо копии логики — иначе они разошлись бы при следующей
+  // правке одной из двух.
+  static sessionMaxSeconds() {
+    return sessionMaxSeconds();
   }
 }
 

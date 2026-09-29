@@ -3,6 +3,22 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { getDatabase } = require('../db');
 const config = require('../config');
+const FilePolicyService = require('./file-policy.service');
+
+// Хвост сигнатур в требованиях задачи — не длиннее 12 байт (RIFF....WEBP);
+// с запасом читаем немного больше.
+const HEAD_BYTES = 16;
+
+async function readHeadBytes(filePath, length = HEAD_BYTES) {
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buf, 0, length, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
 
 class FileService {
   // Файл уже лежит во временной папке: хеш считается потоком, а сам файл
@@ -10,6 +26,21 @@ class FileService {
   // синхронной записи ста мегабайт.
   static async saveUploadedFile({ uploaderId, originalName, tempPath, size, mimeType }) {
     const db = getDatabase();
+
+    // Фильтр типов файлов (находка аудита №6): имя, расширение и сигнатура
+    // содержимого проверяются здесь — до переноса из временной папки. При
+    // отказе временный файл удаляется, ничего не остаётся на диске под видом
+    // сохранённого вложения.
+    const headBytes = await readHeadBytes(tempPath);
+    const problem = await FilePolicyService.check({ userId: uploaderId, originalName, headBytes });
+    if (problem) {
+      await fs.promises.rm(tempPath, { force: true });
+      const err = new Error(problem.message);
+      err.code = problem.code;
+      err.statusCode = 415;
+      throw err;
+    }
+
     const sha256 = await new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
       fs.createReadStream(tempPath)
@@ -60,10 +91,14 @@ class FileService {
     if (!file) return false;
     if (Number(file.uploader_id) === Number(userId)) return true;
 
+    // Удалённое сообщение обнуляет metadata_json (см. MessageService.deleteMessage),
+    // так что ссылка на файл там уже и так пропадает сама собой — is_deleted
+    // проверяется явно вторым слоем, а не полагается только на это совпадение.
     const refs = db.prepare(`
       SELECT conversation_type, target_id, sender_id
       FROM messages
-      WHERE json_valid(metadata_json)
+      WHERE is_deleted = 0
+        AND json_valid(metadata_json)
         AND CAST(json_extract(metadata_json, '$.file_id') AS INTEGER) = ?
     `).all(Number(fileId));
 
@@ -94,7 +129,8 @@ class FileService {
       WHERE f.uploader_id = ?
         OR EXISTS (
           SELECT 1 FROM messages m
-          WHERE json_valid(m.metadata_json)
+          WHERE m.is_deleted = 0
+            AND json_valid(m.metadata_json)
             AND CAST(json_extract(m.metadata_json, '$.file_id') AS INTEGER) = f.id
             AND (
               (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))

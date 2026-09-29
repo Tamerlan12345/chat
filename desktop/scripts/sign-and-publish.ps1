@@ -18,6 +18,14 @@
 # установщик. Здесь это проверяется: выпуск с неподписанным внутренним exe
 # останавливается.
 #
+# Setup и Portable, которые называет electron-builder (build.nsis.artifactName
+# и build.portable.artifactName в package.json), уже содержат версию и нужный
+# нам вид имени — просто копируются под этим же именем, без переименования.
+# Если целевой файл уже подписан ЗАКРЕПЛЁННЫМ отпечатком (например, повторный
+# запуск после сбоя публикации), он не переподписывается — Set-AuthenticodeSignature
+# на уже подписанном файле не вредит, но лишний проход по сети до серверов
+# меток времени не нужен.
+#
 # Запуск:  npm run sign   (из папки desktop, после npm run dist)
 
 $ErrorActionPreference = 'Stop'
@@ -71,32 +79,67 @@ if ($unsigned.Count -gt 0) {
 Write-Host "  win-unpacked: все exe и dll подписаны" -ForegroundColor Green
 Write-Host ""
 
+# publisherName обязателен для electron-updater: без него верификации подписи
+# скачанного обновления не с чем сверяться, и это лучше поймать здесь, а не
+# после того, как файл уже разошёлся по сети как обновление.
+$AppUpdateYml = Join-Path $Unpacked 'resources\app-update.yml'
+if (-not (Test-Path -LiteralPath $AppUpdateYml) -or
+    -not (Select-String -LiteralPath $AppUpdateYml -Pattern 'publisherName' -Quiet)) {
+    Write-Host "В release\win-unpacked\resources\app-update.yml нет publisherName." -ForegroundColor Red
+    Write-Host "Проверьте build.win.signtoolOptions.publisherName в package.json и пересоберите." -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "  app-update.yml: publisherName на месте" -ForegroundColor Green
+Write-Host ""
+
+# Имена — как их задают build.nsis.artifactName и build.portable.artifactName
+# в package.json (с версией и дефисами): их же ожидает серверная проверка
+# обновлений и publish-update.ps1, так что здесь имя не меняется, только копия
+# уходит в installer/ — папку ручной раздачи сотрудникам.
 $Targets = @(
-    @{ Pattern = '*Setup*.exe'; Name = 'OpenMyChat-Enterprise-Setup.exe' },
-    @{ Pattern = 'OpenMyChat Enterprise *.exe'; Name = 'OpenMyChat-Enterprise-Portable.exe' }
+    @{ Pattern = 'OpenMyChat-Enterprise-Setup-*.exe' },
+    @{ Pattern = 'OpenMyChat-Enterprise-Portable-*.exe' }
 )
 
 $signed = 0
+$copiedNames = @()
 foreach ($target in $Targets) {
     $source = Get-ChildItem (Join-Path $ReleaseDir $target.Pattern) -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -notlike '*uninstaller*' } |
+              Where-Object { $_.Name -notlike '*uninstaller*' -and $_.Extension -eq '.exe' } |
               Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $source) {
         Write-Host "  не найден: $($target.Pattern)" -ForegroundColor Yellow
         continue
     }
 
-    $dest = Join-Path $InstallerDir $target.Name
+    $name = $source.Name
+    # Проверяется ДО копирования: source — то, что реально вышло из-под
+    # electron-builder на этом прогоне; dest в installer/ всегда перезаписывается
+    # Copy-Item -Force ниже, так что проверка dest ПОСЛЕ копии видела бы уже
+    # скопированный source и никогда не находила прежнюю подпись установщика
+    # из installer/ — переподписывался бы каждый раз, даже когда source уже
+    # подписан закреплённым сертификатом (например, повторный запуск после
+    # сбоя на шаге контрольных сумм).
+    $alreadySigned = Test-MyChatSignature $source.FullName
+    $dest = Join-Path $InstallerDir $name
     Copy-Item $source.FullName $dest -Force
+
+    if ($alreadySigned) {
+        Write-Host "  $($name): уже подписан закреплённым сертификатом, пропускаю" -ForegroundColor Green
+        $copiedNames += $name
+        $signed++
+        continue
+    }
 
     $check = Invoke-MyChatSign $dest $cert
     if (-not $check.Signed) {
-        Write-Host "  $($target.Name): ПОДПИСЬ НЕ ПОСТАВЛЕНА" -ForegroundColor Red
+        Write-Host "  $($name): ПОДПИСЬ НЕ ПОСТАВЛЕНА" -ForegroundColor Red
         continue
     }
 
     $stamp = if ($check.Timestamp) { 'с меткой времени' } else { 'БЕЗ метки времени' }
-    Write-Host "  $($target.Name): подписан, $stamp" -ForegroundColor Green
+    Write-Host "  $($name): подписан, $stamp" -ForegroundColor Green
+    $copiedNames += $name
     $signed++
 }
 
@@ -110,7 +153,7 @@ if ($signed -eq 0) {
 # же папке раздачи): кто может подменить установщик, подменит и лежащий рядом
 # список, а сверка с суммой из другого источника подмену выдаёт.
 $SumsPath = Join-Path $InstallerDir 'SHA256SUMS.txt'
-$SumFiles = @('OpenMyChat-Enterprise-Setup.exe', 'OpenMyChat-Enterprise-Portable.exe', 'Centras-Corporate-Root.cer')
+$SumFiles = $copiedNames + @('Centras-Corporate-Root.cer')
 $lines = foreach ($name in $SumFiles) {
     $file = Join-Path $InstallerDir $name
     if (Test-Path -LiteralPath $file) {
@@ -123,7 +166,7 @@ $lines = foreach ($name in $SumFiles) {
 Write-Host ""
 Write-Host "SHA-256 (опубликуйте отдельно от файлов):" -ForegroundColor Cyan
 $lines | ForEach-Object { Write-Host "  $_" }
-Write-Host "Проверка у сотрудника: Get-FileHash .\OpenMyChat-Enterprise-Setup.exe" -ForegroundColor DarkGray
+Write-Host "Проверка у сотрудника: Get-FileHash .\OpenMyChat-Enterprise-Setup-<версия>.exe" -ForegroundColor DarkGray
 Write-Host ""
 
 # Статус UnknownError здесь — норма: подпись на месте, но корневой сертификат

@@ -27,6 +27,22 @@ async function syncDefaultChannelMembers() {
   return added;
 }
 
+// Аудит, находка №8: без предела в knock, брошенная (никем не связанная)
+// очередь устройств растёт бесконечно. Предел в knock останавливает рост «в
+// моменте», а эта уборка при каждом запуске выметает то, что накопилось до
+// предела и так и осталось невостребованным — тридцать дней с лихвой
+// перекрывают любой разумный отпуск администратора.
+async function pruneStaleDevices() {
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const result = await identity().run(
+    `DELETE FROM pending_devices WHERE first_knock_at < $1 AND status <> 'paired'`,
+    [cutoff]
+  );
+  const removed = Number(result?.changes || 0);
+  if (removed) console.log(`[DB] Удалено устаревших заявок на связывание устройств: ${removed}`);
+  return removed;
+}
+
 async function bootstrap() {
   if (started) return started;
   started = (async () => {
@@ -41,6 +57,8 @@ async function bootstrap() {
     );
     seedChatDefaults(chatDb, admin ? admin.id : null);
     await syncDefaultChannelMembers();
+    await pruneStaleDevices();
+    await require('./updates/client-installs').pruneClientInstalls();
 
     finalizeIdentitySplit(chatDb);
 
@@ -63,4 +81,4 @@ async function shutdown() {
   await closeIdentity();
 }
 
-module.exports = { bootstrap, shutdown, isReady: isIdentityReady, syncDefaultChannelMembers };
+module.exports = { bootstrap, shutdown, isReady: isIdentityReady, syncDefaultChannelMembers, pruneStaleDevices };

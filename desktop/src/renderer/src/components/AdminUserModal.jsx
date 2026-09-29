@@ -4,7 +4,20 @@ import { useInlineToast } from './InlineToast';
 import Icon from './Icon';
 import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
+import FilePolicyAdmin from './FilePolicyAdmin';
+import UpdatesAdmin from './UpdatesAdmin';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
+import { isValidMessageWindowValue } from '../lib/message-actions.mjs';
+
+// Окна правки/удаления сообщений — единственные числовые настройки этого
+// раздела с содержательным «пусто»: пустое поле в PUT ушло бы как '' и
+// сервер (validateSettingsUpdate) отклонил бы весь набор настроек разом.
+// Здесь — своя, менее резкая реакция: конкретное поле в сохранение не
+// попадает, остальные настройки по-прежнему сохраняются.
+const MESSAGE_WINDOW_SETTING_LABELS = {
+  message_edit_window_minutes: 'Изменять сообщение можно',
+  message_delete_window_minutes: 'Удалять сообщение можно'
+};
 
 // Ключи настроек, которыми владеет раздел «Безопасность».
 const SECURITY_SETTING_KEYS = ['remote_desktop_enabled', 'rd_ice_servers', 'security_alerts_telegram'];
@@ -66,6 +79,20 @@ export default function AdminUserModal({
   const [oneTimePassword, setOneTimePassword] = useState(null);
   const [savingUser, setSavingUser] = useState(false);
   const [formError, setFormError] = useState('');
+  // Подвал раньше показывал жёсткую строку «2025.3.1» — ни сервера, ни этого
+  // компьютера она не касалась. getAppInfo() есть только у оболочки Задачи 9
+  // и новее и только у главного окна; у старой оболочки и здесь ничего не
+  // будет — подвал тогда покажет только версию сервера.
+  const [clientVersion, setClientVersion] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (window.electronAPI?.getAppInfo) {
+      window.electronAPI.getAppInfo()
+        .then((info) => { if (!cancelled && info && typeof info.version === 'string') setClientVersion(info.version); })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, []);
   const [annSubmitting, setAnnSubmitting] = useState(false);
   const focusHandledRef = useRef(null);
 
@@ -151,6 +178,8 @@ export default function AdminUserModal({
     allow_registration: 'false',
     max_upload_size_mb: '100',
     idle_timeout_seconds: '300',
+    message_edit_window_minutes: '60',
+    message_delete_window_minutes: '60',
     telegram_enabled: 'false',
     telegram_bot_token: '',
     telegram_channel_id: '',
@@ -1030,6 +1059,20 @@ export default function AdminUserModal({
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
+      const body = withoutSecurityKeys(sysSettings);
+      // Пустое или нечисловое окно правки/удаления не отправляется вовсе:
+      // сервер всё равно отклонит его целиком (400 на весь PUT), а так
+      // одно недописанное поле не мешает сохранить остальные настройки —
+      // и не улетает в базу как '' (Number('') === 0 — «без ограничения»).
+      for (const key of Object.keys(MESSAGE_WINDOW_SETTING_LABELS)) {
+        if (!isValidMessageWindowValue(body[key])) {
+          delete body[key];
+          showToast(
+            `«${MESSAGE_WINDOW_SETTING_LABELS[key]}»: нужно целое число минут (−1 или больше) — значение не сохранено, прежнее осталось в силе`,
+            'error'
+          );
+        }
+      }
       const res = await fetch(`${serverUrl}/api/admin/settings`, {
         method: 'PUT',
         headers: {
@@ -1039,7 +1082,7 @@ export default function AdminUserModal({
         // Настройки удалённого стола и оповещений меняются в разделе
         // «Безопасность». Здесь они могли загрузиться раньше и затёрли бы
         // свежие значения при сохранении общих параметров.
-        body: JSON.stringify(withoutSecurityKeys(sysSettings))
+        body: JSON.stringify(body)
       });
       if (!res.ok) {
         showToast(await readError(res, 'Параметры сервера не сохранены'), 'error');
@@ -1175,6 +1218,13 @@ export default function AdminUserModal({
                   </button>
 
                   <button
+                    className={`admin-nav-item ${activeTab === 'files' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('files')}
+                  >
+                    <Icon name="file" size={16} /> <span>Файлы</span>
+                  </button>
+
+                  <button
                     className={`admin-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
                     onClick={() => setActiveTab('settings')}
                   >
@@ -1192,6 +1242,13 @@ export default function AdminUserModal({
                   </button>
 
                   <button
+                    className={`admin-nav-item ${activeTab === 'updates' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('updates')}
+                  >
+                    <Icon name="download" size={16} /> <span>Обновления</span>
+                  </button>
+
+                  <button
                     className={`admin-nav-item ${activeTab === 'licenses' ? 'active' : ''}`}
                     onClick={() => setActiveTab('licenses')}
                   >
@@ -1204,7 +1261,7 @@ export default function AdminUserModal({
             <div className="admin-sidebar-footer">
               <div><strong>Порт чата:</strong> 2004 TCP</div>
               <div><strong>Статус:</strong> <span style={{ color: 'light-dark(#16a34a, #81eea9)' }}>● Активен</span></div>
-              <div><strong>Версия:</strong> 2025.3.1</div>
+              <div><strong>Версия:</strong> сервер {serverInfo?.version || '—'} · клиент {clientVersion || '—'}</div>
             </div>
           </div>
 
@@ -2646,6 +2703,37 @@ export default function AdminUserModal({
                     />
                   </div>
 
+                  {/* Rocket.Chat: Allow Message Editing/Deleting, Block Editing/Deleting
+                      After N Minutes. Сервер проверяет окно ещё раз при каждой правке и
+                      удалении — здесь только то, что видит сотрудник в меню сообщения. */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      Изменять сообщение можно (минут, 0 — всегда, −1 — нельзя)
+                    </label>
+                    <input
+                      type="number"
+                      min={-1}
+                      max={100000}
+                      className="admin-filter-input"
+                      value={sysSettings.message_edit_window_minutes}
+                      onChange={(e) => setSysSettings({ ...sysSettings, message_edit_window_minutes: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      Удалять сообщение можно (минут, 0 — всегда, −1 — нельзя)
+                    </label>
+                    <input
+                      type="number"
+                      min={-1}
+                      max={100000}
+                      className="admin-filter-input"
+                      value={sysSettings.message_delete_window_minutes}
+                      onChange={(e) => setSysSettings({ ...sysSettings, message_delete_window_minutes: e.target.value })}
+                    />
+                  </div>
+
                   {/* Telegram Gateway Section */}
                   <div style={{
                     border: '1px solid light-dark(#cbd5e1, rgba(126, 151, 180, 0.38))',
@@ -2752,6 +2840,12 @@ export default function AdminUserModal({
               </div>
             )}
 
+            {activeTab === 'files' && superAdmin && (
+              <div className="admin-tab-pane">
+                <FilePolicyAdmin serverUrl={serverUrl} showToast={showToast} />
+              </div>
+            )}
+
             {activeTab === 'security' && superAdmin && (
               <div className="admin-tab-pane">
                 <SecurityCenter
@@ -2761,6 +2855,12 @@ export default function AdminUserModal({
                   onAlertAcknowledged={onSecurityAlertAcknowledged}
                   showToast={showToast}
                 />
+              </div>
+            )}
+
+            {activeTab === 'updates' && superAdmin && (
+              <div className="admin-tab-pane">
+                <UpdatesAdmin serverUrl={serverUrl} showToast={showToast} />
               </div>
             )}
 

@@ -18,6 +18,17 @@ const FULL_FIELDS = `
   u.approval_status, u.registered_at, u.token_version, u.last_login_at, u.last_login_ip
 `;
 
+// То же самое, но без token_version — для контурного администратора в
+// справочнике сотрудников. Номер поколения токена сам по себе не секрет, но
+// вместе с секретом устройства, который claim'ит один сотрудник, а видит
+// другой контурный администратор, он превращался в условие для получения
+// чужого токена без пароля (аудит, находка №1). Суперадминистратору поле
+// нужно для диагностики и оставлено.
+const SCOPED_ADMIN_FIELDS = `
+  ${PUBLIC_FIELDS}, u.bound_ip, u.admin_scope_dept_id, u.must_change_password,
+  u.approval_status, u.registered_at, u.last_login_at, u.last_login_ip
+`;
+
 const JOINS = `
   FROM users u
   LEFT JOIN roles r ON r.id = u.role_id
@@ -51,6 +62,39 @@ function withPermissions(user) {
   return user;
 }
 
+// Проверка полей, которые сотрудник или администратор вписывают руками.
+// Пределы — не про удобство: без них имя или должность, показанные в каждом
+// сообщении и в оргструктуре компании, превращались в способ засорить эфир
+// или выдать себя за кого-то ещё (аудит, находка №5).
+const EMAIL_MAX = 254;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_MAX = 32;
+const PHONE_RE = /^[0-9+()\-\s]+$/;
+const NAME_FIELD_MAX = 120;
+
+function assertEmail(value) {
+  if (value === undefined || value === null || value === '') return;
+  const email = String(value);
+  if (email.length > EMAIL_MAX || !EMAIL_RE.test(email)) {
+    throw new Error(`Неверный формат email (не длиннее ${EMAIL_MAX} символов, вида имя@домен.зона)`);
+  }
+}
+
+function assertPhone(value) {
+  if (value === undefined || value === null || value === '') return;
+  const phone = String(value);
+  if (phone.length > PHONE_MAX || !PHONE_RE.test(phone)) {
+    throw new Error(`Неверный формат телефона (не длиннее ${PHONE_MAX} символов: цифры, пробел, + ( ) -)`);
+  }
+}
+
+function assertFieldLength(value, label, max = NAME_FIELD_MAX) {
+  if (value === undefined || value === null || value === '') return;
+  if (String(value).length > max) {
+    throw new Error(`${label} — не длиннее ${max} символов`);
+  }
+}
+
 function safeParse(json) {
   if (!json) return {};
   if (typeof json === 'object') return json;
@@ -64,6 +108,20 @@ function safeParse(json) {
 class UserService {
   static toPublicUser(user) {
     return toPublicUser(user);
+  }
+
+  // Та же граница, что getAllUsers применяет через SCOPED_ADMIN_FIELDS —
+  // token_version вместе с секретом устройства, который claim'ит один
+  // сотрудник, открывал бы контурному администратору вход без пароля под ним
+  // (аудит, находка №1). PUT /admin/users/:id раньше отдавал полную запись
+  // (adminUpdateUser читает её через getUserById → FULL_FIELDS) в обход этого
+  // правила — тот же ответ, тот же контурный администратор, то же поле.
+  static hideAdminOnlyFields(record, actor) {
+    if (record && actor?.permissions?.is_scoped_admin) {
+      const { token_version, ...rest } = record;
+      return rest;
+    }
+    return record;
   }
 
   /**
@@ -82,7 +140,8 @@ class UserService {
       allowedDeptIds = await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
     }
 
-    const fields = adminUser ? FULL_FIELDS : PUBLIC_FIELDS;
+    const isScopedAdminCaller = Boolean(adminUser?.permissions?.is_scoped_admin);
+    const fields = !adminUser ? PUBLIC_FIELDS : isScopedAdminCaller ? SCOPED_ADMIN_FIELDS : FULL_FIELDS;
     const pairing = adminUser
       ? `, dp.device_name AS paired_device_name, dp.device_id AS paired_device_id`
       : '';
@@ -176,7 +235,15 @@ class UserService {
     return this.getUserById(userId);
   }
 
-  static async updateProfile(userId, { full_name, email, phone, job_title, avatar_url, custom_status } = {}) {
+  static async updateProfile(userId, { email, phone, avatar_url, custom_status } = {}) {
+    // ФИО и должность в это тело даже не принимаются — деструктуризация выше
+    // намеренно их не берёт. Эти поля показывают отправителя в каждом
+    // сообщении, оргструктуре и списке сотрудников: разреши их самому себе,
+    // и сотрудник назовётся «Служба поддержки» или директором для фишинга
+    // (план 1.8.3, аудит, находка №5). Меняет их только администратор —
+    // см. adminUpdateUser.
+    assertEmail(email);
+    assertPhone(phone);
     // Фотография уходит каждому сотруднику в каждом ответе справочника. Снимок
     // с телефона на 8 МБ в data URL превращал список сотрудников в десятки
     // мегабайт, а произвольная строка — в ссылку куда угодно.
@@ -202,18 +269,12 @@ class UserService {
     const orNull = (v) => (v === undefined ? null : v);
     await identity().run(
       `UPDATE users
-       SET full_name = COALESCE($1, full_name),
-           email = COALESCE($2, email),
-           phone = COALESCE($3, phone),
-           job_title = COALESCE($4, job_title),
-           avatar_url = COALESCE($5, avatar_url),
-           custom_status = COALESCE($6, custom_status)
-       WHERE id = $7`,
-      [
-        orNull(full_name), orNull(email), orNull(phone),
-        orNull(job_title), orNull(avatar_url), orNull(custom_status),
-        Number(userId)
-      ]
+       SET email = COALESCE($1, email),
+           phone = COALESCE($2, phone),
+           avatar_url = COALESCE($3, avatar_url),
+           custom_status = COALESCE($4, custom_status)
+       WHERE id = $5`,
+      [orNull(email), orNull(phone), orNull(avatar_url), orNull(custom_status), Number(userId)]
     );
     return this.getUserById(userId);
   }
@@ -351,6 +412,15 @@ class UserService {
     username, full_name, email, phone, job_title, department_id, role_id,
     extension, uin, is_active, bound_ip, admin_scope_dept_id, must_change_password
   }) {
+    // Администратору эти поля доступны, но не без границ: те же форматы для
+    // email/телефона, что и в самостоятельном изменении профиля, и предел
+    // длины для ФИО/должности — их точно так же видит вся компания в каждом
+    // сообщении и в оргструктуре (аудит, находка №5).
+    assertEmail(email);
+    assertPhone(phone);
+    assertFieldLength(full_name, 'ФИО', NAME_FIELD_MAX);
+    assertFieldLength(job_title, 'Должность', NAME_FIELD_MAX);
+
     const db = identity();
     const user = await this.getUserById(userId);
     if (!user) throw new Error('Пользователь не найден');
@@ -464,6 +534,14 @@ function assertPasswordPolicy(password, { allowWeakInitial = false } = {}) {
 
 module.exports = UserService;
 module.exports.assertPasswordPolicy = assertPasswordPolicy;
+// Переиспользуются в AuthService.register (самостоятельная регистрация) —
+// те же пределы формата и длины, что и у administratorа, редактирующего
+// профиль сотрудника (аудит, находка №5): анонимная заявка — тот же чужой
+// ввод, что и тело PUT /admin/users/:id.
+module.exports.assertEmail = assertEmail;
+module.exports.assertPhone = assertPhone;
+module.exports.assertFieldLength = assertFieldLength;
+module.exports.NAME_FIELD_MAX = NAME_FIELD_MAX;
 module.exports.isWeakPassword = (password) => {
   try {
     assertPasswordPolicy(password);

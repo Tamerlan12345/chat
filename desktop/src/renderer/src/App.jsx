@@ -16,6 +16,7 @@ import AdminUserModal from './components/AdminUserModal';
 import ServerConnectModal from './components/ServerConnectModal';
 import CommandPalette from './components/CommandPalette';
 import ToastNotificationStack, { playNotificationSound } from './components/ToastNotificationStack';
+import UpdateBanner from './components/UpdateBanner';
 import VoiceCallPanel from './components/VoiceCallPanel';
 import { useConfirm } from './components/ConfirmDialog';
 import Avatar from './components/Avatar';
@@ -24,6 +25,7 @@ import PresenceControl from './components/PresenceControl';
 import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
+import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
 import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
 
@@ -400,6 +402,18 @@ export default function App() {
         } catch (e) {}
       }
 
+      // Реальная версия оболочки (Задача 9, есть начиная с 1.1.0) — и то
+      // только у главного окна. Старая оболочка (1.0.0, ещё без getAppInfo) и
+      // любое другое окно (getAppInfo() -> null) остаются с версией по
+      // умолчанию — сервер и так подставит её сам, если поле не пришло.
+      let clientVersion = '1.0.0';
+      if (window.electronAPI && window.electronAPI.getAppInfo) {
+        try {
+          const appInfo = await window.electronAPI.getAppInfo();
+          if (appInfo && typeof appInfo.version === 'string') clientVersion = appInfo.version;
+        } catch (e) {}
+      }
+
       const knockRes = await fetch(serverUrl + '/api/auth/knock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -408,7 +422,7 @@ export default function App() {
           device_secret: deviceSecret,
           device_name: (devInfo && devInfo.hostname) || 'ПК пользователя',
           platform: (devInfo && devInfo.platform) || 'Windows 11',
-          client_version: '1.0.0'
+          client_version: clientVersion
         })
       });
 
@@ -556,11 +570,20 @@ export default function App() {
       return;
     }
     localStorage.setItem('mychat_logged_out', '1');
+    // Секрет устройства отвязывается ДО отзыва токена, а не после: /auth/logout
+    // отзывает jti немедленно, и запрос на отвязку с уже отозванным токеном
+    // получал бы 401, который молча проглатывался (аудит, круг 3, находка
+    // №9б — секрет переживал обычный выход). revokeTokenOnServer ниже всё
+    // равно передаёт device_id ещё раз и на сервере отвязывает секрет тем же
+    // запросом, что отзывает токен, — это работает независимо от порядка
+    // вызовов и не зависит от того, что этот запрос успел выполниться первым.
+    await unbindDeviceOnServer();
     // Токен отзывается и на сервере: иначе скопированный токен оставался бы
     // действующим до двенадцати часов после выхода. Ждём недолго — без связи
     // выход всё равно должен случиться; keepalive даёт запросу пережить
     // перезагрузку окна.
     await revokeTokenOnServer();
+    localStorage.removeItem('mychat_device_secret');
     // Раньше очищались только токен и пользователь: открытый чат, сообщения,
     // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
     // кто входил следующим за этим компьютером, видел чужую переписку.
@@ -590,6 +613,12 @@ export default function App() {
   const revokeTokenOnServer = async () => {
     const currentToken = tokenRef.current;
     if (!currentToken) return;
+    // device_id едет вместе с /auth/logout: сервер отвязывает секрет устройства
+    // тем же запросом, что отзывает токен (см. комментарий на маршруте в
+    // server/src/api/index.js). Это работает независимо от того, успел ли
+    // unbindDeviceOnServer выполниться раньше, — второй, избыточный путь к
+    // тому же результату, а не замена ему.
+    const deviceId = localStorage.getItem('mychat_device_id');
     let timer = null;
     try {
       // По таймауту запрос не отменяется: keepalive доводит его до сервера
@@ -597,13 +626,51 @@ export default function App() {
       await Promise.race([
         fetch(`${serverUrlRef.current}/api/auth/logout`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${currentToken}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentToken}` },
+          body: JSON.stringify(deviceId ? { device_id: deviceId } : {}),
           keepalive: true
         }).catch(() => {}),
         new Promise((resolve) => {
           timer = setTimeout(resolve, LOGOUT_REQUEST_TIMEOUT_MS);
         })
       ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // Раньше «выход» отзывал только сам токен: секрет устройства оставался на
+  // сервере действующим, и локальная копия localStorage (или тот же
+  // компьютер до следующего входа) снова впускала без пароля — секрет
+  // переживал логаут (аудит, находка №9). Отказ сети не должен блокировать
+  // выход — тем же способом, что и revokeTokenOnServer. Вызывается ДО
+  // revokeTokenOnServer, пока токен ещё не отозван: тем же токеном после
+  // отзыва сервер ответил бы 401, который раньше молча проглатывался (круг 3,
+  // находка №9б) — тогда секрет оставался действующим до истечения TTL.
+  const unbindDeviceOnServer = async () => {
+    const currentToken = tokenRef.current;
+    const deviceId = localStorage.getItem('mychat_device_id');
+    if (!currentToken || !deviceId) return;
+    let timer = null;
+    try {
+      const res = await Promise.race([
+        fetch(`${serverUrlRef.current}/api/auth/device/unbind`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentToken}` },
+          body: JSON.stringify({ device_id: deviceId }),
+          keepalive: true
+        }).catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), LOGOUT_REQUEST_TIMEOUT_MS);
+        })
+      ]);
+      // Неуспешный ответ (401/403/5xx) выход не блокирует — /auth/logout ниже
+      // всё равно отвяжет секрет тем же запросом, что отзывает токен. Но
+      // молчать о нём не стоит: раньше именно такое молчание маскировало
+      // находку №9б.
+      if (res && !res.ok) {
+        console.warn(`[Logout] Не удалось отвязать секрет устройства на сервере: HTTP ${res.status}`);
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -1070,7 +1137,23 @@ export default function App() {
             type: 'system',
             isUrgent: true
           });
+        } else if (event.context === 'edit_message') {
+          addToast({ title: 'Сообщение не изменено', body: event.message, type: 'system', isUrgent: true });
+        } else if (event.context === 'delete_message') {
+          addToast({ title: 'Сообщение не удалено', body: event.message, type: 'system', isUrgent: true });
         }
+        break;
+
+      // ── Правка и удаление своих сообщений ──────────────────────────────
+      case 'message_updated':
+        setMessages((prev) => applyUpdate(prev, event.message));
+        break;
+
+      case 'message_deleted':
+        setMessages((prev) => applyDelete(prev, event.messageId));
+        // Последнее сообщение диалога могло быть тем самым удалённым —
+        // список бесед должен перестать показывать его текст в превью.
+        refreshConversations();
         break;
 
       case 'rd_end': {
@@ -1554,6 +1637,26 @@ export default function App() {
     });
   };
 
+  // Правка и удаление своих сообщений — только через сокет: без него нет
+  // смысла давать команду, которую некому подтвердить событием
+  // message_updated/message_deleted (REST-путь для send_message существует
+  // как запасной на случай обрыва сокета, здесь — не заведён).
+  const handleEditMessage = (messageId, text) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'edit_message', messageId, text }));
+    } else {
+      addToast({ title: 'Нет связи с сервером', body: 'Сообщение не изменено — переподключитесь и повторите', type: 'system', isUrgent: true });
+    }
+  };
+
+  const handleDeleteMessage = (messageId) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'delete_message', messageId }));
+    } else {
+      addToast({ title: 'Нет связи с сервером', body: 'Сообщение не удалено — переподключитесь и повторите', type: 'system', isUrgent: true });
+    }
+  };
+
   // Send Message
   // metadata carries the uploaded file's id — dropping it here (it used to be
   // missing from this signature) meant an attachment was stored as a bare
@@ -1647,7 +1750,7 @@ export default function App() {
         try { data = JSON.parse(xhr.responseText); } catch {}
         if (xhr.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
         if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data });
-        else resolve({ ok: false, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
+        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
       };
       xhr.onerror = () => resolve({ ok: false, error: 'Нет связи с сервером' });
       xhr.onabort = () => resolve({ ok: false, cancelled: true });
@@ -2420,6 +2523,10 @@ export default function App() {
                 onTogglePersonPanel={() => setIsPersonPanelOpen((prev) => !prev)}
                 onSendMessage={handleSendMessage}
                 onSendFile={handleSendFile}
+                onEditMessage={handleEditMessage}
+                onDeleteMessage={handleDeleteMessage}
+                editWindowMinutes={Number(serverInfo?.message_edit_window_minutes ?? 60)}
+                deleteWindowMinutes={Number(serverInfo?.message_delete_window_minutes ?? 60)}
                 onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
                 onMarkRead={(conversationType, targetId) =>
@@ -2527,6 +2634,8 @@ export default function App() {
           }}
         />
       )}
+
+      <UpdateBanner serverUrl={serverUrl} />
 
       <ToastNotificationStack
         toasts={toasts}

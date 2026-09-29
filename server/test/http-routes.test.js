@@ -171,7 +171,13 @@ test('студия базы данных не видит учётных запи
   assert.match(attach.json.error, /ATTACH/);
 });
 
-test('/health сообщает, где хранятся учётные записи', async () => {
+test('/health без токена не выдаёт подробностей — только статус', async () => {
   const res = await request('GET', '/health');
+  assert.deepStrictEqual(Object.keys(res.json), ['status'], 'анонимному запросу — только состояние (аудит, находка №18)');
+});
+
+test('/health с токеном супер-администратора сообщает, где хранятся учётные записи', async () => {
+  const res = await request('GET', '/health', { token: globalThis.__token });
   assert.ok(['postgres', 'sqlite'].includes(res.json.identityStore));
+  assert.strictEqual(res.json.version, require('../src/config').SERVER_VERSION);
 });

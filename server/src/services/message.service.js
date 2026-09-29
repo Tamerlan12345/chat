@@ -1,5 +1,6 @@
 const { getDatabase } = require('../db');
 const UserService = require('./user.service');
+const SettingsService = require('./settings.service');
 
 // Переписка лежит в SQLite, сотрудники — в отдельном хранилище. Поэтому имя и
 // должность отправителя больше не приклеиваются к сообщению соединением
@@ -11,6 +12,52 @@ const UserService = require('./user.service');
 const DIALOG_LIST_LIMIT = 50;
 
 const MESSAGE_TYPES = new Set(['text', 'file', 'image']);
+
+// Текст без верхней границы сохранялся целиком и рассылался каждому участнику
+// переписки — один авторизованный отправитель мог гонять по многомегабайтному
+// сообщению в канал с сотней участников (аудит, находка №7). Предел щедрый —
+// это не лимит на «длинное сообщение», а защита от злоупотребления.
+const MAX_TEXT_LENGTH = 16000;
+
+// Rocket.Chat: Block Message Editing/Deleting After N Minutes. Значения
+// настроек — минуты: 0 — без ограничения, -1 — действие выключено совсем.
+// Администратор не задавал их раньше — час, чтобы опечатку можно было
+// поправить сразу после отправки, но не превратить чат в редактируемый
+// задним числом.
+const DEFAULT_EDIT_WINDOW_MINUTES = '60';
+const DEFAULT_DELETE_WINDOW_MINUTES = '60';
+const DEFAULT_WINDOW_MINUTES = 60;
+// Год в минутах — щедрый потолок для «сколько угодно, но не бесконечность
+// как повод не думать»; validateSettingsUpdate (server/src/api/index.js)
+// отклоняет всё, что вне -1..MAX_MESSAGE_WINDOW_MINUTES, ещё на записи.
+const MAX_WINDOW_MINUTES = 525600;
+
+// Только «-1», «0» или положительное целое — валидное значение окна. Раньше
+// любой мусор (пустая строка, "abc", дробь) проходил как Number(...) === NaN
+// или 0 и трактовался как «без ограничения» — испорченная или незаполненная
+// настройка молча снимала защиту, а не включала её (находка ревью раунда 1).
+function isValidWindowValue(raw) {
+  if (raw === null || raw === undefined) return false;
+  const str = String(raw).trim();
+  if (!/^-?\d+$/.test(str)) return false; // только целое число, без дробной части и текста
+  const n = Number(str);
+  return n >= -1 && n <= MAX_WINDOW_MINUTES;
+}
+
+// Испорченное или отсутствующее значение — это «настройка не задана», а не
+// «ограничения нет»: безопасный откат на DEFAULT_WINDOW_MINUTES, тот же
+// принцип, что у max_upload_size_mb (server/src/api/index.js, acceptUpload).
+function parseWindowMinutes(raw) {
+  return isValidWindowValue(raw) ? Number(raw) : DEFAULT_WINDOW_MINUTES;
+}
+
+function isWithinWindow(createdAt, windowMinutesRaw) {
+  const minutes = parseWindowMinutes(windowMinutesRaw);
+  if (minutes === -1) return false;
+  if (minutes === 0) return true;
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  return ageMs <= minutes * 60 * 1000;
+}
 
 class MessageService {
   // У канала нет негласного правила «читать может каждый»: участие
@@ -217,6 +264,9 @@ class MessageService {
     if (!body.trim() && type === 'text') {
       throw new Error('Пустое сообщение не отправляется');
     }
+    if (body.length > MAX_TEXT_LENGTH) {
+      throw new Error(`Сообщение слишком длинное (не больше ${MAX_TEXT_LENGTH} символов)`);
+    }
 
     // Ссылка на вложение и есть пропуск к файлу: доступ к скачиванию выдаётся
     // каждому участнику переписки, где файл упомянут. Без этой проверки
@@ -263,6 +313,85 @@ class MessageService {
     return this.getMessageById(messageId);
   }
 
+  /**
+   * Правка своего текстового сообщения (Rocket.Chat: Allow Message Editing).
+   * Старый текст уходит в message_history до того, как строка в messages
+   * перезаписывается, — иначе первая же правка стирала бы след безвозвратно.
+   */
+  static async editMessage({ messageId, actorId, text }) {
+    const db = getDatabase();
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
+    if (!message) throw new Error('Сообщение не найдено');
+    if (Number(message.sender_id) !== Number(actorId)) {
+      throw new Error('Нельзя редактировать чужое сообщение');
+    }
+    if (message.is_deleted) throw new Error('Сообщение удалено');
+    if (message.type !== 'text') throw new Error('Редактировать можно только текстовые сообщения');
+
+    const windowMinutes = await SettingsService.getSetting('message_edit_window_minutes', DEFAULT_EDIT_WINDOW_MINUTES);
+    if (!isWithinWindow(message.created_at, windowMinutes)) {
+      throw new Error('Время на изменение сообщения истекло');
+    }
+
+    const body = typeof text === 'string' ? text : String(text ?? '');
+    if (!body.trim()) throw new Error('Пустое сообщение не отправляется');
+    if (body.length > MAX_TEXT_LENGTH) {
+      throw new Error(`Сообщение слишком длинное (не больше ${MAX_TEXT_LENGTH} символов)`);
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
+      VALUES (?, 'edit', ?, ?, ?, ?)
+    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+
+    db.prepare('UPDATE messages SET text = ?, updated_at = ? WHERE id = ?').run(body, now, message.id);
+
+    return this.getMessageById(message.id);
+  }
+
+  /**
+   * Удаление своего сообщения (Rocket.Chat: Allow Message Deleting). Супер-
+   * администратор удаляет чужое в целях модерации — без временного окна, но
+   * с последующей записью в аудит (внешним кодом: здесь известно только то,
+   * что удаление разрешено, а не кто его выполняет с точки зрения журнала).
+   * Текст и вложение обнуляются в самой строке — reply-превью и поиск не
+   * видят их ни при каком запросе; старые значения остаются только в
+   * message_history.
+   */
+  static async deleteMessage({ messageId, actorId, isSuperAdmin = false }) {
+    const db = getDatabase();
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
+    if (!message) throw new Error('Сообщение не найдено');
+    if (message.is_deleted) throw new Error('Сообщение уже удалено');
+
+    if (!isSuperAdmin) {
+      if (Number(message.sender_id) !== Number(actorId)) {
+        throw new Error('Нельзя удалить чужое сообщение');
+      }
+      const windowMinutes = await SettingsService.getSetting('message_delete_window_minutes', DEFAULT_DELETE_WINDOW_MINUTES);
+      if (!isWithinWindow(message.created_at, windowMinutes)) {
+        throw new Error('Время на удаление сообщения истекло');
+      }
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
+      VALUES (?, 'delete', ?, ?, ?, ?)
+    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+
+    db.prepare("UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ? WHERE id = ?")
+      .run(now, message.id);
+
+    return {
+      id: message.id,
+      conversation_type: message.conversation_type,
+      target_id: Number(message.target_id),
+      sender_id: Number(message.sender_id)
+    };
+  }
+
   static async getMessageById(messageId) {
     const row = getDatabase().prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
     if (!row) return null;
@@ -277,16 +406,49 @@ class MessageService {
   static async attachSenders(rows) {
     if (!rows.length) return rows;
     const directory = await UserService.getDirectory(rows.map((r) => r.sender_id));
+    const originalNames = this.fileOriginalNames(rows);
     return rows.map((row) => {
       const sender = directory.get(Number(row.sender_id));
+      const fileId = this.metadataFileId(row);
       return {
         ...row,
         sender_username: sender?.username || null,
         sender_name: sender?.full_name || 'Удалённый сотрудник',
         sender_avatar: sender?.avatar_url || null,
-        sender_department: sender?.department_name || null
+        sender_department: sender?.department_name || null,
+        // Имя для скачивания вложения: только отсюда, никогда из текста
+        // сообщения. Текст задаёт отправитель и его можно подделать/спутать
+        // (см. аудит безопасности, находка №6) — original_name из таблицы
+        // files записывается один раз при загрузке и с тех пор неизменен.
+        file_original_name: fileId != null ? (originalNames.get(fileId) ?? null) : null
       };
     });
+  }
+
+  // Идентификатор вложения из metadata_json сообщения, если он там есть и
+  // выглядит как число. Сам metadata_json клиенту не доверяем — при отправке
+  // сообщения он уже проверен (sendMessage → FileService.canUserAccessFile),
+  // но здесь достаточно просто вытащить число для последующего JOIN.
+  static metadataFileId(row) {
+    if (!row.metadata_json) return null;
+    try {
+      const meta = JSON.parse(row.metadata_json);
+      const id = Number(meta?.file_id);
+      return Number.isInteger(id) ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Одним запросом на всю пачку сообщений — вместо запроса к files на
+  // каждую строку.
+  static fileOriginalNames(rows) {
+    const ids = [...new Set(rows.map((row) => this.metadataFileId(row)).filter((id) => id !== null))];
+    if (!ids.length) return new Map();
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const found = db.prepare(`SELECT id, original_name FROM files WHERE id IN (${placeholders})`).all(...ids);
+    return new Map(found.map((f) => [Number(f.id), f.original_name]));
   }
 
   static markAsRead(conversationType, targetId, currentUserId) {
@@ -338,7 +500,7 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.text LIKE ? AND (
+        WHERE m.is_deleted = 0 AND m.text LIKE ? AND (
           (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
           (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
         )
@@ -450,3 +612,9 @@ class MessageService {
 
 module.exports = MessageService;
 module.exports.DIALOG_LIST_LIMIT = DIALOG_LIST_LIMIT;
+module.exports.MAX_TEXT_LENGTH = MAX_TEXT_LENGTH;
+// Переиспользуются validateSettingsUpdate (server/src/api/index.js) — одна
+// проверка формата на запись (settings PUT) и на чтение (isWithinWindow),
+// а не две разные копии одной и той же регулярки.
+module.exports.isValidMessageWindowValue = isValidWindowValue;
+module.exports.MAX_MESSAGE_WINDOW_MINUTES = MAX_WINDOW_MINUTES;

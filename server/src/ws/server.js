@@ -10,8 +10,31 @@ const config = require('../config');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
-// 100 МБ, и десяток таких сообщений съедает память сервера.
+// 100 МБ, и десяток таких сообщений съедает память сервера. Это верхний
+// предел для соединения целиком (проверяется библиотекой ws при получении
+// кадра, до события 'message'); обычным типам ниже отведено намного меньше.
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+
+// Обычному кадру (сообщение чата, смена статуса, «печатает…») взяться крупным
+// неоткуда — 256 КБ с большим запасом. Крупные кадры законны только там, где
+// их не избежать: файл или список экранов на удалённый рабочий стол (rd_*),
+// обмен ICE-кандидатами и сигналинг звонка (call_*, ice_candidate) — см.
+// RD_RELAY_TYPES выше и клиентские rd_file/rd_screens в
+// desktop/src/renderer/src/components/RemoteDesktop*.jsx. Для них верхней
+// границей остаётся MAX_MESSAGE_BYTES, проверенный библиотекой ws.
+const MAX_TEXT_FRAME_BYTES = 256 * 1024;
+// Разрешённый тип проверяется дважды и по-разному, и оба раза — не по сырым
+// байтам от клиента. Раньше исключение решалось подстрокой в начале кадра
+// («клиент всегда пишет type первым полем») — но JSON допускает повторяющийся
+// ключ, и JSON.parse оставляет ПОСЛЕДНЕЕ значение, а не первое, которое видела
+// подстрока (тот же ключ можно ещё и записать через экранирование \uXXXX, так
+// что даже поиск подстроки "type" по всему кадру, а не только в начале, не
+// спасал бы). Клиент мог показать в начале кадра type":"rd_file",
+// а на деле передать send_message на 300 КБ текста — предел обходился целиком
+// (найдено на ревью). Теперь решение до разбора зависит только от того, что
+// сервер сам знает про это соединение (isOversizedFrameAllowedFor), а после
+// разбора — от разобранного (не подстрокой) значения data.type.
+const LARGE_FRAME_ALLOWED_TYPE_RE = /^(rd_[a-zA-Z0-9_]+|ice_candidate|call_[a-zA-Z0-9_]+)$/;
 
 // Статус выставляет система: «в сети» и «отошёл» приходят от клиента, когда
 // компьютер активен или простаивает, «не в сети» — только от разрыва
@@ -53,6 +76,8 @@ const RATE_LIMITS = {
   send_message: [10, 1000],
   direct_message: [10, 1000],
   channel_message: [10, 1000],
+  edit_message: [10, 1000],
+  delete_message: [10, 1000],
   mark_read: [20, 1000],
   call_offer: [3, 10000],
   rd_request: [3, 30000],
@@ -81,6 +106,15 @@ const RD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
 function isRemoteDesktopEnabled() {
   const SettingsService = require('../services/settings.service');
   return SettingsService.getSettingSync('remote_desktop_enabled', 'true') !== 'false';
+}
+
+// Те же адресаты, что при отправке (send_message): все члены канала или обе
+// стороны личной переписки. edit_message/delete_message рассылаются по той
+// же логике — иначе правка ушла бы не всем, кто уже видел исходное сообщение.
+function conversationRecipients(message) {
+  return message.conversation_type === 'channel'
+    ? MessageService.getChannelMemberIds(message.target_id)
+    : [Number(message.target_id), Number(message.sender_id)];
 }
 
 function allowRate(ws, key) {
@@ -292,6 +326,19 @@ class WsServer {
           if (allowRate(ws, 'audio')) this.relayAudioFrame(ws, raw);
           return;
         }
+        // 256 КБ проверяются ДО разбора JSON — но решение, разбирать ли кадр
+        // вообще, зависит не от того, что написано в кадре (это как раз то,
+        // что клиент подделывает), а от того, что сервер сам знает об этом
+        // соединении: открытый сеанс удалённого стола или разговор — см.
+        // isOversizedFrameAllowedFor ниже.
+        const oversized = raw.length > MAX_TEXT_FRAME_BYTES;
+        if (oversized) {
+          const sender = this.socketUser.get(ws);
+          if (!sender || !this.isOversizedFrameAllowedFor(sender.id)) {
+            try { ws.close(1009, 'Message too large'); } catch {}
+            return;
+          }
+        }
         let data;
         try {
           data = JSON.parse(raw.toString('utf8'));
@@ -300,6 +347,17 @@ class WsServer {
           return;
         }
         if (!data || typeof data !== 'object') return;
+        // Кадр прошёл проверку размера только потому, что у отправителя есть
+        // открытый сеанс/разговор — это не значит, что этому конкретному
+        // кадру законно быть большим. Разобранный (не подстрокой из сырых
+        // байт — её обходит дублирующийся или экранированный ключ "type")
+        // тип обязан входить в перечень тех, что действительно бывают
+        // крупными; иначе это подмена — сообщение сверх лимита, которое
+        // притворилось rd_*/call_*/ice_candidate, пока его не разобрали.
+        if (oversized && !LARGE_FRAME_ALLOWED_TYPE_RE.test(String(data.type))) {
+          try { ws.close(1008, 'Policy violation'); } catch {}
+          return;
+        }
         if (!authenticated && data.type !== 'auth') {
           try { ws.close(1008, 'Authentication required'); } catch {}
           return;
@@ -398,6 +456,20 @@ class WsServer {
   hasPendingOffer(callerId, targetId) {
     const offer = this.pendingOffers.get(callerId);
     return Boolean(offer && offer.targetId === targetId && Date.now() - offer.at < CALL_OFFER_TTL_MS);
+  }
+
+  // Единственное законное основание разобрать кадр крупнее MAX_TEXT_FRAME_BYTES:
+  // у отправителя уже есть открытый сеанс удалённого стола (файл, список
+  // экранов, буфер обмена) или разговор/вызов (ICE-кандидаты). Это состояние
+  // сервер вёл сам — не то, что написал клиент в этом же кадре.
+  isOversizedFrameAllowedFor(userId) {
+    if (RemoteDesktopService.findOpenSessionsForUser(userId).length) return true;
+    if (this.activeCalls.has(userId)) return true;
+    if (this.pendingOffers.has(userId)) return true;
+    for (const offer of this.pendingOffers.values()) {
+      if (offer.targetId === userId) return true;
+    }
+    return false;
   }
 
   async handleMessage(ws, msg) {
@@ -528,6 +600,60 @@ class WsServer {
             timestamp: now
           });
         }
+      }
+      return;
+    }
+
+    // 2b. Правка своего сообщения (Rocket.Chat: Allow Message Editing).
+    if (type === 'edit_message') {
+      try {
+        const updated = await MessageService.editMessage({
+          messageId: Number(msg.messageId),
+          actorId: currentUser.id,
+          text: msg.text
+        });
+        for (const userId of conversationRecipients(updated)) {
+          this.sendToUser(userId, { type: 'message_updated', message: updated });
+        }
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', context: 'edit_message', message: err.message }));
+      }
+      return;
+    }
+
+    // 2c. Удаление своего сообщения; супер-администратор — чужого, в целях
+    // модерации, без окна времени, со следом в аудите.
+    if (type === 'delete_message') {
+      const isSuperAdminUser = Boolean(currentUser.permissions?.is_admin) && !currentUser.permissions?.is_scoped_admin;
+      try {
+        const deleted = await MessageService.deleteMessage({
+          messageId: Number(msg.messageId),
+          actorId: currentUser.id,
+          isSuperAdmin: isSuperAdminUser
+        });
+        if (isSuperAdminUser && deleted.sender_id !== currentUser.id) {
+          AuditService.log({
+            userId: currentUser.id,
+            action: 'message_deleted_by_admin',
+            ip: ws.remoteIp,
+            details: {
+              messageId: deleted.id,
+              authorId: deleted.sender_id,
+              conversationType: deleted.conversation_type,
+              targetId: deleted.target_id
+            }
+          });
+        }
+        for (const userId of conversationRecipients(deleted)) {
+          this.sendToUser(userId, {
+            type: 'message_deleted',
+            messageId: deleted.id,
+            conversationType: deleted.conversation_type,
+            targetId: deleted.target_id
+          });
+        }
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', context: 'delete_message', message: err.message }));
       }
       return;
     }

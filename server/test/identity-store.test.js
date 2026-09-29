@@ -143,7 +143,15 @@ test('прежний пароль работает и переписываетс
   assert.strictEqual(result.user.department_name, 'Бухгалтерия');
 
   const after = await identity.get(`SELECT password_hash, salt FROM users WHERE username = 'petrov'`);
-  assert.match(after.password_hash, /^scrypt\$N=32768/, 'вход — единственный момент, когда пароль известен открытым');
+  // Значение N — из password.js, а не захардкожено здесь: задача 3 подняла
+  // его до 2^17, и этот тест проверяет сам факт пересчёта в текущий формат,
+  // а не конкретную цифру стоимости.
+  const { CURRENT_PARAMS } = require('../src/db/identity/password');
+  assert.match(
+    after.password_hash,
+    new RegExp(`^scrypt\\$N=${CURRENT_PARAMS.N}`),
+    'вход — единственный момент, когда пароль известен открытым'
+  );
   assert.strictEqual(after.salt, null);
 
   // И, разумеется, продолжает работать после пересчёта.

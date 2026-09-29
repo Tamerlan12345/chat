@@ -8736,3 +8736,143 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
   .sec-switch-track::after,
   .sec-tab { transition: none; }
 }
+
+/* ── Фильтр типов файлов (вкладка «Файлы», FilePolicyAdmin) ─────────────── */
+.fp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  font-size: 12.5px;
+  color: var(--text-main);
+}
+.fp-chip.is-risky { border-color: var(--danger); background: var(--danger-soft); color: var(--danger-text); }
+.fp-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.fp-chip-remove:hover { opacity: 1; background: rgba(127, 127, 127, 0.18); }
+.fp-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fp-add-row .sec-input { max-width: 160px; }
+.fp-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.fp-warning .ui-icon { flex: none; margin-top: 1px; }
+.fp-user-list { display: flex; flex-direction: column; gap: 10px; }
+.fp-user-block {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-card);
+}
+.fp-user-block-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fp-user-name { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+
+/* ── Задача 10: баннер автообновления и вкладка «Обновления» ──────────────── */
+
+.update-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--primary);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-main);
+  font-size: 13px;
+  animation: toast-in 0.22s var(--ease-out);
+}
+.update-banner.is-warn { border-left-color: var(--warning); }
+.update-banner.is-error { border-left-color: var(--danger); }
+.update-banner-icon { display: inline-flex; flex-shrink: 0; color: var(--primary); }
+.update-banner.is-warn .update-banner-icon { color: var(--warning); }
+.update-banner.is-error .update-banner-icon { color: var(--danger); }
+.update-banner-text { flex: 1 1 auto; min-width: 180px; line-height: 1.4; }
+.update-banner-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.update-banner.is-warn .update-banner-btn { background: var(--warning); }
+.update-banner.is-error .update-banner-btn { background: var(--danger); }
+.update-banner-btn:disabled { opacity: 0.6; cursor: default; }
+.update-banner-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.update-banner-close:hover { background: var(--bg-hover); color: var(--text-main); }
+.update-banner-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.update-banner-note { flex-basis: 100%; font-size: 11px; color: var(--text-muted); }
+
+.upd-channel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.upd-rollout-input { width: 84px; }
+.upd-policy-problems { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.upd-fleet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.upd-fleet-group-title { margin: 0 0 6px; font-size: 12px; font-weight: 650; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; }
+.upd-fleet-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.upd-fleet-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--border-color); }
+.upd-fleet-list li:last-child { border-bottom: none; }
+.upd-in-rollout-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+  font-size: 11px;
+  font-weight: 600;
+}
