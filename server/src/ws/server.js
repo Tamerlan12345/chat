@@ -61,7 +61,13 @@ const PRE_AUTH_MAX_BYTES = 4096;
 // Сколько соединений держит один адрес и один сотрудник. Офис за одним NAT —
 // это сотни человек, поэтому предел на адрес щедрый; на человека — несколько
 // окон и устройств.
-const MAX_SOCKETS_PER_IP = Number(process.env.WS_MAX_SOCKETS_PER_IP) || 500;
+// Офис за одним NAT — это сотни человек, у каждого возможны несколько окон и
+// устройств. 500 было мало для крупного офиса (проверка раунда 4, M7): при
+// 500 сотрудниках с парой вкладок предел упирался бы в штатной работе. 2000
+// с запасом; настраивается через WS_MAX_SOCKETS_PER_IP.
+const MAX_SOCKETS_PER_IP = Number(process.env.WS_MAX_SOCKETS_PER_IP) > 0
+  ? Number(process.env.WS_MAX_SOCKETS_PER_IP)
+  : 2000;
 const MAX_SOCKETS_PER_USER = 8;
 
 // Частота сообщений на соединение: [сколько, за сколько мс]. Без предела одна
@@ -498,8 +504,15 @@ class WsServer {
       // действует, и поколение токена: выданный до смены пароля сюда не пройдёт.
       const user = await AuthService.resolveSession(msg.token);
       if (!user) {
-        registerFailure(limitKey, AUTH_LIMIT);
-        require('../services/security-monitor.service').recordWsAuthFailure(ws.remoteIp);
+        // Протухший или отозванный, но ПОДПИСАННЫЙ нами токен — это обычное
+        // утреннее переподключение (токен истёк за ночь), а не подбор: предел
+        // ws_auth оно не расходует, иначе офис за одним NAT запирал бы сам себя
+        // на 9:00 (проверка раунда 4, M7). Считаем только по-настоящему
+        // недействительный токен: неверная подпись или мусор.
+        if (!AuthService.signatureValid(msg.token)) {
+          registerFailure(limitKey, AUTH_LIMIT);
+          require('../services/security-monitor.service').recordWsAuthFailure(ws.remoteIp);
+        }
         return ws.send(JSON.stringify({
           type: 'auth_error',
           code: 'INVALID_TOKEN',
@@ -525,6 +538,11 @@ class WsServer {
         this.userSockets.set(user.id, new Set());
       }
       this.userSockets.get(user.id).add(ws);
+
+      // Успешная авторизация по WebSocket — подтверждение личности: адрес
+      // становится знакомым, чтобы задержка входа по паролю под атакой не
+      // задевала сотрудника с его обычного места (проверка раунда 4, ПР-I4).
+      require('../services/trusted-sources.service').recordAsync(user.id, ws.ipKey || rateLimitIpKey(ws.remoteIp));
 
       // Только что подключился — значит, за компьютером. «Не беспокоить»,
       // включённое раньше, остаётся.

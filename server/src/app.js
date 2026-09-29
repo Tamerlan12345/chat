@@ -95,8 +95,10 @@ app.use((req, res, next) => {
   ].join('; '));
   res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=()');
   // Ответы API несут личные данные и токены — ни браузер, ни промежуточный
-  // кэш не должны их сохранять.
-  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  // кэш не должны их сохранять. Путь сравнивается в нижнем регистре:
+  // маршрутизация Express нечувствительна к регистру, и «/API/…» доходил бы
+  // до тех же обработчиков, но мимо no-store (проверка раунда 4, ПР-I1).
+  if (req.path.toLowerCase().startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
   // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
   // и не пойдут по http даже по подменённой ссылке.
   if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
@@ -148,10 +150,17 @@ app.use((req, res, next) => {
 // сотрудник, а не аноним; проверка подписи — один HMAC, без базы. Предел
 // щедрый: офис за одним NAT при запуске делает несколько анонимных запросов
 // на человека (сведения о сервере, «стук», вход).
+// Дешёвые публичные GET, которые отдаются из памяти без обращения к базе:
+// клиент запускается и опрашивает их у всех сотрудников разом. Из потолка
+// исключены — их флуд стоит только обработки HTTP, а вход/регистрация/«стук»
+// ограничены каждый своим пределом (проверка раунда 4, ПР-I1).
+const ANON_CEILING_EXEMPT = new Set(['/health', '/api/settings/info', '/api/settings/departments']);
 app.use((req, res, next) => {
   const limit = config.ANON_RATE_LIMIT_PER_MINUTE;
   if (!limit) return next();
-  if (!req.path.startsWith('/api/') && req.path !== '/health') return next();
+  const path = req.path.toLowerCase();
+  if (!path.startsWith('/api/') && path !== '/health') return next();
+  if (req.method === 'GET' && ANON_CEILING_EXEMPT.has(path)) return next();
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ') && AuthService.verifyToken(authHeader.substring(7))) {
     return next();

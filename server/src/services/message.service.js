@@ -527,7 +527,9 @@ class MessageService {
   static async searchAuditLogs(query = '', limit = 100) {
     const db = getDatabase();
     const capped = Math.min(Math.max(Number(limit) || 100, 1), 1000);
-    const term = String(query || '').trim();
+    // Длина ограничена, % и _ экранированы (буквальный поиск, не шаблон) —
+    // как в обычном поиске по переписке (проверка раунда 4, M1).
+    const term = String(query || '').trim().slice(0, 200);
 
     let rows;
     if (!term) {
@@ -537,8 +539,8 @@ class MessageService {
       const ids = matchedUsers.map((u) => Number(u.id));
       const idFilter = ids.length ? ` OR m.sender_id IN (${ids.map(() => '?').join(', ')})` : '';
       rows = db
-        .prepare(`SELECT m.* FROM messages m WHERE m.text LIKE ?${idFilter} ORDER BY m.id DESC LIMIT ?`)
-        .all(`%${term}%`, ...ids, capped);
+        .prepare(`SELECT m.* FROM messages m WHERE m.text LIKE ? ESCAPE '\\'${idFilter} ORDER BY m.id DESC LIMIT ?`)
+        .all(`%${escapeLike(term)}%`, ...ids, capped);
     }
 
     const withSenders = await this.attachSenders(rows);

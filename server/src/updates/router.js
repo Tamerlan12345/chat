@@ -64,6 +64,27 @@ function notFound(res) {
   res.status(404).type('text/plain').send('Not found');
 }
 
+// Предел частоты обновлений — по установке (X-MyChat-Install-Id), а не только
+// по адресу: за одним NAT крупного офиса сотни установок опрашивают сервер
+// утром разом, и общий счётчик 120/мин на адрес срабатывал на штатной работе
+// (проверка раунда 4, M7). У каждой установки свой щедрый предел; на адрес
+// (сеть /64) — высокий потолок, чтобы уместился весь офис, но поток с одного
+// адреса без валидного install-id всё же был ограничен. Ключи — по адресу и
+// по install-id, оба fail open (ПР-01).
+const UPD_PER_INSTALL = { maxAttempts: 120, windowMs: 60000 };
+function updPerIpLimit() {
+  const n = Number(process.env.UPDATES_MAX_REQ_PER_MIN_PER_IP);
+  return { maxAttempts: Number.isInteger(n) && n > 0 ? n : 6000, windowMs: 60000 };
+}
+function updateRequestAllowed(req, info) {
+  const ipOk = checkRateLimit('upd-ip:' + rateLimitIpKey(getClientIp(req)), updPerIpLimit());
+  if (info.installId) {
+    const idOk = checkRateLimit('upd-id:' + info.installId, UPD_PER_INSTALL);
+    return ipOk && idOk;
+  }
+  return ipOk;
+}
+
 function decideFor(channel, info) {
   const store = getUpdateStore();
   const policy = UpdatePolicy.getPolicy();
@@ -89,7 +110,7 @@ router.get('/policy.json', (req, res) => {
   // штатной работе приложения, а не только electron-updater'ом. Сверх предела
   // просто пропускаем запись — ответ клиент всё равно получит (находка
   // ревью, задача 6).
-  if (checkRateLimit('upd:' + rateLimitIpKey(getClientIp(req)), { maxAttempts: 120, windowMs: 60000 })) {
+  if (updateRequestAllowed(req, info)) {
     recordInstall(req, info, channel);
   }
 
@@ -115,12 +136,12 @@ router.get('/policy.json', (req, res) => {
 router.get('/:channel/latest.yml', (req, res) => {
   const { channel } = req.params;
   if (!CHANNELS.has(channel)) return notFound(res);
-  if (!checkRateLimit('upd:' + rateLimitIpKey(getClientIp(req)), { maxAttempts: 120, windowMs: 60000 })) {
+  const info = clientInfo(req);
+  if (!updateRequestAllowed(req, info)) {
     res.set('Retry-After', '60');
     return res.status(429).json({ error: 'Слишком много запросов, повторите позже' });
   }
 
-  const info = clientInfo(req);
   recordInstall(req, info, channel);
   // Нет права на версию — 404: для electron-updater это «обновлений нет».
   const { release } = decideFor(channel, info);
