@@ -53,6 +53,21 @@ test('install.ps1 и настроить-клиент.bat — говорят о �
   }
 });
 
+test('правило брандмауэра — только домен/частная сеть; для «Общественной» сети — подсказка сменить профиль, а не расширять правило', () => {
+  for (const name of ['setup-firewall.bat', 'install-service.bat']) {
+    const text = readText(path.join(INSTALLER_DIR, name));
+    assert.match(text, /localport=2004 profile=domain,private/, `${name}: правило только для домена и частной сети`);
+    assert.ok(!/profile=(any|public|domain,private,public)/i.test(text), `${name}: правило не расширяется на публичный профиль`);
+    assert.match(text, /^echo .*Get-NetConnectionProfile/m, `${name}: команда проверки профиля сети`);
+    assert.match(text, /^echo .*Set-NetConnectionProfile -InterfaceIndex \S+ -NetworkCategory Private/m, `${name}: команда смены профиля на частный`);
+    assert.match(text, /Общественн|Public/, `${name}: объясняет, когда это нужно`);
+    // Символы, которые cmd в echo понимает как перенаправление, сломали бы подсказку.
+    for (const line of text.split(/\r?\n/).filter((l) => /^echo .*NetConnectionProfile/.test(l))) {
+      assert.ok(!/[<>|&]/.test(line), `${name}: в строке подсказки нет < > | &: ${line}`);
+    }
+  }
+});
+
 test('настроить-клиент.bat — существует и запускает configure-client.ps1', () => {
   const batPath = path.join(INSTALLER_DIR, 'настроить-клиент.bat');
   assert.ok(fs.existsSync(batPath), 'должен существовать installer/настроить-клиент.bat');
