@@ -1,10 +1,21 @@
 package com.openmychat.mobile.build
 
+import com.openmychat.mobile.BuildConfig
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 class ReleaseConfigurationTest {
+
+    @Test
+    fun debugVariantIsExplicitlyIdentifiable() {
+        assertTrue(
+            "the debug unit-test variant must expose BuildConfig.DEBUG",
+            BuildConfig.DEBUG
+        )
+        assertEquals("debug", BuildConfig.BUILD_TYPE)
+    }
 
     @Test
     fun releaseBuildEnablesMinification() {
