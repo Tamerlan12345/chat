@@ -9,7 +9,7 @@ const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const ALLOW_LOCAL_HTTP =
   Boolean(import.meta.env.DEV) ||
   (window.location.protocol === 'http:' && LOCAL_HOSTS.includes(window.location.hostname));
-const DEFAULT_HOST = 'chat-production-0456.up.railway.app';
+const DEFAULT_HOST = 'centychat-production.up.railway.app';
 
 function isAllowedServerUrl(url) {
   try {
@@ -67,7 +67,7 @@ export default function ServerConnectModal({ currentUrl, onClose, onApplyServer 
       // Live Railway deployment. Point this at ch.cic.kz instead once that
       // domain is actually configured to resolve to it — see
       // knowledge/Architecture/Architecture - Server Deployment and Connection.md
-      host: 'chat-production-0456.up.railway.app',
+      host: 'centychat-production.up.railway.app',
       port: '',
       protocol: 'https',
       desc: 'Railway — внешний корпоративный шлюз'

@@ -94,7 +94,7 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState(() => {
     const stored = localStorage.getItem('mychat_server_url');
     if (stored && isAllowedServerUrl(stored)) return stored;
-    return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://chat-production-0456.up.railway.app';
+    return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://centychat-production.up.railway.app';
   });
   const [wsConnected, setWsConnected] = useState(false);
 

@@ -89,7 +89,7 @@ log(`Electron main.js loaded (packaged: ${app.isPackaged})`);
 // реестра HKLM\SOFTWARE\Policies\CentyChat (см. client-config.js);
 // без неё — константа ниже. Файл client.json в ProgramData не читается:
 // папку там может создать любой пользователь ПК.
-const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
+const DEFAULT_SERVER_URL = 'https://centychat-production.up.railway.app';
 // ProgramData и корень Windows в собранной сборке — из ядра и HKLM, а не из
 // переменных окружения, которые сотрудник задаёт себе сам (см. client-config.js).
 const SYSTEM_DIRS = resolveSystemDirs({ isPackaged: app.isPackaged, env: process.env });

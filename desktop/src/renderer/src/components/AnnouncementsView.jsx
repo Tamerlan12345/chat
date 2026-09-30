@@ -5,7 +5,7 @@ import Icon from './Icon';
 export default function AnnouncementsView({
   token,
   currentUser,
-  serverUrl = 'https://chat-production-0456.up.railway.app',
+  serverUrl = 'https://centychat-production.up.railway.app',
   onAcknowledged
 }) {
   const [announcements, setAnnouncements] = useState([]);

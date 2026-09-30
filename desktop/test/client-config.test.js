@@ -13,7 +13,7 @@ const {
 } = require('../src/main/client-config');
 
 const SYSTEM_ROOT = 'C:\\Windows';
-const HARD_DEFAULT = 'https://chat-production-0456.up.railway.app';
+const HARD_DEFAULT = 'https://centychat-production.up.railway.app';
 
 // Вывод «reg.exe query <ключ политики>»: строки «    Имя    ТИП    значение».
 function policyOutput(values) {

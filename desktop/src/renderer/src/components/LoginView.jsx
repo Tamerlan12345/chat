@@ -6,7 +6,7 @@ import { postLoginWithRetry } from '../lib/login-retry.mjs';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MIN_PASSWORD_LENGTH = 8;
-const DEFAULT_SERVER_URL = 'https://chat-production-0456.up.railway.app';
+const DEFAULT_SERVER_URL = 'https://centychat-production.up.railway.app';
 
 // Только https. http — лишь для сервера на своей машине в разработке: по
 // открытому каналу пароль уходит как есть. Адрес, сохранённый раньше
