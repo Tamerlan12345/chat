@@ -61,3 +61,30 @@ JDK 17 (and the local path override only when using this non-ASCII worktree):
 ```powershell
 .\gradlew.bat testDebugUnitTest lint assembleDebug assembleRelease
 ```
+
+## Review-fix verification
+
+This addendum supersedes the earlier shorthand that the Gradle-targeted test
+was “run”: it was **BLOCKED BEFORE TEST EXECUTION** because the Android SDK
+was not configured at that time. It did not pass.
+
+The review fix replaces the debug-only assertion in
+`ReleaseConfigurationTest` with a regression assertion that the release
+build type sets `isMinifyEnabled = true`. The SDK-independent
+`verify-release-configuration.ps1` fixture was run RED with the setting
+temporarily false (expected error: `Release build type must set
+isMinifyEnabled = true.`) and GREEN after restoring true.
+
+`gradlew` now has Git mode `100755` for Linux/macOS execution.
+
+With JDK 17, SDK 35, and an isolated
+`--project-cache-dir C:\tmp\mobile-release-parity-gradle-project-cache`,
+the canonical command reached `:app:compileDebugKotlin` but is **BLOCKED**
+by pre-existing compilation errors outside Task 1:
+
+```
+ApiClient.kt:278:38 'fun parse(url: String): HttpUrl?' is deprecated.
+ApiClient.kt:294:38 'fun parse(url: String): HttpUrl?' is deprecated.
+```
+
+The worktree `.gradle` cache was not modified or committed.
