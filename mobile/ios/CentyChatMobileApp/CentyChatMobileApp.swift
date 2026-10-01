@@ -6,6 +6,14 @@ import SwiftUI
 struct CentyChatMobileApp: App {
     @State private var appState = AppState()
 
+    init() {
+#if DEBUG
+        if LaunchTestFixture.shouldResetSecureState {
+            KeychainManager.shared.resetForUITesting()
+        }
+#endif
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {

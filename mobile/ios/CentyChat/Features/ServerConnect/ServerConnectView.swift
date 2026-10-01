@@ -39,7 +39,7 @@ public struct ServerConnectView: View {
                             .foregroundColor(.secondary)
                         
                         CentyTextField(
-                            placeholder: "http://192.168.1.100:2004",
+                            placeholder: "https://chat.example.com",
                             text: $serverUrlInput,
                             icon: "server.rack",
                             keyboardType: .URL
@@ -116,23 +116,21 @@ public struct ServerConnectView: View {
         defer { isChecking = false }
         
         let cleaned = serverUrlInput.trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: cleaned), url.scheme != nil, url.host != nil else {
-            errorMessage = "Введите корректный URL (например, http://localhost:2004)"
+        guard let serverURL = ServerEndpointPolicy.configuredURL(from: cleaned) else {
+            errorMessage = "Введите корректный URL (например, https://chat.example.com)"
             CentyHaptics.error()
             return
         }
         
-        KeychainManager.shared.serverUrl = cleaned
-        
         do {
-            let health = try await APIClient.shared.checkHealth()
+            let health = try await APIClient.shared.checkHealth(serverURL: serverURL)
             guard health.isHealthy else {
                 errorMessage = "Сервер ответил статусом: \(health.status)"
                 CentyHaptics.warning()
                 return
             }
             
-            let info = try await APIClient.shared.getServerInfo()
+            let info = try await APIClient.shared.getServerInfo(serverURL: serverURL)
             serverDetails = info
             checkSuccess = true
             CentyHaptics.success()

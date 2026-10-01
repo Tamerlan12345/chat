@@ -64,10 +64,18 @@ public final class KeychainManager: @unchecked Sendable {
     
     public var serverUrl: String {
         get {
-            get(key: Keys.serverUrl) ?? "http://localhost:2004"
+            guard let storedURL = get(key: Keys.serverUrl),
+                  let secureURL = ServerEndpointPolicy.configuredURL(from: storedURL) else {
+                return ""
+            }
+            return secureURL.absoluteString
         }
         set {
-            set(value: newValue, key: Keys.serverUrl)
+            guard let secureURL = ServerEndpointPolicy.configuredURL(from: newValue) else {
+                delete(key: Keys.serverUrl)
+                return
+            }
+            set(value: secureURL.absoluteString, key: Keys.serverUrl)
         }
     }
     
@@ -90,6 +98,16 @@ public final class KeychainManager: @unchecked Sendable {
         authToken = nil
         deviceSecret = nil
     }
+
+#if DEBUG
+    func resetForUITesting() {
+        delete(key: Keys.authToken)
+        delete(key: Keys.deviceId)
+        delete(key: Keys.deviceSecret)
+        delete(key: Keys.serverUrl)
+        delete(key: Keys.savedUsername)
+    }
+#endif
     
     // MARK: - Keychain Core Operations
     
@@ -107,7 +125,7 @@ public final class KeychainManager: @unchecked Sendable {
         
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)

@@ -7,13 +7,17 @@ public actor APIClient {
     private let session: URLSession
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
-    private var isRefreshingToken = false
+    private let refreshCoordinator = TokenRefreshCoordinator()
     
-    public init(session: URLSession = .shared) {
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 20.0
-        configuration.timeoutIntervalForResource = 60.0
-        self.session = URLSession(configuration: configuration)
+    public init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.default
+            configuration.timeoutIntervalForRequest = 20.0
+            configuration.timeoutIntervalForResource = 60.0
+            self.session = URLSession(configuration: configuration)
+        }
         
         self.jsonDecoder = JSONDecoder()
         self.jsonEncoder = JSONEncoder()
@@ -30,126 +34,186 @@ public actor APIClient {
         requiresAuth: Bool = true,
         isRetry: Bool = false
     ) async throws -> T {
-        let serverUrlString = KeychainManager.shared.serverUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        
-        guard var components = URLComponents(string: "\(serverUrlString)/api\(endpoint)") else {
-            throw APIError.invalidURL("\(serverUrlString)/api\(endpoint)")
+        try await performRequest(
+            endpoint: endpoint,
+            method: method,
+            queryItems: queryItems,
+            body: body,
+            headers: headers,
+            requiresAuth: requiresAuth,
+            isRetry: isRetry,
+            serverURL: try configuredServerURL()
+        )
+    }
+
+    private func performRequest<T: Decodable>(
+        endpoint: String,
+        method: String = "GET",
+        queryItems: [URLQueryItem]? = nil,
+        body: Data? = nil,
+        headers: [String: String]? = nil,
+        requiresAuth: Bool = true,
+        isRetry: Bool = false,
+        serverURL: URL
+    ) async throws -> T {
+        guard var components = URLComponents(url: try apiURL(serverURL: serverURL, endpoint: endpoint), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL(endpoint)
         }
-        
-        if let queryItems = queryItems, !queryItems.isEmpty {
+        if let queryItems, !queryItems.isEmpty {
             components.queryItems = queryItems
         }
-        
         guard let url = components.url else {
             throw APIError.invalidURL(endpoint)
         }
-        
+
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = method
         urlRequest.httpBody = body
-        
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil && urlRequest.value(forHTTPHeaderField: "Content-Type") == nil {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        
-        if requiresAuth, let token = KeychainManager.shared.authToken {
+
+        let requestToken: String?
+        if requiresAuth {
+            guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
+                throw APIError.insecureTransport
+            }
+            guard let token = KeychainManager.shared.authToken else {
+                throw APIError.unauthorized
+            }
+            requestToken = token
             urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } else {
+            requestToken = nil
         }
-        
-        if let headers = headers {
-            for (key, val) in headers {
-                urlRequest.setValue(val, forHTTPHeaderField: key)
+
+        if let headers {
+            let containsAuthorization = headers.keys.contains { $0.caseInsensitiveCompare("Authorization") == .orderedSame }
+            guard !containsAuthorization || ServerEndpointPolicy.allowsAuthorization(to: url) else {
+                throw APIError.insecureTransport
+            }
+            for (key, value) in headers {
+                urlRequest.setValue(value, forHTTPHeaderField: key)
             }
         }
-        
-        let (data, response): (Data, URLResponse)
+
+        let data: Data
+        let response: URLResponse
         do {
             (data, response) = try await session.data(for: urlRequest)
         } catch {
             throw APIError.noConnection
         }
-        
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        
-        // 401 Unauthorized -> Handle token refresh and retry
+
         if httpResponse.statusCode == 401 && requiresAuth && !isRetry {
+            guard let requestToken else {
+                throw APIError.unauthorized
+            }
             do {
-                try await performTokenRefresh()
-                return try await request(
+                try await refreshAccessToken(after: requestToken)
+                return try await performRequest(
                     endpoint: endpoint,
                     method: method,
                     queryItems: queryItems,
                     body: body,
                     headers: headers,
                     requiresAuth: requiresAuth,
-                    isRetry: true
+                    isRetry: true,
+                    serverURL: serverURL
                 )
-            } catch {
-                KeychainManager.shared.clearAllAuthData()
+            } catch APIError.unauthorized {
+                if KeychainManager.shared.authToken == requestToken {
+                    KeychainManager.shared.clearAllAuthData()
+                }
                 throw APIError.unauthorized
             }
         }
-        
-        // 403 Forbidden -> Check for MUST_CHANGE_PASSWORD
-        if httpResponse.statusCode == 403 {
-            if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data),
-               serverError.code == "MUST_CHANGE_PASSWORD" {
-                throw APIError.mustChangePassword(message: serverError.error)
-            }
+
+        if httpResponse.statusCode == 403,
+           let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data),
+           serverError.code == "MUST_CHANGE_PASSWORD" {
+            throw APIError.mustChangePassword(message: serverError.error)
         }
-        
-        // Error handling
+
         guard (200...299).contains(httpResponse.statusCode) else {
-            var errorMessage = "Ошибка запроса"
-            var errorCode: String? = nil
-            if let serverErr = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
-                errorMessage = serverErr.error
-                errorCode = serverErr.code
+            var errorMessage = "Request failed"
+            var errorCode: String?
+            if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
+                errorMessage = serverError.error
+                errorCode = serverError.code
             } else if let raw = String(data: data, encoding: .utf8), !raw.isEmpty {
                 errorMessage = raw
             }
             throw APIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage, code: errorCode)
         }
-        
-        // Decode expected response
+
         do {
             return try jsonDecoder.decode(T.self, from: data)
         } catch {
             throw APIError.decodingError(error.localizedDescription)
         }
     }
-    
-    // MARK: - Auto-Refresh Logic
-    
-    private func performTokenRefresh() async throws {
-        guard !isRefreshingToken else { return }
-        isRefreshingToken = true
-        defer { isRefreshingToken = false }
-        
-        let serverUrlString = KeychainManager.shared.serverUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(serverUrlString)/api/auth/refresh") else {
-            throw APIError.invalidURL("/api/auth/refresh")
+
+    private func configuredServerURL() throws -> URL {
+        guard let serverURL = ServerEndpointPolicy.configuredURL(from: KeychainManager.shared.serverUrl) else {
+            throw APIError.invalidURL("A secure server URL is required.")
         }
-        
-        guard let currentToken = KeychainManager.shared.authToken else {
-            throw APIError.unauthorized
+        return serverURL
+    }
+
+    private func validatedServerURL(_ serverURL: URL) throws -> URL {
+        guard ServerEndpointPolicy.allowsConnection(to: serverURL) else {
+            throw APIError.insecureTransport
         }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        
-        let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            throw APIError.unauthorized
+        return serverURL
+    }
+
+    private func apiURL(serverURL: URL, endpoint: String) throws -> URL {
+        guard endpoint.hasPrefix("/"), var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL(endpoint)
         }
-        
-        let refreshResponse = try jsonDecoder.decode(RefreshTokenResponse.self, from: data)
-        KeychainManager.shared.authToken = refreshResponse.token
+        let basePath = components.path == "/" ? "" : components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = "/" + [basePath, "api" + endpoint].filter { !$0.isEmpty }.joined(separator: "/")
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else {
+            throw APIError.invalidURL(endpoint)
+        }
+        return url
+    }
+
+    private func refreshAccessToken(after staleToken: String) async throws {
+        guard KeychainManager.shared.authToken == staleToken else { return }
+        let serverURL = try configuredServerURL()
+        guard ServerEndpointPolicy.allowsAuthorization(to: serverURL) else {
+            throw APIError.insecureTransport
+        }
+        let refreshURL = try apiURL(serverURL: serverURL, endpoint: "/auth/refresh")
+        let session = session
+        let refreshedToken = try await refreshCoordinator.token(for: staleToken) {
+            var request = URLRequest(url: refreshURL)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(staleToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                    throw APIError.unauthorized
+                }
+                throw APIError.httpError(statusCode: httpResponse.statusCode, message: "Session refresh failed", code: nil)
+            }
+            return try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
+        }
+        if KeychainManager.shared.authToken == staleToken {
+            KeychainManager.shared.authToken = refreshedToken
+        }
     }
     
     // MARK: - Endpoints Implementation
@@ -158,10 +222,18 @@ public actor APIClient {
     public func checkHealth() async throws -> HealthResponse {
         try await request(endpoint: "/health", requiresAuth: false)
     }
+
+    public func checkHealth(serverURL: URL) async throws -> HealthResponse {
+        try await performRequest(endpoint: "/health", requiresAuth: false, serverURL: try validatedServerURL(serverURL))
+    }
     
     /// Общедоступные сведения о сервере
     public func getServerInfo() async throws -> ServerInfo {
         try await request(endpoint: "/settings/info", requiresAuth: false)
+    }
+
+    public func getServerInfo(serverURL: URL) async throws -> ServerInfo {
+        try await performRequest(endpoint: "/settings/info", requiresAuth: false, serverURL: try validatedServerURL(serverURL))
     }
     
     /// Device Knock при запуске
@@ -297,19 +369,20 @@ public actor APIClient {
     
     /// Загрузка файла/вложения (multipart/form-data)
     public func uploadFile(fileData: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
-        let serverUrlString = KeychainManager.shared.serverUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(serverUrlString)/api/files/upload") else {
-            throw APIError.invalidURL("/api/files/upload")
+        let serverURL = try configuredServerURL()
+        let url = try apiURL(serverURL: serverURL, endpoint: "/files/upload")
+        guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
+            throw APIError.insecureTransport
+        }
+        guard let token = KeychainManager.shared.authToken else {
+            throw APIError.unauthorized
         }
         
         let boundary = "Boundary-\(UUID().uuidString)"
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
-        if let token = KeychainManager.shared.authToken {
-            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -317,22 +390,19 @@ public actor APIClient {
         body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
         body.append(fileData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        
         urlRequest.httpBody = body
         
         let (data, response) = try await session.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        
         guard (200...299).contains(httpResponse.statusCode) else {
-            var msg = "Ошибка загрузки файла"
-            if let serverErr = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
-                msg = serverErr.error
+            var message = "File upload failed"
+            if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
+                message = serverError.error
             }
-            throw APIError.httpError(statusCode: httpResponse.statusCode, message: msg, code: nil)
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message, code: nil)
         }
-        
         return try jsonDecoder.decode(FileUploadResponse.self, from: data)
     }
 }

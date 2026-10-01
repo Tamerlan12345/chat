@@ -157,3 +157,57 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(at, 1759230000000)
     }
 }
+
+final class EndpointSecurityTests: XCTestCase {
+    func testProductionEndpointPolicyRejectsMissingAndInsecureEndpoints() {
+        XCTAssertNil(ServerEndpointPolicy.productionURL(from: ""))
+        XCTAssertNil(ServerEndpointPolicy.productionURL(from: "http://chat.example.com"))
+        XCTAssertNil(ServerEndpointPolicy.productionURL(from: "ws://chat.example.com"))
+        XCTAssertNotNil(ServerEndpointPolicy.productionURL(from: "https://chat.example.com"))
+    }
+
+    func testWebSocketAndAuthorizationRequireSecureTransport() {
+        let secureURL = try! XCTUnwrap(ServerEndpointPolicy.productionURL(from: "https://chat.example.com/base"))
+        let webSocketURL = ServerEndpointPolicy.webSocketURL(for: secureURL)
+
+        XCTAssertEqual(webSocketURL?.scheme, "wss")
+        XCTAssertEqual(webSocketURL?.path, "/ws")
+        XCTAssertTrue(ServerEndpointPolicy.allowsAuthorization(to: secureURL))
+        XCTAssertFalse(ServerEndpointPolicy.allowsAuthorization(to: URL(string: "http://127.0.0.1:2004")!))
+    }
+
+#if DEBUG
+    func testDebugFixturePermitsOnlyLoopbackHTTP() {
+        XCTAssertNotNil(ServerEndpointPolicy.debugFixtureURL(from: "http://127.0.0.1:2004"))
+        XCTAssertNotNil(ServerEndpointPolicy.debugFixtureURL(from: "http://localhost:2004"))
+        XCTAssertNil(ServerEndpointPolicy.debugFixtureURL(from: "http://192.168.1.100:2004"))
+    }
+#endif
+
+    func testRefreshCoordinatorSharesOneRefreshForSameExpiredToken() async throws {
+        let coordinator = TokenRefreshCoordinator()
+        let counter = RefreshInvocationCounter()
+
+        async let first = coordinator.token(for: "expired-token") {
+            await counter.increment()
+            try await Task.sleep(nanoseconds: 100_000_000)
+            return "fresh-token"
+        }
+        async let second = coordinator.token(for: "expired-token") {
+            await counter.increment()
+            return "unexpected-second-refresh"
+        }
+
+        XCTAssertEqual(try await first, "fresh-token")
+        XCTAssertEqual(try await second, "fresh-token")
+        XCTAssertEqual(await counter.value, 1)
+    }
+}
+
+private actor RefreshInvocationCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}

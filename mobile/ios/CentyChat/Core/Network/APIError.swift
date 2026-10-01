@@ -3,6 +3,7 @@ import Foundation
 /// Ошибки сетевого взаимодействия CentyChat
 public enum APIError: Error, LocalizedError, Sendable {
     case invalidURL(String)
+    case insecureTransport
     case invalidResponse
     case httpError(statusCode: Int, message: String, code: String?)
     case mustChangePassword(message: String)
@@ -15,6 +16,8 @@ public enum APIError: Error, LocalizedError, Sendable {
         switch self {
         case .invalidURL(let url):
             return "Неверный URL сервера: \(url)"
+        case .insecureTransport:
+            return "A secure connection is required to protect the session."
         case .invalidResponse:
             return "Некорректный ответ от сервера"
         case .httpError(let statusCode, let message, _):

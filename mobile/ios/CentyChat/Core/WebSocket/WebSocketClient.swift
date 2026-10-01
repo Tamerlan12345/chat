@@ -46,14 +46,14 @@ public actor WebSocketClient {
         guard !isConnected else { return }
         isIntentionalDisconnect = false
         
-        let serverUrlString = KeychainManager.shared.serverUrl
-        guard let httpUrl = URL(string: serverUrlString) else { return }
-        
-        var wsComponents = URLComponents(url: httpUrl, resolvingAgainstBaseURL: true)
-        wsComponents?.scheme = (httpUrl.scheme == "https") ? "wss" : "ws"
-        wsComponents?.path = "/ws"
-        
-        guard let wsUrl = wsComponents?.url else { return }
+        guard let serverURL = ServerEndpointPolicy.configuredURL(from: KeychainManager.shared.serverUrl),
+              let wsUrl = ServerEndpointPolicy.webSocketURL(for: serverURL) else {
+            return
+        }
+        let authToken = KeychainManager.shared.authToken
+        guard authToken == nil || ServerEndpointPolicy.allowsAuthorization(to: wsUrl) else {
+            return
+        }
         
         let config = URLSessionConfiguration.default
         let session = URLSession(configuration: config)
@@ -70,7 +70,7 @@ public actor WebSocketClient {
         self.reconnectAttempt = 0
         
         // Автоматически отправляем auth, если токен есть в Keychain
-        if let token = KeychainManager.shared.authToken {
+        if let token = authToken {
             send(clientMessage: .auth(token: token))
         }
         

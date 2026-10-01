@@ -47,7 +47,12 @@ public final class AppState {
         defer { isLoading = false }
         
         let serverUrl = KeychainManager.shared.serverUrl
-        isServerConfigured = !serverUrl.isEmpty
+        guard !serverUrl.isEmpty else {
+            isServerConfigured = false
+            isAuthenticated = false
+            return
+        }
+        isServerConfigured = true
         
         // 1. Проверяем доступность сервера
         do {
@@ -76,9 +81,11 @@ public final class AppState {
                 self.isAuthenticated = true
                 self.mustChangePasswordRequired = true
                 self.errorMessage = msg
+            } catch APIError.unauthorized {
+                KeychainManager.shared.clearAllAuthData()
+                self.isAuthenticated = false
             } catch {
                 print("[AppState] Session validation failed: \(error)")
-                KeychainManager.shared.clearAllAuthData()
                 self.isAuthenticated = false
             }
         } else {

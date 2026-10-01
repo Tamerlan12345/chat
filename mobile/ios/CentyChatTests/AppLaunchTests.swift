@@ -3,6 +3,8 @@ import XCTest
 final class AppLaunchTests: XCTestCase {
     func testFreshInstallShowsServerSetup() {
         let application = XCUIApplication()
+        application.launchEnvironment["CENTYCHAT_UI_TESTING"] = "1"
+        application.launchArguments += ["-reset-secure-state"]
         application.launch()
 
         XCTAssertTrue(
