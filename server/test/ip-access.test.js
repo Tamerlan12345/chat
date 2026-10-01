@@ -179,3 +179,26 @@ test('restricted IP treats API health case and trailing slash variants like /hea
     delete process.env.ALLOWED_CLIENT_IPS;
   }
 });
+
+test('double-slash API health paths remain protected by generic startup handling', async () => {
+  const http = require('node:http');
+  loadService();
+  delete require.cache[require.resolve('../src/app')];
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    for (const path of ['/api/health//', '/API/health//']) {
+      const response = await fetch(base + path);
+      assert.strictEqual(response.status, 503, path);
+      assert.strictEqual(response.headers.get('cache-control'), 'no-store', path);
+      const body = await response.json();
+      assert.ok(typeof body.error === 'string', path);
+      assert.notStrictEqual(body.status, 'starting', path);
+    }
+  } finally {
+    server.close();
+  }
+});
