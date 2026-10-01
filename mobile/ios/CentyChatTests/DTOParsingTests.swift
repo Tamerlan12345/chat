@@ -396,3 +396,186 @@ private final class InMemoryKeychainItemStore: KeychainItemStore {
         attributes[kSecAttrAccount as String] as! String
     }
 }
+
+final class TerminalRefresh401Tests: XCTestCase {
+    func testTerminal401AfterRefreshClearsSessionForStandardRequest() async throws {
+        let keychain = KeychainManager(
+            testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
+        )
+        try keychain.saveServerURL("https://chat.example.com")
+        try keychain.saveAuthToken("stale-token")
+        Terminal401ChannelsURLProtocol.reset()
+        let client = APIClient(session: makeSession(using: Terminal401ChannelsURLProtocol.self), keychain: keychain)
+
+        do {
+            let _: [Channel] = try await client.getChannels()
+            XCTFail("A second 401 after a successful refresh must fail closed.")
+        } catch APIError.unauthorized {
+            // Expected: the retry is terminal and must not start another refresh.
+        } catch {
+            XCTFail("Expected APIError.unauthorized, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        XCTAssertEqual(Terminal401ChannelsURLProtocol.refreshRequestCount, 1)
+    }
+
+    func testTerminal401AfterRefreshClearsSessionForUpload() async throws {
+        let keychain = KeychainManager(
+            testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
+        )
+        try keychain.saveServerURL("https://chat.example.com")
+        try keychain.saveAuthToken("stale-token")
+        Terminal401UploadURLProtocol.reset()
+        let client = APIClient(session: makeSession(using: Terminal401UploadURLProtocol.self), keychain: keychain)
+
+        do {
+            _ = try await client.uploadFile(
+                fileData: Data("test".utf8),
+                fileName: "test.txt",
+                mimeType: "text/plain"
+            )
+            XCTFail("A second upload 401 after a successful refresh must fail closed.")
+        } catch APIError.unauthorized {
+            // Expected: the retry is terminal and must not start another refresh.
+        } catch {
+            XCTFail("Expected APIError.unauthorized, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        XCTAssertEqual(Terminal401UploadURLProtocol.refreshRequestCount, 1)
+    }
+
+    private func makeSession(using urlProtocol: AnyClass) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [urlProtocol]
+        return URLSession(configuration: configuration)
+    }
+}
+
+private final class Terminal401ChannelsURLProtocol: URLProtocol {
+    private static let refreshCounter = LockedCounter()
+
+    static func reset() {
+        refreshCounter.reset()
+    }
+
+    static var refreshRequestCount: Int {
+        refreshCounter.value
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let responseData: (statusCode: Int, body: String)
+        switch request.url?.path {
+        case "/api/channels":
+            responseData = (401, "{\"error\":\"expired\"}")
+        case "/api/auth/refresh":
+            Self.refreshCounter.increment()
+            responseData = (200, "{\"token\":\"refreshed-token\"}")
+        default:
+            responseData = (500, "{\"error\":\"unexpected path\"}")
+        }
+        send(statusCode: responseData.statusCode, body: responseData.body)
+    }
+
+    override func stopLoading() {}
+
+    private func send(statusCode: Int, body: String) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: statusCode,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+private final class Terminal401UploadURLProtocol: URLProtocol {
+    private static let refreshCounter = LockedCounter()
+
+    static func reset() {
+        refreshCounter.reset()
+    }
+
+    static var refreshRequestCount: Int {
+        refreshCounter.value
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let responseData: (statusCode: Int, body: String)
+        switch request.url?.path {
+        case "/api/files/upload":
+            responseData = (401, "{\"error\":\"expired\"}")
+        case "/api/auth/refresh":
+            Self.refreshCounter.increment()
+            responseData = (200, "{\"token\":\"refreshed-token\"}")
+        default:
+            responseData = (500, "{\"error\":\"unexpected path\"}")
+        }
+        send(statusCode: responseData.statusCode, body: responseData.body)
+    }
+
+    override func stopLoading() {}
+
+    private func send(statusCode: Int, body: String) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: statusCode,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        count = 0
+    }
+}

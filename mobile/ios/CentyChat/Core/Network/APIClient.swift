@@ -111,8 +111,14 @@ public actor APIClient {
             throw APIError.invalidResponse
         }
 
-        if httpResponse.statusCode == 401 && requiresAuth && !isRetry {
+        if httpResponse.statusCode == 401 && requiresAuth {
             guard let requestToken else {
+                throw APIError.unauthorized
+            }
+            if isRetry {
+                if keychain.authToken == requestToken {
+                    try keychain.clearAllAuthData()
+                }
                 throw APIError.unauthorized
             }
             do {
@@ -412,7 +418,13 @@ public actor APIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        if httpResponse.statusCode == 401 && !isRetry {
+        if httpResponse.statusCode == 401 {
+            if isRetry {
+                if keychain.authToken == token {
+                    try keychain.clearAllAuthData()
+                }
+                throw APIError.unauthorized
+            }
             do {
                 try await refreshAccessToken(after: token)
                 return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: true)
