@@ -214,9 +214,12 @@ final class EndpointSecurityTests: XCTestCase {
 
         await secondCallerJoined.wait()
         await allowRefreshToFinish.open()
-        XCTAssertEqual(try await first.value, "fresh-token")
-        XCTAssertEqual(try await second.value, "fresh-token")
-        XCTAssertEqual(await counter.value, 1)
+        let firstToken = try await first.value
+        let secondToken = try await second.value
+        let refreshInvocations = await counter.value
+        XCTAssertEqual(firstToken, "fresh-token")
+        XCTAssertEqual(secondToken, "fresh-token")
+        XCTAssertEqual(refreshInvocations, 1)
     }
 }
 
