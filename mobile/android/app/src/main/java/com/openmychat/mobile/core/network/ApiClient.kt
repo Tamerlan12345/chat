@@ -452,6 +452,9 @@ class ApiClient(
         }
 
         if (code == 401) {
+            // A protected request reached the server and the session was rejected.
+            // Clear local credentials so the navigation guard can return to sign-in.
+            sessionManager.clearSession()
             throw UnauthorizedException(errorMessage)
         }
 
