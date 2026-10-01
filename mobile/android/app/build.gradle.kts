@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.androidx.security.crypto)
+    implementation("com.google.errorprone:error_prone_annotations:2.18.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
