@@ -21,14 +21,14 @@ public struct MainTabView: View {
             // Вкладка 1: Чаты
             ChatListView()
                 .tabItem {
-                    Label("Чаты", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("Сообщения", systemImage: "bubble.left.and.bubble.right.fill")
                 }
                 .badge(totalChatUnread > 0 ? "\(totalChatUnread)" : nil)
             
             // Вкладка 2: Корпоративные распоряжения
             AnnouncementsView()
                 .tabItem {
-                    Label("Распоряжения", systemImage: "megaphone.fill")
+                    Label("Объявления", systemImage: "megaphone.fill")
                 }
                 .badge(unconfirmedAnnouncementsCount > 0 ? "\(unconfirmedAnnouncementsCount)" : nil)
             

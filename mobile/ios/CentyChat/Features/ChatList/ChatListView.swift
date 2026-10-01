@@ -31,6 +31,14 @@ public struct ChatListView: View {
         appState.channels.reduce(0) { $0 + $1.unreadCount }
     }
     
+    private var directTabTitle: String {
+        totalDirectUnread > 0 ? "Личные (\(totalDirectUnread))" : "Личные"
+    }
+
+    private var channelsTabTitle: String {
+        totalChannelUnread > 0 ? "Каналы (\(totalChannelUnread))" : "Каналы"
+    }
+
     private var filteredConversations: [DirectConversation] {
         if searchText.isEmpty {
             return appState.directConversations
@@ -56,27 +64,14 @@ public struct ChatListView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Переключатель вкладок Личные / Каналы
-                Picker("Категория", selection: $selectedTab) {
-                    HStack {
-                        Text("Личные")
-                        if totalDirectUnread > 0 {
-                            Text("(\(totalDirectUnread))")
-                        }
-                    }
-                    .tag(ChatListTab.direct)
-                    
-                    HStack {
-                        Text("Каналы")
-                        if totalChannelUnread > 0 {
-                            Text("(\(totalChannelUnread))")
-                        }
-                    }
-                    .tag(ChatListTab.channels)
+                Picker("Раздел", selection: $selectedTab) {
+                    Text(directTabTitle).tag(ChatListTab.direct)
+                    Text(channelsTabTitle).tag(ChatListTab.channels)
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .background(Color(uiColor: .systemBackground))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(CentyColors.navigationSurface)
                 
                 // Списки бесед
                 if selectedTab == .direct {
@@ -85,12 +80,23 @@ public struct ChatListView: View {
                     channelsList
                 }
             }
-            .navigationTitle("Чаты")
+            .navigationTitle("CentyChat")
+            .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Поиск по переписке и сотрудникам")
             .refreshable {
                 await appState.loadAllData()
             }
+            .toolbarBackground(CentyColors.navigationSurface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Task { await appState.loadAllData() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Обновить список")
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         if selectedTab == .direct {
@@ -99,8 +105,9 @@ public struct ChatListView: View {
                             showNewChannelSheet = true
                         }
                     }) {
-                        Image(systemName: selectedTab == .direct ? "square.and.pencil" : "plus.bubble.fill")
+                        Image(systemName: selectedTab == .direct ? "square.and.pencil" : "plus")
                     }
+                    .accessibilityLabel(selectedTab == .direct ? "Новый диалог" : "Новый канал")
                 }
             }
             .sheet(isPresented: $showNewChatSheet) {
@@ -134,10 +141,14 @@ public struct ChatListView: View {
                     )) {
                         ConversationRowView(conversation: conv)
                     }
+                    .listRowBackground(CentyColors.cardBackground)
+                    .listRowSeparatorTint(CentyColors.rowSeparator)
                 }
             }
         }
-        .listStyle(.plain)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(CentyColors.chatBackground)
     }
     
     // MARK: - Channels List
@@ -162,10 +173,14 @@ public struct ChatListView: View {
                     )) {
                         ChannelRowView(channel: channel)
                     }
+                    .listRowBackground(CentyColors.cardBackground)
+                    .listRowSeparatorTint(CentyColors.rowSeparator)
                 }
             }
         }
-        .listStyle(.plain)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(CentyColors.chatBackground)
     }
     
     // MARK: - New Direct Chat Sheet (Colleagues Directory)
