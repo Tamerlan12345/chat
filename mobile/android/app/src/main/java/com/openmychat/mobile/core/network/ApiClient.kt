@@ -32,33 +32,10 @@ class ApiClient(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val originalRequest = chain.request()
-                val token = sessionManager.token
-
-                val requestBuilder = originalRequest.newBuilder()
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "CentyChat-Android/1.0.0")
-
-                if (
-                    !token.isNullOrBlank() &&
-                    originalRequest.header("Authorization") == null &&
-                    ServerEndpointPolicy.canSendBearerCredentials(originalRequest.url)
-                ) {
-                    requestBuilder.header("Authorization", "Bearer $token")
-                }
-
-                val response = chain.proceed(requestBuilder.build())
-
-                if (response.code == 403) {
-                    val peekBody = response.peekBody(4096).string()
-                    if (peekBody.contains("MUST_CHANGE_PASSWORD")) {
-                        sessionManager.mustChangePassword = true
-                    }
-                }
-
-                response
-            }
+            .addInterceptor(BearerCredentialsInterceptor(
+                tokenProvider = { sessionManager.token },
+                markMustChangePassword = { sessionManager.mustChangePassword = true }
+            ))
             .authenticator(object : Authenticator {
                 override fun authenticate(route: Route?, response: Response): Request? {
                     val path = response.request.url.encodedPath
@@ -119,8 +96,7 @@ class ApiClient(
 
             unauthenticatedClient.newCall(refreshRequest).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val responseBody = response.body?.string().orEmpty()
-                    if (RefreshFailurePolicy.shouldClearSession(response.code, refreshFailureCode(responseBody))) {
+                    if (RefreshFailurePolicy.shouldClearSession(response.code)) {
                         sessionManager.clearSession()
                     }
                     return null
@@ -133,13 +109,6 @@ class ApiClient(
         }
     }
 
-    private fun refreshFailureCode(responseBody: String): String? = runCatching {
-        json.parseToJsonElement(responseBody)
-            .jsonObject["code"]
-            ?.jsonPrimitive
-            ?.content
-    }.getOrNull()
-
     private fun getBaseUrl(): String = sessionManager.serverUrl.removeSuffix("/")
 
     private fun checkProactiveRefresh() {
@@ -151,10 +120,14 @@ class ApiClient(
                 val element = json.parseToJsonElement(payloadJson).jsonObject
                 val exp = element["exp"]?.jsonPrimitive?.longOrNull ?: return
                 val nowSeconds = System.currentTimeMillis() / 1000
-                // Refresh if expiring within 30 minutes (1800 seconds)
-                if (exp - nowSeconds in 1..1800) {
-                    // Trigger asynchronous background refresh
-                }
+                refreshCoordinator.refreshIfExpiring(
+                    requestToken = token,
+                    expiresAtEpochSeconds = exp,
+                    nowEpochSeconds = nowSeconds,
+                    currentToken = { sessionManager.token },
+                    refresh = ::refreshTokenForAuthenticator,
+                    updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
+                )
             }
         } catch (_: Exception) {}
     }
