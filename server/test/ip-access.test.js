@@ -114,3 +114,39 @@ test('маршруты /updates/* закрыты ALLOWED_CLIENT_IPS и стоя�
     delete process.env.ALLOWED_CLIENT_IPS;
   }
 });
+
+test('GET /api/health mirrors /health while the server is starting', async () => {
+  const http = require('node:http');
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const [root, alias] = await Promise.all([
+      fetch(base + '/health'),
+      fetch(base + '/api/health')
+    ]);
+
+    assert.strictEqual(root.status, 503);
+    assert.strictEqual(alias.status, root.status);
+    assert.deepStrictEqual(await alias.json(), await root.json());
+
+    for (const name of [
+      'cache-control',
+      'content-security-policy',
+      'cross-origin-opener-policy',
+      'cross-origin-resource-policy',
+      'origin-agent-cluster',
+      'permissions-policy',
+      'referrer-policy',
+      'x-content-type-options',
+      'x-frame-options',
+      'x-permitted-cross-domain-policies'
+    ]) {
+      assert.strictEqual(alias.headers.get(name), root.headers.get(name), name);
+    }
+  } finally {
+    server.close();
+  }
+});

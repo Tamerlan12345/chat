@@ -98,7 +98,7 @@ app.use((req, res, next) => {
   // кэш не должны их сохранять. Путь сравнивается в нижнем регистре:
   // маршрутизация Express нечувствительна к регистру, и «/API/…» доходил бы
   // до тех же обработчиков, но мимо no-store (проверка раунда 4, ПР-I1).
-  if (req.path.toLowerCase().startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  if (req.path.toLowerCase().startsWith('/api/') && req.path.toLowerCase() !== '/api/health') res.setHeader('Cache-Control', 'no-store');
   // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
   // и не пойдут по http даже по подменённой ссылке.
   if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
@@ -125,7 +125,7 @@ app.use((req, res, next) => {
   // address is shown deliberately: without it the employee cannot tell the
   // administrator what to add, and it is their own address, not a secret.
   const wantsJson =
-    req.path.startsWith('/api') ||
+    (req.path !== '/api/health' && req.path.startsWith('/api')) ||
     (req.get('accept') || '').includes('application/json');
 
   if (wantsJson) {
@@ -138,7 +138,7 @@ app.use((req, res, next) => {
 // запрос упёрся бы в невнятную ошибку внутри сервиса — честнее ответить, что
 // сервер ещё запускается.
 app.use((req, res, next) => {
-  if (isReady() || req.path === '/health') return next();
+  if (isReady() || req.path === '/health' || req.path === '/api/health') return next();
   res.status(503).json({ error: 'Сервер запускается, повторите через несколько секунд' });
 });
 
@@ -157,7 +157,7 @@ app.use((req, res, next) => {
 // /api/settings/departments НЕ исключён: он делает запрос к базе (в отличие от
 // settings/info и /health, отвечающих из памяти), поэтому остаётся под
 // потолком; сам ответ вдобавок кэшируется на 30 с (проверка раунда 4, M6).
-const ANON_CEILING_EXEMPT = new Set(['/health', '/api/settings/info']);
+const ANON_CEILING_EXEMPT = new Set(['/health', '/api/health', '/api/settings/info']);
 app.use((req, res, next) => {
   const limit = config.ANON_RATE_LIMIT_PER_MINUTE;
   if (!limit) return next();
@@ -218,7 +218,7 @@ app.use('/api', apiRouter);
 // о развёртывании, а сюда достаёт кто угодно в разрешённой сети, ещё до
 // входа (план 3.6, аудит, находка №18). Подробности отдаются только с
 // действующим токеном супер-администратора.
-app.get('/health', async (req, res) => {
+async function healthCheck(req, res) {
   const ready = isReady();
   if (!ready) {
     // Хранилище ещё поднимается — проверять токен не на чем, а «starting»
@@ -246,7 +246,10 @@ app.get('/health', async (req, res) => {
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString()
   });
-});
+}
+
+app.get('/health', healthCheck);
+app.get('/api/health', healthCheck);
 
 // Serve frontend if built — but only to the actual desktop app, not to
 // someone who just typed the server's address into a browser. The only
