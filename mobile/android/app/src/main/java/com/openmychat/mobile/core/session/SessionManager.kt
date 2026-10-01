@@ -236,8 +236,8 @@ class SessionManager internal constructor(
         _mustChangePasswordFlow.value = user.mustChangePassword
     }
 
-    fun clearSession() {
-        editSecureStorage {
+    fun clearSession(): Boolean {
+        val cleared = editSecureStorage {
             remove(KEY_TOKEN)
             remove(KEY_CURRENT_USER)
             remove(KEY_MUST_CHANGE_PASSWORD)
@@ -245,6 +245,7 @@ class SessionManager internal constructor(
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
+        return cleared
     }
 
     companion object {

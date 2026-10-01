@@ -50,7 +50,12 @@ object ServerEndpointPolicy {
         ValidatedEndpoint(apiUrl, webSocketUrl, secure)
     }
 
-    fun canSendBearerCredentials(url: HttpUrl): Boolean = url.isHttps
+    fun canSendBearerCredentials(url: HttpUrl, trustedApiBaseUrl: HttpUrl?): Boolean {
+        if (!url.isHttps || trustedApiBaseUrl?.isHttps != true) return false
+
+        return url.host.equals(trustedApiBaseUrl.host, ignoreCase = true) &&
+            url.port == trustedApiBaseUrl.port
+    }
 
     private fun isLocalDebugHost(host: String): Boolean = host.equals("localhost", ignoreCase = true) ||
         host == "127.0.0.1" || host == "::1" || host == "10.0.2.2" || host == "10.0.3.2"

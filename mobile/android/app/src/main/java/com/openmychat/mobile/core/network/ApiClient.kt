@@ -1,6 +1,7 @@
 package com.openmychat.mobile.core.network
 
 import android.util.Base64
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +17,8 @@ import java.util.concurrent.TimeUnit
 
 class ApiClient(
     private val sessionManager: SessionManager,
-    private val okHttpClient: OkHttpClient? = null
+    private val okHttpClient: OkHttpClient? = null,
+    private val verificationHttpClient: OkHttpClient? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -34,6 +36,7 @@ class ApiClient(
             .writeTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(BearerCredentialsInterceptor(
                 tokenProvider = { sessionManager.token },
+                trustedApiBaseUrlProvider = ::trustedApiBaseUrl,
                 markMustChangePassword = { sessionManager.mustChangePassword = true }
             ))
             .authenticator(object : Authenticator {
@@ -47,7 +50,7 @@ class ApiClient(
                         return null
                     }
 
-                    if (!ServerEndpointPolicy.canSendBearerCredentials(response.request.url)) return null
+                    if (!canSendCurrentSessionCredentials(response.request.url)) return null
 
                     val requestToken = response.request.header("Authorization")
                         ?.removePrefix("Bearer ")
@@ -67,6 +70,20 @@ class ApiClient(
             .build()
     }
 
+    private val verificationClient: OkHttpClient by lazy {
+        verificationHttpClient ?: OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun trustedApiBaseUrl(): HttpUrl? = sessionManager.validateServerEndpoint(sessionManager.serverUrl)
+        .getOrNull()?.apiBaseUrl?.toHttpUrlOrNull()
+
+    private fun canSendCurrentSessionCredentials(url: HttpUrl): Boolean =
+        ServerEndpointPolicy.canSendBearerCredentials(url, trustedApiBaseUrl())
+
     private fun responseCount(response: Response): Int {
         var result = 1
         var prior = response.priorResponse
@@ -79,7 +96,7 @@ class ApiClient(
 
     private fun refreshTokenForAuthenticator(currentToken: String): String? {
         val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return null
-        if (!ServerEndpointPolicy.canSendBearerCredentials(refreshUrl)) return null
+        if (!canSendCurrentSessionCredentials(refreshUrl)) return null
 
         return try {
             val refreshRequest = Request.Builder()
@@ -141,6 +158,15 @@ class ApiClient(
         executeRequest(request)
     }
 
+    suspend fun checkHealthAt(endpoint: ValidatedEndpoint): HealthStatus = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${endpoint.apiBaseUrl}/health")
+            .get()
+            .build()
+
+        executeRequest(request, verificationClient)
+    }
+
     suspend fun knock(request: KnockRequest): KnockResponse = withContext(Dispatchers.IO) {
         val body = json.encodeToString(request).toRequestBody(jsonMediaType)
         val httpRequest = Request.Builder()
@@ -149,6 +175,16 @@ class ApiClient(
             .build()
 
         executeRequest(httpRequest)
+    }
+
+    suspend fun knockAt(endpoint: ValidatedEndpoint, request: KnockRequest): KnockResponse = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(request).toRequestBody(jsonMediaType)
+        val httpRequest = Request.Builder()
+            .url("${endpoint.apiBaseUrl}/auth/knock")
+            .post(body)
+            .build()
+
+        executeRequest(httpRequest, verificationClient)
     }
 
     suspend fun claimDevice(request: DeviceClaimRequest): DeviceClaimResponse = withContext(Dispatchers.IO) {
@@ -202,16 +238,20 @@ class ApiClient(
     }
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        try {
-            val httpRequest = Request.Builder()
-                .url("${getBaseUrl()}/auth/logout")
-                .post("{}".toRequestBody(jsonMediaType))
-                .build()
-
-            executeRequestNoContent(httpRequest)
-        } finally {
-            sessionManager.clearSession()
+        val tokenForRemoteLogout = sessionManager.token
+        if (!sessionManager.clearSession()) {
+            throw SecureStorageUnavailableException()
         }
+
+        if (tokenForRemoteLogout.isNullOrBlank()) return@withContext
+
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/logout")
+            .header("Authorization", "Bearer $tokenForRemoteLogout")
+            .post("{}".toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
     }
 
     suspend fun getMe(): User = withContext(Dispatchers.IO) {
@@ -353,9 +393,12 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    private inline fun <reified T> executeRequest(request: Request): T {
+    private inline fun <reified T> executeRequest(
+        request: Request,
+        requestClient: OkHttpClient = client
+    ): T {
         val response = try {
-            client.newCall(request).execute()
+            requestClient.newCall(request).execute()
         } catch (e: IOException) {
             throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
         }

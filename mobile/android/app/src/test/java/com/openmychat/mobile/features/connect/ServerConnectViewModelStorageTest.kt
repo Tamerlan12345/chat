@@ -23,7 +23,8 @@ class ServerConnectViewModelStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false)
-            val viewModel = ServerConnectViewModel(ApiClient(sessionManager, connectedServerClient()), sessionManager)
+            val verificationClient = connectedServerClient()
+            val viewModel = ServerConnectViewModel(ApiClient(sessionManager, verificationHttpClient = verificationClient), sessionManager)
             var navigationRequested = false
 
             viewModel.updateServerUrl("https://chat.example")

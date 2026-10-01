@@ -38,6 +38,7 @@ fun ProfileScreen(
     val customStatusInput by viewModel.customStatusInput.collectAsState()
     val wakeCooldown by viewModel.wakeCooldown.collectAsState()
     val isSaving by viewModel.isSaving.collectAsState()
+    val logoutError by viewModel.logoutError.collectAsState()
 
     var showLogoutDialog by remember { mutableStateOf(false) }
     var wakeTargetInput by remember { mutableStateOf("") }
@@ -264,6 +265,15 @@ fun ProfileScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            logoutError?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
             // Logout Button
             OutlinedButton(

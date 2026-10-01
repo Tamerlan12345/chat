@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.WebSocketClient
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.UpdateProfileRequest
 import com.openmychat.mobile.data.model.User
@@ -32,6 +33,9 @@ class ProfileViewModel(
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    private val _logoutError = MutableStateFlow<String?>(null)
+    val logoutError: StateFlow<String?> = _logoutError.asStateFlow()
 
     private var cooldownJob: Job? = null
 
@@ -109,10 +113,17 @@ class ProfileViewModel(
 
     fun logout(onLoggedOut: () -> Unit) {
         viewModelScope.launch {
+            _logoutError.value = null
             try {
                 apiClient.logout()
+            } catch (error: SecureStorageUnavailableException) {
+                _logoutError.value = error.message ?: "Secure storage is unavailable"
+                return@launch
             } catch (_: Exception) {
-                sessionManager.clearSession()
+                if (!sessionManager.clearSession()) {
+                    _logoutError.value = "Secure storage is unavailable"
+                    return@launch
+                }
             }
             webSocketClient.disconnect()
             onLoggedOut()

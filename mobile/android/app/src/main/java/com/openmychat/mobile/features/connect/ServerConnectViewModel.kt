@@ -40,15 +40,15 @@ class ServerConnectViewModel(
             try {
                 val endpoint = sessionManager.validateServerEndpoint(_serverUrl.value)
                     .getOrElse { throw it }
-                sessionManager.useServerEndpointForVerification(endpoint)
-                val health = apiClient.checkHealth()
+                val health = apiClient.checkHealthAt(endpoint)
 
                 // Try device knock
                 val knockResp = try {
-                    apiClient.knock(
+                    apiClient.knockAt(
+                        endpoint,
                         KnockRequest(
                             deviceId = sessionManager.deviceId,
-                            deviceSecret = sessionManager.deviceSecret,
+                            deviceSecret = null,
                             deviceName = "Android Device"
                         )
                     )
