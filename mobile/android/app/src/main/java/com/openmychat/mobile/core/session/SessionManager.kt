@@ -15,6 +15,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
+enum class SessionStorageState {
+    AVAILABLE,
+    UNAVAILABLE
+}
+
 class SessionManager(private val context: Context) {
 
     private val json = Json {
@@ -22,7 +27,10 @@ class SessionManager(private val context: Context) {
         encodeDefaults = true
     }
 
-    private val prefs: SharedPreferences by lazy {
+    private val _storageState = MutableStateFlow(SessionStorageState.AVAILABLE)
+    val storageState: StateFlow<SessionStorageState> = _storageState.asStateFlow()
+
+    private val prefs: SharedPreferences? by lazy {
         try {
             val masterKey = MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -35,9 +43,9 @@ class SessionManager(private val context: Context) {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-        } catch (e: Exception) {
-            // Fallback for Robolectric / unit testing or unsupported devices
-            context.getSharedPreferences("centychat_fallback_session", Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            markStorageUnavailable()
+            null
         }
     }
 
@@ -54,11 +62,11 @@ class SessionManager(private val context: Context) {
     val serverUrlFlow: StateFlow<String> = _serverUrlFlow.asStateFlow()
 
     init {
-        _tokenFlow.value = prefs.getString(KEY_TOKEN, null)
-        _mustChangePasswordFlow.value = prefs.getBoolean(KEY_MUST_CHANGE_PASSWORD, false)
+        _tokenFlow.value = readString(KEY_TOKEN)
+        _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
         restorePersistedServerEndpoint()
 
-        val userJson = prefs.getString(KEY_CURRENT_USER, null)
+        val userJson = readString(KEY_CURRENT_USER)
         if (!userJson.isNullOrBlank()) {
             try {
                 _currentUserFlow.value = json.decodeFromString<User>(userJson)
@@ -67,6 +75,50 @@ class SessionManager(private val context: Context) {
             }
         }
     }
+
+    private fun markStorageUnavailable() {
+        _storageState.value = SessionStorageState.UNAVAILABLE
+        _tokenFlow.value = null
+        _currentUserFlow.value = null
+        _mustChangePasswordFlow.value = false
+    }
+
+    private fun readString(key: String, defaultValue: String? = null): String? =
+        try {
+            prefs?.getString(key, defaultValue) ?: defaultValue
+        } catch (_: Exception) {
+            markStorageUnavailable()
+            defaultValue
+        }
+
+    private fun readBoolean(key: String, defaultValue: Boolean): Boolean =
+        try {
+            prefs?.getBoolean(key, defaultValue) ?: defaultValue
+        } catch (_: Exception) {
+            markStorageUnavailable()
+            defaultValue
+        }
+
+    private fun editSecureStorage(change: SharedPreferences.Editor.() -> Unit): Boolean {
+        val securePrefs = prefs ?: return false
+        return try {
+            val editor = securePrefs.edit()
+            editor.change()
+            editor.apply()
+            true
+        } catch (_: Exception) {
+            markStorageUnavailable()
+            false
+        }
+    }
+
+    private fun writeString(key: String, value: String?): Boolean =
+        editSecureStorage {
+            if (value == null) remove(key) else putString(key, value)
+        }
+
+    private fun writeBoolean(key: String, value: Boolean): Boolean =
+        editSecureStorage { putBoolean(key, value) }
 
     var serverUrl: String
         get() = _serverUrlFlow.value
@@ -85,15 +137,15 @@ class SessionManager(private val context: Context) {
     }
 
     fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
-        prefs.edit().putString(KEY_SERVER_URL, endpoint.apiBaseUrl).apply()
+        writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)
         _serverUrlFlow.value = endpoint.apiBaseUrl
     }
 
     fun restorePersistedServerEndpoint() {
-        val stored = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        val stored = readString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
         val endpoint = validateServerEndpoint(stored).getOrNull()
         if (endpoint == null && stored.isNotBlank()) {
-            prefs.edit().remove(KEY_SERVER_URL).apply()
+            writeString(KEY_SERVER_URL, null)
         }
         _serverUrlFlow.value = endpoint?.apiBaseUrl ?: DEFAULT_SERVER_URL
     }
@@ -103,40 +155,44 @@ class SessionManager(private val context: Context) {
             ?: error("A verified server endpoint is required before opening a WebSocket")
 
     var token: String?
-        get() = prefs.getString(KEY_TOKEN, null)
+        get() = readString(KEY_TOKEN)
         set(value) {
-            prefs.edit().putString(KEY_TOKEN, value).apply()
-            _tokenFlow.value = value
+            if (writeString(KEY_TOKEN, value)) {
+                _tokenFlow.value = value
+            }
         }
 
     val deviceId: String
         get() {
-            var id = prefs.getString(KEY_DEVICE_ID, null)
+            var id = readString(KEY_DEVICE_ID)
             if (id.isNullOrBlank()) {
                 id = UUID.randomUUID().toString()
-                prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+                writeString(KEY_DEVICE_ID, id)
             }
             return id
         }
 
     var deviceSecret: String?
-        get() = prefs.getString(KEY_DEVICE_SECRET, null)
+        get() = readString(KEY_DEVICE_SECRET)
         set(value) {
-            prefs.edit().putString(KEY_DEVICE_SECRET, value).apply()
+            writeString(KEY_DEVICE_SECRET, value)
         }
 
     var currentUser: User?
         get() = _currentUserFlow.value
         set(value) {
-            _currentUserFlow.value = value
             if (value != null) {
                 val encoded = json.encodeToString(value)
-                prefs.edit().putString(KEY_CURRENT_USER, encoded).apply()
-                if (value.mustChangePassword) {
-                    updateMustChangePassword(true)
+                if (writeString(KEY_CURRENT_USER, encoded)) {
+                    _currentUserFlow.value = value
+                    if (value.mustChangePassword) {
+                        updateMustChangePassword(true)
+                    }
                 }
             } else {
-                prefs.edit().remove(KEY_CURRENT_USER).apply()
+                if (writeString(KEY_CURRENT_USER, null)) {
+                    _currentUserFlow.value = null
+                }
             }
         }
 
@@ -147,38 +203,43 @@ class SessionManager(private val context: Context) {
         }
 
     private fun updateMustChangePassword(mustChange: Boolean) {
-        prefs.edit().putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange).apply()
-        _mustChangePasswordFlow.value = mustChange
+        if (writeBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange)) {
+            _mustChangePasswordFlow.value = mustChange
+        }
     }
 
     var messageEditWindowMinutes: String
-        get() = prefs.getString(KEY_MSG_EDIT_WINDOW, "60") ?: "60"
+        get() = readString(KEY_MSG_EDIT_WINDOW, "60") ?: "60"
         set(value) {
-            prefs.edit().putString(KEY_MSG_EDIT_WINDOW, value).apply()
+            writeString(KEY_MSG_EDIT_WINDOW, value)
         }
 
     var messageDeleteWindowMinutes: String
-        get() = prefs.getString(KEY_MSG_DELETE_WINDOW, "60") ?: "60"
+        get() = readString(KEY_MSG_DELETE_WINDOW, "60") ?: "60"
         set(value) {
-            prefs.edit().putString(KEY_MSG_DELETE_WINDOW, value).apply()
+            writeString(KEY_MSG_DELETE_WINDOW, value)
         }
 
     fun saveAuthSuccess(user: User, token: String) {
-        this.token = token
-        this.currentUser = user
-        if (user.mustChangePassword) {
-            updateMustChangePassword(true)
-        } else {
-            updateMustChangePassword(false)
-        }
+        val encodedUser = json.encodeToString(user)
+        if (!editSecureStorage {
+                putString(KEY_TOKEN, token)
+                putString(KEY_CURRENT_USER, encodedUser)
+                putBoolean(KEY_MUST_CHANGE_PASSWORD, user.mustChangePassword)
+            }
+        ) return
+
+        _tokenFlow.value = token
+        _currentUserFlow.value = user
+        _mustChangePasswordFlow.value = user.mustChangePassword
     }
 
     fun clearSession() {
-        prefs.edit()
-            .remove(KEY_TOKEN)
-            .remove(KEY_CURRENT_USER)
-            .remove(KEY_MUST_CHANGE_PASSWORD)
-            .apply()
+        editSecureStorage {
+            remove(KEY_TOKEN)
+            remove(KEY_CURRENT_USER)
+            remove(KEY_MUST_CHANGE_PASSWORD)
+        }
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
