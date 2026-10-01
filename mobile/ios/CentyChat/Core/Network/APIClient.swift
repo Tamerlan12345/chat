@@ -373,6 +373,15 @@ public actor APIClient {
     
     /// Загрузка файла/вложения (multipart/form-data)
     public func uploadFile(fileData: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
+        try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: false)
+    }
+
+    private func performUploadFile(
+        fileData: Data,
+        fileName: String,
+        mimeType: String,
+        isRetry: Bool
+    ) async throws -> FileUploadResponse {
         let serverURL = try configuredServerURL()
         let url = try apiURL(serverURL: serverURL, endpoint: "/files/upload")
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
@@ -399,6 +408,17 @@ public actor APIClient {
         let (data, response) = try await session.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
+        }
+        if httpResponse.statusCode == 401 && !isRetry {
+            do {
+                try await refreshAccessToken(after: token)
+                return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: true)
+            } catch APIError.unauthorized {
+                if KeychainManager.shared.authToken == token {
+                    KeychainManager.shared.clearAllAuthData()
+                }
+                throw APIError.unauthorized
+            }
         }
         guard (200...299).contains(httpResponse.statusCode) else {
             var message = "File upload failed"

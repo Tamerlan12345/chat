@@ -187,19 +187,29 @@ final class EndpointSecurityTests: XCTestCase {
     func testRefreshCoordinatorSharesOneRefreshForSameExpiredToken() async throws {
         let coordinator = TokenRefreshCoordinator()
         let counter = RefreshInvocationCounter()
+        let refreshStarted = AsyncGate()
+        let allowRefreshToFinish = AsyncGate()
 
-        async let first = coordinator.token(for: "expired-token") {
-            await counter.increment()
-            try await Task.sleep(nanoseconds: 100_000_000)
-            return "fresh-token"
+        let first = Task {
+            try await coordinator.token(for: "expired-token") {
+                await counter.increment()
+                await refreshStarted.open()
+                await allowRefreshToFinish.wait()
+                return "fresh-token"
+            }
         }
-        async let second = coordinator.token(for: "expired-token") {
-            await counter.increment()
-            return "unexpected-second-refresh"
+        await refreshStarted.wait()
+
+        let second = Task {
+            try await coordinator.token(for: "expired-token") {
+                await counter.increment()
+                return "unexpected-second-refresh"
+            }
         }
 
-        XCTAssertEqual(try await first, "fresh-token")
-        XCTAssertEqual(try await second, "fresh-token")
+        await allowRefreshToFinish.open()
+        XCTAssertEqual(try await first.value, "fresh-token")
+        XCTAssertEqual(try await second.value, "fresh-token")
         XCTAssertEqual(await counter.value, 1)
     }
 }
@@ -209,5 +219,23 @@ private actor RefreshInvocationCounter {
 
     func increment() {
         value += 1
+    }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        pendingWaiters.forEach { $0.resume() }
     }
 }
