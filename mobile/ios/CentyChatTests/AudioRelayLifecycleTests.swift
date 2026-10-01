@@ -47,6 +47,32 @@ final class AudioRelayLifecycleTests: XCTestCase {
         let startResult = await startTask.value
         XCTAssertEqual(startResult, .cancelled)
         XCTAssertEqual(relay.state, .inactive)
+        XCTAssertNil(backend.lifecycleHandler)
+        XCTAssertEqual(backend.startCount, 0)
+        XCTAssertEqual(backend.stopCount, 1)
+    }
+
+    func testCancellingTaskDuringPermissionRequestLeavesRelayInactive() async {
+        let permissionRequestStarted = expectation(description: "permission request started")
+        let backend = FakeAudioRelayBackend(
+            permission: .undetermined,
+            suspendPermissionRequest: true
+        )
+        backend.onPermissionRequestStarted = { permissionRequestStarted.fulfill() }
+        let relay = AudioCallRelay(targetUserId: 42, backend: backend, sendFrame: { _ in })
+
+        let startTask = Task { @MainActor in
+            await relay.start()
+        }
+        await fulfillment(of: [permissionRequestStarted], timeout: 1)
+
+        startTask.cancel()
+        backend.resolvePermissionRequest(granted: true)
+
+        let startResult = await startTask.value
+        XCTAssertEqual(startResult, .cancelled)
+        XCTAssertEqual(relay.state, .inactive)
+        XCTAssertNil(backend.lifecycleHandler)
         XCTAssertEqual(backend.startCount, 0)
     }
 
@@ -97,12 +123,78 @@ final class AudioRelayLifecycleTests: XCTestCase {
         }
         relay.receive(AudioRelayEngine.DecodedAudioFrame(senderId: 999, samples: frame.samples))
 
-        XCTAssertEqual(backend.scheduledPlayback.count, 10)
+        XCTAssertEqual(backend.scheduledPlayback.count, 9)
         XCTAssertTrue(backend.scheduledPlayback.allSatisfy { $0.samples.count == AudioRelayEngine.samplesPerFrame })
         XCTAssertTrue(backend.scheduledPlayback.allSatisfy {
             $0.time >= 100 + JitterScheduler.targetLeadSeconds &&
             $0.time <= 100 + JitterScheduler.maxLeadSeconds
         })
+    }
+
+    func testRouteChangeDuringInterruptionDoesNotRestartAudio() async {
+        let backend = FakeAudioRelayBackend(permission: .granted)
+        let relay = AudioCallRelay(targetUserId: 42, backend: backend, sendFrame: { _ in })
+
+        let startResult = await relay.start()
+        XCTAssertEqual(startResult, .started)
+        backend.emit(.interruptionBegan)
+        backend.emit(.routeChanged)
+
+        XCTAssertEqual(relay.state, .interrupted)
+        XCTAssertEqual(backend.pauseCount, 1)
+        XCTAssertEqual(backend.routeChangeCount, 0)
+        XCTAssertEqual(backend.resetPlaybackCount, 1)
+        XCTAssertEqual(backend.resumeCount, 0)
+    }
+
+    func testResumeReactivatesAudioSessionBeforeEngine() async {
+        let backend = FakeAudioRelayBackend(permission: .granted)
+        let relay = AudioCallRelay(targetUserId: 42, backend: backend, sendFrame: { _ in })
+
+        let startResult = await relay.start()
+        XCTAssertEqual(startResult, .started)
+        backend.emit(.interruptionBegan)
+        backend.emit(.interruptionEnded(shouldResume: true))
+
+        XCTAssertEqual(relay.state, .active)
+        XCTAssertEqual(Array(backend.lifecycleOperations.suffix(2)), ["reactivateAudioSession", "resume"])
+    }
+
+    func testRouteChangeDiscardsStaleScheduledPlayback() async {
+        let backend = FakeAudioRelayBackend(permission: .granted)
+        let relay = AudioCallRelay(
+            targetUserId: 42,
+            backend: backend,
+            sendFrame: { _ in },
+            now: { 100 }
+        )
+        let frame = AudioRelayEngine.DecodedAudioFrame(
+            senderId: 42,
+            samples: [Float](repeating: 0.25, count: AudioRelayEngine.samplesPerFrame)
+        )
+
+        let startResult = await relay.start()
+        XCTAssertEqual(startResult, .started)
+        relay.receive(frame)
+        relay.receive(frame)
+        XCTAssertEqual(backend.scheduledPlayback.count, 1)
+
+        backend.emit(.routeChanged)
+
+        XCTAssertEqual(relay.state, .active)
+        XCTAssertEqual(backend.routeChangeCount, 1)
+        XCTAssertEqual(backend.resetPlaybackCount, 1)
+        XCTAssertTrue(backend.scheduledPlayback.isEmpty)
+    }
+
+    func testNewestFrameQueueDropsOldestFramesAtCapacity() {
+        var queue = BoundedNewestQueue<Int>(capacity: 3)
+
+        for frame in 1...5 {
+            queue.append(frame)
+        }
+
+        XCTAssertEqual(queue.elements, [3, 4, 5])
     }
 
     func testInterruptionAndRouteChangeRecoverOnlyWhenTheSystemAllowsIt() async {
@@ -156,6 +248,7 @@ final class AudioRelayLifecycleTests: XCTestCase {
         XCTAssertEqual(appState.activeCall?.endReason, .micPermissionDenied)
         XCTAssertEqual(backend.startCount, 0)
         XCTAssertNotNil(appState.callAudioError)
+        XCTAssertTrue(appState.callAudioRequiresMicrophonePermission)
     }
 
     private func makeAppState(backend: FakeAudioRelayBackend) -> AppState {
@@ -186,7 +279,9 @@ private final class FakeAudioRelayBackend: AudioRelayBackend {
     private(set) var pauseCount = 0
     private(set) var resumeCount = 0
     private(set) var routeChangeCount = 0
+    private(set) var resetPlaybackCount = 0
     private(set) var scheduledPlayback: [ScheduledPlayback] = []
+    private(set) var lifecycleOperations: [String] = []
 
     init(
         permission: AudioRecordPermission,
@@ -235,10 +330,20 @@ private final class FakeAudioRelayBackend: AudioRelayBackend {
 
     func resume() throws {
         resumeCount += 1
+        lifecycleOperations.append("resume")
+    }
+
+    func reactivateAudioSession() throws {
+        lifecycleOperations.append("reactivateAudioSession")
     }
 
     func handleRouteChange() throws {
         routeChangeCount += 1
+    }
+
+    func resetPlayback() {
+        resetPlaybackCount += 1
+        scheduledPlayback.removeAll()
     }
 
     func schedulePlayback(samples: [Float], at time: TimeInterval) throws {

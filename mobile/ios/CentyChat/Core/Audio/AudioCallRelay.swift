@@ -54,6 +54,38 @@ public enum AudioRelayBackendEvent: Equatable, Sendable {
     case routeChanged
 }
 
+/// Keeps only the most recent elements when a fixed-capacity queue is full.
+struct BoundedNewestQueue<Element> {
+    private var storage: [Element] = []
+
+    let capacity: Int
+
+    init(capacity: Int) {
+        precondition(capacity > 0, "A bounded queue needs positive capacity")
+        self.capacity = capacity
+    }
+
+    var count: Int { storage.count }
+    var isEmpty: Bool { storage.isEmpty }
+    var elements: [Element] { storage }
+
+    mutating func append(_ element: Element) {
+        if storage.count == capacity {
+            storage.removeFirst()
+        }
+        storage.append(element)
+    }
+
+    mutating func popFirst() -> Element? {
+        guard !storage.isEmpty else { return nil }
+        return storage.removeFirst()
+    }
+
+    mutating func removeAll(keepingCapacity: Bool = true) {
+        storage.removeAll(keepingCapacity: keepingCapacity)
+    }
+}
+
 /// The narrow boundary that keeps relay logic testable without microphone hardware.
 @MainActor
 public protocol AudioRelayBackend: AnyObject {
@@ -64,8 +96,10 @@ public protocol AudioRelayBackend: AnyObject {
     func startCapture(_ handler: @escaping ([Float]) -> Void) throws
     func stop()
     func pause()
+    func reactivateAudioSession() throws
     func resume() throws
     func handleRouteChange() throws
+    func resetPlayback()
     func schedulePlayback(samples: [Float], at time: TimeInterval) throws
 }
 
@@ -85,8 +119,12 @@ public final class AudioCallRelay {
     private let now: () -> TimeInterval
     private let jitterScheduler = JitterScheduler()
     private var pendingSamples: [Float] = []
+    private var incomingPlaybackFrames = BoundedNewestQueue<AudioRelayEngine.DecodedAudioFrame>(capacity: 8)
+    private var isIncomingPlaybackPrimed = false
     private var isMuted = false
     private var startAttempt = 0
+
+    private let minimumIncomingFramesBeforePlayback = 2
 
     public init(
         targetUserId: Int64,
@@ -116,11 +154,15 @@ public final class AudioCallRelay {
             return .microphonePermissionDenied
         }
 
-        guard isCurrentStartAttempt(attempt), !Task.isCancelled else {
+        guard isCurrentStartAttempt(attempt) else {
+            return .cancelled
+        }
+        guard !Task.isCancelled else {
+            cancelCurrentStartAttempt(attempt, stoppingBackend: false)
             return .cancelled
         }
 
-        jitterScheduler.reset()
+        resetIncomingPlayback(unschedulingBackend: false)
         pendingSamples.removeAll(keepingCapacity: true)
         backend.lifecycleHandler = { [weak self] event in
             self?.handleBackendEvent(event)
@@ -130,9 +172,11 @@ public final class AudioCallRelay {
             try backend.startCapture { [weak self] samples in
                 self?.capture(samples)
             }
-            guard isCurrentStartAttempt(attempt), !Task.isCancelled else {
-                backend.stop()
-                backend.lifecycleHandler = nil
+            guard isCurrentStartAttempt(attempt) else {
+                return .cancelled
+            }
+            guard !Task.isCancelled else {
+                cancelCurrentStartAttempt(attempt, stoppingBackend: true)
                 return .cancelled
             }
             state = .active
@@ -149,8 +193,8 @@ public final class AudioCallRelay {
     public func stop() {
         startAttempt &+= 1
         backend.lifecycleHandler = nil
+        resetIncomingPlayback(unschedulingBackend: true)
         backend.stop()
-        jitterScheduler.reset()
         pendingSamples.removeAll(keepingCapacity: true)
         state = .inactive
     }
@@ -167,6 +211,16 @@ public final class AudioCallRelay {
             return
         }
 
+        incomingPlaybackFrames.append(frame)
+        guard isIncomingPlaybackPrimed || incomingPlaybackFrames.count >= minimumIncomingFramesBeforePlayback else {
+            return
+        }
+        isIncomingPlaybackPrimed = true
+        scheduleNextIncomingPlayback()
+    }
+
+    private func scheduleNextIncomingPlayback() {
+        guard let frame = incomingPlaybackFrames.popFirst() else { return }
         do {
             let scheduledTime = jitterScheduler.scheduleFrame(currentTime: now())
             try backend.schedulePlayback(samples: frame.samples, at: scheduledTime)
@@ -199,11 +253,21 @@ public final class AudioCallRelay {
         }
     }
 
+    private func resetIncomingPlayback(unschedulingBackend: Bool) {
+        incomingPlaybackFrames.removeAll(keepingCapacity: true)
+        isIncomingPlaybackPrimed = false
+        jitterScheduler.reset()
+        if unschedulingBackend {
+            backend.resetPlayback()
+        }
+    }
+
     private func handleBackendEvent(_ event: AudioRelayBackendEvent) {
         switch event {
         case .interruptionBegan:
             guard state == .active else { return }
             backend.pause()
+            resetIncomingPlayback(unschedulingBackend: true)
             state = .interrupted
 
         case .interruptionEnded(let shouldResume):
@@ -214,6 +278,7 @@ public final class AudioCallRelay {
                 return
             }
             do {
+                try backend.reactivateAudioSession()
                 try backend.resume()
                 state = .active
             } catch {
@@ -221,10 +286,10 @@ public final class AudioCallRelay {
             }
 
         case .routeChanged:
-            guard state == .active || state == .interrupted else { return }
+            guard state == .active else { return }
             do {
                 try backend.handleRouteChange()
-                jitterScheduler.reset()
+                resetIncomingPlayback(unschedulingBackend: true)
             } catch {
                 fail(.unavailable)
             }
@@ -235,11 +300,22 @@ public final class AudioCallRelay {
         startAttempt == attempt && state == .starting
     }
 
+    private func cancelCurrentStartAttempt(_ attempt: Int, stoppingBackend: Bool) {
+        guard isCurrentStartAttempt(attempt) else { return }
+        if stoppingBackend {
+            backend.stop()
+        }
+        backend.lifecycleHandler = nil
+        resetIncomingPlayback(unschedulingBackend: false)
+        pendingSamples.removeAll(keepingCapacity: true)
+        state = .inactive
+    }
+
     private func fail(_ failure: AudioRelayFailure) {
         startAttempt &+= 1
-        backend.stop()
         backend.lifecycleHandler = nil
-        jitterScheduler.reset()
+        resetIncomingPlayback(unschedulingBackend: true)
+        backend.stop()
         pendingSamples.removeAll(keepingCapacity: true)
         state = .failed(failure)
     }
@@ -275,6 +351,14 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     private var captureHandler: (([Float]) -> Void)?
     private var notificationTokens: [NSObjectProtocol] = []
     private var isGraphAttached = false
+    private var queuedPlayback = BoundedNewestQueue<QueuedPlayback>(capacity: 6)
+    private var isPlaybackInFlight = false
+    private var playbackGeneration = 0
+
+    private struct QueuedPlayback {
+        let buffer: AVAudioPCMBuffer
+        let time: TimeInterval
+    }
 
     public override init() {
         super.init()
@@ -321,8 +405,8 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
 
     public func stop() {
         engine.inputNode.removeTap(onBus: 0)
-        player.stop()
         engine.stop()
+        resetPlayback()
         captureHandler = nil
         notificationTokens.forEach(NotificationCenter.default.removeObserver)
         notificationTokens.removeAll()
@@ -332,6 +416,10 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     public func pause() {
         player.pause()
         engine.pause()
+    }
+
+    public func reactivateAudioSession() throws {
+        try AudioSessionManager.shared.activateForCall()
     }
 
     public func resume() throws {
@@ -349,6 +437,38 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         player.play()
     }
 
+    public func resetPlayback() {
+        playbackGeneration &+= 1
+        queuedPlayback.removeAll(keepingCapacity: true)
+        isPlaybackInFlight = false
+        player.stop()
+        if engine.isRunning {
+            player.play()
+        }
+    }
+
+    private func scheduleNextPlaybackIfNeeded() {
+        guard !isPlaybackInFlight,
+              let next = queuedPlayback.popFirst() else {
+            return
+        }
+        isPlaybackInFlight = true
+        let generation = playbackGeneration
+        let delay = max(0, next.time - CACurrentMediaTime())
+        let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay)
+        player.scheduleBuffer(next.buffer, at: AVAudioTime(hostTime: hostTime), options: []) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finishPlayback(generation: generation)
+            }
+        }
+    }
+
+    private func finishPlayback(generation: Int) {
+        guard playbackGeneration == generation else { return }
+        isPlaybackInFlight = false
+        scheduleNextPlaybackIfNeeded()
+    }
+
     public func schedulePlayback(samples: [Float], at time: TimeInterval) throws {
         guard samples.count == AudioRelayEngine.samplesPerFrame,
               let buffer = AVAudioPCMBuffer(
@@ -364,9 +484,8 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
 
-        let delay = max(0, time - CACurrentMediaTime())
-        let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay)
-        player.scheduleBuffer(buffer, at: AVAudioTime(hostTime: hostTime), options: [])
+        queuedPlayback.append(QueuedPlayback(buffer: buffer, time: time))
+        scheduleNextPlaybackIfNeeded()
     }
 
     private func attachGraphIfNeeded() {
