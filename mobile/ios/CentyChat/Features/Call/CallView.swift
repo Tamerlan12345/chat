@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Полноэкранный интерфейс голосового вызова CentyChat в стиле Apple HIG
 public struct CallView: View {
@@ -51,6 +52,42 @@ public struct CallView: View {
                                 .font(.system(size: 18, weight: .regular))
                                 .foregroundColor(.white.opacity(0.7))
                         }
+                    }
+
+                    if let audioError = appState.callAudioError {
+                        VStack(spacing: 12) {
+                            Text(audioError)
+                                .font(.callout)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.white)
+                                .accessibilityLabel("Audio error: \(audioError)")
+                            if call.state == .active || call.state == .connecting || appState.callAudioRequiresMicrophonePermission {
+                                HStack {
+                                    if call.state == .active || call.state == .connecting {
+                                        Button("Try again") {
+                                            Task { await appState.retryAudioForActiveCall() }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .accessibilityLabel("Retry audio connection")
+                                        .accessibilityHint("Tries to reconnect audio for the current call")
+                                    }
+
+                                    if appState.callAudioRequiresMicrophonePermission {
+                                        Button("Open Settings") {
+                                            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+                                            UIApplication.shared.open(settingsURL)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .tint(.white)
+                                        .accessibilityLabel("Open microphone settings")
+                                        .accessibilityHint("Opens app settings to grant microphone access")
+                                    }
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 16))
+                        .accessibilityElement(children: .contain)
                     }
                     
                     Spacer()

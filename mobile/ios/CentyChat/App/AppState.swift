@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import UIKit
 
 /// Глобальное состояние приложения CentyChat (MV-паттерн с @Observable)
 @Observable
@@ -26,6 +27,11 @@ public final class AppState {
     
     public var activeCall: CallSession? = nil
     private var callTimer: Task<Void, Never>?
+    private var audioRelay: AudioCallRelay?
+    private var incomingAudioTask: Task<Void, Never>?
+    public var callAudioError: String? = nil
+    public var callAudioRequiresMicrophonePermission = false
+    private let audioRelayFactory: (Int64) -> AudioCallRelay
     
     // MARK: - Wake Buzzer & Presence
     
@@ -40,7 +46,19 @@ public final class AppState {
     
     // MARK: - Initialization & Lifecycle
     
-    public init() {}
+    public init(audioRelayFactory: @escaping (Int64) -> AudioCallRelay = { peerId in
+        AudioCallRelay(
+            targetUserId: peerId,
+            backend: AVAudioEngineBackend(),
+            sendFrame: { frame in
+                Task {
+                    await WebSocketClient.shared.sendAudioFrame(frame)
+                }
+            }
+        )
+    }) {
+        self.audioRelayFactory = audioRelayFactory
+    }
     
     public func initialize() async {
         isLoading = true
@@ -99,6 +117,7 @@ public final class AppState {
         
         // 3. Запускаем прослушивание WebSocket событий
         startListeningWebSocketEvents()
+        startListeningIncomingAudio()
     }
     
     // MARK: - Device Knock
@@ -157,6 +176,17 @@ public final class AppState {
             for await event in eventStream {
                 guard let self = self else { break }
                 self.handleWebSocketEvent(event)
+            }
+        }
+    }
+
+    private func startListeningIncomingAudio() {
+        incomingAudioTask?.cancel()
+        incomingAudioTask = Task { [weak self] in
+            let audioStream = await WebSocketClient.shared.incomingAudio
+            for await frame in audioStream {
+                guard !Task.isCancelled else { return }
+                self?.audioRelay?.receive(frame)
             }
         }
     }
@@ -238,11 +268,14 @@ public final class AppState {
             CentyHaptics.warning()
             
         case .callAnswer(let _, let senderId, _):
-            if activeCall?.peerId == senderId {
-                activeCall?.state = .active
-                activeCall?.startedAt = Date()
-                startCallTimer()
-                AudioSessionManager.shared.configureForCall()
+            guard activeCall?.peerId == senderId,
+                  activeCall?.direction == .outgoing,
+                  activeCall?.state == .calling else {
+                return
+            }
+            activeCall?.state = .connecting
+            Task { [weak self] in
+                await self?.activateAcceptedOutgoingCall(for: senderId)
             }
             
         case .callRejected(let _, let senderId, _, let reason):
@@ -394,35 +427,63 @@ public final class AppState {
     // MARK: - Call Control
     
     public func startOutgoingCall(targetUser: PublicUser) async {
-        activeCall = CallSession(
+        guard activeCall == nil else { return }
+        callAudioError = nil
+        callAudioRequiresMicrophonePermission = false
+        let call = CallSession(
             peerId: targetUser.id,
             peerName: targetUser.fullName,
             peerAvatar: targetUser.avatarUrl,
             state: .calling,
             direction: .outgoing
         )
+        activeCall = call
         await WebSocketClient.shared.send(clientMessage: .callOffer(targetUserId: targetUser.id))
-        AudioSessionManager.shared.configureForCall()
         
         // Таймаут вызова 45 секунд
-        Task {
+        Task { [weak self, callID = call.id] in
             try? await Task.sleep(nanoseconds: 45 * 1_000_000_000)
-            if self.activeCall?.state == .calling {
-                self.activeCall?.state = .failed
-                self.activeCall?.endReason = .timeout
-                self.stopCallSession(delay: 2.0)
+            guard let self,
+                  !Task.isCancelled,
+                  self.activeCall?.id == callID,
+                  self.activeCall?.state == .calling else {
+                return
             }
+            self.activeCall?.state = .failed
+            self.activeCall?.endReason = .timeout
+            self.stopCallSession(delay: 2.0)
         }
     }
     
     public func answerIncomingCall() async {
-        guard let call = activeCall, call.direction == .incoming else { return }
+        guard let call = activeCall,
+              call.direction == .incoming,
+              call.state == .ringing else {
+            return
+        }
         activeCall?.state = .connecting
+        let startResult = await prepareAudioRelay(for: call.peerId)
+        guard isConnectingCall(with: call.peerId, direction: .incoming) else {
+            discardAudioRelay(for: call.peerId)
+            return
+        }
+        guard startResult == .started else {
+            guard startResult != .cancelled else { return }
+            await WebSocketClient.shared.send(
+                clientMessage: .callRejected(
+                    targetUserId: call.peerId,
+                    reason: callAudioError ?? "Unable to start call audio"
+                )
+            )
+            finishAudioStartupFailure(for: call.peerId)
+            return
+        }
         await WebSocketClient.shared.send(clientMessage: .callAnswer(targetUserId: call.peerId))
-        AudioSessionManager.shared.configureForCall()
-        activeCall?.state = .active
-        activeCall?.startedAt = Date()
-        startCallTimer()
+        guard isConnectingCall(with: call.peerId, direction: .incoming) else {
+            discardAudioRelay(for: call.peerId)
+            return
+        }
+        activateConnectedCall()
     }
     
     public func rejectIncomingCall(reason: String = "Занят") async {
@@ -437,6 +498,55 @@ public final class AppState {
         stopCallSession(delay: 0)
     }
     
+    func activateAcceptedOutgoingCall(for peerId: Int64) async {
+        guard let call = activeCall,
+              call.peerId == peerId,
+              call.direction == .outgoing,
+              call.state == .calling || call.state == .connecting else {
+            return
+        }
+        activeCall?.state = .connecting
+        let startResult = await prepareAudioRelay(for: peerId)
+        guard isConnectingCall(with: peerId, direction: .outgoing) else {
+            discardAudioRelay(for: peerId)
+            return
+        }
+        guard startResult == .started else {
+            guard startResult != .cancelled else { return }
+            await WebSocketClient.shared.send(
+                clientMessage: .callEnd(
+                    targetUserId: peerId,
+                    reason: callAudioError ?? "Unable to start call audio"
+                )
+            )
+            finishAudioStartupFailure(for: peerId)
+            return
+        }
+        activateConnectedCall()
+    }
+
+    private func activateConnectedCall() {
+        activeCall?.state = .active
+        activeCall?.startedAt = Date()
+        startCallTimer()
+    }
+
+    private func isConnectingCall(with peerId: Int64, direction: CallDirection) -> Bool {
+        activeCall?.peerId == peerId &&
+        activeCall?.direction == direction &&
+        activeCall?.state == .connecting
+    }
+
+    private func finishAudioStartupFailure(for peerId: Int64) {
+        guard activeCall?.peerId == peerId,
+              activeCall?.state == .connecting else {
+            return
+        }
+        activeCall?.state = .failed
+        activeCall?.endReason = callAudioRequiresMicrophonePermission ? .micPermissionDenied : .connectionLost
+        stopCallSession(delay: 2.0, retainingAudioError: true)
+    }
+
     private func startCallTimer() {
         callTimer?.cancel()
         callTimer = Task {
@@ -448,15 +558,28 @@ public final class AppState {
         }
     }
     
-    public func stopCallSession(delay: TimeInterval = 0) {
+    public func stopCallSession(delay: TimeInterval = 0, retainingAudioError: Bool = false) {
         callTimer?.cancel()
         callTimer = nil
-        AudioSessionManager.shared.endCallSession()
+        audioRelay?.stop()
+        audioRelay = nil
+        if !retainingAudioError {
+            callAudioError = nil
+            callAudioRequiresMicrophonePermission = false
+        }
         
         if delay > 0 {
-            Task {
+            let endingCallID = activeCall?.id
+            Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard let self,
+                      !Task.isCancelled,
+                      self.activeCall?.id == endingCallID else {
+                    return
+                }
                 self.activeCall = nil
+                self.callAudioError = nil
+                self.callAudioRequiresMicrophonePermission = false
             }
         } else {
             activeCall = nil
@@ -464,18 +587,104 @@ public final class AppState {
     }
     
     public func toggleMute() {
+        guard activeCall?.state == .active else { return }
         activeCall?.isMuted.toggle()
+        if let isMuted = activeCall?.isMuted {
+            audioRelay?.setMuted(isMuted)
+        }
         CentyHaptics.light()
     }
     
     public func toggleSpeaker() {
+        guard activeCall?.state == .active else { return }
         guard let current = activeCall?.isSpeakerOn else { return }
         let newState = !current
         activeCall?.isSpeakerOn = newState
         AudioSessionManager.shared.setSpeaker(enabled: newState)
         CentyHaptics.light()
     }
-    
+
+    public func retryAudioForActiveCall() async {
+        guard let call = activeCall,
+              call.state == .active || call.state == .connecting else {
+            return
+        }
+        let callStateBeforeRetry = call.state
+        let startResult = await prepareAudioRelay(for: call.peerId)
+        guard activeCall?.id == call.id,
+              activeCall?.state == callStateBeforeRetry else {
+            discardAudioRelay(for: call.peerId)
+            return
+        }
+        guard startResult == .started else { return }
+        if callStateBeforeRetry == .connecting {
+            activateConnectedCall()
+        }
+    }
+
+    private func prepareAudioRelay(for peerId: Int64) async -> AudioRelayStartResult {
+        if let existing = audioRelay,
+           existing.targetUserId == peerId,
+           existing.state == .active {
+            return .started
+        }
+
+        audioRelay?.stop()
+        let relay = audioRelayFactory(peerId)
+        audioRelay = relay
+        relay.onStateChange = { [weak self] state in
+            guard case .failed = state else { return }
+            self?.setCallAudioError("Audio connection was interrupted. Check the microphone and try again.")
+        }
+        relay.onRecoveryRequired = { [weak self] _ in
+            self?.setCallAudioError("Audio was interrupted. Try the call again when the audio route is available.")
+        }
+
+        switch await relay.start() {
+        case .started:
+            guard audioRelay === relay else {
+                relay.stop()
+                return .cancelled
+            }
+            callAudioError = nil
+            callAudioRequiresMicrophonePermission = false
+            if activeCall?.isMuted == true {
+                relay.setMuted(true)
+            }
+            return .started
+        case .microphonePermissionDenied:
+            if audioRelay === relay {
+                audioRelay = nil
+            }
+            setCallAudioError("Microphone access is required to start a call.")
+            callAudioRequiresMicrophonePermission = true
+            return .microphonePermissionDenied
+        case .unavailable:
+            if audioRelay === relay {
+                audioRelay = nil
+            }
+            setCallAudioError("Unable to start audio. Check your audio route and try again.")
+            callAudioRequiresMicrophonePermission = false
+            return .unavailable
+        case .cancelled:
+            if audioRelay === relay {
+                audioRelay = nil
+            }
+            return .cancelled
+        }
+    }
+
+    private func discardAudioRelay(for peerId: Int64) {
+        guard let relay = audioRelay, relay.targetUserId == peerId else { return }
+        relay.stop()
+        audioRelay = nil
+    }
+
+    private func setCallAudioError(_ message: String) {
+        callAudioError = message
+        UIAccessibility.post(notification: .announcement, argument: message)
+    }
+
     // MARK: - Logout
     
     public func logout() {
@@ -506,6 +715,8 @@ public final class AppState {
         channels = []
         announcements = []
         users = []
-        activeCall = nil
+        incomingAudioTask?.cancel()
+        incomingAudioTask = nil
+        stopCallSession()
     }
 }

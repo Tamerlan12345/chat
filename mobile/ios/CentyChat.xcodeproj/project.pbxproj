@@ -15,6 +15,7 @@
 		A10000000000000000000023 /* DTOParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* DTOParsingTests.swift */; };
 		A10000000000000000000024 /* EditWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000034 /* EditWindowTests.swift */; };
 		A10000000000000000000025 /* AppLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* AppLaunchTests.swift */; };
+		A10000000000000000000026 /* AudioRelayLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000036 /* AudioRelayLifecycleTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +37,7 @@
 		A10000000000000000000033 /* DTOParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DTOParsingTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000034 /* EditWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditWindowTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000035 /* AppLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000036 /* AudioRelayLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRelayLifecycleTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -78,7 +80,7 @@
 			sourceTree = "<group>";
 		};
 		A10000000000000000000081 /* CentyChatMobileApp */ = {isa = PBXGroup; children = (A10000000000000000000012 /* CentyChatMobileApp.swift */); path = CentyChatMobileApp; sourceTree = "<group>"; };
-		A10000000000000000000082 /* CentyChatTests */ = {isa = PBXGroup; children = (A10000000000000000000031 /* AudioRelayTests.swift */, A10000000000000000000032 /* CallStateMachineTests.swift */, A10000000000000000000033 /* DTOParsingTests.swift */, A10000000000000000000034 /* EditWindowTests.swift */, A10000000000000000000035 /* AppLaunchTests.swift */); path = CentyChatTests; sourceTree = "<group>"; };
+		A10000000000000000000082 /* CentyChatTests */ = {isa = PBXGroup; children = (A10000000000000000000031 /* AudioRelayTests.swift */, A10000000000000000000032 /* CallStateMachineTests.swift */, A10000000000000000000033 /* DTOParsingTests.swift */, A10000000000000000000034 /* EditWindowTests.swift */, A10000000000000000000035 /* AppLaunchTests.swift */, A10000000000000000000036 /* AudioRelayLifecycleTests.swift */); path = CentyChatTests; sourceTree = "<group>"; };
 		A10000000000000000000083 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000015 /* CentyChat.app */, A10000000000000000000016 /* CentyChatTests.xctest */, A10000000000000000000017 /* CentyChatUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -147,7 +149,7 @@
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000091 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 
-		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021 /* AudioRelayTests.swift in Sources */, A10000000000000000000022 /* CallStateMachineTests.swift in Sources */, A10000000000000000000023 /* DTOParsingTests.swift in Sources */, A10000000000000000000024 /* EditWindowTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021 /* AudioRelayTests.swift in Sources */, A10000000000000000000022 /* CallStateMachineTests.swift in Sources */, A10000000000000000000023 /* DTOParsingTests.swift in Sources */, A10000000000000000000024 /* EditWindowTests.swift in Sources */, A10000000000000000000026 /* AudioRelayLifecycleTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
