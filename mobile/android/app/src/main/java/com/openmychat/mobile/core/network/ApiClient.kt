@@ -10,7 +10,7 @@ import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.logging.HttpLoggingInterceptor
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -25,6 +25,7 @@ class ApiClient(
     }
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    private val refreshCoordinator = RefreshCoordinator()
 
     private val client: OkHttpClient by lazy {
         okHttpClient ?: OkHttpClient.Builder()
@@ -39,7 +40,11 @@ class ApiClient(
                     .header("Accept", "application/json")
                     .header("User-Agent", "CentyChat-Android/1.0.0")
 
-                if (!token.isNullOrBlank() && originalRequest.header("Authorization") == null) {
+                if (
+                    !token.isNullOrBlank() &&
+                    originalRequest.header("Authorization") == null &&
+                    ServerEndpointPolicy.canSendBearerCredentials(originalRequest.url)
+                ) {
                     requestBuilder.header("Authorization", "Bearer $token")
                 }
 
@@ -65,47 +70,21 @@ class ApiClient(
                         return null
                     }
 
-                    synchronized(this) {
-                        val currentToken = sessionManager.token ?: return null
-                        val requestAuth = response.request.header("Authorization")
-                        val requestToken = requestAuth?.removePrefix("Bearer ")?.trim()
+                    if (!ServerEndpointPolicy.canSendBearerCredentials(response.request.url)) return null
 
-                        val validToken = if (requestToken != null && requestToken != currentToken && currentToken.isNotBlank()) {
-                            currentToken
-                        } else {
-                            try {
-                                val refreshRequest = Request.Builder()
-                                    .url("${getBaseUrl()}/auth/refresh")
-                                    .header("Authorization", "Bearer $currentToken")
-                                    .header("Accept", "application/json")
-                                    .header("User-Agent", "CentyChat-Android/1.0.0")
-                                    .post("{}".toRequestBody(jsonMediaType))
-                                    .build()
+                    val requestToken = response.request.header("Authorization")
+                        ?.removePrefix("Bearer ")
+                        ?.trim()
+                    val validToken = refreshCoordinator.refreshIfNeeded(
+                        requestToken = requestToken,
+                        currentToken = { sessionManager.token },
+                        refresh = ::refreshTokenForAuthenticator,
+                        updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
+                    ) ?: return null
 
-                                val unauthClient = OkHttpClient.Builder()
-                                    .connectTimeout(10, TimeUnit.SECONDS)
-                                    .readTimeout(10, TimeUnit.SECONDS)
-                                    .build()
-
-                                val refreshResp = unauthClient.newCall(refreshRequest).execute()
-                                if (refreshResp.isSuccessful) {
-                                    val body = refreshResp.body?.string() ?: ""
-                                    val authSuccess = json.decodeFromString<AuthSuccessResponse>(body)
-                                    sessionManager.token = authSuccess.token
-                                    authSuccess.token
-                                } else {
-                                    sessionManager.clearSession()
-                                    return null
-                                }
-                            } catch (e: Exception) {
-                                return null
-                            }
-                        }
-
-                        return response.request.newBuilder()
-                            .header("Authorization", "Bearer $validToken")
-                            .build()
-                    }
+                    return response.request.newBuilder()
+                        .header("Authorization", "Bearer $validToken")
+                        .build()
                 }
             })
             .build()
@@ -120,6 +99,46 @@ class ApiClient(
         }
         return result
     }
+
+    private fun refreshTokenForAuthenticator(currentToken: String): String? {
+        val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return null
+        if (!ServerEndpointPolicy.canSendBearerCredentials(refreshUrl)) return null
+
+        return try {
+            val refreshRequest = Request.Builder()
+                .url(refreshUrl)
+                .header("Authorization", "Bearer $currentToken")
+                .header("Accept", "application/json")
+                .header("User-Agent", "CentyChat-Android/1.0.0")
+                .post("{}".toRequestBody(jsonMediaType))
+                .build()
+            val unauthenticatedClient = OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .build()
+
+            unauthenticatedClient.newCall(refreshRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseBody = response.body?.string().orEmpty()
+                    if (RefreshFailurePolicy.shouldClearSession(response.code, refreshFailureCode(responseBody))) {
+                        sessionManager.clearSession()
+                    }
+                    return null
+                }
+                val authSuccess = json.decodeFromString<AuthSuccessResponse>(response.body?.string().orEmpty())
+                authSuccess.token
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun refreshFailureCode(responseBody: String): String? = runCatching {
+        json.parseToJsonElement(responseBody)
+            .jsonObject["code"]
+            ?.jsonPrimitive
+            ?.content
+    }.getOrNull()
 
     private fun getBaseUrl(): String = sessionManager.serverUrl.removeSuffix("/")
 
@@ -275,7 +294,7 @@ class ApiClient(
 
     suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
         withContext(Dispatchers.IO) {
-            val urlBuilder = HttpUrl.parse("${getBaseUrl()}/messages/direct/$targetId")?.newBuilder()
+            val urlBuilder = "${getBaseUrl()}/messages/direct/$targetId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/direct/$targetId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
@@ -291,7 +310,7 @@ class ApiClient(
 
     suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
         withContext(Dispatchers.IO) {
-            val urlBuilder = HttpUrl.parse("${getBaseUrl()}/messages/channels/$channelId")?.newBuilder()
+            val urlBuilder = "${getBaseUrl()}/messages/channels/$channelId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/channels/$channelId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())

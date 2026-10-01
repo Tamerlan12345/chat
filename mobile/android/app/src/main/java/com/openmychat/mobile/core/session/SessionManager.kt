@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import android.content.pm.ApplicationInfo
+import com.openmychat.mobile.core.network.ServerEndpointPolicy
+import com.openmychat.mobile.core.network.ValidatedEndpoint
 import com.openmychat.mobile.data.model.User
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +56,7 @@ class SessionManager(private val context: Context) {
     init {
         _tokenFlow.value = prefs.getString(KEY_TOKEN, null)
         _mustChangePasswordFlow.value = prefs.getBoolean(KEY_MUST_CHANGE_PASSWORD, false)
-        _serverUrlFlow.value = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        restorePersistedServerEndpoint()
 
         val userJson = prefs.getString(KEY_CURRENT_USER, null)
         if (!userJson.isNullOrBlank()) {
@@ -66,21 +69,38 @@ class SessionManager(private val context: Context) {
     }
 
     var serverUrl: String
-        get() = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        get() = _serverUrlFlow.value
         set(value) {
-            val sanitized = value.trim().removeSuffix("/")
-            prefs.edit().putString(KEY_SERVER_URL, sanitized).apply()
-            _serverUrlFlow.value = sanitized
+            validateServerEndpoint(value).onSuccess(::useServerEndpointForVerification)
         }
 
-    val wsUrl: String
-        get() {
-            val base = serverUrl
-            val cleanBase = if (base.endsWith("/api")) base.removeSuffix("/api") else base
-            val wsScheme = if (cleanBase.startsWith("https://")) "wss://" else "ws://"
-            val hostAndPort = cleanBase.substringAfter("://")
-            return "$wsScheme$hostAndPort/ws"
+    fun validateServerEndpoint(raw: String): Result<ValidatedEndpoint> =
+        ServerEndpointPolicy.validate(raw, allowInsecureDebug = isDebuggableBuild)
+
+    private val isDebuggableBuild: Boolean
+        get() = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    fun useServerEndpointForVerification(endpoint: ValidatedEndpoint) {
+        _serverUrlFlow.value = endpoint.apiBaseUrl
+    }
+
+    fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
+        prefs.edit().putString(KEY_SERVER_URL, endpoint.apiBaseUrl).apply()
+        _serverUrlFlow.value = endpoint.apiBaseUrl
+    }
+
+    fun restorePersistedServerEndpoint() {
+        val stored = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        val endpoint = validateServerEndpoint(stored).getOrNull()
+        if (endpoint == null && stored.isNotBlank()) {
+            prefs.edit().remove(KEY_SERVER_URL).apply()
         }
+        _serverUrlFlow.value = endpoint?.apiBaseUrl ?: DEFAULT_SERVER_URL
+    }
+
+    val wsUrl: String
+        get() = validateServerEndpoint(serverUrl).getOrNull()?.webSocketUrl
+            ?: error("A verified server endpoint is required before opening a WebSocket")
 
     var token: String?
         get() = prefs.getString(KEY_TOKEN, null)
@@ -113,7 +133,7 @@ class SessionManager(private val context: Context) {
                 val encoded = json.encodeToString(value)
                 prefs.edit().putString(KEY_CURRENT_USER, encoded).apply()
                 if (value.mustChangePassword) {
-                    setMustChangePassword(true)
+                    updateMustChangePassword(true)
                 }
             } else {
                 prefs.edit().remove(KEY_CURRENT_USER).apply()
@@ -123,10 +143,10 @@ class SessionManager(private val context: Context) {
     var mustChangePassword: Boolean
         get() = _mustChangePasswordFlow.value
         set(value) {
-            setMustChangePassword(value)
+            updateMustChangePassword(value)
         }
 
-    fun setMustChangePassword(mustChange: Boolean) {
+    private fun updateMustChangePassword(mustChange: Boolean) {
         prefs.edit().putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange).apply()
         _mustChangePasswordFlow.value = mustChange
     }
@@ -147,9 +167,9 @@ class SessionManager(private val context: Context) {
         this.token = token
         this.currentUser = user
         if (user.mustChangePassword) {
-            setMustChangePassword(true)
+            updateMustChangePassword(true)
         } else {
-            setMustChangePassword(false)
+            updateMustChangePassword(false)
         }
     }
 
@@ -165,7 +185,7 @@ class SessionManager(private val context: Context) {
     }
 
     companion object {
-        const val DEFAULT_SERVER_URL = "http://10.0.2.2:2004/api"
+        const val DEFAULT_SERVER_URL = ""
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_TOKEN = "jwt_token"
         private const val KEY_DEVICE_ID = "device_id"

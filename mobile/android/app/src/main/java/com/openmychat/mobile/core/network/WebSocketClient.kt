@@ -58,7 +58,10 @@ class WebSocketClient(
             return
         }
 
-        val wsUrl = sessionManager.wsUrl
+        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull() ?: return
+        if (!endpoint.isSecure) return
+
+        val wsUrl = endpoint.webSocketUrl
         val request = Request.Builder()
             .url(wsUrl)
             .header("User-Agent", "CentyChat-Android/1.0.0")

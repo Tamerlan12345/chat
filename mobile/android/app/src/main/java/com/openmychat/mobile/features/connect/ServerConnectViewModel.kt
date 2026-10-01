@@ -31,14 +31,15 @@ class ServerConnectViewModel(
 
     fun updateServerUrl(url: String) {
         _serverUrl.value = url
-        sessionManager.serverUrl = url
     }
 
     fun checkConnection(onSuccess: (isPaired: Boolean) -> Unit) {
         viewModelScope.launch {
             _uiState.value = ServerConnectUiState.Checking
             try {
-                sessionManager.serverUrl = _serverUrl.value
+                val endpoint = sessionManager.validateServerEndpoint(_serverUrl.value)
+                    .getOrElse { throw it }
+                sessionManager.useServerEndpointForVerification(endpoint)
                 val health = apiClient.checkHealth()
 
                 // Try device knock
@@ -54,6 +55,7 @@ class ServerConnectViewModel(
                     null
                 }
 
+                sessionManager.commitVerifiedServerEndpoint(endpoint)
                 _uiState.value = ServerConnectUiState.Success(
                     health = health,
                     knockStatus = knockResp?.status
@@ -66,6 +68,7 @@ class ServerConnectViewModel(
                     onSuccess(false)
                 }
             } catch (e: Exception) {
+                sessionManager.restorePersistedServerEndpoint()
                 _uiState.value = ServerConnectUiState.Error(
                     e.message ?: "Не удалось подключиться к серверу"
                 )
