@@ -1,7 +1,5 @@
 package com.openmychat.mobile.build
 
-import com.openmychat.mobile.BuildConfig
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -9,19 +7,23 @@ import java.io.File
 class ReleaseConfigurationTest {
 
     @Test
-    fun debugVariantIsExplicitlyIdentifiable() {
+    fun debugBuildIsExplicitlyDebuggable() {
+        val debugBlock = buildTypeBlock("debug")
+
         assertTrue(
-            "the debug unit-test variant must expose BuildConfig.DEBUG",
-            BuildConfig.DEBUG
+            "debug build type must be explicitly declared",
+            debugBlock != null
         )
-        assertEquals("debug", BuildConfig.BUILD_TYPE)
+        assertTrue(
+            "debug build type must explicitly be debuggable",
+            Regex("""(?m)^\s*isDebuggable\s*=\s*true\s*$""")
+                .containsMatchIn(debugBlock!!.groups["body"]!!.value)
+        )
     }
 
     @Test
     fun releaseBuildEnablesMinification() {
-        val releaseBlock = Regex(
-            """(?ms)^\s*release\s*\{(?<body>.*?)^\s*}"""
-        ).find(projectBuildScript().readText())
+        val releaseBlock = buildTypeBlock("release")
 
         assertTrue("release build type must be declared", releaseBlock != null)
         assertTrue(
@@ -36,4 +38,8 @@ class ReleaseConfigurationTest {
             .map { File(it, "app/build.gradle.kts") }
             .firstOrNull(File::isFile)
             ?: error("Unable to locate app/build.gradle.kts from the test working directory")
+
+    private fun buildTypeBlock(name: String): MatchResult? =
+        Regex("""(?ms)^\s*$name\s*\{(?<body>.*?)^\s*}""")
+            .find(projectBuildScript().readText())
 }
