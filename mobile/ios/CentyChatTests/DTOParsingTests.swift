@@ -185,8 +185,13 @@ final class EndpointSecurityTests: XCTestCase {
 #endif
 
     func testRefreshCoordinatorSharesOneRefreshForSameExpiredToken() async throws {
-        let coordinator = TokenRefreshCoordinator()
         let counter = RefreshInvocationCounter()
+        let secondCallerJoined = AsyncGate()
+        let coordinator = TokenRefreshCoordinator {
+            Task {
+                await secondCallerJoined.open()
+            }
+        }
         let refreshStarted = AsyncGate()
         let allowRefreshToFinish = AsyncGate()
 
@@ -207,6 +212,7 @@ final class EndpointSecurityTests: XCTestCase {
             }
         }
 
+        await secondCallerJoined.wait()
         await allowRefreshToFinish.open()
         XCTAssertEqual(try await first.value, "fresh-token")
         XCTAssertEqual(try await second.value, "fresh-token")

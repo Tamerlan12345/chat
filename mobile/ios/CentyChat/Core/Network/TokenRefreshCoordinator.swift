@@ -2,6 +2,11 @@ import Foundation
 
 actor TokenRefreshCoordinator {
     private var inFlight: (staleToken: String, id: UUID, task: Task<String, Error>)?
+    private let didJoinInFlightRefresh: (@Sendable () -> Void)?
+
+    init(didJoinInFlightRefresh: (@Sendable () -> Void)? = nil) {
+        self.didJoinInFlightRefresh = didJoinInFlightRefresh
+    }
 
     func token(
         for staleToken: String,
@@ -10,6 +15,7 @@ actor TokenRefreshCoordinator {
         let task: Task<String, Error>
         let taskID: UUID
         if let inFlight, inFlight.staleToken == staleToken {
+            didJoinInFlightRefresh?()
             task = inFlight.task
             taskID = inFlight.id
         } else {
