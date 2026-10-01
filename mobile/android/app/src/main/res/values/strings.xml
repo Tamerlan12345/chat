@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">CentyChat</string>
+    <string name="server_url">Адрес сервера</string>
+    <string name="connect">Подключиться</string>
+    <string name="login">Войти</string>
+    <string name="username">Логин</string>
+    <string name="password">Пароль</string>
+    <string name="must_change_password_title">Обязательная смена пароля</string>
+    <string name="must_change_password_desc">Срок действия вашего временного пароля истек или администратор запросил смену пароля.</string>
+    <string name="current_password">Текущий пароль</string>
+    <string name="new_password">Новый пароль</string>
+    <string name="confirm_new_password">Повторите новый пароль</string>
+    <string name="change_password_action">Сменить пароль</string>
+    <string name="chats">Чаты</string>
+    <string name="channels">Каналы</string>
+    <string name="announcements">Объявления</string>
+    <string name="profile">Профиль</string>
+    <string name="typing_suffix">печатает…</string>
+    <string name="wake_sent">Сигнал побудки отправлен</string>
+    <string name="wake_received">Вас вызывает коллега!</string>
+    <string name="call">Позвонить</string>
+    <string name="end_call">Завершить</string>
+    <string name="accept_call">Ответить</string>
+    <string name="mute">Микрофон</string>
+    <string name="speaker">Динамик</string>
+    <string name="acknowledge">Ознакомлен</string>
+</resources>

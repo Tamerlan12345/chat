@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- CentyChat Corporate Theme Palette -->
+    <color name="primary">#00677F</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#B7EAFF</color>
+    <color name="on_primary_container">#001F28</color>
+
+    <color name="secondary">#4C626A</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="secondary_container">#CFE6F0</color>
+    <color name="on_secondary_container">#071E26</color>
+
+    <color name="tertiary">#595C7E</color>
+    <color name="on_tertiary">#FFFFFF</color>
+    <color name="tertiary_container">#E0E0FF</color>
+    <color name="on_tertiary_container">#161937</color>
+
+    <color name="error">#BA1A1A</color>
+    <color name="error_container">#FFDAD6</color>
+    <color name="on_error">#FFFFFF</color>
+    <color name="on_error_container">#410002</color>
+
+    <color name="background">#FBFCFD</color>
+    <color name="on_background">#191C1D</color>
+    <color name="surface">#FBFCFD</color>
+    <color name="on_surface">#191C1D</color>
+</resources>

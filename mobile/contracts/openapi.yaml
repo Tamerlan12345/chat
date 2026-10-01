@@ -1,0 +1,3836 @@
+openapi: 3.1.0
+info:
+  title: CentyChat Corporate Messenger REST API
+  version: 1.0.0
+  description: |
+    Спецификация REST API корпоративного защищённого мессенджера CentyChat.
+    Включает эндпоинты аутентификации, привязки устройств, профилей пользователей,
+    оргструктуры, каналов, личных и групповых сообщений, оповещений, файлов,
+    настроек и консоли администрирования.
+    
+    Спецификация полностью отражает серверную реализацию CentyChat (`server/src/api/index.js`,
+    `server/src/app.js`, `server/src/files/policy-router.js`, `server/src/updates/admin-router.js`,
+    `server/src/updates/router.js`).
+servers:
+  - url: http://localhost:2004/api
+    description: Локальный сервер разработки / корпоративная сеть
+  - url: https://chat.centras.kz/api
+    description: Рабочий сервер АО СК «Сентрас Иншуранс»
+paths:
+  /health:
+    get:
+      summary: Проверка состояния сервера
+      description: |
+        Базовый опрос состояния. Анонимным клиентам отдаётся только статус `ok` (или 503 `starting` при старте).
+        С действующим токеном супер-администратора возвращаются подробные сведения о среде и времени работы.
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Сервер работает нормально
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/HealthStatusPublic'
+                  - $ref: '#/components/schemas/HealthStatusPrivileged'
+        '503':
+          description: Сервер запускается или хранилище учетных записей недоступно
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    example: starting
+                  error:
+                    type: string
+                    example: Сервер запускается, повторите через несколько секунд
+
+  /auth/knock:
+    post:
+      summary: Регистрация / приветствие узла (device knock)
+      description: |
+        Клиент стучится при запуске. Если устройство уже привязано администратором к сотруднику
+        и передан верный `device_secret`, возвращается сессионный токен и профиль сотрудника.
+        Иначе узел встаёт в очередь неподтверждённых устройств (`pending_devices`).
+      operationId: knockDevice
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnockRequest'
+      responses:
+        '200':
+          description: Результат обработки запроса устройства
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnockResponse'
+        '400':
+          description: Ошибка валидации параметров узла
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит запросов (очередь устройств переполнена либо флуд-контроль)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/device/claim:
+    post:
+      summary: Подтверждение владения устройством и получение секрета
+      description: |
+        Вызывается сразу после успешного входа по паролю (`amr: pwd`, не старше 300 секунд).
+        Клиент генерирует случайный 256-битный секрет и привязывает его отпечаток к устройству на сервере.
+      operationId: claimDeviceSecret
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceClaimRequest'
+      responses:
+        '200':
+          description: Результат привязки секрета устройства
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - claimed
+                properties:
+                  claimed:
+                    type: boolean
+                    example: true
+        '403':
+          description: Требуется недавний вход по паролю (amr=pwd, auth_time <= 300с)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - claimed
+                  - error
+                properties:
+                  claimed:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
+                    example: Требуется недавний вход по паролю
+
+  /auth/device/unbind:
+    post:
+      summary: Отзыв секрета устройства текущего пользователя
+      description: |
+        Снимает секрет беспарольного входа для указанного устройства текущего пользователя.
+        Привязка самого устройства к сотруднику остаётся активной.
+      operationId: unbindDeviceSecret
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceUnbindRequest'
+      responses:
+        '200':
+          description: Секрет успешно сброшен
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/login:
+    post:
+      summary: Аутентификация по логину и паролю
+      description: |
+        Проверка учетных данных пользователя. При успешной проверке возвращается JWT токен
+        и полный профиль сотрудника. Защищено тройным троттлингом (по IP, по паре IP+логин,
+        суточные корзины попыток).
+      operationId: login
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Успешная аутентификация
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          description: Неверные учетные данные или валидация логина
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Слишком много неудачных попыток входа
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Количество секунд до повторной попытки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Очередь хэширования паролей scrypt перегружена
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/register:
+    post:
+      summary: Подача заявки на самостоятельную регистрацию
+      description: |
+        Доступно только при включенной настройке `allow_registration: 'true'`.
+        Создает заявку в статусе `pending`. Вход становится возможен только после
+        одобрения администратором.
+      operationId: register
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Заявка успешно подана
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - pending
+                  - message
+                properties:
+                  pending:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Заявка отправлена. Вход станет возможен после подтверждения администратором.
+        '400':
+          description: Ошибка валидации полей заявки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Самостоятельная регистрация отключена администратором
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит заявок на регистрацию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Сервер занят расчетом хэшей
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /auth/refresh:
+    post:
+      summary: Продление сессионного токена
+      description: |
+        Выдаёт новый токен JWT взамен действующего. Старый токен отзывается с небольшой
+        задержкой grace-period (60с). Активные сокеты переключаются на новый токен.
+      operationId: refreshToken
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Новый токен успешно выпущен
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - token
+                properties:
+                  token:
+                    type: string
+                    description: Свежий подписанный JWT токен
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+
+  /auth/logout:
+    post:
+      summary: Выход из системы
+      description: |
+        Отзывает текущий JWT токен (заносит jti в `revoked_tokens`) и принудительно
+        закрывает все сокеты, авторизованные этим токеном. Опционально отвязывает
+        секрет устройства (`device_id`).
+      operationId: logout
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_id:
+                  type: string
+                  description: Идентификатор устройства для отвязки секрета
+                  example: device-uuid-1234
+      responses:
+        '200':
+          description: Выход выполнен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/me:
+    get:
+      summary: Получение профиля текущего пользователя
+      description: Возвращает полную информацию об учетной записи текущего пользователя.
+      operationId: getCurrentUser
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Профиль текущего пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - user
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /users:
+    get:
+      summary: Справочник сотрудников
+      description: |
+        Возвращает список всех подтвержденных активных пользователей с публичными полями.
+      operationId: getUsers
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Список сотрудников компании
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublicUser'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+
+  /users/{id}:
+    get:
+      summary: Получение информации о пользователе по ID
+      description: |
+        Возвращает полную карточку, если запрашивается свой профиль или профиль запрашивает
+        администратор (в рамках своего контура). Для коллег возвращаются только публичные поля.
+      operationId: getUserById
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Числовой ID пользователя
+      responses:
+        '200':
+          description: Карточка пользователя
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/User'
+                  - $ref: '#/components/schemas/PublicUser'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/profile:
+    put:
+      summary: Обновление собственного профиля
+      description: |
+        Позволяет сотруднику изменить контактный email, телефон, фото профиля (data URL до 500 КБ)
+        и пользовательский статус. ФИО и должность менять запрещено во избежание спуфинга.
+      operationId: updateProfile
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Обновленный профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Ошибка валидации формата email, телефона или аватара
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+
+  /users/password:
+    post:
+      summary: Смена пароля сотрудником
+      description: |
+        Смена пароля с проверкой текущего старого пароля. При успешной смене отзываются
+        все старые сессии (token_version инкрементируется) и возвращается новый сессионный токен.
+      operationId: changePassword
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Пароль успешно изменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePasswordResponse'
+        '400':
+          description: Неверный старый пароль или новый пароль не удовлетворяет политике
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          description: Слишком много попыток смены пароля
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Очередь хэширования занята
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /org/tree:
+    get:
+      summary: Иерархическое дерево оргструктуры
+      description: |
+        Возвращает полное дерево подразделений со списками сотрудников, счетчиками состава
+        и онлайн-статусами. Для контурного администратора дерево ограничено его контуром.
+      operationId: getOrgTree
+      tags:
+        - Org
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Дерево оргструктуры компании
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgTreeResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+
+  /org/departments:
+    post:
+      summary: Создание подразделения
+      description: Доступно только суперадминистраторам.
+      operationId: createDepartment
+      tags:
+        - Org
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentCreateRequest'
+      responses:
+        '201':
+          description: Подразделение создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /org/departments/{id}:
+    put:
+      summary: Редактирование подразделения
+      description: Доступно только суперадминистраторам. Проверяет отсутствие циклов в иерархии.
+      operationId: updateDepartment
+      tags:
+        - Org
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentUpdateRequest'
+      responses:
+        '200':
+          description: Подразделение обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    delete:
+      summary: Удаление подразделения
+      description: Доступно только суперадминистраторам. Переносит дочерние отделы выше, сотрудников оставляет без отдела.
+      operationId: deleteDepartment
+      tags:
+        - Org
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Отдел удален
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /org/move-user:
+    post:
+      summary: Перемещение сотрудника в другое подразделение
+      description: Доступно только суперадминистраторам.
+      operationId: moveUser
+      tags:
+        - Org
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - departmentId
+              properties:
+                userId:
+                  type: integer
+                  example: 15
+                departmentId:
+                  type: integer
+                  nullable: true
+                  example: 3
+      responses:
+        '200':
+          description: Сотрудник перемещен
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /channels:
+    get:
+      summary: Список каналов пользователя
+      description: |
+        Возвращает доступные пользователю каналы (все публичные и системные каналы,
+        а также приватные, где пользователь является участником).
+      operationId: getChannels
+      tags:
+        - Channels
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Список доступных каналов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+    post:
+      summary: Создание нового канала пользователем
+      description: Доступно пользователям с правом `can_create_channels` или `is_admin`.
+      operationId: createChannel
+      tags:
+        - Channels
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelCreateRequest'
+      responses:
+        '201':
+          description: Канал успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Нет прав на создание каналов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /conversations/direct:
+    get:
+      summary: Список личных диалогов (direct messages)
+      description: |
+        Возвращает список собеседников, с которыми есть реальная переписка, отсортированный
+        по времени последнего сообщения, со счетчиками непрочитанных.
+      operationId: getDirectConversations
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Список активных диалогов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DirectConversation'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+
+  /messages:
+    get:
+      summary: Загрузка истории сообщений (универсальный маршрут)
+      description: |
+        Позволяет запросить сообщения как для канала (`conversationType: channel`),
+        так и для личной беседы (`conversationType: direct`). Проверяет членство в канале.
+      operationId: getMessagesGeneric
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: conversationType
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [direct, channel]
+        - name: targetId
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: ID канала или ID собеседника
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: beforeId
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Загрузить сообщения старше данного messageId (пагинация назад)
+      responses:
+        '200':
+          description: Хронологический список сообщений
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          description: Пользователь не является участником канала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/direct/{targetId}:
+    get:
+      summary: История личной переписки с пользователем
+      description: Загружает историю переписки между текущим пользователем и targetId.
+      operationId: getDirectMessages
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: beforeId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      summary: Отправка прямого сообщения пользователю по HTTP
+      description: Сохраняет сообщение в БД и транслирует его получателю и отправителю через WebSocket.
+      operationId: sendDirectMessage
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Сообщение создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /messages/channels/{targetId}:
+    get:
+      summary: История сообщений канала
+      description: Загружает сообщения канала. Проверяет участие текущего пользователя.
+      operationId: getChannelMessages
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: beforeId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '403':
+          description: Вы не участник этого канала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Отправка сообщения в канал по HTTP
+      description: Сохраняет сообщение в БД и транслирует его всем участникам канала через WebSocket.
+      operationId: sendChannelMessage
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Сообщение создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Вы не участник этого канала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/search:
+    get:
+      summary: Полнотекстовый поиск по сообщениям
+      description: |
+        Поиск по тексту сообщений в доступных каналах и личной переписке.
+        Ограничен 30 запросами в минуту на пользователя, длина запроса до 200 символов.
+      operationId: searchMessages
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Найденные сообщения
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '429':
+          description: Слишком много поисковых запросов
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /announcements:
+    get:
+      summary: Список активных объявлений пользователя
+      description: Возвращает массовые и адресные оповещения, предназначенные текущему сотруднику.
+      operationId: getAnnouncements
+      tags:
+        - Announcements
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Announcement'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      summary: Публикация нового корпоративного оповещения
+      description: Требуется право `can_broadcast` или права суперадминистратора.
+      operationId: createAnnouncement
+      tags:
+        - Announcements
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnnouncementCreateRequest'
+      responses:
+        '201':
+          description: Оповещение создано и разослано получателям
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Announcement'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Нет прав на массовые оповещения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /announcements/{id}/acknowledge:
+    post:
+      summary: Подтверждение прочтения (ознакомления) с оповещением
+      description: Фиксирует факт, дату/время и IP-адрес ознакомления сотрудника с важным распоряжением.
+      operationId: acknowledgeAnnouncement
+      tags:
+        - Announcements
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Ознакомление подтверждено
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - announcementId
+                  - confirmed_at
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  announcementId:
+                    type: integer
+                    example: 5
+                  confirmed_at:
+                    type: string
+                    format: date-time
+                    example: '2026-09-30T09:30:00.000Z'
+        '403':
+          description: Оповещение не адресовано текущему пользователю
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Оповещение не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /announcements/{id}/audit:
+    get:
+      summary: Журнал ознакомления с оповещением (для руководства/автора)
+      description: Возвращает статистику и детальный список сотрудников, подтвердивших и ожидающих ознакомления.
+      operationId: getAnnouncementAudit
+      tags:
+        - Announcements
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnouncementAuditResponse'
+        '403':
+          description: Доступно только администраторам или автору оповещения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /files/upload:
+    post:
+      summary: Загрузка файла/вложения (multipart/form-data)
+      description: |
+        Принимает одиночный файл в поле формы `file`. Проверяет квоту сотрудника (МБ/час),
+        лимит параллельных загрузок (2), политику разрешенных расширений и магические байты (сигнатуру).
+      operationId: uploadFile
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Файл сохранен на сервере
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Загрузка файлов не разрешена для текущей роли
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Файл превышает установленный администратором максимальный размер
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Тип или сигнатура файла заблокированы политикой безопасности
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                  - code
+                properties:
+                  error:
+                    type: string
+                    example: Файлы .exe к отправке не разрешены
+                  code:
+                    type: string
+                    example: ext-not-allowed
+        '429':
+          description: Превышена часовая квота загрузки или лимит параллельных загрузок
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '507':
+          description: Недостаточно свободного места на сервере
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /files/policy:
+    get:
+      summary: Действующая политика разрешенных файлов для текущего пользователя
+      description: |
+        Возвращает флаг `enabled` и список разрешенных расширений (с учетом персональных исключений).
+        Мобильный клиент использует этот список для локальной фильтрации перед выбором файла.
+      operationId: getEffectiveFilePolicy
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilePolicyEffectiveResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /files/download/{id}:
+    get:
+      summary: Скачивание вложения по ID
+      description: |
+        Отдает файл строго в виде attachment с жесткими заголовками безопасности
+        (CSP sandbox, nosniff, no-store). Доступ проверяется по участию пользователя
+        в переписке, содержащей данный `file_id`.
+      operationId: downloadFile
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Содержимое файла
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename*=UTF-8''document.pdf
+            Content-Type:
+              schema:
+                type: string
+                example: application/pdf
+            Content-Security-Policy:
+              schema:
+                type: string
+                example: default-src 'none'; sandbox
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Доступ запрещен (файл вне ваших диалогов и каналов)
+        '404':
+          description: Файл не найден
+
+  /files/recent:
+    get:
+      summary: Недавние файлы пользователя
+      description: Список последних загруженных и полученных файлов текущего сотрудника.
+      operationId: getRecentFiles
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecentFile'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /settings/info:
+    get:
+      summary: Общедоступные сведения о сервере
+      description: |
+        Публичный эндпоинт. Возвращает название сервера, название компании, флаг разрешения
+        самостоятельной регистрации и временные окна редактирования/удаления сообщений.
+      operationId: getPublicServerInfo
+      tags:
+        - Settings
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerInfo'
+
+  /settings/departments:
+    get:
+      summary: Список подразделений для формы регистрации
+      description: |
+        Публичный эндпоинт для формы регистрации. Если `allow_registration: false`, возвращает пустой список.
+        Кэшируется на сервере на 30 секунд.
+      operationId: getRegistrationDepartments
+      tags:
+        - Settings
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - departments
+                properties:
+                  departments:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - name
+                      properties:
+                        id:
+                          type: integer
+                          example: 2
+                        name:
+                          type: string
+                          example: Департамент информационных технологий
+
+  /settings/rd:
+    get:
+      summary: Настройки удаленного рабочего стола
+      description: Возвращает статус включения удаленного стола и список настроенных STUN/TURN ICE-серверов.
+      operationId: getRemoteDesktopSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoteDesktopSettings'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /settings:
+    get:
+      summary: Получение всех настроек сервера (для администраторов)
+      description: Доступно только суперадминистраторам.
+      operationId: getAdminSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    put:
+      summary: Обновление настроек сервера
+      description: Доступно только суперадминистраторам. Служебные настройки защищены валидацией.
+      operationId: updateAdminSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                oneOf:
+                  - type: string
+                  - type: number
+                  - type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/users:
+    get:
+      summary: Список пользователей в панели администрирования
+      description: Суперадминистратор видит всех, контурный администратор — сотрудников своего поддерева.
+      operationId: adminGetUsers
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    post:
+      summary: Создание нового пользователя администратором
+      description: Создает пользователя и сразу добавляет его в общекорпоративные каналы.
+      operationId: adminCreateUser
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCreateUserRequest'
+      responses:
+        '201':
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/users/{id}:
+    put:
+      summary: Редактирование пользователя администратором
+      description: При изменении роли, контура или блокировке пользователя его активные WebSocket сессии принудительно сбрасываются.
+      operationId: adminUpdateUser
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateUserRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    delete:
+      summary: Деактивация пользователя (мягкое удаление)
+      operationId: adminDeleteUser
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - user
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user:
+                    $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/users/{id}/toggle-active:
+    post:
+      summary: Переключение активности пользователя (активен / отключен)
+      operationId: adminToggleUserActive
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/users/{id}/reset-password:
+    post:
+      summary: Сброс пароля пользователя администратором
+      description: Генерирует временный пароль со флагом `must_change_password: 1` или устанавливает заданный.
+      operationId: adminResetPassword
+      tags:
+        - AdminUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  description: Опциональный новый пароль. Если не передан, сервер сгенерирует случайный.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - generated
+                  - message
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  generated:
+                    type: boolean
+                    example: true
+                  password:
+                    type: string
+                    description: Возвращается только если сгенерирован сервером
+                    example: kX9#mP2$vQ
+                  message:
+                    type: string
+                    example: Выдан временный пароль — передайте его сотруднику
+
+  /admin/registrations:
+    get:
+      summary: Список ожидающих заявок на регистрацию
+      operationId: adminGetRegistrations
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PendingRegistration'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/registrations/{id}/approve:
+    post:
+      summary: Одобрение заявки на регистрацию
+      description: Переводит заявку в `approved`, добавляет сотрудника в корпоративные каналы.
+      operationId: adminApproveRegistration
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/registrations/{id}/reject:
+    post:
+      summary: Отклонение заявки на регистрацию
+      operationId: adminRejectRegistration
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/devices/pending:
+    get:
+      summary: Список ожидающих и связанных устройств
+      operationId: adminGetPendingDevices
+      tags:
+        - AdminDevices
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PendingDevice'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/devices/bind:
+    post:
+      summary: Привязка устройства к сотруднику
+      operationId: adminBindDevice
+      tags:
+        - AdminDevices
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - device_id
+                - user_id
+              properties:
+                device_id:
+                  type: string
+                user_id:
+                  type: integer
+                ip_address:
+                  type: string
+                device_name:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - device_id
+                  - user
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  device_id:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/PublicUser'
+
+  /admin/devices/auto-match:
+    post:
+      summary: Автоматическое сопоставление устройств по IP-адресу bound_ip
+      operationId: adminAutoMatchDevices
+      tags:
+        - AdminDevices
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - matched_count
+                properties:
+                  matched_count:
+                    type: integer
+                    example: 3
+
+  /admin/devices/unbind:
+    post:
+      summary: Отвязка устройства администратором
+      operationId: adminUnbindDevice
+      tags:
+        - AdminDevices
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - device_id
+              properties:
+                device_id:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /admin/file-policy:
+    get:
+      summary: Полная конфигурация политики файлов (для админ-панели)
+      operationId: adminGetFilePolicy
+      tags:
+        - AdminFilePolicy
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFilePolicy'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    put:
+      summary: Обновление конфигурации политики файлов и исключений сотрудников
+      operationId: adminUpdateFilePolicy
+      tags:
+        - AdminFilePolicy
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFilePolicyUpdate'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFilePolicy'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/server/overview:
+    get:
+      summary: Сводка состояния сервера (Overview)
+      operationId: adminGetServerOverview
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerOverview'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/server/disconnect-user:
+    post:
+      summary: Принудительный сброс сессий пользователя
+      operationId: adminDisconnectUser
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - message
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /admin/roles:
+    get:
+      summary: Список системных ролей и прав
+      operationId: adminGetRoles
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+
+  /admin/roles/{id}:
+    put:
+      summary: Изменение прав роли
+      description: Доступно только суперадминистраторам. Сбрасывает токены всех пользователей этой роли.
+      operationId: adminUpdateRole
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - permissions
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                permissions:
+                  $ref: '#/components/schemas/RolePermissions'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /admin/channels:
+    get:
+      summary: Список всех каналов компании с метаданными
+      operationId: adminGetChannels
+      tags:
+        - AdminChannels
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminChannel'
+    post:
+      summary: Создание корпоративного канала с автодобавлением всех сотрудников
+      operationId: adminCreateChannel
+      tags:
+        - AdminChannels
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                topic:
+                  type: string
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+
+  /admin/channels/{id}:
+    delete:
+      summary: Удаление канала
+      description: Главный корпоративный канал `#Общий` удалять запрещено.
+      operationId: adminDeleteChannel
+      tags:
+        - AdminChannels
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /admin/audit/messages:
+    get:
+      summary: Аудиторский поиск по всей переписке компании
+      description: Фиксируется в журнале безопасности с фиксацией IP и текста запроса.
+      operationId: adminSearchAuditMessages
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+
+  /admin/security/status:
+    get:
+      summary: Статус центра безопасности
+      operationId: adminGetSecurityStatus
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  healthy:
+                    type: boolean
+                  openAlertsCount:
+                    type: integer
+                  lastAuditCheck:
+                    type: string
+
+  /admin/security/alerts:
+    get:
+      summary: Список инцидентов и оповещений безопасности
+      operationId: adminGetSecurityAlerts
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: open
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecurityAlert'
+
+  /admin/security/alerts/{id}/ack:
+    post:
+      summary: Подтверждение просмотра инцидента безопасности
+      operationId: adminAckSecurityAlert
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /admin/audit/verify:
+    get:
+      summary: Проверка криптографической целостности цепочки аудита
+      operationId: adminVerifyAuditChain
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  checked:
+                    type: integer
+                    example: 1540
+                  brokenAt:
+                    type: integer
+                    nullable: true
+
+  /admin/audit:
+    get:
+      summary: Журнал аудита действий администраторов и пользователей
+      operationId: adminGetAuditLogs
+      tags:
+        - AdminSecurity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: userId
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogEntry'
+
+  /admin/filters:
+    get:
+      summary: Настройки спам-фильтра и антифлуда
+      operationId: adminGetFilters
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterSettings'
+    post:
+      summary: Изменение настроек спам-фильтра и черного списка IP
+      operationId: adminUpdateFilters
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterSettings'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /admin/telegram/test:
+    post:
+      summary: Тестирование интеграции с Telegram-ботом
+      operationId: adminTestTelegram
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bot_token
+              properties:
+                bot_token:
+                  type: string
+                chat_id:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                properties:
+                  success:
+                    type: boolean
+                  bot:
+                    type: object
+                  message:
+                    type: string
+                  warning:
+                    type: string
+
+  /admin/licenses:
+    get:
+      summary: Сведения о лицензии CentyChat
+      operationId: adminGetLicenseInfo
+      tags:
+        - AdminServer
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseInfo'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Сессионный JWT токен CentyChat, подписанный HMAC-SHA256 серверным секретом `JWT_SECRET`.
+        Передаётся в стандартном заголовке `Authorization: Bearer <token>`.
+
+  responses:
+    UnauthorizedError:
+      description: Необходима авторизация или токен недействителен / отозван
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MustChangePasswordError:
+      description: Пользователь обязан сменить пароль перед продолжением работы
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+              - code
+            properties:
+              error:
+                type: string
+                example: Требуется смена пароля перед продолжением работы
+              code:
+                type: string
+                example: MUST_CHANGE_PASSWORD
+    ForbiddenAdminError:
+      description: Доступ запрещен (требуются права администратора)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequestError:
+      description: Некорректные параметры запроса
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFoundError:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Человекочитаемое описание ошибки
+          example: Пользователь не найден
+        code:
+          type: string
+          description: Машиночитаемый код ошибки (опционально)
+          example: INVALID_CREDENTIALS
+
+    HealthStatusPublic:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+
+    HealthStatusPrivileged:
+      type: object
+      required:
+        - status
+        - version
+        - identityStore
+        - uptimeSeconds
+        - timestamp
+      properties:
+        status:
+          type: string
+          example: ok
+        version:
+          type: string
+          example: '1.0.0'
+        identityStore:
+          type: string
+          enum: [postgres, sqlite]
+          example: sqlite
+        uptimeSeconds:
+          type: integer
+          example: 3600
+        timestamp:
+          type: string
+          format: date-time
+
+    KnockRequest:
+      type: object
+      required:
+        - device_id
+      properties:
+        device_id:
+          type: string
+          maxLength: 128
+          description: Уникальный UUID устройства клиента
+          example: 'd198f820-2b6e-4f76-8051-419b48c1562b'
+        device_secret:
+          type: string
+          description: 256-битный секрет, полученный при claim после входа по паролю
+          example: 'Z5j29xM_K94Q3q-W8l...example'
+        device_name:
+          type: string
+          maxLength: 128
+          example: 'iPhone 15 Pro - Алия'
+        platform:
+          type: string
+          maxLength: 64
+          example: 'iOS 17.5'
+        client_version:
+          type: string
+          maxLength: 32
+          example: '1.2.0'
+
+    KnockResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [paired, login_required, pending, too_many_pending]
+          example: paired
+        message:
+          type: string
+          example: Узел зарегистрирован в очереди.
+        device_id:
+          type: string
+        device_name:
+          type: string
+        ip_address:
+          type: string
+        auto_matched:
+          type: boolean
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+
+    DeviceClaimRequest:
+      type: object
+      required:
+        - device_id
+        - device_secret
+      properties:
+        device_id:
+          type: string
+          example: 'd198f820-2b6e-4f76-8051-419b48c1562b'
+        device_secret:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43,128}$'
+          example: 'aB8_d9K3lP0qWsX2mN8vC4xZ1kL5pT7rQ9wE2yU4iO6'
+
+    DeviceUnbindRequest:
+      type: object
+      properties:
+        device_id:
+          type: string
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: 'a.serikova'
+        password:
+          type: string
+          example: 'SecretPass#2026'
+
+    AuthSuccessResponse:
+      type: object
+      required:
+        - user
+        - token
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+          description: Подписанный JWT токен
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{3,64}$'
+          example: 'n.orazbayev'
+        password:
+          type: string
+          minLength: 8
+          example: 'SecureCorpPass$9'
+        full_name:
+          type: string
+          maxLength: 120
+          example: 'Оразбаев Нурлан'
+        email:
+          type: string
+          format: email
+          example: 'n.orazbayev@cic.kz'
+        phone:
+          type: string
+          example: '+7 (777) 123-45-67'
+        job_title:
+          type: string
+          maxLength: 120
+          example: 'Главный специалист'
+        department_id:
+          type: integer
+          example: 4
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - oldPassword
+        - newPassword
+      properties:
+        oldPassword:
+          type: string
+          example: 'CurrentPass#1'
+        newPassword:
+          type: string
+          minLength: 8
+          example: 'NextPass#2026'
+
+    ChangePasswordResponse:
+      type: object
+      required:
+        - success
+        - message
+        - token
+        - user
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Пароль успешно изменен
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          nullable: true
+          example: 'worker@cic.kz'
+        phone:
+          type: string
+          maxLength: 32
+          nullable: true
+          example: '+7 (701) 999-88-77'
+        avatar_url:
+          type: string
+          nullable: true
+          description: Base64 data URL изображения (PNG, JPEG, GIF, WebP) до 500 КБ
+          example: 'data:image/png;base64,iVBORw0KGgo...'
+        custom_status:
+          type: string
+          maxLength: 200
+          nullable: true
+          example: 'На совещании до 16:00'
+
+    User:
+      type: object
+      required:
+        - id
+        - username
+        - full_name
+        - status
+        - is_active
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 7
+        username:
+          type: string
+          example: 'k.akhmetov'
+        full_name:
+          type: string
+          example: 'Ахметов Канат'
+        email:
+          type: string
+          nullable: true
+          example: 'k.akhmetov@cic.kz'
+        phone:
+          type: string
+          nullable: true
+          example: '+7 (727) 250-00-11'
+        job_title:
+          type: string
+          nullable: true
+          example: 'Ведущий разработчик'
+        department_id:
+          type: integer
+          nullable: true
+          example: 3
+        department_name:
+          type: string
+          nullable: true
+          example: 'Отдел мобильной разработки'
+        role_id:
+          type: integer
+          nullable: true
+          example: 2
+        role_name:
+          type: string
+          nullable: true
+          example: 'Сотрудник'
+        permissions:
+          $ref: '#/components/schemas/RolePermissions'
+        uin:
+          type: integer
+          nullable: true
+          example: 1042
+        extension:
+          type: string
+          nullable: true
+          example: '142'
+        company:
+          type: string
+          nullable: true
+          example: 'АО "Страховая компания "Сентрас Иншуранс"'
+        avatar_url:
+          type: string
+          nullable: true
+          example: 'data:image/png;base64,...'
+        status:
+          type: string
+          enum: [online, away, dnd, offline]
+          example: online
+        custom_status:
+          type: string
+          nullable: true
+          example: 'В командировке'
+        last_seen:
+          type: string
+          nullable: true
+          example: '2026-09-30T09:15:22.000Z'
+        is_active:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        created_at:
+          type: string
+          example: '2025-01-10T08:00:00.000Z'
+        must_change_password:
+          type: integer
+          enum: [0, 1]
+          example: 0
+        admin_scope_dept_id:
+          type: integer
+          nullable: true
+          example: null
+        admin_scope_dept_name:
+          type: string
+          nullable: true
+        approval_status:
+          type: string
+          enum: [pending, approved, rejected]
+          example: approved
+        registered_at:
+          type: string
+          nullable: true
+        token_version:
+          type: integer
+          example: 3
+        last_login_at:
+          type: string
+          nullable: true
+        last_login_ip:
+          type: string
+          nullable: true
+        bound_ip:
+          type: string
+          nullable: true
+        initial_password:
+          type: string
+          description: Возвращается только однократно при создании пользователя администратором
+          nullable: true
+
+    PublicUser:
+      type: object
+      required:
+        - id
+        - username
+        - full_name
+        - status
+        - is_active
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 7
+        username:
+          type: string
+          example: 'k.akhmetov'
+        full_name:
+          type: string
+          example: 'Ахметов Канат'
+        email:
+          type: string
+          nullable: true
+          example: 'k.akhmetov@cic.kz'
+        phone:
+          type: string
+          nullable: true
+          example: '+7 (727) 250-00-11'
+        job_title:
+          type: string
+          nullable: true
+          example: 'Ведущий разработчик'
+        department_id:
+          type: integer
+          nullable: true
+          example: 3
+        department_name:
+          type: string
+          nullable: true
+          example: 'Отдел мобильной разработки'
+        role_id:
+          type: integer
+          nullable: true
+          example: 2
+        role_name:
+          type: string
+          nullable: true
+          example: 'Сотрудник'
+        uin:
+          type: integer
+          nullable: true
+          example: 1042
+        extension:
+          type: string
+          nullable: true
+          example: '142'
+        company:
+          type: string
+          nullable: true
+          example: 'АО "Страховая компания "Сентрас Иншуранс"'
+        avatar_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [online, away, dnd, offline]
+          example: online
+        custom_status:
+          type: string
+          nullable: true
+        last_seen:
+          type: string
+          nullable: true
+        is_active:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        created_at:
+          type: string
+
+    RolePermissions:
+      type: object
+      properties:
+        is_admin:
+          type: boolean
+          example: false
+        is_scoped_admin:
+          type: boolean
+          example: false
+        can_manage_users:
+          type: boolean
+          example: false
+        can_manage_structure:
+          type: boolean
+          example: false
+        can_manage_db:
+          type: boolean
+          example: false
+        can_broadcast:
+          type: boolean
+          example: false
+        can_call:
+          type: boolean
+          example: true
+        can_remote_control:
+          type: boolean
+          example: false
+        can_create_channels:
+          type: boolean
+          example: true
+        can_upload_files:
+          type: boolean
+          example: true
+
+    Role:
+      type: object
+      required:
+        - id
+        - name
+        - permissions
+      properties:
+        id:
+          type: integer
+          example: 2
+        name:
+          type: string
+          example: 'Сотрудник'
+        description:
+          type: string
+          nullable: true
+          example: 'Базовые права корпоративного пользователя'
+        permissions_json:
+          type: string
+        permissions:
+          $ref: '#/components/schemas/RolePermissions'
+
+    Department:
+      type: object
+      required:
+        - id
+        - name
+        - sort_order
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 3
+        parent_id:
+          type: integer
+          nullable: true
+          example: 1
+        name:
+          type: string
+          example: 'Департамент IT'
+        description:
+          type: string
+          nullable: true
+          example: 'Информационные технологии'
+        dept_type:
+          type: string
+          example: 'department'
+        sort_order:
+          type: integer
+          example: 10
+        created_at:
+          type: string
+
+    DepartmentCreateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        parent_id:
+          type: integer
+          nullable: true
+          example: 1
+        name:
+          type: string
+          example: 'Отдел тестирования'
+        description:
+          type: string
+          example: 'QA и автоматизация'
+        dept_type:
+          type: string
+          default: department
+        sort_order:
+          type: integer
+          default: 0
+
+    DepartmentUpdateRequest:
+      type: object
+      properties:
+        parent_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+        dept_type:
+          type: string
+        sort_order:
+          type: integer
+
+    OrgTreeNode:
+      type: object
+      required:
+        - id
+        - name
+        - subDepartments
+        - employees
+        - totalStaffCount
+        - onlineStaffCount
+      properties:
+        id:
+          type: integer
+          example: 1
+        parent_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          example: 'Правление'
+        description:
+          type: string
+          nullable: true
+        dept_type:
+          type: string
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+        subDepartments:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrgTreeNode'
+        employees:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicUser'
+        totalStaffCount:
+          type: integer
+          example: 45
+        onlineStaffCount:
+          type: integer
+          example: 28
+
+    OrgTreeResponse:
+      type: object
+      required:
+        - tree
+        - unassigned
+        - totalUsers
+        - onlineUsers
+      properties:
+        tree:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrgTreeNode'
+        unassigned:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicUser'
+        totalUsers:
+          type: integer
+          example: 180
+        onlineUsers:
+          type: integer
+          example: 112
+
+    Channel:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: '#Общий'
+        topic:
+          type: string
+          nullable: true
+          example: 'Главный корпоративный канал для всех сотрудников'
+        type:
+          type: string
+          enum: [public, private, system]
+          example: public
+        owner_id:
+          type: integer
+          nullable: true
+          example: 1
+        created_at:
+          type: string
+          example: '2025-01-01T00:00:00.000Z'
+        member_role:
+          type: string
+          nullable: true
+          enum: [admin, moderator, member]
+          example: member
+        members_count:
+          type: integer
+          example: 180
+        unread_count:
+          type: integer
+          example: 0
+        last_message_text:
+          type: string
+          nullable: true
+          example: 'Всем доброе утро!'
+        last_message_time:
+          type: string
+          nullable: true
+          example: '2026-09-30T09:00:00.000Z'
+
+    AdminChannel:
+      allOf:
+        - $ref: '#/components/schemas/Channel'
+        - type: object
+          properties:
+            total_messages:
+              type: integer
+              example: 1540
+
+    ChannelCreateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: '#Проект-Мобайл'
+        topic:
+          type: string
+          example: 'Обсуждение мобильных клиентов iOS/Android'
+        type:
+          type: string
+          enum: [public, private]
+          default: public
+
+    DirectConversation:
+      type: object
+      required:
+        - user_id
+        - full_name
+        - status
+        - unread_count
+      properties:
+        user_id:
+          type: integer
+          example: 12
+        username:
+          type: string
+          nullable: true
+          example: 'd.nurpeisov'
+        full_name:
+          type: string
+          example: 'Нурпеисов Данияр'
+        avatar_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [online, away, dnd, offline]
+          example: online
+        custom_status:
+          type: string
+          nullable: true
+        job_title:
+          type: string
+          nullable: true
+          example: 'Android Tech Lead'
+        uin:
+          type: integer
+          nullable: true
+          example: 1055
+        extension:
+          type: string
+          nullable: true
+          example: '155'
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        company:
+          type: string
+          nullable: true
+        department_name:
+          type: string
+          nullable: true
+          example: 'Отдел мобильной разработки'
+        last_message_id:
+          type: integer
+          nullable: true
+          example: 981
+        last_message_text:
+          type: string
+          nullable: true
+          example: 'Проверь пожалуйста пуллреквест по WebSocket'
+        last_message_time:
+          type: string
+          nullable: true
+          example: '2026-09-30T09:25:00.000Z'
+        last_message_sender_id:
+          type: integer
+          nullable: true
+          example: 12
+        last_message_type:
+          type: string
+          nullable: true
+          example: text
+        unread_count:
+          type: integer
+          example: 2
+
+    Message:
+      type: object
+      required:
+        - id
+        - conversation_type
+        - target_id
+        - sender_id
+        - text
+        - type
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 240
+        conversation_type:
+          type: string
+          enum: [channel, direct]
+          example: direct
+        target_id:
+          type: integer
+          description: ID получателя (при direct) или ID канала (при channel)
+          example: 12
+        sender_id:
+          type: integer
+          example: 7
+        text:
+          type: string
+          example: 'Привет! Добавил спецификацию в contracts/openapi.yaml'
+        type:
+          type: string
+          enum: [text, file, image]
+          example: text
+        reply_to_id:
+          type: integer
+          nullable: true
+          example: null
+        metadata_json:
+          type: string
+          nullable: true
+          description: JSON строка с метаданными вложения
+          example: '{"file_id": 42, "file_name": "spec.pdf", "size": 1048576}'
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-09-30T09:20:15.000Z'
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_deleted:
+          type: integer
+          enum: [0, 1]
+          example: 0
+        sender_username:
+          type: string
+          nullable: true
+          example: 'k.akhmetov'
+        sender_name:
+          type: string
+          example: 'Ахметов Канат'
+        sender_avatar:
+          type: string
+          nullable: true
+        sender_department:
+          type: string
+          nullable: true
+          example: 'Отдел разработки'
+        file_original_name:
+          type: string
+          nullable: true
+          example: 'spec.pdf'
+        delivery_status:
+          type: string
+          nullable: true
+          enum: [delivered, read]
+          example: read
+
+    SendMessageRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          maxLength: 16000
+          example: 'Сообщение для коллеги'
+        type:
+          type: string
+          enum: [text, file, image]
+          default: text
+        reply_to_id:
+          type: integer
+          nullable: true
+          example: 238
+        metadata:
+          type: object
+          description: Метаданные вложения, например { file_id: 12 }
+          properties:
+            file_id:
+              type: integer
+              example: 42
+
+    Announcement:
+      type: object
+      required:
+        - id
+        - author_id
+        - title
+        - content
+        - target_type
+        - priority
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 3
+        author_id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: 'Плановые технические работы в серверной'
+        content:
+          type: string
+          example: 'Сегодня с 22:00 до 23:00 будет проводиться обновление сетевых коммутаторов.'
+        target_type:
+          type: string
+          enum: [all, departments, users]
+          example: all
+        target_ids_json:
+          type: string
+          example: '[]'
+        priority:
+          type: string
+          enum: [normal, urgent, critical]
+          example: urgent
+        expires_at:
+          type: string
+          nullable: true
+          example: '2026-10-05T00:00:00.000Z'
+        created_at:
+          type: string
+          example: '2026-09-30T08:00:00.000Z'
+        author_name:
+          type: string
+          example: 'Главный Администратор'
+        author_job_title:
+          type: string
+          nullable: true
+          example: 'Директор департамента безопасности'
+        read_at:
+          type: string
+          nullable: true
+        confirmed_at:
+          type: string
+          nullable: true
+          example: '2026-09-30T08:15:00.000Z'
+        is_confirmed:
+          type: integer
+          enum: [0, 1]
+          example: 1
+
+    AnnouncementCreateRequest:
+      type: object
+      required:
+        - title
+        - content
+      properties:
+        title:
+          type: string
+          example: 'Приказ №42: График отпусков'
+        content:
+          type: string
+          example: 'Всем руководителям подразделений предоставить графики до пятницы.'
+        target_type:
+          type: string
+          enum: [all, departments, users]
+          default: all
+        target_ids:
+          type: array
+          items:
+            type: integer
+          default: []
+        priority:
+          type: string
+          enum: [normal, urgent, critical]
+          default: normal
+        expires_at:
+          type: string
+          nullable: true
+
+    AnnouncementAuditResponse:
+      type: object
+      required:
+        - announcement
+        - recipients
+        - stats
+      properties:
+        announcement:
+          $ref: '#/components/schemas/Announcement'
+        recipients:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - full_name
+              - is_confirmed
+            properties:
+              id:
+                type: integer
+              username:
+                type: string
+              full_name:
+                type: string
+              job_title:
+                type: string
+                nullable: true
+              department_name:
+                type: string
+                nullable: true
+              read_at:
+                type: string
+                nullable: true
+              confirmed_at:
+                type: string
+                nullable: true
+              ip_address:
+                type: string
+                nullable: true
+              is_confirmed:
+                type: integer
+                enum: [0, 1]
+        stats:
+          type: object
+          required:
+            - total
+            - confirmedCount
+            - pendingCount
+            - percentage
+          properties:
+            total:
+              type: integer
+              example: 180
+            confirmedCount:
+              type: integer
+              example: 144
+            pendingCount:
+              type: integer
+              example: 36
+            percentage:
+              type: integer
+              example: 80
+
+    FileUploadResponse:
+      type: object
+      required:
+        - id
+        - originalName
+        - storedFilename
+        - fileSize
+        - mimeType
+        - url
+      properties:
+        id:
+          type: integer
+          example: 42
+        originalName:
+          type: string
+          example: 'photo_report.png'
+        storedFilename:
+          type: string
+          example: '1789385160210_57cb49677b85dae3.png'
+        fileSize:
+          type: integer
+          example: 245760
+        mimeType:
+          type: string
+          example: 'image/png'
+        url:
+          type: string
+          example: '/api/files/download/42'
+
+    FilePolicyEffectiveResponse:
+      type: object
+      required:
+        - enabled
+        - allowed
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        allowed:
+          type: array
+          items:
+            type: string
+          example: ['pdf', 'docx', 'xlsx', 'png', 'jpg', 'zip']
+
+    AdminFilePolicy:
+      type: object
+      required:
+        - enabled
+        - allowed
+        - perUser
+        - maxPerUserEntries
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        allowed:
+          type: array
+          items:
+            type: string
+          example: ['pdf', 'doc', 'docx', 'png', 'jpg']
+        perUser:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            '7': ['apk', 'ipa']
+        maxPerUserEntries:
+          type: integer
+          example: 50
+
+    AdminFilePolicyUpdate:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        allowed:
+          type: array
+          items:
+            type: string
+        perUser:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    RecentFile:
+      type: object
+      required:
+        - id
+        - original_name
+        - file_size
+        - created_at
+        - uploader_name
+      properties:
+        id:
+          type: integer
+          example: 18
+        uploader_id:
+          type: integer
+        original_name:
+          type: string
+          example: 'report_q3.xlsx'
+        stored_filename:
+          type: string
+        file_size:
+          type: integer
+          example: 524288
+        mime_type:
+          type: string
+          example: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        created_at:
+          type: string
+        uploader_name:
+          type: string
+          example: 'Иванов Иван'
+
+    ServerInfo:
+      type: object
+      required:
+        - server_name
+        - company_name
+        - allow_registration
+        - message_edit_window_minutes
+        - message_delete_window_minutes
+        - version
+      properties:
+        server_name:
+          type: string
+          example: 'CentyChat Server'
+        company_name:
+          type: string
+          example: 'АО "Страховая компания "Сентрас Иншуранс"'
+        allow_registration:
+          type: boolean
+          example: false
+        message_edit_window_minutes:
+          type: string
+          description: Окно редактирования (-1 выключено, 0 без ограничений, >0 минут)
+          example: '60'
+        message_delete_window_minutes:
+          type: string
+          description: Окно удаления (-1 выключено, 0 без ограничений, >0 минут)
+          example: '60'
+        version:
+          type: string
+          example: '1.0.0'
+
+    RemoteDesktopSettings:
+      type: object
+      required:
+        - enabled
+        - iceServers
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        iceServers:
+          type: array
+          items:
+            type: object
+            required:
+              - urls
+            properties:
+              urls:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+                example: 'stun:stun.l.google.com:19302'
+              username:
+                type: string
+              credential:
+                type: string
+
+    ServerOverview:
+      type: object
+      required:
+        - server_name
+        - company_name
+        - version
+        - uptime_seconds
+        - lan_ip
+        - port
+        - node_version
+        - platform
+        - db_engine
+        - online_count
+        - total_users
+        - total_channels
+        - online_connections
+      properties:
+        server_name:
+          type: string
+        company_name:
+          type: string
+        version:
+          type: string
+        uptime_seconds:
+          type: integer
+        lan_ip:
+          type: string
+        port:
+          type: integer
+        node_version:
+          type: string
+        platform:
+          type: string
+        db_engine:
+          type: string
+        online_count:
+          type: integer
+        total_users:
+          type: integer
+        total_channels:
+          type: integer
+        online_connections:
+          type: array
+          items:
+            type: object
+            properties:
+              userId:
+                type: integer
+              username:
+                type: string
+              full_name:
+                type: string
+              uin:
+                type: integer
+              job_title:
+                type: string
+              department_name:
+                type: string
+              ip:
+                type: string
+              connectedAt:
+                type: string
+              status:
+                type: string
+
+    AdminCreateUserRequest:
+      type: object
+      required:
+        - username
+        - full_name
+      properties:
+        username:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{3,64}$'
+          example: 'e.khasenov'
+        full_name:
+          type: string
+          maxLength: 120
+          example: 'Хасенов Ержан'
+        email:
+          type: string
+          format: email
+          example: 'e.khasenov@cic.kz'
+        phone:
+          type: string
+          example: '+7 (702) 111-22-33'
+        job_title:
+          type: string
+          maxLength: 120
+          example: 'iOS Инженер'
+        department_id:
+          type: integer
+          example: 3
+        role_id:
+          type: integer
+          example: 2
+        extension:
+          type: string
+          example: '143'
+        uin:
+          type: integer
+          example: 1043
+        password:
+          type: string
+          description: Если не указан, генерируется сервером и возвращается в поле `initial_password`
+        bound_ip:
+          type: string
+          nullable: true
+          example: '192.168.1.55'
+        admin_scope_dept_id:
+          type: integer
+          nullable: true
+
+    AdminUpdateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        full_name:
+          type: string
+          maxLength: 120
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        job_title:
+          type: string
+          maxLength: 120
+        department_id:
+          type: integer
+          nullable: true
+        role_id:
+          type: integer
+        extension:
+          type: string
+        uin:
+          type: integer
+        is_active:
+          type: integer
+          enum: [0, 1]
+        bound_ip:
+          type: string
+          nullable: true
+        admin_scope_dept_id:
+          type: integer
+          nullable: true
+        must_change_password:
+          type: integer
+          enum: [0, 1]
+
+    PendingRegistration:
+      type: object
+      required:
+        - id
+        - username
+        - full_name
+        - registered_at
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        full_name:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        job_title:
+          type: string
+          nullable: true
+        department_id:
+          type: integer
+          nullable: true
+        department_name:
+          type: string
+          nullable: true
+        registered_at:
+          type: string
+
+    PendingDevice:
+      type: object
+      required:
+        - id
+        - device_id
+        - status
+        - first_knock_at
+        - last_knock_at
+      properties:
+        id:
+          type: integer
+        device_id:
+          type: string
+        device_name:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        platform:
+          type: string
+          nullable: true
+        client_version:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, paired]
+        first_knock_at:
+          type: string
+        last_knock_at:
+          type: string
+        paired_user_id:
+          type: integer
+          nullable: true
+        paired_user_name:
+          type: string
+          nullable: true
+        paired_username:
+          type: string
+          nullable: true
+        paired_user_dept_id:
+          type: integer
+          nullable: true
+        suggested_user:
+          type: object
+          nullable: true
+
+    SecurityAlert:
+      type: object
+      required:
+        - id
+        - rule
+        - severity
+        - title
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 1
+        rule:
+          type: string
+          example: 'audit_chain_broken'
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+          example: 'critical'
+        title:
+          type: string
+          example: 'Нарушена целостность журнала аудита'
+        details_json:
+          type: string
+        created_at:
+          type: string
+        acknowledged_at:
+          type: string
+          nullable: true
+        acknowledged_by:
+          type: integer
+          nullable: true
+
+    AuditLogEntry:
+      type: object
+      required:
+        - id
+        - action
+        - created_at
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+          nullable: true
+        action:
+          type: string
+          example: 'login'
+        details_json:
+          type: string
+        ip_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+
+    FilterSettings:
+      type: object
+      properties:
+        antiflood_limit:
+          type: integer
+          example: 10
+        bad_words_enabled:
+          type: boolean
+          example: true
+        bad_words_list:
+          type: string
+          example: 'спам,мат,реклама'
+        ip_blacklist:
+          type: string
+          example: '192.168.100.99'
+
+    LicenseInfo:
+      type: object
+      properties:
+        product_name:
+          type: string
+        license_type:
+          type: string
+        license_owner:
+          type: string
+        license_key:
+          type: string
+        max_online_users:
+          type: string
+        current_active_users:
+          type: integer
+        support_expiration:
+          type: string
+        registered_at:
+          type: string

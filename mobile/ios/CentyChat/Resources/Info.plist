@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ru</string>
+    <key>CFBundleDisplayName</key>
+    <string>CentyChat</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>kz.centras.centychat</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    
+    <!-- Privacy Descriptions for App Store Review -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>CentyChat требует доступ к микрофону для проведения корпоративных защищённых голосовых звонков между сотрудниками.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>CentyChat требует доступ к камере для отправки фотографий в корпоративный чат и обновления аватара профиля.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>CentyChat требует доступ к медиатеке для отправки изображений, документов и вложений в чаты.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Для сохранения вложений и изображений из переписки в медиатеку.</string>
+    
+    <!-- Background Modes (Guideline 2.5.4 compliant: voip removed until CallKit integration) -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+        <string>fetch</string>
+        <string>remote-notification</string>
+    </array>
+    
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>armv7</string>
+    </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict>
+</plist>
