@@ -71,12 +71,13 @@ class SessionManagerPersistentInvalidationTest {
     }
 
     @Test
-    fun failedInvalidationMarkerErasesEncryptionKeyBeforeAProcessCanRestoreCredentials() {
+    fun bothDurableInvalidationBarriersFailThenEncryptionKeyIsErased() {
         val securePrefs = CommitControlledSharedPreferences()
         val keyEraser = RecordingKeyEraser { securePrefs.unreadable = true }
         val invalidation = FailClosedSessionInvalidationStore(
             marker = FailingSessionInvalidationMarker(),
-            keyEraser = keyEraser
+            keyEraser = keyEraser,
+            sentinel = FailingSessionInvalidationSentinel()
         )
         val seeded = sessionManager(securePrefs, invalidation)
         seeded.saveAuthSuccess(alice(), "token")
@@ -89,6 +90,39 @@ class SessionManagerPersistentInvalidationTest {
         assertEquals(SessionStorageState.UNAVAILABLE, restarted.storageState.value)
         assertNull(restarted.token)
         assertNull(restarted.currentUser)
+    }
+
+    @Test
+    fun durableInvalidationBarrierRetainsEncryptionKeySoRecoveredSessionSurvivesRecreation() {
+        val securePrefs = CommitControlledSharedPreferences()
+        val marker = MemorySessionInvalidationMarker(initiallyInvalidated = false)
+        val sentinel = MemorySessionInvalidationSentinel(initiallyInvalidated = false)
+        val keyEraser = RecordingKeyEraser { securePrefs.unreadable = true }
+        val invalidation = FailClosedSessionInvalidationStore(
+            marker = marker,
+            keyEraser = keyEraser,
+            sentinel = sentinel
+        )
+        val seeded = sessionManager(securePrefs, invalidation)
+        seeded.saveAuthSuccess(alice(), "stale-token")
+        securePrefs.failNextCommit = true
+
+        assertFalse(seeded.clearSession())
+        assertTrue(marker.invalidated)
+        assertTrue(sentinel.invalidated)
+        assertFalse(keyEraser.erased)
+
+        val recovering = sessionManager(securePrefs, invalidation)
+        val endpoint = recovering.validateServerEndpoint("https://chat.example").getOrThrow()
+        recovering.commitVerifiedServerEndpoint(endpoint)
+        recovering.saveAuthSuccess(alice(), "fresh-token")
+
+        assertFalse(marker.invalidated)
+        assertFalse(sentinel.invalidated)
+        val restarted = sessionManager(securePrefs, invalidation)
+        assertEquals(SessionStorageState.AVAILABLE, restarted.storageState.value)
+        assertEquals("fresh-token", restarted.token)
+        assertEquals(alice(), restarted.currentUser)
     }
 
     @Test
@@ -310,6 +344,12 @@ class SessionManagerPersistentInvalidationTest {
         override fun isInvalidated(): Boolean = invalidated
         override fun markInvalidated(): Boolean = true.also { invalidated = true }
         override fun clearInvalidation(): Boolean = true.also { invalidated = false }
+    }
+
+    private class FailingSessionInvalidationSentinel : SessionInvalidationSentinel {
+        override fun isInvalidated(): Boolean = false
+        override fun markInvalidated(): Boolean = false
+        override fun clearInvalidation(): Boolean = false
     }
 
     private class MemorySessionInvalidationSentinel(

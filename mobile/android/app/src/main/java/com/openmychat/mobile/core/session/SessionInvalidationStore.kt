@@ -65,8 +65,12 @@ internal class FailClosedSessionInvalidationStore(
 
     override fun invalidate(): Boolean {
         val markerPersisted = runCatching { marker.markInvalidated() }.getOrDefault(false)
-        val keyErased = runCatching { keyEraser.erase() }.getOrDefault(false)
         val sentinelPersisted = runCatching { sentinel.markInvalidated() }.getOrDefault(false)
+        val keyErased = if (!markerPersisted && !sentinelPersisted) {
+            runCatching { keyEraser.erase() }.getOrDefault(false)
+        } else {
+            false
+        }
         return markerPersisted || keyErased || sentinelPersisted
     }
 
