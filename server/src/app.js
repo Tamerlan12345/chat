@@ -16,8 +16,7 @@ function normalizedRequestPath(pathname) {
 }
 
 function isHealthRoute(req) {
-  const pathname = normalizedRequestPath(req.path);
-  return pathname === '/health' || pathname === '/api/health';
+  return /^\/(?:api\/)?health\/?$/i.test(req.path);
 }
 
 // Middlewares
