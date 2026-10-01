@@ -39,6 +39,7 @@ fun ProfileScreen(
     val wakeCooldown by viewModel.wakeCooldown.collectAsState()
     val isSaving by viewModel.isSaving.collectAsState()
     val logoutError by viewModel.logoutError.collectAsState()
+    val storageError by viewModel.storageError.collectAsState()
 
     var showLogoutDialog by remember { mutableStateOf(false) }
     var wakeTargetInput by remember { mutableStateOf("") }
@@ -265,6 +266,16 @@ fun ProfileScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            storageError?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             logoutError?.let { error ->
                 Text(

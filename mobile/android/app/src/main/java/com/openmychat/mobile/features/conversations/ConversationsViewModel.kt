@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.network.WsEvent
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.Channel
 import com.openmychat.mobile.data.model.ConversationType
@@ -63,7 +64,15 @@ class ConversationsViewModel(
             _error.value = null
             try {
                 // Fetch server info for edit/delete windows
-                launch { try { apiClient.getServerInfo() } catch (_: Exception) {} }
+                launch {
+                    try {
+                        apiClient.getServerInfo()
+                    } catch (error: SecureStorageUnavailableException) {
+                        _error.value = error.message ?: "Secure storage is unavailable"
+                    } catch (_: Exception) {
+                        // Server-info caching is non-critical; the primary data request continues.
+                    }
+                }
 
                 val chats = apiClient.getDirectConversations()
                 val chs = apiClient.getChannels()

@@ -93,9 +93,15 @@ class LoginViewModel(
                     _uiState.value = LoginUiState.Success
                 }
             } catch (e: MustChangePasswordException) {
-                sessionManager.mustChangePassword = true
-                _mustChangePasswordDialogVisible.value = true
-                _uiState.value = LoginUiState.Idle
+                try {
+                    sessionManager.mustChangePassword = true
+                    _mustChangePasswordDialogVisible.value = true
+                    _uiState.value = LoginUiState.Idle
+                } catch (storageError: SecureStorageUnavailableException) {
+                    _uiState.value = LoginUiState.Error(
+                        storageError.message ?: "Secure storage is unavailable"
+                    )
+                }
             } catch (e: SecureStorageUnavailableException) {
                 _uiState.value = LoginUiState.Error(e.message ?: "Secure storage is unavailable")
             } catch (e: Exception) {
@@ -117,7 +123,6 @@ class LoginViewModel(
                 )
                 if (resp.success) {
                     _mustChangePasswordDialogVisible.value = false
-                    sessionManager.mustChangePassword = false
                     _uiState.value = LoginUiState.Success
                 } else {
                     _changePasswordError.value = resp.message.ifBlank { "Ошибка смены пароля" }

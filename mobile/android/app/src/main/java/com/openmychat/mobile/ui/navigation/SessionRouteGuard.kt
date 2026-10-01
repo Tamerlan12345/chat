@@ -15,6 +15,21 @@ object SessionRouteGuard {
             !session.token.isNullOrBlank() &&
             session.hasCurrentUser
 
+    /**
+     * Applies the session policy before a destination is rendered or added to a saved back stack.
+     * This deliberately duplicates no asynchronous activity-level observer: process restoration
+     * must be safe during the very first composition too.
+     */
+    fun destinationForNavigation(
+        requestedDestination: NavKey,
+        session: AuthenticatedRouteState,
+        hasConfiguredServer: Boolean
+    ): NavKey = if (requestedDestination.requiresAuthenticatedSession() && !hasAuthenticatedSession(session)) {
+        if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect
+    } else {
+        requestedDestination
+    }
+
     fun destinationAfterSessionLoss(
         currentDestination: NavKey,
         session: AuthenticatedRouteState,
@@ -23,7 +38,11 @@ object SessionRouteGuard {
         if (hasAuthenticatedSession(session) || !currentDestination.requiresAuthenticatedSession()) {
             return null
         }
-        return if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect
+        return destinationForNavigation(
+            requestedDestination = currentDestination,
+            session = session,
+            hasConfiguredServer = hasConfiguredServer
+        )
     }
 
     fun acceptsIncomingCall(session: AuthenticatedRouteState): Boolean =

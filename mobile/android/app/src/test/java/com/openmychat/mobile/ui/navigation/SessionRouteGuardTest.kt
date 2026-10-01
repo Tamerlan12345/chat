@@ -47,4 +47,22 @@ class SessionRouteGuardTest {
         )
         assertTrue(SessionRouteGuard.acceptsIncomingCall(activeSession))
     }
+
+    @Test
+    fun unavailableSessionRedirectsRestoredCallRouteBeforeItCanRender() {
+        val unavailableSession = AuthenticatedRouteState(
+            token = "stale-token",
+            hasCurrentUser = true,
+            storageState = SessionStorageState.UNAVAILABLE
+        )
+
+        assertEquals(
+            NavKey.Login,
+            SessionRouteGuard.destinationForNavigation(
+                requestedDestination = NavKey.Call(peerId = 42, peerName = "Alice"),
+                session = unavailableSession,
+                hasConfiguredServer = true
+            )
+        )
+    }
 }

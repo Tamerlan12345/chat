@@ -161,9 +161,7 @@ class MainActivity : ComponentActivity() {
                                         val resp = app.apiClient.changePassword(
                                             ChangePasswordRequest(oldPassword = oldPass, newPassword = newPass)
                                         )
-                                        if (resp.success) {
-                                            app.sessionManager.mustChangePassword = false
-                                        } else {
+                                        if (!resp.success) {
                                             changePasswordError = resp.message.ifBlank { "Ошибка смены пароля" }
                                         }
                                     } catch (e: Exception) {

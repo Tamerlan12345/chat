@@ -37,6 +37,9 @@ class ProfileViewModel(
     private val _logoutError = MutableStateFlow<String?>(null)
     val logoutError: StateFlow<String?> = _logoutError.asStateFlow()
 
+    private val _storageError = MutableStateFlow<String?>(null)
+    val storageError: StateFlow<String?> = _storageError.asStateFlow()
+
     private var cooldownJob: Job? = null
 
     init {
@@ -49,6 +52,8 @@ class ProfileViewModel(
                 val user = apiClient.getMe()
                 _currentUser.value = user
                 _customStatusInput.value = user.customStatus ?: ""
+            } catch (error: SecureStorageUnavailableException) {
+                _storageError.value = error.message ?: "Secure storage is unavailable"
             } catch (_: Exception) {}
         }
     }
@@ -59,10 +64,17 @@ class ProfileViewModel(
 
     fun setStatus(status: UserStatus) {
         viewModelScope.launch {
+            _storageError.value = null
             val user = _currentUser.value ?: return@launch
             val updated = user.copy(status = status)
-            _currentUser.value = updated
-            sessionManager.currentUser = updated
+            try {
+                sessionManager.currentUser = updated
+                _currentUser.value = updated
+            } catch (error: SecureStorageUnavailableException) {
+                _currentUser.value = sessionManager.currentUser
+                _storageError.value = error.message ?: "Secure storage is unavailable"
+                return@launch
+            }
 
             if (status == UserStatus.DND) {
                 webSocketClient.setDnd(true, _customStatusInput.value.ifBlank { null })
@@ -88,6 +100,9 @@ class ProfileViewModel(
                 } else {
                     webSocketClient.sendPresence(currentStatus.value, updatedText.ifBlank { null })
                 }
+            } catch (error: SecureStorageUnavailableException) {
+                _currentUser.value = sessionManager.currentUser
+                _storageError.value = error.message ?: "Secure storage is unavailable"
             } catch (_: Exception) {} finally {
                 _isSaving.value = false
             }

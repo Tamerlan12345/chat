@@ -274,10 +274,15 @@ class ApiClient(
             .build()
 
         val response: ChangePasswordResponse = executeRequest(httpRequest)
-        if (response.success && !response.token.isNullOrBlank()) {
-            sessionManager.token = response.token
-            sessionManager.mustChangePassword = false
-            response.user?.let { sessionManager.currentUser = it }
+        if (response.success) {
+            val replacementToken = response.token?.takeIf { it.isNotBlank() }
+                ?: sessionManager.token?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("The password was changed but no authenticated session is available")
+            sessionManager.replaceAuthenticatedSession(
+                user = response.user,
+                token = replacementToken,
+                mustChangePassword = false
+            )
         }
         response
     }

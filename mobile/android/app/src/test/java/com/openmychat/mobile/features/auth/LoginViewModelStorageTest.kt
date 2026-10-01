@@ -4,6 +4,8 @@ import android.content.SharedPreferences
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.core.session.SessionStorageState
+import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
+import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.resetMain
@@ -92,13 +94,44 @@ class LoginViewModelStorageTest {
     }
 
     @Test
-    fun passwordChangeShowsRecoverableErrorWhenMustChangeFlagWriteFailsAfterTokenWrite() = runBlocking {
+    fun passwordChangeShowsRecoverableErrorWhenAtomicReplacementWriteFails() = runBlocking {
         assertPasswordChangeDoesNotAuthenticateWhenCommitFails(commitToFail = 2)
     }
 
     @Test
-    fun passwordChangeShowsRecoverableErrorWhenCurrentUserWriteFailsAfterTokenWrite() = runBlocking {
-        assertPasswordChangeDoesNotAuthenticateWhenCommitFails(commitToFail = 3)
+    fun passwordChangeFailureCannotRestoreCredentialsAfterProcessRestart() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val storage = FailingAfterFirstCommitSharedPreferences(
+                initialValues = seededPasswordChangeSession(),
+                commitToFail = 2
+            )
+            val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val viewModel = LoginViewModel(
+                ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
+                sessionManager
+            )
+
+            viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
+            withTimeout(2_000) { viewModel.changePasswordError.first { !it.isNullOrBlank() } }
+
+            val restartedManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val restoredRoute = SessionRouteGuard.destinationForNavigation(
+                requestedDestination = com.openmychat.mobile.ui.navigation.NavKey.Conversations,
+                session = AuthenticatedRouteState(
+                    token = restartedManager.token,
+                    hasCurrentUser = restartedManager.currentUser != null,
+                    storageState = restartedManager.storageState.value
+                ),
+                hasConfiguredServer = restartedManager.serverUrl.isNotBlank()
+            )
+
+            assertNull(restartedManager.token)
+            assertNull(restartedManager.currentUser)
+            assertEquals(com.openmychat.mobile.ui.navigation.NavKey.Login, restoredRoute)
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     private suspend fun kotlinx.coroutines.CoroutineScope.assertPasswordChangeDoesNotAuthenticateWhenCommitFails(
@@ -107,12 +140,7 @@ class LoginViewModelStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val storage = FailingAfterFirstCommitSharedPreferences(
-                initialValues = mapOf(
-                    "jwt_token" to "old-token",
-                    "current_user_json" to """{"id":1,"username":"alice","full_name":"Alice"}""",
-                    "must_change_password" to true,
-                    "server_url" to "https://chat.example/api"
-                ),
+                initialValues = seededPasswordChangeSession(),
                 commitToFail = commitToFail
             )
             val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
@@ -144,6 +172,13 @@ class LoginViewModelStorageTest {
             Dispatchers.resetMain()
         }
     }
+
+    private fun seededPasswordChangeSession(): Map<String, Any?> = mapOf(
+        "jwt_token" to "old-token",
+        "current_user_json" to """{"id":1,"username":"alice","full_name":"Alice"}""",
+        "must_change_password" to true,
+        "server_url" to "https://chat.example/api"
+    )
 
     private fun successfulLoginClient(): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor { chain ->

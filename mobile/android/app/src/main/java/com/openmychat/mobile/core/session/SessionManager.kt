@@ -215,27 +215,49 @@ class SessionManager internal constructor(
     var messageEditWindowMinutes: String
         get() = readString(KEY_MSG_EDIT_WINDOW, "60") ?: "60"
         set(value) {
-            writeString(KEY_MSG_EDIT_WINDOW, value)
+            if (!writeString(KEY_MSG_EDIT_WINDOW, value)) throw SecureStorageUnavailableException()
         }
 
     var messageDeleteWindowMinutes: String
         get() = readString(KEY_MSG_DELETE_WINDOW, "60") ?: "60"
         set(value) {
-            writeString(KEY_MSG_DELETE_WINDOW, value)
+            if (!writeString(KEY_MSG_DELETE_WINDOW, value)) throw SecureStorageUnavailableException()
         }
 
     fun saveAuthSuccess(user: User, token: String) {
-        val encodedUser = json.encodeToString(user)
+        persistAuthenticatedSession(user, token, user.mustChangePassword)
+    }
+
+    /**
+     * Replaces an authenticated session after server-side credential rotation.
+     *
+     * Clearing the old session is deliberately committed before the single replacement edit.
+     * If the replacement cannot be committed, a later process cannot resurrect the old or
+     * partially updated credential set.
+     */
+    fun replaceAuthenticatedSession(
+        user: User?,
+        token: String,
+        mustChangePassword: Boolean
+    ) {
+        val authenticatedUser = user ?: _currentUserFlow.value
+            ?: throw IllegalStateException("Cannot replace a session without an authenticated user")
+        if (!clearSession()) throw SecureStorageUnavailableException()
+        persistAuthenticatedSession(authenticatedUser, token, mustChangePassword)
+    }
+
+    private fun persistAuthenticatedSession(user: User, token: String, mustChangePassword: Boolean) {
+        val encodedUser = json.encodeToString(user.copy(mustChangePassword = mustChangePassword))
         if (!editSecureStorage {
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
-                putBoolean(KEY_MUST_CHANGE_PASSWORD, user.mustChangePassword)
+                putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
             }
         ) throw SecureStorageUnavailableException()
 
         _tokenFlow.value = token
-        _currentUserFlow.value = user
-        _mustChangePasswordFlow.value = user.mustChangePassword
+        _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
+        _mustChangePasswordFlow.value = mustChangePassword
     }
 
     fun clearSession(): Boolean {

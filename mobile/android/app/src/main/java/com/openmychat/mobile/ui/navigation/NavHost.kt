@@ -3,6 +3,9 @@ package com.openmychat.mobile.ui.navigation
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.openmychat.mobile.core.audio.AudioEngine
@@ -34,12 +37,49 @@ fun CentyNavHost(
     audioEngine: AudioEngine,
     modifier: Modifier = Modifier
 ) {
+    val token by sessionManager.tokenFlow.collectAsState()
+    val currentUser by sessionManager.currentUserFlow.collectAsState()
+    val storageState by sessionManager.storageState.collectAsState()
+    val session = AuthenticatedRouteState(
+        token = token,
+        hasCurrentUser = currentUser != null,
+        storageState = storageState
+    )
+    val requestedDestination = backStack.currentKey
+    val destination = SessionRouteGuard.destinationForNavigation(
+        requestedDestination = requestedDestination,
+        session = session,
+        hasConfiguredServer = sessionManager.serverUrl.isNotBlank()
+    )
+
+    // Do not render a protected destination from a restored/saved stack even for one frame.
+    LaunchedEffect(requestedDestination, destination) {
+        if (destination != requestedDestination) {
+            backStack.clearAndSet(destination)
+        }
+    }
+
+    fun navigate(destination: NavKey) {
+        val freshSession = AuthenticatedRouteState(
+            token = sessionManager.token,
+            hasCurrentUser = sessionManager.currentUser != null,
+            storageState = sessionManager.storageState.value
+        )
+        val allowedDestination = SessionRouteGuard.destinationForNavigation(
+            requestedDestination = destination,
+            session = freshSession,
+            hasConfiguredServer = sessionManager.serverUrl.isNotBlank()
+        )
+        if (allowedDestination == destination) backStack.navigate(destination)
+        else backStack.clearAndSet(allowedDestination)
+    }
+
     BackHandler(enabled = backStack.stack.size > 1) {
         backStack.pop()
     }
 
     AnimatedContent(
-        targetState = backStack.currentKey,
+        targetState = destination,
         transitionSpec = {
             fadeIn() togetherWith fadeOut()
         },
@@ -51,15 +91,16 @@ fun CentyNavHost(
                 val vm = viewModel { ServerConnectViewModel(apiClient, sessionManager) }
                 ServerConnectScreen(
                     viewModel = vm,
-                    onNavigateToLogin = { backStack.navigate(NavKey.Login) },
-                    onNavigateToMain = { backStack.clearAndSet(NavKey.Conversations) }
+                    onNavigateToLogin = { navigate(NavKey.Login) },
+                    onNavigateToMain = { navigate(NavKey.Conversations) }
                 )
             }
             is NavKey.Login -> {
                 val vm = viewModel { LoginViewModel(apiClient, sessionManager) }
                 ServerConnectScreenNavigationWrapper(
-                    backStack = backStack,
-                    viewModel = vm
+                    viewModel = vm,
+                    onLoginSuccess = { navigate(NavKey.Conversations) },
+                    onNavigateBackToServerConnect = { navigate(NavKey.ServerConnect) }
                 )
             }
             is NavKey.Conversations -> {
@@ -67,7 +108,7 @@ fun CentyNavHost(
                 ConversationsScreen(
                     viewModel = vm,
                     onOpenDirectChat = { userId, name, avatar, status ->
-                        backStack.navigate(
+                        navigate(
                             NavKey.Chat(
                                 conversationType = "direct",
                                 targetId = userId,
@@ -78,7 +119,7 @@ fun CentyNavHost(
                         )
                     },
                     onOpenChannel = { chId, name ->
-                        backStack.navigate(
+                        navigate(
                             NavKey.Chat(
                                 conversationType = "channel",
                                 targetId = chId,
@@ -86,8 +127,8 @@ fun CentyNavHost(
                             )
                         )
                     },
-                    onNavigateToAnnouncements = { backStack.navigate(NavKey.Announcements) },
-                    onNavigateToProfile = { backStack.navigate(NavKey.Profile) }
+                    onNavigateToAnnouncements = { navigate(NavKey.Announcements) },
+                    onNavigateToProfile = { navigate(NavKey.Profile) }
                 )
             }
             is NavKey.Chat -> {
@@ -108,7 +149,7 @@ fun CentyNavHost(
                     status = currentDestination.status,
                     onNavigateBack = { backStack.pop() },
                     onStartCall = { peerId, peerName ->
-                        backStack.navigate(
+                        navigate(
                             NavKey.Call(
                                 peerId = peerId,
                                 peerName = peerName,
@@ -122,8 +163,8 @@ fun CentyNavHost(
                 val vm = viewModel { AnnouncementsViewModel(apiClient, webSocketClient) }
                 AnnouncementsScreen(
                     viewModel = vm,
-                    onNavigateToConversations = { backStack.navigate(NavKey.Conversations) },
-                    onNavigateToProfile = { backStack.navigate(NavKey.Profile) }
+                    onNavigateToConversations = { navigate(NavKey.Conversations) },
+                    onNavigateToProfile = { navigate(NavKey.Profile) }
                 )
             }
             is NavKey.Call -> {
@@ -145,9 +186,9 @@ fun CentyNavHost(
                 val vm = viewModel { ProfileViewModel(apiClient, webSocketClient, sessionManager) }
                 ProfileScreen(
                     viewModel = vm,
-                    onNavigateToConversations = { backStack.navigate(NavKey.Conversations) },
-                    onNavigateToAnnouncements = { backStack.navigate(NavKey.Announcements) },
-                    onLoggedOut = { backStack.clearAndSet(NavKey.Login) }
+                    onNavigateToConversations = { navigate(NavKey.Conversations) },
+                    onNavigateToAnnouncements = { navigate(NavKey.Announcements) },
+                    onLoggedOut = { navigate(NavKey.Login) }
                 )
             }
         }
@@ -156,12 +197,13 @@ fun CentyNavHost(
 
 @Composable
 private fun ServerConnectScreenNavigationWrapper(
-    backStack: NavBackStack,
-    viewModel: LoginViewModel
+    viewModel: LoginViewModel,
+    onLoginSuccess: () -> Unit,
+    onNavigateBackToServerConnect: () -> Unit
 ) {
     LoginScreen(
         viewModel = viewModel,
-        onLoginSuccess = { backStack.clearAndSet(NavKey.Conversations) },
-        onNavigateBackToServerConnect = { backStack.navigate(NavKey.ServerConnect) }
+        onLoginSuccess = onLoginSuccess,
+        onNavigateBackToServerConnect = onNavigateBackToServerConnect
     )
 }
