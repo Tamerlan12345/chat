@@ -59,6 +59,30 @@ class SessionManagerStorageTest {
     }
 
     @Test
+    fun switchingToAnotherVerifiedServerClearsThePreviousServerSession() {
+        val storageConstructor = SessionManager::class.java.declaredConstructors
+            .single { constructor ->
+                constructor.parameterTypes.contentEquals(
+                    arrayOf(SharedPreferences::class.java, Boolean::class.javaPrimitiveType)
+                )
+            }
+        storageConstructor.isAccessible = true
+        val manager = storageConstructor.newInstance(AvailableSharedPreferences(), false) as SessionManager
+
+        manager.commitVerifiedServerEndpoint(
+            manager.validateServerEndpoint("https://trusted.example").getOrThrow()
+        )
+        manager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "trusted-token")
+
+        manager.commitVerifiedServerEndpoint(
+            manager.validateServerEndpoint("https://new-server.example").getOrThrow()
+        )
+
+        assertNull(manager.token)
+        assertNull(manager.currentUser)
+    }
+
+    @Test
     fun backupRulesExcludeEveryActualSessionStoreFromCloudAndDeviceTransfer() {
         val projectRoot = projectRoot()
         val backupRules = File(projectRoot, "app/src/main/res/xml/backup_rules.xml").readText()
@@ -75,6 +99,32 @@ class SessionManagerStorageTest {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         return generateSequence(File(workingDirectory)) { it.parentFile }
             .first { File(it, "app/src/main/res/xml/backup_rules.xml").isFile }
+    }
+
+    private class AvailableSharedPreferences : SharedPreferences {
+        override fun getAll(): MutableMap<String, *> = mutableMapOf<String, Any?>()
+        override fun getString(key: String, defValue: String?): String? = defValue
+        override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+        override fun getInt(key: String, defValue: Int): Int = defValue
+        override fun getLong(key: String, defValue: Long): Long = defValue
+        override fun getFloat(key: String, defValue: Float): Float = defValue
+        override fun getBoolean(key: String, defValue: Boolean): Boolean = defValue
+        override fun contains(key: String): Boolean = false
+        override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+        override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+
+        override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
+            override fun putString(key: String, value: String?): SharedPreferences.Editor = this
+            override fun putStringSet(key: String, values: MutableSet<String>?): SharedPreferences.Editor = this
+            override fun putInt(key: String, value: Int): SharedPreferences.Editor = this
+            override fun putLong(key: String, value: Long): SharedPreferences.Editor = this
+            override fun putFloat(key: String, value: Float): SharedPreferences.Editor = this
+            override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor = this
+            override fun remove(key: String): SharedPreferences.Editor = this
+            override fun clear(): SharedPreferences.Editor = this
+            override fun commit(): Boolean = true
+            override fun apply() = Unit
+        }
     }
 
     private class FailingSharedPreferences : SharedPreferences {

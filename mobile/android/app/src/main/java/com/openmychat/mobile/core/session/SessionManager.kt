@@ -133,10 +133,16 @@ class SessionManager internal constructor(
         ServerEndpointPolicy.validate(raw, allowInsecureDebug = isDebuggableBuild)
 
     fun useServerEndpointForVerification(endpoint: ValidatedEndpoint) {
+        check(_tokenFlow.value == null && _currentUserFlow.value == null) {
+            "An authenticated session cannot be moved to an unverified server"
+        }
         _serverUrlFlow.value = endpoint.apiBaseUrl
     }
 
     fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
+        if (_serverUrlFlow.value != endpoint.apiBaseUrl && !clearSession()) {
+            throw SecureStorageUnavailableException()
+        }
         if (!writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)) {
             throw SecureStorageUnavailableException()
         }
