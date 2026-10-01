@@ -51,14 +51,12 @@ final class AudioRelayTests: XCTestCase {
         let secondScheduled = scheduler.scheduleFrame(currentTime: currentTime)
         XCTAssertEqual(secondScheduled, firstScheduled + 0.032, accuracy: 0.001)
         
-        // Симулируем накопление задержки свыше 250 мс
-        // Допустим, мы вызываем scheduleFrame при текущем времени 1000.0, но очередь убежала на +0.300с
-        let futureTime: TimeInterval = currentTime
-        for _ in 0..<15 {
-            _ = scheduler.scheduleFrame(currentTime: futureTime)
+        // Заполняем очередь до границы в 250 мс.
+        for _ in 0..<4 {
+            _ = scheduler.scheduleFrame(currentTime: currentTime)
         }
-        
-        // Следующий вызов должен заметить превышение 250мс и сброситься к 60мс
+
+        // Следующий вызов должен заметить превышение 250мс и сброситься к 60мс.
         let resetScheduled = scheduler.scheduleFrame(currentTime: currentTime)
         XCTAssertEqual(resetScheduled, currentTime + 0.06, accuracy: 0.001)
     }

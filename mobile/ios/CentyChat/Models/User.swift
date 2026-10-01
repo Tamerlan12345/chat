@@ -66,6 +66,20 @@ public struct RolePermissions: Codable, Sendable, Equatable, Hashable {
         case canCreateChannels = "can_create_channels"
         case canUploadFiles = "can_upload_files"
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isAdmin = try container.decodeIfPresent(Bool.self, forKey: .isAdmin) ?? false
+        isScopedAdmin = try container.decodeIfPresent(Bool.self, forKey: .isScopedAdmin) ?? false
+        canManageUsers = try container.decodeIfPresent(Bool.self, forKey: .canManageUsers) ?? false
+        canManageStructure = try container.decodeIfPresent(Bool.self, forKey: .canManageStructure) ?? false
+        canManageDb = try container.decodeIfPresent(Bool.self, forKey: .canManageDb) ?? false
+        canBroadcast = try container.decodeIfPresent(Bool.self, forKey: .canBroadcast) ?? false
+        canCall = try container.decodeIfPresent(Bool.self, forKey: .canCall) ?? false
+        canRemoteControl = try container.decodeIfPresent(Bool.self, forKey: .canRemoteControl) ?? false
+        canCreateChannels = try container.decodeIfPresent(Bool.self, forKey: .canCreateChannels) ?? false
+        canUploadFiles = try container.decodeIfPresent(Bool.self, forKey: .canUploadFiles) ?? false
+    }
 }
 
 /// Полная модель пользователя CentyChat
