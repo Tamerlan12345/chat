@@ -380,22 +380,7 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         captureHandler = handler
         attachGraphIfNeeded()
 
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        let inputSampleRate = inputFormat.sampleRate
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { [weak self] buffer, _ in
-            let monoSamples = Self.monoSamples(from: buffer)
-            let normalized = Self.resample(
-                monoSamples,
-                from: inputSampleRate,
-                to: AudioRelayPCMFormat.voiceRelay.sampleRate
-            )
-            guard !normalized.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                self?.captureHandler?(normalized)
-            }
-        }
+        installCaptureTap(on: engine.inputNode)
 
         if !engine.isRunning {
             try engine.start()
@@ -433,6 +418,7 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         if engine.isRunning {
             engine.pause()
         }
+        installCaptureTap(on: engine.inputNode)
         try engine.start()
         player.play()
     }
@@ -486,6 +472,21 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
 
         queuedPlayback.append(QueuedPlayback(buffer: buffer, time: time))
         scheduleNextPlaybackIfNeeded()
+    }
+
+    private func installCaptureTap(on inputNode: AVAudioInputNode) {
+        inputNode.removeTap(onBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { [weak self] buffer, _ in
+            let monoSamples = Self.monoSamples(from: buffer)
+            let normalized = AudioCaptureNormalizer.normalize(
+                monoSamples,
+                bufferSampleRate: buffer.format.sampleRate
+            )
+            guard !normalized.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                self?.captureHandler?(normalized)
+            }
+        }
     }
 
     private func attachGraphIfNeeded() {
@@ -554,12 +555,20 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         return samples
     }
 
-    private nonisolated static func resample(_ samples: [Float], from sourceRate: Double, to targetRate: Double) -> [Float] {
-        guard sourceRate > 0, targetRate > 0, !samples.isEmpty else { return [] }
-        guard sourceRate != targetRate else { return samples }
+}
 
-        let outputCount = max(1, Int((Double(samples.count) * targetRate / sourceRate).rounded(.down)))
-        let step = sourceRate / targetRate
+private enum AudioEngineError: Error {
+    case invalidPCMBuffer
+}
+/// Converts capture samples with the sample rate carried by each AVAudioPCMBuffer.
+enum AudioCaptureNormalizer {
+    static func normalize(_ samples: [Float], bufferSampleRate: Double) -> [Float] {
+        let targetSampleRate = AudioRelayPCMFormat.voiceRelay.sampleRate
+        guard bufferSampleRate > 0, !samples.isEmpty else { return [] }
+        guard bufferSampleRate != targetSampleRate else { return samples }
+
+        let outputCount = max(1, Int((Double(samples.count) * targetSampleRate / bufferSampleRate).rounded(.down)))
+        let step = bufferSampleRate / targetSampleRate
         return (0..<outputCount).map { outputIndex in
             let sourcePosition = min(Double(samples.count - 1), Double(outputIndex) * step)
             let lowerIndex = Int(sourcePosition)
@@ -568,8 +577,4 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
             return samples[lowerIndex] + (samples[upperIndex] - samples[lowerIndex]) * fraction
         }
     }
-}
-
-private enum AudioEngineError: Error {
-    case invalidPCMBuffer
 }

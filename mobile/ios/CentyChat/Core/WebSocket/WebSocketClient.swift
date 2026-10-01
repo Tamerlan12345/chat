@@ -22,7 +22,9 @@ public actor WebSocketClient {
     
     // Event Streams
     private var eventContinuation: AsyncStream<WSServerEvent>.Continuation?
+    private let incomingAudioBufferCapacity = 8
     private var audioContinuation: AsyncStream<AudioRelayEngine.DecodedAudioFrame>.Continuation?
+    private var audioContinuationID: UUID?
     
     public init() {}
     
@@ -35,8 +37,16 @@ public actor WebSocketClient {
     }
     
     public var incomingAudio: AsyncStream<AudioRelayEngine.DecodedAudioFrame> {
-        AsyncStream { continuation in
+        let subscriberID = UUID()
+        return AsyncStream(bufferingPolicy: .bufferingNewest(incomingAudioBufferCapacity)) { continuation in
+            audioContinuation?.finish()
             self.audioContinuation = continuation
+            self.audioContinuationID = subscriberID
+            continuation.onTermination = { [weak self] _ in
+                Task {
+                    await self?.clearIncomingAudioContinuation(id: subscriberID)
+                }
+            }
         }
     }
     
@@ -89,6 +99,7 @@ public actor WebSocketClient {
         webSocketTask = nil
         urlSession?.invalidateAndCancel()
         urlSession = nil
+        finishIncomingAudioStream()
     }
     
     // MARK: - Message Sending
@@ -147,9 +158,7 @@ public actor WebSocketClient {
             
         case .data(let data):
             if data.count == AudioRelayEngine.frameSizeBytes {
-                if let decoded = AudioRelayEngine.decodeFrame(data: data) {
-                    audioContinuation?.yield(decoded)
-                }
+                receiveIncomingAudioFrame(data)
             } else if let event = WSServerEvent.parse(from: data) {
                 eventContinuation?.yield(event)
             }
@@ -159,6 +168,27 @@ public actor WebSocketClient {
         }
     }
     
+    /// Accepts one binary relay frame and retains only the newest frames for the audio consumer.
+    func receiveIncomingAudioFrame(_ data: Data) {
+        guard data.count == AudioRelayEngine.frameSizeBytes,
+              let decoded = AudioRelayEngine.decodeFrame(data: data) else {
+            return
+        }
+        audioContinuation?.yield(decoded)
+    }
+
+    private func clearIncomingAudioContinuation(id: UUID) {
+        guard audioContinuationID == id else { return }
+        audioContinuation = nil
+        audioContinuationID = nil
+    }
+
+    private func finishIncomingAudioStream() {
+        audioContinuation?.finish()
+        audioContinuation = nil
+        audioContinuationID = nil
+    }
+
     // MARK: - Heartbeat Ping / Pong
     
     private func startPingTimer() {
