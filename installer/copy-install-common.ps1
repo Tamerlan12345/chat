@@ -63,7 +63,11 @@ function Test-CentyChatCopyDir {
 function Get-CentyChatProcessesIn {
     param([string]$Dir)
     $prefix = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
-    @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
+    if ($processes.Count -eq 0) {
+        $processes = @(Get-WmiObject -Class Win32_Process -ErrorAction SilentlyContinue)
+    }
+    @($processes |
         Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
 }
 

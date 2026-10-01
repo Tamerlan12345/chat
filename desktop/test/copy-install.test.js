@@ -216,6 +216,22 @@ test('Stop-CentyChatCopyApp закрывает запущенное из пап�
   }
 });
 
+test('Stop-CentyChatCopyApp uses the WMI fallback when CIM is unavailable', { skip: SKIP }, async () => {
+  const dir = path.join(sandbox, 'stop-fallback', 'Programs', 'CentyChat');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(PING, path.join(dir, 'CentyChat.exe'));
+  const inside = startFake(path.join(dir, 'CentyChat.exe'));
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(isRunning(inside.pid));
+    const stopped = common(`function Get-CimInstance { return @() }; Stop-CentyChatCopyApp -Dir ${psQuote(dir)} | ConvertTo-Json`);
+    assert.strictEqual(stopped, true);
+    assert.ok(await waitFor(() => !isRunning(inside.pid), 5000), 'fallback closes only the process in the installation directory');
+  } finally {
+    if (isRunning(inside.pid)) inside.kill();
+  }
+});
+
 test('Get-CentyChatNsisInstall находит установку через Setup.exe по записи NSIS', { skip: SKIP }, () => {
   const keys = `@(${psQuote(`HKCU:\\${KEYS.nsisCu}`)}, ${psQuote(`HKCU:\\${KEYS.nsisLm}`)})`;
   // ConvertTo-Json в PowerShell 5.1 ничего не выводит для $null.
