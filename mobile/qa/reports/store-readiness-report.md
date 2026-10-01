@@ -1,84 +1,56 @@
-# Отчет о готовности к публикации в магазинах приложений (Store Readiness Report)
+# CentyChat Mobile Store-Readiness Ledger
 
-**Дата аудита**: 30 сентября 2026 г.  
-**Платформы**:
-- **Apple App Store** (iOS 17.0+ / Xcode 16 / Swift 5.9+)
-- **Google Play Store** (Android 8.0+ API 26 / Target SDK 35 Android 15)
+**Assessment date:** 2026-10-01
+**Purpose:** capture missing publication evidence; this is not a store approval
+or policy-compliance statement.
 
----
+| Store | Current status | Why no release decision can be made |
+|---|---|---|
+| Apple App Store | NOT READY | A macOS/Xcode test/build record, signed candidate, physical iOS evidence, App Store Connect metadata and reviewer-access evidence are missing. |
+| Google Play Store | NOT READY | Signed candidate, Play Console data-safety declaration, internal-track result and physical-device evidence are not attached. |
 
-## 1. Сводная оценка готовности (Readiness Scorecard)
+## Validation status by platform
 
-```
-+------------------------------------+------------------+-----------------------+
-| Магазин приложений                | Текущий статус   | Риск отклонения (Risk)|
-+------------------------------------+------------------+-----------------------+
-| Apple App Store                    | ✅ ГОТОВО К РЕЛИЗУ| НИЗКИЙ (Все требования соблюдены) |
-| Google Play Store                  | ✅ ГОТОВО К РЕЛИЗУ| НИЗКИЙ (Все блокеры устранены)   |
-+------------------------------------+------------------+-----------------------+
-```
+| Validation activity | Status | Required evidence before reassessment |
+|---|---|---|
+| macOS/Xcode simulator validation | macOS/Xcode simulator validation: PENDING | `xcodebuild` command, selected Xcode version, simulator destination, commit SHA, `.xcresult` and exit code from a macOS runner. |
+| iOS physical-device validation | iOS physical-device validation: PENDING | Candidate IPA/build identifier, device model/OS, permission and lifecycle scenario results, logs/video and tester/date. |
+| Android physical-device validation | PENDING | Candidate APK/AAB SHA-256, device model/OS, permissions, edge-to-edge, lifecycle and network-loss evidence. |
+| BrowserStack App Automate handoff | PENDING | Upload/session URLs, accepted artifact identifier, chosen device/OS, capability record and scenario results. |
 
----
+## Apple submission gate
 
-## 2. Apple App Store Review Audit
+Before an App Store submission, attach all of the following to the candidate:
 
-### 2.1. Аудит манифеста конфиденциальности (`PrivacyInfo.xcprivacy`)
+- macOS CI evidence for a clean simulator test and a release configuration
+  build without code signing for the simulator;
+- a signed distribution candidate whose bundle identifier, version and
+  SHA-256 match the record under test;
+- a review of `PrivacyInfo.xcprivacy`, permission usage descriptions and the
+  matching App Store Connect privacy answers against the shipped binary;
+- a complete App Review Information record, including a working reviewer test
+  account, server availability instructions and any hardware prerequisites;
+- physical-device evidence for microphone, camera/photo access, notifications,
+  background/foreground transitions, network loss/recovery and audio routes
+  used by the product.
 
-Файл расположен в [`mobile/ios/CentyChat/Resources/PrivacyInfo.xcprivacy`](file:///c:/Users/user/Documents/Нет%20в%20репо/chat/mobile/ios/CentyChat/Resources/PrivacyInfo.xcprivacy).
+## Google Play submission gate
 
-| Секция манифеста | Статус в проекте | Требование Apple | Замечания и вердикт |
-|---|:---:|---|---|
-| `NSPrivacyTracking` | `<false/>` | Обязательно | ✅ Соответствует. Трекинг пользователей через IDFA и сторонние рекламные сети отсутствует. |
-| `NSPrivacyTrackingDomains` | `<array/>` | Обязательно | ✅ Соответствует. Домены трекинга отсутствуют. |
-| `NSPrivacyAccessedAPITypes` | Задекларированы 3 API | Обязательно для Required Reason APIs | ✅ Задекларированы: `UserDefaults` (`CA92.1`), `FileTimestamp` (`C617.1`), `DiskSpace` (`E174.1`). |
-| `NSPrivacyCollectedDataTypes` | Задекларированы 7 типов | Обязательно при сборе персональных данных | ✅ **ПОЛНОСТЬЮ СООТВЕТСТВУЕТ**: внесены все собираемые типы (`Name`, `EmailAddress`, `PhoneNumber`, `UserID`, `EmailsOrTextMessages`, `AudioData`, `PhotosOrVideos`) с назначением `AppFunctionality` и привязкой к профилю (`Linked = true`). |
+Before a Play production rollout, attach all of the following:
 
----
+- a signed Android App Bundle/APK candidate with package name, version code,
+  SHA-256 and signing provenance;
+- the matching Play Console Data safety form, content rating, privacy-policy
+  URL, testing-track record and account/access instructions;
+- results from a current Android physical device for dangerous-permission
+  grant/deny/revoke flows, edge-to-edge/IME layouts, process recreation,
+  network loss/recovery and audio behaviour;
+- evidence that the uploaded artifact is the same SHA-256 artifact tested in
+  the runtime records.
 
-### 2.2. Аудит описания разрешений (`Info.plist` Usage Descriptions)
+## Reassessment rule
 
-Файл расположен в [`mobile/ios/CentyChat/Resources/Info.plist`](file:///c:/Users/user/Documents/Нет%20в%20репо/chat/mobile/ios/CentyChat/Resources/Info.plist).
-
-| Ключ разрешения | Присутствует | Текст обоснования (Usage Description) | Оценка |
-|---|:---:|---|:---:|
-| `NSMicrophoneUsageDescription` | ✅ | *«CentyChat требует доступ к микрофону для проведения корпоративных защищённых голосовых звонков между сотрудниками.»* | Соответствует |
-| `NSCameraUsageDescription` | ✅ | *«CentyChat требует доступ к камере для отправки фотографий в корпоративный чат и обновления аватара профиля.»* | Соответствует |
-| `NSPhotoLibraryUsageDescription` | ✅ | *«CentyChat требует доступ к медиатеке для отправки изображений, документов и вложений в чаты.»* | Соответствует |
-| `NSPhotoLibraryAddUsageDescription` | ✅ | *«Для сохранения вложений и изображений из переписки в медиатеку.»* | Соответствует |
-
----
-
-### 2.3. Аудит App Store Review Guidelines
-
-1. **Guideline 2.5.4 (Background Modes)**:
-   - Ключ `voip` успешно удален из `UIBackgroundModes` во избежание реджекта из-за отсутствия CallKit. Оставлены безопасные режимы: `audio`, `fetch`, `remote-notification`.
-2. **Guideline 2.1 (App Completeness)**:
-   - В App Review Information подготовлены тестовые корпоративные учетные данные и преднастроенный сервер.
-
----
-
-## 3. Google Play Policies & Android Audit
-
-### 3.1. Аудит Edge-to-Edge и поддержка Android 15 (Target SDK 35)
-
-- `compileSdk = 35`, `targetSdk = 35`.
-- В `MainActivity.kt` вызывается `enableEdgeToEdge()`.
-- Режим `windowSoftInputMode="adjustResize"` обеспечивает корректную анимацию клавиатуры.
-- Отступы `Scaffold` и `.imePadding()` протестированы.
-
-### 3.2. Аудит Runtime Permissions (Разрешения во время выполнения)
-
-| Разрешение | Заявлено в манифесте | Запрос во время выполнения (Runtime) | Оценка готовности |
-|---|:---:|:---:|:---:|
-| `android.permission.RECORD_AUDIO` | ✅ | ✅ Запрашивается в `CallScreen.kt` через `rememberLauncherForActivityResult` | ✅ ГОТОВО |
-| `android.permission.POST_NOTIFICATIONS` | ✅ | ✅ Запрашивается в `MainActivity.kt` для Android 13+ (API 33+) | ✅ ГОТОВО |
-| `android.permission.VIBRATE` | ✅ | Не требуется (Normal permission) | ✅ ГОТОВО |
-| `android.permission.INTERNET` | ✅ | Не требуется (Normal permission) | ✅ ГОТОВО |
-| `android.permission.ACCESS_NETWORK_STATE` | ✅ | Не требуется (Normal permission) | ✅ ГОТОВО |
-| `android.permission.MODIFY_AUDIO_SETTINGS` | ✅ | Не требуется (Normal permission) | ✅ ГОТОВО |
-
----
-
-## 4. Заключение
-
-Все требования App Store Review Guidelines и Google Play Developer Program Policies полностью выполнены. Приложения допущены к релизу.
+Only release management may change a store from `NOT READY` after the exact
+evidence required here, in `release-signoff.md` and in
+`device-farm-handoff.md` is linked. Store acceptance remains an external
+decision and must never be represented as already granted by this repository.
