@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="CentyChat application icon">
+  <rect width="1024" height="1024" fill="#101827"/>
+  <path fill="#5EE7E7" d="M768 254c-63-58-144-88-230-88-184 0-334 151-334 346s150 346 334 346c86 0 167-30 230-88l-93-104c-38 34-86 52-137 52-103 0-186-92-186-206s83-206 186-206c51 0 99 18 137 52z"/>
+  <path fill="#101827" d="M650 438h228v148H650z"/>
+</svg>
