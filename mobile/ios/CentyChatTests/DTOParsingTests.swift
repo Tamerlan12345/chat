@@ -1,3 +1,5 @@
+import Foundation
+import Security
 import XCTest
 @testable import CentyChat
 
@@ -246,5 +248,151 @@ private actor AsyncGate {
         let pendingWaiters = waiters
         waiters.removeAll()
         pendingWaiters.forEach { $0.resume() }
+    }
+}
+
+final class KeychainFailClosedTests: XCTestCase {
+    func testFailedTokenSaveMakesLoginFailBeforeCallerCanAuthenticate() async throws {
+        let store = InMemoryKeychainItemStore(failure: .add(account: "auth_token", status: errSecAuthFailed))
+        let keychain = KeychainManager(testStore: store)
+        try keychain.saveServerURL("https://chat.example.com")
+        let client = APIClient(session: makeSession(), keychain: keychain)
+        let appState = await MainActor.run { AppState() }
+
+        do {
+            let response = try await client.login(request: LoginRequest(username: "qa", password: "password"))
+            await MainActor.run {
+                appState.currentUser = response.user
+                appState.isAuthenticated = true
+            }
+            XCTFail("Login must fail when its bearer token cannot be persisted securely.")
+        } catch let error as KeychainManagerError {
+            XCTAssertEqual(error, .addFailed(status: errSecAuthFailed))
+        } catch {
+            XCTFail("Expected a typed KeychainManagerError, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        let isAuthenticated = await MainActor.run { appState.isAuthenticated }
+        XCTAssertFalse(isAuthenticated)
+    }
+
+    func testFailedTokenDeleteMakesLogoutFailAndPreservesAuthenticatedState() async throws {
+        let store = InMemoryKeychainItemStore(failure: .delete(account: "auth_token", status: errSecAuthFailed))
+        let keychain = KeychainManager(testStore: store)
+        try keychain.saveServerURL("https://chat.example.com")
+        try keychain.saveAuthToken("persisted-token")
+        let client = APIClient(session: makeSession(), keychain: keychain)
+        let appState = await MainActor.run {
+            let state = AppState()
+            state.isAuthenticated = true
+            return state
+        }
+
+        await appState.logout(using: client)
+
+        XCTAssertEqual(keychain.authToken, "persisted-token")
+        let state = await MainActor.run { (appState.isAuthenticated, appState.errorMessage) }
+        XCTAssertTrue(state.0)
+        XCTAssertEqual(state.1, KeychainManagerError.deleteFailed(status: errSecAuthFailed).localizedDescription)
+    }
+
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthResponseURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+}
+
+private final class AuthResponseURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        let payload: String
+        switch url.path {
+        case "/api/auth/login":
+            payload = """
+            {"user":{"id":1,"username":"qa","full_name":"QA User","is_active":1,"must_change_password":0},"token":"server-token"}
+            """
+        case "/api/auth/logout":
+            payload = "{\"success\":true}"
+        default:
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class InMemoryKeychainItemStore: KeychainItemStore {
+    enum Failure {
+        case add(account: String, status: OSStatus)
+        case delete(account: String, status: OSStatus)
+    }
+
+    private let failure: Failure
+    private var values: [String: Data] = [:]
+
+    init(failure: Failure) {
+        self.failure = failure
+    }
+
+    func update(query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        let account = account(in: query)
+        guard values[account] != nil else { return errSecItemNotFound }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        values[account] = data
+        return errSecSuccess
+    }
+
+    func add(attributes: [String: Any]) -> OSStatus {
+        let account = account(in: attributes)
+        if case let .add(failingAccount, status) = failure, failingAccount == account {
+            return status
+        }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        values[account] = data
+        return errSecSuccess
+    }
+
+    func read(query: [String: Any]) -> (status: OSStatus, data: Data?) {
+        guard let data = values[account(in: query)] else {
+            return (errSecItemNotFound, nil)
+        }
+        return (errSecSuccess, data)
+    }
+
+    func delete(query: [String: Any]) -> OSStatus {
+        let account = account(in: query)
+        if case let .delete(failingAccount, status) = failure, failingAccount == account {
+            return status
+        }
+        return values.removeValue(forKey: account) == nil ? errSecItemNotFound : errSecSuccess
+    }
+
+    private func account(in attributes: [String: Any]) -> String {
+        attributes[kSecAttrAccount as String] as! String
     }
 }

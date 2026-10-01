@@ -85,9 +85,16 @@ public struct ServerConnectView: View {
                                 title: "Перейти ко входу",
                                 icon: "arrow.right"
                             ) {
-                                KeychainManager.shared.serverUrl = serverUrlInput.trimmingCharacters(in: .whitespaces)
-                                appState.serverInfo = details
-                                appState.isServerConfigured = true
+                                do {
+                                    try KeychainManager.shared.saveServerURL(
+                                        serverUrlInput.trimmingCharacters(in: .whitespaces)
+                                    )
+                                    appState.serverInfo = details
+                                    appState.isServerConfigured = true
+                                } catch {
+                                    errorMessage = error.localizedDescription
+                                    CentyHaptics.error()
+                                }
                             }
                             .padding(.top, 8)
                         }

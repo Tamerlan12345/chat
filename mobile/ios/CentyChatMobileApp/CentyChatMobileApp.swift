@@ -9,7 +9,7 @@ struct CentyChatMobileApp: App {
     init() {
 #if DEBUG
         if LaunchTestFixture.shouldResetSecureState {
-            KeychainManager.shared.resetForUITesting()
+            try? KeychainManager.shared.resetForUITesting()
         }
 #endif
     }

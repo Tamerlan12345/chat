@@ -82,7 +82,11 @@ public final class AppState {
                 self.mustChangePasswordRequired = true
                 self.errorMessage = msg
             } catch APIError.unauthorized {
-                KeychainManager.shared.clearAllAuthData()
+                do {
+                    try KeychainManager.shared.clearAllAuthData()
+                } catch {
+                    self.errorMessage = error.localizedDescription
+                }
                 self.isAuthenticated = false
             } catch {
                 print("[AppState] Session validation failed: \(error)")
@@ -100,19 +104,18 @@ public final class AppState {
     // MARK: - Device Knock
     
     public func performDeviceKnock() async {
-        let req = KnockRequest(
-            deviceId: KeychainManager.shared.deviceId,
-            deviceSecret: KeychainManager.shared.deviceSecret,
-            deviceName: UIDevice.current.name,
-            platform: "iOS \(UIDevice.current.systemVersion)"
-        )
-        
         do {
+            let req = KnockRequest(
+                deviceId: try KeychainManager.shared.deviceID(),
+                deviceSecret: KeychainManager.shared.deviceSecret,
+                deviceName: UIDevice.current.name,
+                platform: "iOS \(UIDevice.current.systemVersion)"
+            )
             let knockRes = try await APIClient.shared.knock(request: req)
             switch knockRes.status {
             case .paired:
                 if let token = knockRes.token, let user = knockRes.user {
-                    KeychainManager.shared.authToken = token
+                    try KeychainManager.shared.saveAuthToken(token)
                     self.currentUser = user
                     self.isAuthenticated = true
                     self.mustChangePasswordRequired = user.mustChangePassword
@@ -477,15 +480,32 @@ public final class AppState {
     
     public func logout() {
         Task {
-            try? await APIClient.shared.logout()
-            await WebSocketClient.shared.disconnect()
-            self.currentUser = nil
-            self.isAuthenticated = false
-            self.directConversations = []
-            self.channels = []
-            self.announcements = []
-            self.users = []
-            self.activeCall = nil
+            await logout(using: APIClient.shared)
         }
+    }
+
+    func logout(using client: APIClient) async {
+        do {
+            try await client.logout()
+            await WebSocketClient.shared.disconnect()
+            handleLogoutOutcome(nil)
+        } catch {
+            handleLogoutOutcome(error)
+        }
+    }
+
+    func handleLogoutOutcome(_ error: (any Error)?) {
+        if let error {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        currentUser = nil
+        isAuthenticated = false
+        directConversations = []
+        channels = []
+        announcements = []
+        users = []
+        activeCall = nil
     }
 }

@@ -5,11 +5,12 @@ public actor APIClient {
     public static let shared = APIClient()
     
     private let session: URLSession
+    private let keychain: KeychainManager
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
     private let refreshCoordinator = TokenRefreshCoordinator()
     
-    public init(session: URLSession? = nil) {
+    public init(session: URLSession? = nil, keychain: KeychainManager = .shared) {
         if let session {
             self.session = session
         } else {
@@ -18,7 +19,8 @@ public actor APIClient {
             configuration.timeoutIntervalForResource = 60.0
             self.session = URLSession(configuration: configuration)
         }
-        
+
+        self.keychain = keychain
         self.jsonDecoder = JSONDecoder()
         self.jsonEncoder = JSONEncoder()
     }
@@ -79,7 +81,7 @@ public actor APIClient {
             guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
                 throw APIError.insecureTransport
             }
-            guard let token = KeychainManager.shared.authToken else {
+            guard let token = keychain.authToken else {
                 throw APIError.unauthorized
             }
             requestToken = token
@@ -126,8 +128,8 @@ public actor APIClient {
                     serverURL: serverURL
                 )
             } catch APIError.unauthorized {
-                if KeychainManager.shared.authToken == requestToken {
-                    KeychainManager.shared.clearAllAuthData()
+                if keychain.authToken == requestToken {
+                    try keychain.clearAllAuthData()
                 }
                 throw APIError.unauthorized
             }
@@ -159,7 +161,7 @@ public actor APIClient {
     }
 
     private func configuredServerURL() throws -> URL {
-        guard let serverURL = ServerEndpointPolicy.configuredURL(from: KeychainManager.shared.serverUrl) else {
+        guard let serverURL = ServerEndpointPolicy.configuredURL(from: keychain.serverUrl) else {
             throw APIError.invalidURL("A secure server URL is required.")
         }
         return serverURL
@@ -187,13 +189,14 @@ public actor APIClient {
     }
 
     private func refreshAccessToken(after staleToken: String) async throws {
-        guard KeychainManager.shared.authToken == staleToken else { return }
+        guard keychain.authToken == staleToken else { return }
         let serverURL = try configuredServerURL()
         guard ServerEndpointPolicy.allowsAuthorization(to: serverURL) else {
             throw APIError.insecureTransport
         }
         let refreshURL = try apiURL(serverURL: serverURL, endpoint: "/auth/refresh")
         let session = session
+        let keychain = self.keychain
         let refreshedToken = try await refreshCoordinator.token(for: staleToken) {
             var request = URLRequest(url: refreshURL)
             request.httpMethod = "POST"
@@ -210,13 +213,13 @@ public actor APIClient {
                 throw APIError.httpError(statusCode: httpResponse.statusCode, message: "Session refresh failed", code: nil)
             }
             let refreshedToken = try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
-            if KeychainManager.shared.authToken == staleToken {
-                KeychainManager.shared.authToken = refreshedToken
+            if keychain.authToken == staleToken {
+                try keychain.saveAuthToken(refreshedToken)
             }
             return refreshedToken
         }
-        if KeychainManager.shared.authToken == staleToken {
-            KeychainManager.shared.authToken = refreshedToken
+        if keychain.authToken == staleToken {
+            try keychain.saveAuthToken(refreshedToken)
         }
     }
     
@@ -259,17 +262,17 @@ public actor APIClient {
     public func login(request loginReq: LoginRequest) async throws -> AuthSuccessResponse {
         let body = try jsonEncoder.encode(loginReq)
         let res: AuthSuccessResponse = try await request(endpoint: "/auth/login", method: "POST", body: body, requiresAuth: false)
-        KeychainManager.shared.authToken = res.token
+        try keychain.saveAuthToken(res.token)
         return res
     }
     
     /// Выход из системы
     public func logout() async throws {
-        let deviceId = KeychainManager.shared.deviceId
+        let deviceId = try keychain.deviceID()
         let body = try? JSONSerialization.data(withJSONObject: ["device_id": deviceId])
         struct LogoutResponse: Codable { let success: Bool }
         let _: LogoutResponse? = try? await request(endpoint: "/auth/logout", method: "POST", body: body)
-        KeychainManager.shared.clearAllAuthData()
+        try keychain.clearAllAuthData()
     }
     
     /// Профиль текущего пользователя
@@ -351,7 +354,7 @@ public actor APIClient {
     public func changePassword(request changeReq: ChangePasswordRequest) async throws -> ChangePasswordResponse {
         let body = try jsonEncoder.encode(changeReq)
         let res: ChangePasswordResponse = try await request(endpoint: "/users/password", method: "POST", body: body)
-        KeychainManager.shared.authToken = res.token
+        try keychain.saveAuthToken(res.token)
         return res
     }
     
@@ -387,7 +390,7 @@ public actor APIClient {
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
             throw APIError.insecureTransport
         }
-        guard let token = KeychainManager.shared.authToken else {
+        guard let token = keychain.authToken else {
             throw APIError.unauthorized
         }
         
@@ -414,8 +417,8 @@ public actor APIClient {
                 try await refreshAccessToken(after: token)
                 return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: true)
             } catch APIError.unauthorized {
-                if KeychainManager.shared.authToken == token {
-                    KeychainManager.shared.clearAllAuthData()
+                if keychain.authToken == token {
+                    try keychain.clearAllAuthData()
                 }
                 throw APIError.unauthorized
             }

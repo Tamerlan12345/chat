@@ -121,18 +121,17 @@ public struct LoginView: View {
         let cleanedUsername = usernameInput.trimmingCharacters(in: .whitespaces).lowercased()
         
         do {
+            try KeychainManager.shared.saveUsername(cleanedUsername)
             let req = LoginRequest(username: cleanedUsername, password: passwordInput)
             let res = try await APIClient.shared.login(request: req)
-            
-            KeychainManager.shared.savedUsername = cleanedUsername
             appState.currentUser = res.user
             
             // Device Claim для беспарольного входа (Parity Matrix Section 2)
             let secret = generateDeviceSecret()
-            let deviceId = KeychainManager.shared.deviceId
+            let deviceId = try KeychainManager.shared.deviceID()
             let claimed = try? await APIClient.shared.claimDevice(deviceId: deviceId, deviceSecret: secret)
             if claimed == true {
-                KeychainManager.shared.deviceSecret = secret
+                try KeychainManager.shared.saveDeviceSecret(secret)
             }
             
             // Подключение WebSocket
