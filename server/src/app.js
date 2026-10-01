@@ -11,6 +11,15 @@ const { checkRateLimit } = require('./services/rate-limiter');
 
 const app = express();
 
+function normalizedRequestPath(pathname) {
+  return pathname.toLowerCase().replace(/\/+$/, '') || '/';
+}
+
+function isHealthRoute(req) {
+  const pathname = normalizedRequestPath(req.path);
+  return pathname === '/health' || pathname === '/api/health';
+}
+
 // Middlewares
 app.disable('x-powered-by');
 
@@ -98,7 +107,7 @@ app.use((req, res, next) => {
   // кэш не должны их сохранять. Путь сравнивается в нижнем регистре:
   // маршрутизация Express нечувствительна к регистру, и «/API/…» доходил бы
   // до тех же обработчиков, но мимо no-store (проверка раунда 4, ПР-I1).
-  if (req.path.toLowerCase().startsWith('/api/') && req.path.toLowerCase() !== '/api/health') res.setHeader('Cache-Control', 'no-store');
+  if (normalizedRequestPath(req.path).startsWith('/api/') && !isHealthRoute(req)) res.setHeader('Cache-Control', 'no-store');
   // Сервис работает только по HTTPS (Railway): браузер и Electron запоминают это
   // и не пойдут по http даже по подменённой ссылке.
   if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
@@ -125,7 +134,7 @@ app.use((req, res, next) => {
   // address is shown deliberately: without it the employee cannot tell the
   // administrator what to add, and it is their own address, not a secret.
   const wantsJson =
-    (req.path !== '/api/health' && req.path.startsWith('/api')) ||
+    (!isHealthRoute(req) && req.path.startsWith('/api')) ||
     (req.get('accept') || '').includes('application/json');
 
   if (wantsJson) {
@@ -138,7 +147,7 @@ app.use((req, res, next) => {
 // запрос упёрся бы в невнятную ошибку внутри сервиса — честнее ответить, что
 // сервер ещё запускается.
 app.use((req, res, next) => {
-  if (isReady() || req.path === '/health' || req.path === '/api/health') return next();
+  if (isReady() || isHealthRoute(req)) return next();
   res.status(503).json({ error: 'Сервер запускается, повторите через несколько секунд' });
 });
 
@@ -157,13 +166,13 @@ app.use((req, res, next) => {
 // /api/settings/departments НЕ исключён: он делает запрос к базе (в отличие от
 // settings/info и /health, отвечающих из памяти), поэтому остаётся под
 // потолком; сам ответ вдобавок кэшируется на 30 с (проверка раунда 4, M6).
-const ANON_CEILING_EXEMPT = new Set(['/health', '/api/health', '/api/settings/info']);
+const ANON_CEILING_EXEMPT = new Set(['/api/settings/info']);
 app.use((req, res, next) => {
   const limit = config.ANON_RATE_LIMIT_PER_MINUTE;
   if (!limit) return next();
   const path = req.path.toLowerCase();
   if (!path.startsWith('/api/') && path !== '/health') return next();
-  if (req.method === 'GET' && ANON_CEILING_EXEMPT.has(path)) return next();
+  if (req.method === 'GET' && (isHealthRoute(req) || ANON_CEILING_EXEMPT.has(path))) return next();
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ') && AuthService.verifyToken(authHeader.substring(7))) {
     return next();

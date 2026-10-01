@@ -115,7 +115,7 @@ test('маршруты /updates/* закрыты ALLOWED_CLIENT_IPS и стоя�
   }
 });
 
-test('GET /api/health mirrors /health while the server is starting', async () => {
+test('GET /api/health variants mirror /health while the server is starting', async () => {
   const http = require('node:http');
   const app = require('../src/app');
   const server = http.createServer(app);
@@ -123,16 +123,11 @@ test('GET /api/health mirrors /health while the server is starting', async () =>
   const base = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    const [root, alias] = await Promise.all([
-      fetch(base + '/health'),
-      fetch(base + '/api/health')
-    ]);
+    const root = await fetch(base + '/health');
 
     assert.strictEqual(root.status, 503);
-    assert.strictEqual(alias.status, root.status);
-    assert.deepStrictEqual(await alias.json(), await root.json());
-
-    for (const name of [
+    const rootBody = await root.json();
+    const headers = [
       'cache-control',
       'content-security-policy',
       'cross-origin-opener-policy',
@@ -143,10 +138,44 @@ test('GET /api/health mirrors /health while the server is starting', async () =>
       'x-content-type-options',
       'x-frame-options',
       'x-permitted-cross-domain-policies'
-    ]) {
-      assert.strictEqual(alias.headers.get(name), root.headers.get(name), name);
+    ];
+
+    for (const path of ['/api/health', '/api/health/', '/API/health']) {
+      const alias = await fetch(base + path);
+      assert.strictEqual(alias.status, root.status, path);
+      assert.deepStrictEqual(await alias.json(), rootBody, path);
+      for (const name of headers) {
+        assert.strictEqual(alias.headers.get(name), root.headers.get(name), `${path}: ${name}`);
+      }
     }
   } finally {
     server.close();
+  }
+});
+
+test('restricted IP treats API health case and trailing slash variants like /health', async () => {
+  const http = require('node:http');
+  loadService({ ALLOWED_CLIENT_IPS: '10.9.9.9' });
+  delete require.cache[require.resolve('../src/app')];
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const root = await fetch(base + '/health');
+    assert.strictEqual(root.status, 403);
+    const rootBody = await root.text();
+
+    for (const path of ['/api/health', '/api/health/', '/API/health']) {
+      const alias = await fetch(base + path);
+      assert.strictEqual(alias.status, root.status, path);
+      assert.strictEqual(await alias.text(), rootBody, path);
+      assert.strictEqual(alias.headers.get('content-type'), root.headers.get('content-type'), `${path}: content-type`);
+      assert.strictEqual(alias.headers.get('cache-control'), root.headers.get('cache-control'), `${path}: cache-control`);
+    }
+  } finally {
+    server.close();
+    delete process.env.ALLOWED_CLIENT_IPS;
   }
 });
