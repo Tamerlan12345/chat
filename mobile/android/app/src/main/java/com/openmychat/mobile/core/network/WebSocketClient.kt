@@ -21,7 +21,8 @@ import kotlin.random.Random
 
 class WebSocketClient(
     private val sessionManager: SessionManager,
-    private val okHttpClient: OkHttpClient? = null
+    private val okHttpClient: OkHttpClient? = null,
+    private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -40,6 +41,7 @@ class WebSocketClient(
     private var reconnectJob: Job? = null
 
     private val isConnected = AtomicBoolean(false)
+    private val isConnecting = AtomicBoolean(false)
     private val isManuallyClosed = AtomicBoolean(false)
     private var reconnectAttempts = 0
 
@@ -49,17 +51,22 @@ class WebSocketClient(
     fun connect(coroutineScope: CoroutineScope) {
         scope = coroutineScope
         isManuallyClosed.set(false)
+        if (isConnected.get() || !isConnecting.compareAndSet(false, true)) return
         establishConnection()
     }
 
     private fun establishConnection() {
         val token = sessionManager.token
         if (token.isNullOrBlank()) {
+            isConnecting.set(false)
             return
         }
 
-        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull() ?: return
-        if (!endpoint.isSecure) return
+        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull()
+        if (endpoint == null || !endpoint.isSecure) {
+            isConnecting.set(false)
+            return
+        }
 
         val wsUrl = endpoint.webSocketUrl
         val request = Request.Builder()
@@ -67,9 +74,10 @@ class WebSocketClient(
             .header("User-Agent", "CentyChat-Android/1.0.0")
             .build()
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        val listener = object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
                 isConnected.set(true)
+                isConnecting.set(false)
                 reconnectAttempts = 0
                 // Authenticate immediately upon connection
                 sendAuth(token)
@@ -85,10 +93,12 @@ class WebSocketClient(
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
                 isConnected.set(false)
+                isConnecting.set(false)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 isConnected.set(false)
+                isConnecting.set(false)
                 if (!isManuallyClosed.get()) {
                     scheduleReconnect()
                 }
@@ -96,11 +106,13 @@ class WebSocketClient(
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 isConnected.set(false)
+                isConnecting.set(false)
                 if (!isManuallyClosed.get()) {
                     scheduleReconnect()
                 }
             }
-        })
+        }
+        webSocket = webSocketFactory?.invoke(request, listener) ?: client.newWebSocket(request, listener)
     }
 
     private fun scheduleReconnect() {
@@ -116,7 +128,7 @@ class WebSocketClient(
             val totalDelay = (baseDelay + jitter).coerceAtLeast(500L)
 
             delay(totalDelay)
-            if (!isManuallyClosed.get() && !isConnected.get()) {
+            if (!isManuallyClosed.get() && !isConnected.get() && isConnecting.compareAndSet(false, true)) {
                 establishConnection()
             }
         }
@@ -448,6 +460,7 @@ class WebSocketClient(
 
     fun disconnect() {
         isManuallyClosed.set(true)
+        isConnecting.set(false)
         reconnectJob?.cancel()
         reconnectJob = null
         webSocket?.close(1000, "Normal closure")

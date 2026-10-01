@@ -39,11 +39,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // Start WebSocket connection if token exists
-        if (app.sessionManager.token != null) {
-            app.webSocketClient.connect(lifecycleScope)
-        }
-
         setContent {
             CentyChatTheme {
                 val initialKey = when {
@@ -190,9 +185,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) {
-            app.webSocketClient.disconnect()
-            app.audioEngine.stop()
-        }
+        app.webSocketClient.disconnect()
+        app.audioEngine.stop()
     }
 }
