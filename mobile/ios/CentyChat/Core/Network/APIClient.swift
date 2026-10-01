@@ -209,7 +209,11 @@ public actor APIClient {
                 }
                 throw APIError.httpError(statusCode: httpResponse.statusCode, message: "Session refresh failed", code: nil)
             }
-            return try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
+            let refreshedToken = try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
+            if KeychainManager.shared.authToken == staleToken {
+                KeychainManager.shared.authToken = refreshedToken
+            }
+            return refreshedToken
         }
         if KeychainManager.shared.authToken == staleToken {
             KeychainManager.shared.authToken = refreshedToken
