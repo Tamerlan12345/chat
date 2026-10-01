@@ -20,34 +20,25 @@ enum class SessionStorageState {
     UNAVAILABLE
 }
 
-class SessionManager(private val context: Context) {
+class SessionManager internal constructor(
+    private val prefs: SharedPreferences?,
+    private val isDebuggableBuild: Boolean
+) {
+
+    constructor(context: Context) : this(
+        prefs = createEncryptedPreferences(context),
+        isDebuggableBuild = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    )
 
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
-    private val _storageState = MutableStateFlow(SessionStorageState.AVAILABLE)
+    private val _storageState = MutableStateFlow(
+        if (prefs == null) SessionStorageState.UNAVAILABLE else SessionStorageState.AVAILABLE
+    )
     val storageState: StateFlow<SessionStorageState> = _storageState.asStateFlow()
-
-    private val prefs: SharedPreferences? by lazy {
-        try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-
-            EncryptedSharedPreferences.create(
-                context,
-                "centychat_secure_session",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (_: Exception) {
-            markStorageUnavailable()
-            null
-        }
-    }
 
     private val _tokenFlow = MutableStateFlow<String?>(null)
     val tokenFlow: StateFlow<String?> = _tokenFlow.asStateFlow()
@@ -84,6 +75,7 @@ class SessionManager(private val context: Context) {
     }
 
     private fun readString(key: String, defaultValue: String? = null): String? =
+        if (_storageState.value == SessionStorageState.UNAVAILABLE) defaultValue else
         try {
             prefs?.getString(key, defaultValue) ?: defaultValue
         } catch (_: Exception) {
@@ -92,6 +84,7 @@ class SessionManager(private val context: Context) {
         }
 
     private fun readBoolean(key: String, defaultValue: Boolean): Boolean =
+        if (_storageState.value == SessionStorageState.UNAVAILABLE) defaultValue else
         try {
             prefs?.getBoolean(key, defaultValue) ?: defaultValue
         } catch (_: Exception) {
@@ -100,12 +93,18 @@ class SessionManager(private val context: Context) {
         }
 
     private fun editSecureStorage(change: SharedPreferences.Editor.() -> Unit): Boolean {
-        val securePrefs = prefs ?: return false
+        if (_storageState.value == SessionStorageState.UNAVAILABLE) return false
+        val securePrefs = prefs ?: run {
+            markStorageUnavailable()
+            return false
+        }
         return try {
             val editor = securePrefs.edit()
             editor.change()
-            editor.apply()
-            true
+            if (editor.commit()) true else {
+                markStorageUnavailable()
+                false
+            }
         } catch (_: Exception) {
             markStorageUnavailable()
             false
@@ -128,9 +127,6 @@ class SessionManager(private val context: Context) {
 
     fun validateServerEndpoint(raw: String): Result<ValidatedEndpoint> =
         ServerEndpointPolicy.validate(raw, allowInsecureDebug = isDebuggableBuild)
-
-    private val isDebuggableBuild: Boolean
-        get() = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     fun useServerEndpointForVerification(endpoint: ValidatedEndpoint) {
         _serverUrlFlow.value = endpoint.apiBaseUrl
@@ -246,6 +242,22 @@ class SessionManager(private val context: Context) {
     }
 
     companion object {
+        private fun createEncryptedPreferences(context: Context): SharedPreferences? = try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            EncryptedSharedPreferences.create(
+                context,
+                "centychat_secure_session",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (_: Exception) {
+            null
+        }
+
         const val DEFAULT_SERVER_URL = ""
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_TOKEN = "jwt_token"
