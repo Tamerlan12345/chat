@@ -1,12 +1,32 @@
 import SwiftUI
+import UIKit
 
 /// Корпоративная палитра цветов CentyChat с поддержкой Light и Dark режимов
 public enum CentyColors {
-    // Основные акценты бренда Centras
-    public static let primaryBlue = Color(red: 0.357, green: 0.306, blue: 0.902)
-    public static let primaryPressed = Color(red: 0.302, green: 0.251, blue: 0.839)
-    public static let accentText = Color(red: 0.290, green: 0.239, blue: 0.824)
-    public static let primarySoft = primaryBlue.opacity(0.12)
+    // Основные акценты бренда Centras. В тёмной теме текстовый акцент
+    // светлее: это сохраняет контраст на сгруппированных системных поверхностях.
+    private static func adaptive(_ light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+
+    public static let primaryBlue = adaptive(
+        UIColor(red: 0.357, green: 0.306, blue: 0.902, alpha: 1),
+        dark: UIColor(red: 0.392, green: 0.341, blue: 0.933, alpha: 1)
+    )
+    public static let primaryPressed = adaptive(
+        UIColor(red: 0.302, green: 0.251, blue: 0.839, alpha: 1),
+        dark: UIColor(red: 0.333, green: 0.286, blue: 0.871, alpha: 1)
+    )
+    public static let accentText = adaptive(
+        UIColor(red: 0.290, green: 0.239, blue: 0.824, alpha: 1),
+        dark: UIColor(red: 0.690, green: 0.663, blue: 1.0, alpha: 1)
+    )
+    public static let primarySoft = adaptive(
+        UIColor(red: 0.357, green: 0.306, blue: 0.902, alpha: 0.12),
+        dark: UIColor(red: 0.588, green: 0.549, blue: 1.0, alpha: 0.16)
+    )
     public static let centrasRed = Color(red: 0.88, green: 0.15, blue: 0.18)
     public static let centrasGold = Color(red: 0.95, green: 0.70, blue: 0.10)
     
