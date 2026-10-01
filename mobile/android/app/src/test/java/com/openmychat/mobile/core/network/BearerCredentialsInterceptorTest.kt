@@ -17,7 +17,12 @@ class BearerCredentialsInterceptorTest {
         val authorization = AtomicReference<String?>(null)
         val client = recordingClient(authorization)
 
-        client.newCall(Request.Builder().url("http://10.0.2.2:2004/api/health").build()).execute().close()
+        client.newCall(
+            Request.Builder()
+                .url("http://10.0.2.2:2004/api/health")
+                .header("Authorization", "Bearer manually-set-token")
+                .build()
+        ).execute().close()
 
         assertNull(authorization.get())
     }

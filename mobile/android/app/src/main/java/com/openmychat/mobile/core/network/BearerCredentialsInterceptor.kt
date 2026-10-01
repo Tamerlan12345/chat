@@ -14,10 +14,11 @@ class BearerCredentialsInterceptor(
             .header("Accept", "application/json")
             .header("User-Agent", "CentyChat-Android/1.0.0")
 
-        if (
+        if (!ServerEndpointPolicy.canSendBearerCredentials(originalRequest.url)) {
+            requestBuilder.removeHeader("Authorization")
+        } else if (
             !token.isNullOrBlank() &&
-            originalRequest.header("Authorization") == null &&
-            ServerEndpointPolicy.canSendBearerCredentials(originalRequest.url)
+            originalRequest.header("Authorization") == null
         ) {
             requestBuilder.header("Authorization", "Bearer $token")
         }

@@ -184,14 +184,21 @@ class ApiClient(
     }
 
     suspend fun refreshToken(): AuthSuccessResponse = withContext(Dispatchers.IO) {
-        val httpRequest = Request.Builder()
-            .url("${getBaseUrl()}/auth/refresh")
-            .post("{}".toRequestBody(jsonMediaType))
-            .build()
+        try {
+            val httpRequest = Request.Builder()
+                .url("${getBaseUrl()}/auth/refresh")
+                .post("{}".toRequestBody(jsonMediaType))
+                .build()
 
-        val response: AuthSuccessResponse = executeRequest(httpRequest)
-        sessionManager.token = response.token
-        response
+            val response: AuthSuccessResponse = executeRequest(httpRequest)
+            sessionManager.token = response.token
+            response
+        } catch (error: ApiException) {
+            if (RefreshFailurePolicy.shouldClearSession(error.statusCode)) {
+                sessionManager.clearSession()
+            }
+            throw error
+        }
     }
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
