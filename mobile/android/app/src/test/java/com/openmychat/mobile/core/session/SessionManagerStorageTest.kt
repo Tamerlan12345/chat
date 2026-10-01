@@ -49,7 +49,12 @@ class SessionManagerStorageTest {
         } catch (_: SecureStorageUnavailableException) {
             // Expected: callers receive a recoverable storage error.
         }
-        manager.deviceSecret = "sensitive-device-secret"
+        try {
+            manager.deviceSecret = "sensitive-device-secret"
+            fail("device-secret persistence must fail explicitly when secure storage is unavailable")
+        } catch (_: SecureStorageUnavailableException) {
+            // Expected: callers cannot continue as if device credentials were stored.
+        }
 
         assertEquals(SessionStorageState.UNAVAILABLE, manager.storageState.value)
         assertNull(manager.token)

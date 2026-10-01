@@ -69,10 +69,9 @@ class LoginViewModel(
                 try {
                     val secretBytes = ByteArray(32)
                     SecureRandom().nextBytes(secretBytes)
-                    val secretString = android.util.Base64.encodeToString(
-                        secretBytes,
-                        android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
-                    )
+                    val secretString = java.util.Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(secretBytes)
                     val claimResp = apiClient.claimDevice(
                         DeviceClaimRequest(
                             deviceId = sessionManager.deviceId,
@@ -82,6 +81,8 @@ class LoginViewModel(
                     if (claimResp.claimed) {
                         sessionManager.deviceSecret = secretString
                     }
+                } catch (error: SecureStorageUnavailableException) {
+                    throw error
                 } catch (_: Exception) {}
 
                 if (resp.user.mustChangePassword) {

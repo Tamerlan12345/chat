@@ -165,9 +165,8 @@ class SessionManager internal constructor(
     var token: String?
         get() = readString(KEY_TOKEN)
         set(value) {
-            if (writeString(KEY_TOKEN, value)) {
-                _tokenFlow.value = value
-            }
+            if (!writeString(KEY_TOKEN, value)) throw SecureStorageUnavailableException()
+            _tokenFlow.value = value
         }
 
     val deviceId: String
@@ -183,7 +182,7 @@ class SessionManager internal constructor(
     var deviceSecret: String?
         get() = readString(KEY_DEVICE_SECRET)
         set(value) {
-            writeString(KEY_DEVICE_SECRET, value)
+            if (!writeString(KEY_DEVICE_SECRET, value)) throw SecureStorageUnavailableException()
         }
 
     var currentUser: User?
