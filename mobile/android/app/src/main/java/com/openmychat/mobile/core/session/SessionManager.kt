@@ -174,7 +174,7 @@ class SessionManager internal constructor(
             var id = readString(KEY_DEVICE_ID)
             if (id.isNullOrBlank()) {
                 id = UUID.randomUUID().toString()
-                writeString(KEY_DEVICE_ID, id)
+                if (!writeString(KEY_DEVICE_ID, id)) throw SecureStorageUnavailableException()
             }
             return id
         }
@@ -190,16 +190,14 @@ class SessionManager internal constructor(
         set(value) {
             if (value != null) {
                 val encoded = json.encodeToString(value)
-                if (writeString(KEY_CURRENT_USER, encoded)) {
-                    _currentUserFlow.value = value
-                    if (value.mustChangePassword) {
-                        updateMustChangePassword(true)
-                    }
+                if (!writeString(KEY_CURRENT_USER, encoded)) throw SecureStorageUnavailableException()
+                _currentUserFlow.value = value
+                if (value.mustChangePassword) {
+                    updateMustChangePassword(true)
                 }
             } else {
-                if (writeString(KEY_CURRENT_USER, null)) {
-                    _currentUserFlow.value = null
-                }
+                if (!writeString(KEY_CURRENT_USER, null)) throw SecureStorageUnavailableException()
+                _currentUserFlow.value = null
             }
         }
 
@@ -210,9 +208,8 @@ class SessionManager internal constructor(
         }
 
     private fun updateMustChangePassword(mustChange: Boolean) {
-        if (writeBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange)) {
-            _mustChangePasswordFlow.value = mustChange
-        }
+        if (!writeBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange)) throw SecureStorageUnavailableException()
+        _mustChangePasswordFlow.value = mustChange
     }
 
     var messageEditWindowMinutes: String

@@ -24,11 +24,14 @@ import androidx.lifecycle.lifecycleScope
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ChangePasswordRequest
 import com.openmychat.mobile.features.auth.ChangePasswordDialog
+import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
 import com.openmychat.mobile.ui.navigation.CentyNavHost
 import com.openmychat.mobile.ui.navigation.NavKey
+import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.rememberNavBackStack
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -72,11 +75,22 @@ class MainActivity : ComponentActivity() {
 
                 // Observe global WebSocket events (Wake, Calls, Server Disconnects)
                 LaunchedEffect(Unit) {
-                    app.sessionManager.tokenFlow.collectLatest { token ->
-                        if (token != null) {
+                    combine(
+                        app.sessionManager.tokenFlow,
+                        app.sessionManager.currentUserFlow,
+                        app.sessionManager.storageState
+                    ) { token, user, storageState ->
+                        AuthenticatedRouteState(token, user != null, storageState)
+                    }.collectLatest { session ->
+                        if (SessionRouteGuard.hasAuthenticatedSession(session)) {
                             app.webSocketClient.connect(lifecycleScope)
                         } else {
                             app.webSocketClient.disconnect()
+                            SessionRouteGuard.destinationAfterSessionLoss(
+                                currentDestination = backStack.currentKey,
+                                session = session,
+                                hasConfiguredServer = app.sessionManager.serverUrl.isNotBlank()
+                            )?.let(backStack::clearAndSet)
                         }
                     }
                 }
@@ -93,13 +107,20 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                             is WsEvent.CallOffer -> {
-                                backStack.navigate(
-                                    NavKey.Call(
-                                        peerId = event.senderId,
-                                        peerName = event.senderName,
-                                        isIncoming = true
-                                    )
+                                val session = AuthenticatedRouteState(
+                                    token = app.sessionManager.token,
+                                    hasCurrentUser = app.sessionManager.currentUser != null,
+                                    storageState = app.sessionManager.storageState.value
                                 )
+                                if (SessionRouteGuard.acceptsIncomingCall(session)) {
+                                    backStack.navigate(
+                                        NavKey.Call(
+                                            peerId = event.senderId,
+                                            peerName = event.senderName,
+                                            isIncoming = true
+                                        )
+                                    )
+                                }
                             }
                             is WsEvent.ServerDisconnect -> {
                                 Toast.makeText(

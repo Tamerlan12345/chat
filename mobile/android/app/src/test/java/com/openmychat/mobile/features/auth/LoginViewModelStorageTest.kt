@@ -91,6 +91,60 @@ class LoginViewModelStorageTest {
         }
     }
 
+    @Test
+    fun passwordChangeShowsRecoverableErrorWhenMustChangeFlagWriteFailsAfterTokenWrite() = runBlocking {
+        assertPasswordChangeDoesNotAuthenticateWhenCommitFails(commitToFail = 2)
+    }
+
+    @Test
+    fun passwordChangeShowsRecoverableErrorWhenCurrentUserWriteFailsAfterTokenWrite() = runBlocking {
+        assertPasswordChangeDoesNotAuthenticateWhenCommitFails(commitToFail = 3)
+    }
+
+    private suspend fun kotlinx.coroutines.CoroutineScope.assertPasswordChangeDoesNotAuthenticateWhenCommitFails(
+        commitToFail: Int
+    ) {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val storage = FailingAfterFirstCommitSharedPreferences(
+                initialValues = mapOf(
+                    "jwt_token" to "old-token",
+                    "current_user_json" to """{"id":1,"username":"alice","full_name":"Alice"}""",
+                    "must_change_password" to true,
+                    "server_url" to "https://chat.example/api"
+                ),
+                commitToFail = commitToFail
+            )
+            val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val requestPaths = mutableListOf<String>()
+            val viewModel = LoginViewModel(
+                ApiClient(sessionManager, successfulPasswordChangeClient(requestPaths)),
+                sessionManager
+            )
+            val emittedStates = mutableListOf<LoginUiState>()
+            val observer = launch(Dispatchers.Unconfined) {
+                viewModel.uiState.collect { emittedStates += it }
+            }
+
+            viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
+
+            val error = requireNotNull(withTimeout(2_000) {
+                viewModel.changePasswordError.first { !it.isNullOrBlank() }
+            })
+            observer.cancel()
+
+            assertTrue(error.contains("Secure device storage"))
+            assertEquals(listOf("/api/users/password"), requestPaths)
+            assertEquals(commitToFail, storage.commitCount)
+            assertFalse(emittedStates.any { it is LoginUiState.Success })
+            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
+            assertNull(sessionManager.token)
+            assertNull(sessionManager.currentUser)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun successfulLoginClient(): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor { chain ->
             Response.Builder()
@@ -126,8 +180,29 @@ class LoginViewModelStorageTest {
         }
         .build()
 
-    private class FailingAfterFirstCommitSharedPreferences : SharedPreferences {
-        private val values = mutableMapOf<String, Any?>("device_id" to "existing-device-id")
+    private fun successfulPasswordChangeClient(requestPaths: MutableList<String>): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val path = chain.request().url.encodedPath
+            requestPaths += path
+            check(path == "/api/users/password") { "Unexpected endpoint: ${chain.request().url}" }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(
+                    """{"success":true,"token":"replacement-token","user":{"id":1,"username":"alice","full_name":"Alice"}}"""
+                        .toResponseBody()
+                )
+                .build()
+        }
+        .build()
+
+    private class FailingAfterFirstCommitSharedPreferences(
+        initialValues: Map<String, Any?> = mapOf("device_id" to "existing-device-id"),
+        private val commitToFail: Int = 2
+    ) : SharedPreferences {
+        private val values = initialValues.toMutableMap()
         var commitCount = 0
             private set
 
@@ -155,7 +230,7 @@ class LoginViewModelStorageTest {
             override fun clear(): SharedPreferences.Editor = apply { pending.clear(); values.keys.forEach { pending[it] = null } }
             override fun commit(): Boolean {
                 commitCount += 1
-                if (commitCount > 1) return false
+                if (commitCount >= commitToFail) return false
                 pending.forEach { (key, value) ->
                     if (value == null) values.remove(key) else values[key] = value
                 }
