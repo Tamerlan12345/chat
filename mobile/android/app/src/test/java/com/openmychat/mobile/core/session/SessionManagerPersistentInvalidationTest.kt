@@ -1,9 +1,25 @@
 package com.openmychat.mobile.core.session
 
 import android.content.SharedPreferences
+import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.features.auth.LoginUiState
+import com.openmychat.mobile.features.auth.LoginViewModel
+import com.openmychat.mobile.features.connect.ServerConnectUiState
+import com.openmychat.mobile.features.connect.ServerConnectViewModel
 import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
+import com.openmychat.mobile.ui.navigation.NavKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -75,6 +91,112 @@ class SessionManagerPersistentInvalidationTest {
         assertNull(restarted.currentUser)
     }
 
+    @Test
+    fun verifiedEndpointAndFreshLoginCompleteRecoveryBeforeMarkersAreCleared() {
+        val securePrefs = CommitControlledSharedPreferences()
+        val marker = MemorySessionInvalidationMarker(initiallyInvalidated = true)
+        val sentinel = MemorySessionInvalidationSentinel(initiallyInvalidated = true)
+        val invalidation = FailClosedSessionInvalidationStore(
+            marker = marker,
+            keyEraser = SuccessfulKeyEraser,
+            sentinel = sentinel
+        )
+        val recovering = sessionManager(securePrefs, invalidation)
+
+        val endpoint = recovering.validateServerEndpoint("https://chat.example").getOrThrow()
+        recovering.commitVerifiedServerEndpoint(endpoint)
+        assertEquals(
+            NavKey.Login,
+            SessionRouteGuard.destinationForNavigation(
+                requestedDestination = NavKey.Conversations,
+                session = AuthenticatedRouteState(
+                    token = recovering.token,
+                    hasCurrentUser = recovering.currentUser != null,
+                    storageState = recovering.storageState.value
+                ),
+                hasConfiguredServer = recovering.serverUrl.isNotBlank()
+            )
+        )
+        val ephemeralDeviceId = recovering.deviceId
+        recovering.saveAuthSuccess(alice(), "fresh-token")
+
+        assertEquals(SessionStorageState.AVAILABLE, recovering.storageState.value)
+        assertEquals("https://chat.example/api", recovering.serverUrl)
+        assertFalse(marker.invalidated)
+        assertFalse(sentinel.invalidated)
+        val restarted = sessionManager(securePrefs, invalidation)
+        assertEquals(SessionStorageState.AVAILABLE, restarted.storageState.value)
+        assertEquals("fresh-token", restarted.token)
+        assertEquals(alice(), restarted.currentUser)
+        assertEquals("https://chat.example/api", restarted.serverUrl)
+        assertEquals(ephemeralDeviceId, restarted.deviceId)
+    }
+
+    @Test
+    fun noBackupSentinelBlocksRestartWhenMarkerAndKeyErasureBothFail() {
+        val securePrefs = CommitControlledSharedPreferences()
+        val marker = FailingSessionInvalidationMarker()
+        val sentinel = MemorySessionInvalidationSentinel(initiallyInvalidated = false)
+        val invalidation = FailClosedSessionInvalidationStore(
+            marker = marker,
+            keyEraser = FailingKeyEraser,
+            sentinel = sentinel
+        )
+        val seeded = sessionManager(securePrefs, invalidation)
+        seeded.saveAuthSuccess(alice(), "stale-token")
+        securePrefs.failNextCommit = true
+
+        assertFalse(seeded.clearSession())
+        assertTrue(sentinel.invalidated)
+        val restarted = sessionManager(securePrefs, invalidation)
+
+        assertEquals(SessionStorageState.UNAVAILABLE, restarted.storageState.value)
+        assertNull(restarted.token)
+        assertNull(restarted.currentUser)
+    }
+
+    @Test
+    fun invalidatedOnboardingVerifiesEndpointThenLoginCommitsFreshSessionBeforeNavigation() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val securePrefs = CommitControlledSharedPreferences()
+            val marker = MemorySessionInvalidationMarker(initiallyInvalidated = true)
+            val sentinel = MemorySessionInvalidationSentinel(initiallyInvalidated = true)
+            val invalidation = FailClosedSessionInvalidationStore(
+                marker = marker,
+                keyEraser = SuccessfulKeyEraser,
+                sentinel = sentinel
+            )
+            val sessionManager = sessionManager(securePrefs, invalidation)
+            val serverConnect = ServerConnectViewModel(
+                ApiClient(sessionManager, verificationHttpClient = verifiedOnboardingClient()),
+                sessionManager
+            )
+            var paired: Boolean? = null
+
+            serverConnect.updateServerUrl("https://chat.example")
+            serverConnect.checkConnection { paired = it }
+            withTimeout(2_000) { serverConnect.uiState.first { it is ServerConnectUiState.Success } }
+
+            assertEquals(false, paired)
+            assertEquals("https://chat.example/api", sessionManager.serverUrl)
+            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
+
+            val login = LoginViewModel(ApiClient(sessionManager, okHttpClient = loginClient()), sessionManager)
+            login.login("alice", "password")
+            withTimeout(2_000) { login.uiState.first { it is LoginUiState.Success } }
+
+            assertEquals(SessionStorageState.AVAILABLE, sessionManager.storageState.value)
+            assertFalse(marker.invalidated)
+            assertFalse(sentinel.invalidated)
+            val restarted = sessionManager(securePrefs, invalidation)
+            assertEquals("fresh-token", restarted.token)
+            assertEquals(alice(), restarted.currentUser)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun assertRestartIsUnauthenticated(
         securePrefs: CommitControlledSharedPreferences,
         invalidation: MemorySessionInvalidation
@@ -123,6 +245,41 @@ class SessionManagerPersistentInvalidationTest {
 
     private fun alice() = User(id = 1, username = "alice", fullName = "Alice")
 
+    private fun verifiedOnboardingClient(): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val body = when (chain.request().url.encodedPath) {
+                "/api/health" -> """{"status":"ok"}"""
+                "/api/auth/knock" -> """{"status":"login_required"}"""
+                else -> error("Unexpected onboarding endpoint: ${chain.request().url}")
+            }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(body.toResponseBody())
+                .build()
+        }
+        .build()
+
+    private fun loginClient(): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val body = when (chain.request().url.encodedPath) {
+                "/api/auth/login" ->
+                    """{"user":{"id":1,"username":"alice","full_name":"Alice"},"token":"fresh-token"}"""
+                "/api/auth/device/claim" -> """{"claimed":false}"""
+                else -> error("Unexpected login endpoint: ${chain.request().url}")
+            }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(body.toResponseBody())
+                .build()
+        }
+        .build()
+
     private class MemorySessionInvalidation : SessionInvalidationStore {
         var invalidated = false
 
@@ -143,6 +300,34 @@ class SessionManagerPersistentInvalidationTest {
         override fun isInvalidated(): Boolean = false
         override fun markInvalidated(): Boolean = false
         override fun clearInvalidation(): Boolean = false
+    }
+
+    private class MemorySessionInvalidationMarker(
+        initiallyInvalidated: Boolean
+    ) : SessionInvalidationMarker {
+        var invalidated = initiallyInvalidated
+
+        override fun isInvalidated(): Boolean = invalidated
+        override fun markInvalidated(): Boolean = true.also { invalidated = true }
+        override fun clearInvalidation(): Boolean = true.also { invalidated = false }
+    }
+
+    private class MemorySessionInvalidationSentinel(
+        initiallyInvalidated: Boolean
+    ) : SessionInvalidationSentinel {
+        var invalidated = initiallyInvalidated
+
+        override fun isInvalidated(): Boolean = invalidated
+        override fun markInvalidated(): Boolean = true.also { invalidated = true }
+        override fun clearInvalidation(): Boolean = true.also { invalidated = false }
+    }
+
+    private object SuccessfulKeyEraser : SessionKeyEraser {
+        override fun erase(): Boolean = true
+    }
+
+    private object FailingKeyEraser : SessionKeyEraser {
+        override fun erase(): Boolean = false
     }
 
     private class RecordingKeyEraser(

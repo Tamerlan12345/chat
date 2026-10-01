@@ -75,6 +75,9 @@ class SessionManager private constructor(
     private val _serverUrlFlow = MutableStateFlow(DEFAULT_SERVER_URL)
     val serverUrlFlow: StateFlow<String> = _serverUrlFlow.asStateFlow()
 
+    private var verifiedRecoveryEndpoint: ValidatedEndpoint? = null
+    private var ephemeralDeviceId: String? = null
+
     init {
         if (_storageState.value == SessionStorageState.AVAILABLE) {
             _tokenFlow.value = readString(KEY_TOKEN)
@@ -170,9 +173,15 @@ class SessionManager private constructor(
             "An authenticated session cannot be moved to an unverified server"
         }
         _serverUrlFlow.value = endpoint.apiBaseUrl
+        verifiedRecoveryEndpoint = endpoint
     }
 
     fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
+        if (_storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()) {
+            // Recovery must not weaken invalidation by persisting an endpoint before fresh auth.
+            useServerEndpointForVerification(endpoint)
+            return
+        }
         if (_serverUrlFlow.value != endpoint.apiBaseUrl && !clearSession()) {
             throw SecureStorageUnavailableException()
         }
@@ -204,6 +213,12 @@ class SessionManager private constructor(
 
     val deviceId: String
         get() {
+            if (_storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()) {
+                return ephemeralDeviceId ?: UUID.randomUUID().toString().also {
+                    // Device IDs are non-secret, but must remain memory-only until recovery commits.
+                    ephemeralDeviceId = it
+                }
+            }
             var id = readString(KEY_DEVICE_ID)
             if (id.isNullOrBlank()) {
                 id = UUID.randomUUID().toString()
@@ -283,14 +298,51 @@ class SessionManager private constructor(
         val encodedUser = json.encodeToString(user.copy(mustChangePassword = mustChangePassword))
         val recoveringFromPersistentInvalidation =
             _storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()
-        if (!editSecureStorage(recoveringFromPersistentInvalidation) {
+        if (recoveringFromPersistentInvalidation) {
+            commitRecoveredAuthenticatedSession(
+                user = user,
+                token = token,
+                mustChangePassword = mustChangePassword,
+                encodedUser = encodedUser
+            )
+            return
+        }
+        if (!editSecureStorage {
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
                 putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
             }
         ) throw SecureStorageUnavailableException()
 
-        if (recoveringFromPersistentInvalidation && !invalidationStore.clear()) {
+        _storageState.value = SessionStorageState.AVAILABLE
+        _tokenFlow.value = token
+        _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
+        _mustChangePasswordFlow.value = mustChangePassword
+    }
+
+    /**
+     * Commits a clean replacement in one encrypted-preferences transaction before any marker is
+     * cleared. A crash before [invalidationStore.clear] remains invalidated; a crash afterwards
+     * can restore only this fully verified endpoint and fresh authenticated session.
+     */
+    private fun commitRecoveredAuthenticatedSession(
+        user: User,
+        token: String,
+        mustChangePassword: Boolean,
+        encodedUser: String
+    ) {
+        val endpoint = verifiedRecoveryEndpoint ?: throw SecureStorageUnavailableException()
+        if (!editSecureStorage(allowRecoveryFromPersistentInvalidation = true) {
+                clear()
+                putString(KEY_SERVER_URL, endpoint.apiBaseUrl)
+                putString(KEY_TOKEN, token)
+                putString(KEY_CURRENT_USER, encodedUser)
+                putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
+                ephemeralDeviceId?.let { putString(KEY_DEVICE_ID, it) }
+            }
+        ) throw SecureStorageUnavailableException()
+
+        if (!invalidationStore.clear()) {
             markStorageUnavailable()
             throw SecureStorageUnavailableException()
         }
@@ -299,6 +351,8 @@ class SessionManager private constructor(
         _tokenFlow.value = token
         _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
         _mustChangePasswordFlow.value = mustChangePassword
+        _serverUrlFlow.value = endpoint.apiBaseUrl
+        ephemeralDeviceId = null
     }
 
     fun clearSession(): Boolean {
