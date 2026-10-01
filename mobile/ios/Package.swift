@@ -5,8 +5,7 @@ let package = Package(
     name: "CentyChat",
     defaultLocalization: "ru",
     platforms: [
-        .iOS(.v17),
-        .macOS(.v14)
+        .iOS(.v17)
     ],
     products: [
         .library(
@@ -18,6 +17,9 @@ let package = Package(
         .target(
             name: "CentyChat",
             path: "CentyChat",
+            exclude: [
+                "App/CentyChatApp.swift"
+            ],
             resources: [
                 .process("Resources")
             ]
