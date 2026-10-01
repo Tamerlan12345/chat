@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.connect
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.ApiClient
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.HealthStatus
 import com.openmychat.mobile.data.model.KnockRequest
@@ -67,6 +68,11 @@ class ServerConnectViewModel(
                 } else {
                     onSuccess(false)
                 }
+            } catch (e: SecureStorageUnavailableException) {
+                sessionManager.restorePersistedServerEndpoint()
+                _uiState.value = ServerConnectUiState.Error(
+                    e.message ?: "Secure storage is unavailable"
+                )
             } catch (e: Exception) {
                 sessionManager.restorePersistedServerEndpoint()
                 _uiState.value = ServerConnectUiState.Error(

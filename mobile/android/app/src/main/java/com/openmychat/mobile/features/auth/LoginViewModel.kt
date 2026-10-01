@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.MustChangePasswordException
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.ChangePasswordRequest
 import com.openmychat.mobile.data.model.DeviceClaimRequest
@@ -94,6 +95,8 @@ class LoginViewModel(
                 sessionManager.mustChangePassword = true
                 _mustChangePasswordDialogVisible.value = true
                 _uiState.value = LoginUiState.Idle
+            } catch (e: SecureStorageUnavailableException) {
+                _uiState.value = LoginUiState.Error(e.message ?: "Secure storage is unavailable")
             } catch (e: Exception) {
                 _uiState.value = LoginUiState.Error(e.message ?: "Ошибка авторизации")
             }

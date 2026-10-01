@@ -20,6 +20,10 @@ enum class SessionStorageState {
     UNAVAILABLE
 }
 
+class SecureStorageUnavailableException : IllegalStateException(
+    "Secure device storage is unavailable. Unlock the device or restore screen lock, then try again."
+)
+
 class SessionManager internal constructor(
     private val prefs: SharedPreferences?,
     private val isDebuggableBuild: Boolean
@@ -133,7 +137,9 @@ class SessionManager internal constructor(
     }
 
     fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
-        writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)
+        if (!writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)) {
+            throw SecureStorageUnavailableException()
+        }
         _serverUrlFlow.value = endpoint.apiBaseUrl
     }
 
@@ -223,7 +229,7 @@ class SessionManager internal constructor(
                 putString(KEY_CURRENT_USER, encodedUser)
                 putBoolean(KEY_MUST_CHANGE_PASSWORD, user.mustChangePassword)
             }
-        ) return
+        ) throw SecureStorageUnavailableException()
 
         _tokenFlow.value = token
         _currentUserFlow.value = user

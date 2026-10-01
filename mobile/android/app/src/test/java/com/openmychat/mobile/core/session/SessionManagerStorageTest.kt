@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 
@@ -39,10 +40,15 @@ class SessionManagerStorageTest {
         val storage = FailingSharedPreferences()
         val manager = storageConstructor.newInstance(storage, false) as SessionManager
 
-        manager.saveAuthSuccess(
-            user = User(id = 1, username = "alice", fullName = "Alice"),
-            token = "sensitive-token"
-        )
+        try {
+            manager.saveAuthSuccess(
+                user = User(id = 1, username = "alice", fullName = "Alice"),
+                token = "sensitive-token"
+            )
+            fail("authentication must fail when secure storage cannot persist the session")
+        } catch (_: SecureStorageUnavailableException) {
+            // Expected: callers receive a recoverable storage error.
+        }
         manager.deviceSecret = "sensitive-device-secret"
 
         assertEquals(SessionStorageState.UNAVAILABLE, manager.storageState.value)
@@ -95,7 +101,9 @@ class SessionManagerStorageTest {
             override fun remove(key: String): SharedPreferences.Editor = this
             override fun clear(): SharedPreferences.Editor = this
             override fun commit(): Boolean = false
-            override fun apply() = Unit
+            override fun apply() {
+                throw IllegalStateException("secure storage unavailable")
+            }
         }
     }
 }
