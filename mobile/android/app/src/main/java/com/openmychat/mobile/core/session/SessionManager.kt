@@ -24,14 +24,29 @@ class SecureStorageUnavailableException : IllegalStateException(
     "Secure device storage is unavailable. Unlock the device or restore screen lock, then try again."
 )
 
-class SessionManager internal constructor(
+class SessionManager private constructor(
     private val prefs: SharedPreferences?,
-    private val isDebuggableBuild: Boolean
+    private val isDebuggableBuild: Boolean,
+    private val invalidationStore: SessionInvalidationStore,
+    @Suppress("UNUSED_PARAMETER") private val constructorMarker: Unit
 ) {
+
+    internal constructor(
+        prefs: SharedPreferences?,
+        isDebuggableBuild: Boolean
+    ) : this(prefs, isDebuggableBuild, NoOpSessionInvalidationStore, Unit)
+
+    internal constructor(
+        prefs: SharedPreferences?,
+        isDebuggableBuild: Boolean,
+        invalidationStore: SessionInvalidationStore
+    ) : this(prefs, isDebuggableBuild, invalidationStore, Unit)
 
     constructor(context: Context) : this(
         prefs = createEncryptedPreferences(context),
-        isDebuggableBuild = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        isDebuggableBuild = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+        invalidationStore = createSessionInvalidationStore(context),
+        constructorMarker = Unit
     )
 
     private val json = Json {
@@ -40,7 +55,11 @@ class SessionManager internal constructor(
     }
 
     private val _storageState = MutableStateFlow(
-        if (prefs == null) SessionStorageState.UNAVAILABLE else SessionStorageState.AVAILABLE
+        if (prefs == null || isPersistentlyInvalidated()) {
+            SessionStorageState.UNAVAILABLE
+        } else {
+            SessionStorageState.AVAILABLE
+        }
     )
     val storageState: StateFlow<SessionStorageState> = _storageState.asStateFlow()
 
@@ -57,21 +76,32 @@ class SessionManager internal constructor(
     val serverUrlFlow: StateFlow<String> = _serverUrlFlow.asStateFlow()
 
     init {
-        _tokenFlow.value = readString(KEY_TOKEN)
-        _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
-        restorePersistedServerEndpoint()
+        if (_storageState.value == SessionStorageState.AVAILABLE) {
+            _tokenFlow.value = readString(KEY_TOKEN)
+            _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
+            restorePersistedServerEndpoint()
 
-        val userJson = readString(KEY_CURRENT_USER)
-        if (!userJson.isNullOrBlank()) {
-            try {
-                _currentUserFlow.value = json.decodeFromString<User>(userJson)
-            } catch (e: Exception) {
-                _currentUserFlow.value = null
+            val userJson = readString(KEY_CURRENT_USER)
+            if (!userJson.isNullOrBlank()) {
+                try {
+                    _currentUserFlow.value = json.decodeFromString<User>(userJson)
+                } catch (e: Exception) {
+                    _currentUserFlow.value = null
+                }
             }
         }
     }
 
-    private fun markStorageUnavailable() {
+    private fun isPersistentlyInvalidated(): Boolean = try {
+        invalidationStore.isInvalidated()
+    } catch (_: Exception) {
+        true
+    }
+
+    private fun markStorageUnavailable(persistInvalidation: Boolean = true) {
+        if (persistInvalidation) {
+            invalidationStore.invalidate()
+        }
         _storageState.value = SessionStorageState.UNAVAILABLE
         _tokenFlow.value = null
         _currentUserFlow.value = null
@@ -96,8 +126,11 @@ class SessionManager internal constructor(
             defaultValue
         }
 
-    private fun editSecureStorage(change: SharedPreferences.Editor.() -> Unit): Boolean {
-        if (_storageState.value == SessionStorageState.UNAVAILABLE) return false
+    private fun editSecureStorage(
+        allowRecoveryFromPersistentInvalidation: Boolean = false,
+        change: SharedPreferences.Editor.() -> Unit
+    ): Boolean {
+        if (_storageState.value == SessionStorageState.UNAVAILABLE && !allowRecoveryFromPersistentInvalidation) return false
         val securePrefs = prefs ?: run {
             markStorageUnavailable()
             return false
@@ -248,13 +281,21 @@ class SessionManager internal constructor(
 
     private fun persistAuthenticatedSession(user: User, token: String, mustChangePassword: Boolean) {
         val encodedUser = json.encodeToString(user.copy(mustChangePassword = mustChangePassword))
-        if (!editSecureStorage {
+        val recoveringFromPersistentInvalidation =
+            _storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()
+        if (!editSecureStorage(recoveringFromPersistentInvalidation) {
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
                 putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
             }
         ) throw SecureStorageUnavailableException()
 
+        if (recoveringFromPersistentInvalidation && !invalidationStore.clear()) {
+            markStorageUnavailable()
+            throw SecureStorageUnavailableException()
+        }
+
+        _storageState.value = SessionStorageState.AVAILABLE
         _tokenFlow.value = token
         _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
         _mustChangePasswordFlow.value = mustChangePassword
@@ -274,7 +315,7 @@ class SessionManager internal constructor(
 
     companion object {
         private fun createEncryptedPreferences(context: Context): SharedPreferences? = try {
-            val masterKey = MasterKey.Builder(context)
+            val masterKey = MasterKey.Builder(context, SECURE_SESSION_MASTER_KEY_ALIAS)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
 
