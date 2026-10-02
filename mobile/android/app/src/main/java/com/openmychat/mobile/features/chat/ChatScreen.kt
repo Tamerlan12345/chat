@@ -157,7 +157,7 @@ fun ChatScreen(
         connectionState = connection,
         actions = actions,
         avatarUrl = avatarUrl,
-        peerStatus = if (isDirect) livePeerStatus ?: UserStatus.fromValue(status) else null,
+        peerStatus = if (isDirect) livePeerStatus ?: status?.let(UserStatus::fromValue) else null,
         typingUser = typingUser,
         wakeCooldown = wakeCooldown,
         editingMessage = editingMessage,

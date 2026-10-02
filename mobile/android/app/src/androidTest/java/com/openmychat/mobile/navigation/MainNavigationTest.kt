@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -75,7 +77,7 @@ class MainNavigationTest {
 
     @Test
     fun tabsBackAndLogout() {
-        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
+        composeRule.onNodeWithText("Люди, каналы, сообщения").assertIsDisplayed()
         composeRule.waitForIdle()
         saveScreenshot("main-conversations")
 
@@ -89,7 +91,7 @@ class MainNavigationTest {
 
         // Back from a secondary tab returns to the start tab instead of leaving the app.
         Espresso.pressBack()
-        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
+        composeRule.onNodeWithText("Люди, каналы, сообщения").assertIsDisplayed()
         tab("Чаты").assertIsSelected()
 
         tab("Профиль").performClick()
@@ -101,6 +103,27 @@ class MainNavigationTest {
         }
         assertNull(sessionManager.token)
         saveScreenshot("after-logout")
+    }
+
+    /** Каждая вкладка хранит своё состояние: строка поиска «Сотрудников» переживает уход на «Чаты». */
+    @Test
+    fun eachTabKeepsItsStateAcrossTabSwitches() {
+        tab("Сотрудники").performClick()
+        composeRule.onNodeWithTag("people-search").performTextInput("бухгалтер")
+        composeRule.waitForIdle()
+
+        tab("Чаты").performClick()
+        composeRule.onNodeWithText("Люди, каналы, сообщения").assertIsDisplayed()
+        tab("Сотрудники").assertIsNotSelected()
+
+        tab("Сотрудники").performClick()
+        tab("Сотрудники").assertIsSelected()
+        composeRule.onNodeWithText("бухгалтер").assertIsDisplayed()
+
+        // «Назад» с корня вкладки — на «Чаты», а не из приложения.
+        Espresso.pressBack()
+        Espresso.pressBack()
+        tab("Чаты").assertIsSelected()
     }
 
     private fun saveScreenshot(name: String) {

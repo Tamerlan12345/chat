@@ -69,7 +69,7 @@ class ConversationsContentTest {
     @Test
     fun theSearchFieldSaysItSearchesByName() {
         show(ConversationsUiState.Content(listOf(DirectConversation(userId = 2, fullName = "Боб Тестов")), emptyList()))
-        compose.onNodeWithText("Поиск по имени").assertIsDisplayed()
+        compose.onNodeWithText("Люди, каналы, сообщения").assertIsDisplayed()
     }
 
     @Test
