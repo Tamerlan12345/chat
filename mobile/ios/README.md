@@ -8,7 +8,9 @@
 
 - **Язык**: Swift 6.0+ (строгая потокобезопасность `Sendable`, акторы для сети, `struct`/`enum` value types).
 - **UI-фреймворк**: SwiftUI + Apple Human Interface Guidelines (HIG), SF Symbols, NavigationStack, тактильный отклик (UIImpactFeedbackGenerator).
-- **Архитектура**: MV (Model-View) с `@Observable` сервисом состояния (`AppState`), внедряемым через `@Environment`.
+- **Архитектура**: MV (Model-View). Состояние разделено на `@Observable @MainActor` сторы по фичам (`SessionStore`, `RealtimeStore`, `ConversationsStore`, `ChatStore`, `AnnouncementsStore`, `CallStore`, `ProfileStore`). Сторы работают через протоколы репозиториев (`ServerRepository`, `AuthRepository`, `ChatRepository`, `AnnouncementsRepository`, `RealtimeRepository`) поверх `APIClient`/`WebSocketClient`. `AppContainer` собирает зависимости и внедряется через `@Environment`; представления не обращаются к сетевым синглтонам.
+- **Реалтайм**: единственный насос событий `RealtimeStore` (дедупликация `new_message` + `direct_message`/`channel_message` по id) работает, пока сессия аутентифицирована, и останавливается при выходе.
+- **Локализация**: String Catalog `CentyChat/Resources/Localizable.xcstrings` (ru); `scripts/generate-string-catalog.py` дополняет его без Xcode. Логирование через `os.Logger` (`Log`).
 - **Сеть**:
   - `APIClient` (`actor`, `URLSession`, проактивный рефреш JWT токена на 401, перехват 403 `MUST_CHANGE_PASSWORD`, multipart загрузка файлов).
   - `WebSocketClient` (`actor`, `URLSessionWebSocketTask`, сердечный ритм 30с ping/pong, экспоненциальный бэкофф с джиттером, бинарный релей аудио).
@@ -27,8 +29,10 @@ mobile/ios/
 │   └── CentyChatMobileApp.swift                 # Точка входа @main
 ├── CentyChat/
 │   ├── App/
-│   │   ├── AppState.swift                       # Глобальный @Observable реактивный стейт
-│   │   └── MainTabView.swift                    # Основной экран с вкладками (Чаты / Распоряжения / Профиль)
+│   │   ├── AppContainer.swift                   # Composition root: репозитории, сторы, внедрение в Environment
+│   │   ├── RootView.swift                       # Выбор экрана по фазе сессии, звонок и алерты
+│   │   ├── MainTabView.swift                    # Основной экран с вкладками (Чаты / Распоряжения / Профиль)
+│   │   └── Stores/                              # Session/Realtime/Conversations/Chat/Announcements/Call/Profile
 │   ├── Models/
 │   │   ├── User.swift                           # Модель сотрудника и прав RolePermissions
 │   │   ├── Channel.swift                        # Корпоративный канал
@@ -44,8 +48,11 @@ mobile/ios/
 │   │   ├── Network/
 │   │   │   ├── APIClient.swift                  # HTTP REST клиент с авторефрешем
 │   │   │   └── APIError.swift                   # Локализованные сетевые ошибки
+│   │   ├── Repositories/                        # Протоколы репозиториев и live-реализации
+│   │   ├── Logging/Log.swift                    # Категории os.Logger
 │   │   ├── WebSocket/
-│   │   │   ├── WebSocketClient.swift            # WebSocket транспорт с бэкоффом и пингом
+│   │   │   ├── WebSocketClient.swift            # WebSocket клиент: бэкофф 1-2-4…30 с, ping, connectionState
+│   │   │   ├── WebSocketTransport.swift         # Абстракция сокета (URLSessionWebSocketTask)
 │   │   │   ├── AudioRelayEngine.swift           # Упаковка/распаковка 1028-байтных аудиокадров
 │   │   │   └── JitterBuffer.swift               # Планировщик джиттер-буфера (60мс..250мс)
 │   │   ├── Storage/
@@ -86,9 +93,15 @@ mobile/ios/
 │   │           ├── CentyButton.swift            # Кнопка в HIG стиле
 │   │           └── CentyTextField.swift         # Поле ввода со скрытием пароля
 │   └── Resources/
+│       ├── Localizable.xcstrings                # String Catalog (ru)
 │       ├── Info.plist                           # Разрешения микрофона, камеры, фото и VoIP
 │       └── PrivacyInfo.xcprivacy                # Декларация конфиденциальности для App Store
-└── CentyChatTests/
+└── CentyChatTests/                               # Папка синхронизирована с таргетом: новые файлы подключаются сами
+    ├── Support/TestDoubles.swift                # Фейковые репозитории и TestApp-контейнер
+    ├── RealtimeChatTests.swift                  # Дедупликация, обновления открытого чата
+    ├── SessionLifecycleTests.swift              # Жизненный цикл WS, смена пароля, частичная загрузка
+    ├── ReconnectBackoffTests.swift              # Рост бэкоффа реконнекта
+    ├── LocalizationTests.swift                  # String Catalog и русские тексты ошибок
     ├── DTOParsingTests.swift                    # Тесты сериализации/десериализации моделей
     ├── EditWindowTests.swift                    # Тесты валидации временных окон правки/удаления
     ├── CallStateMachineTests.swift              # Тесты стейт-машины вызова и форматирования
@@ -101,7 +114,7 @@ mobile/ios/
 
 1. **Модели данных**: Все поля и типы строго выровнены с `mobile/contracts/parity-matrix.md` и `mobile/contracts/openapi.yaml`.
 2. **Временные окна сообщений (`ValidationRules`)**: Проверяет настройки `message_edit_window_minutes` и `message_delete_window_minutes` (-1 = отключено, 0 = без ограничений, >0 = минуты). Суперадминистратор имеет право на модераторское удаление в любое время.
-3. **Обязательная смена пароля (`MUST_CHANGE_PASSWORD`)**: При получении ошибки 403 с кодом `MUST_CHANGE_PASSWORD` интерфейс блокируется модальным окном смены пароля.
+3. **Обязательная смена пароля (`MUST_CHANGE_PASSWORD`)**: При флаге `must_change_password` или ошибке 403 с кодом `MUST_CHANGE_PASSWORD` сессия переходит в фазу `passwordChangeRequired`: экран смены пароля показывается один раз как корневой, после успеха сессия аутентифицирована и запускается реалтайм.
 4. **Побудка (Wake Buzzer)**: Кулдаун 60 секунд с активным таймером обратного отсчета; прием сигнала вызывает виброотклик `UINotificationFeedbackGenerator.error` и баннер.
 5. **Аудио-релей звонка**: Передача бинарных фреймов по 1028 байт (UInt32BE peer ID + 512 сэмплов Int16BE), детекция тишины при амплитуде `< 0.0015`, джиттер-буфер с удержанием 60 мс и потолком 250 мс.
 6. **Готовность к App Store**:
