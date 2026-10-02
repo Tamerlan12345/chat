@@ -75,7 +75,13 @@ class ContractFixturesTest {
         "POST /api/messages/direct/{id}" to { body -> json.decodeFromString<Message>(body) },
         "GET /api/sync" to { body -> json.decodeFromString<SyncPage>(body) },
         "GET /api/users" to { body -> json.decodeFromString<List<User>>(body) },
-        "GET /api/users/{id}" to { body -> json.decodeFromString<User>(body) }
+        "GET /api/users/{id}" to { body -> json.decodeFromString<User>(body) },
+        // Ответ на загрузку и удаление аватара — полная запись пользователя.
+        "PUT /api/users/avatar" to { body -> json.decodeFromString<User>(body) },
+        // Регистрация push-токена на Android не реализована (FCM-клиент — задача волны 3, контракт push.md):
+        // пока проверяем только, что ответ — объект JSON, а не мусор.
+        "POST /api/devices/push-token" to { body -> json.parseToJsonElement(body).jsonObject },
+        "DELETE /api/devices/push-token" to { body -> json.parseToJsonElement(body).jsonObject }
     )
 
     /** Event each server frame type must become; null = documented frame the client ignores on purpose. */
@@ -138,6 +144,7 @@ class ContractFixturesTest {
                 when (val kind = entry.string("kind")) {
                     "http" -> decodeHttp(entry, body)
                     "ws" -> decodeWs(entry, body)
+                    "push" -> decodePush(entry, body)
                     else -> error("unknown fixture kind $kind")
                 }
             } catch (failure: Throwable) {
@@ -220,6 +227,24 @@ class ContractFixturesTest {
         val route = "${entry.string("method")} ${entry.string("path")}"
         val decoder = successDecoders[route] ?: error("no client DTO mapped for $route")
         decoder(body)
+    }
+
+    /**
+     * Push-уведомления сервера (только идентификаторы, без текста — mobile/contracts/push.md). Приёмник FCM на Android
+     * ещё не написан, поэтому здесь проверяется форма полезной нагрузки, которую он будет разбирать.
+     */
+    private fun decodePush(entry: JsonObject, body: String) {
+        val provider = entry.string("provider")
+        val payload = json.parseToJsonElement(body).jsonObject
+        when (provider) {
+            "fcm" -> {
+                val data = payload["message"]?.jsonObject?.get("data")?.jsonObject ?: error("fcm: нет message.data")
+                val type = data["type"]?.jsonPrimitive?.content
+                check(type == "message" || type == "call") { "fcm: неизвестный тип push \"$type\"" }
+            }
+            "apns" -> check(payload.isNotEmpty()) { "apns: пустая полезная нагрузка" }
+            else -> error("неизвестный провайдер push \"$provider\"")
+        }
     }
 
     private fun decodeWs(entry: JsonObject, body: String) {
