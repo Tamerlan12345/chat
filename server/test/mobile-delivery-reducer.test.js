@@ -18,7 +18,7 @@ const FIXTURES = path.join(CONTRACTS, 'fixtures');
 const SPEC = path.join(CONTRACTS, 'delivery-state.md');
 const REDUCER = pathToFileURL(path.join(CONTRACTS, 'reference/delivery-reducer.mjs')).href;
 
-const STATE_KEYS = ['me', 'connection', 'visible', 'sync', 'seq', 'outbox', 'ops', 'messages', 'unread', 'sendLog', 'opsLog', 'wake_at'];
+const STATE_KEYS = ['me', 'connection', 'visible', 'sync', 'seq', 'outbox', 'ops', 'messages', 'unread', 'sendLog', 'opsLog', 'wake_at', 'cancelled'];
 const VECTOR_KEYS = ['name', 'description', 'covers', 'initialState', 'events', 'expectedEffects', 'expectedState'];
 
 function loadVectors() {

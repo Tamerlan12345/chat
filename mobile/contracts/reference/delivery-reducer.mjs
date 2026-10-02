@@ -19,7 +19,9 @@ export const OPS_RATE_MAX = 8;
 export const OPS_RATE_WINDOW_MS = 1000;
 export const SYNC_PAGE_LIMIT = 200;
 export const SYNC_RETRY_MS = 5000;
-export const KEY_ERRORS = ['CLIENT_MSG_ID_CONFLICT', 'INVALID_CLIENT_MSG_ID'];
+export const KEY_ERRORS = ['CLIENT_MSG_ID_CONFLICT', 'INVALID_CLIENT_MSG_ID', 'CANCELLED'];
+export const CANCELLED_MAX = 100;
+export const RATE_LIMITED_RETRY_MS = 1000;
 // ECMAScript WhiteSpace + LineTerminator — exactly what the server's trim() removes (§6.1).
 export const WHITESPACE = '\\u0009\\u000A\\u000B\\u000C\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF';
 const BLANK_RE = new RegExp(`^[${WHITESPACE}]*$`);
@@ -42,7 +44,8 @@ export function initialState(me = null) {
     unread: {},
     sendLog: [],
     opsLog: [],
-    wake_at: null
+    wake_at: null,
+    cancelled: []
   };
 }
 
@@ -120,9 +123,16 @@ function sendMessageFrame(e) {
   };
 }
 
-const opFrame = (op) => (op.op === 'edit'
-  ? { type: 'edit_message', messageId: op.message_id, text: op.text }
-  : { type: 'delete_message', messageId: op.message_id });
+function opFrame(op) {
+  if (op.op === 'edit') return { type: 'edit_message', messageId: op.message_id, text: op.text };
+  if (op.op === 'cancel') return { type: 'cancel_message', client_msg_id: op.client_msg_id };
+  return { type: 'delete_message', messageId: op.message_id };
+}
+
+// Event of the op_timeout alarm: delete ops are keyed by message_id, cancel ops by client_msg_id.
+const opTimeoutEvent = (op) => (op.op === 'cancel'
+  ? { type: 'op_timeout', client_msg_id: op.client_msg_id, attempt: op.attempts }
+  : { type: 'op_timeout', message_id: op.message_id, attempt: op.attempts });
 
 const markReadFrame = (conv) => ({ type: 'mark_read', ...parseConversation(conv) });
 
@@ -136,6 +146,7 @@ function findMessage(state, id) {
 
 function cmidInUse(state, cmid) {
   if (state.outbox.some((e) => e.client_msg_id === cmid)) return true;
+  if (state.cancelled.includes(cmid)) return true;
   return Object.values(state.messages).some((list) => list.some((m) => m.sender_id === state.me && m.client_msg_id === cmid));
 }
 
@@ -143,13 +154,34 @@ const sortOutbox = (state) => state.outbox.sort((a, b) => a.seq - b.seq);
 const entryOf = (state, cmid) => state.outbox.find((e) => e.client_msg_id === cmid) || null;
 const removeEntry = (state, cmid) => { state.outbox = state.outbox.filter((e) => e.client_msg_id !== cmid); };
 const deleteOpOf = (state, id) => state.ops.find((o) => o.op === 'delete' && o.message_id === id) || null;
+const cancelOpOf = (state, cmid) => state.ops.find((o) => o.op === 'cancel' && o.client_msg_id === cmid) || null;
+const removeOp = (state, op) => { state.ops = state.ops.filter((o) => o !== op); };
 
-function newOp(op, messageId, text) {
-  return { op, message_id: messageId, text, state: 'queued', attempts: 0, failures: 0, ack_deadline: null, next_attempt_at: null };
+function newOp(op, messageId, text, cmid = null) {
+  return { op, message_id: messageId, client_msg_id: cmid, text, state: 'queued', attempts: 0, failures: 0, ack_deadline: null, next_attempt_at: null };
 }
 
 function addDeleteOp(state, id) {
   if (!deleteOpOf(state, id)) state.ops.push(newOp('delete', id, null));
+}
+
+function addCancelOp(state, cmid) {
+  if (!cancelOpOf(state, cmid)) state.ops.push(newOp('cancel', null, null, cmid));
+}
+
+// Keys of cancelled entries dropped without proof (§7.10): bounded, oldest out first.
+function rememberCancelled(state, cmid) {
+  if (!state.cancelled.includes(cmid)) state.cancelled.push(cmid);
+  if (state.cancelled.length > CANCELLED_MAX) state.cancelled = state.cancelled.slice(-CANCELLED_MAX);
+}
+
+const forgetCancelled = (state, cmid) => { state.cancelled = state.cancelled.filter((k) => k !== cmid); };
+
+// Once a record with the key is known the message has a server id: a delete op replaces the
+// cancel op (a later send with a stored key only returns that record, §7.10).
+function dropCancelOp(state, cmid) {
+  const op = cancelOpOf(state, cmid);
+  if (op) removeOp(state, op);
 }
 
 // A tombstone confirms the delete (and makes any pending edit pointless) — §6.3.
@@ -206,6 +238,16 @@ function attemptFailed(state, e, now, effects) {
   }
 }
 
+// Frame dropped by the server's rate limit (error RATE_LIMITED, §7.3): the attempt was not
+// processed; retry after retry_after_ms with the same key, budget untouched.
+function attemptRateLimited(state, e, now, retryAfterMs, effects) {
+  if (e.pending_delete) { attemptFailed(state, e, now, effects); return; }
+  e.state = 'queued';
+  e.transport = null;
+  e.ack_deadline = null;
+  e.next_attempt_at = now + retryAfterMs;
+}
+
 // Attempt cut off by disconnect/restart/401: back to queued, budget untouched (§7.3).
 function attemptInterrupted(e) {
   e.state = 'queued';
@@ -226,10 +268,16 @@ function ingest(state, rec, source, effects) {
     if (e) {
       removeEntry(state, e.client_msg_id);
       reconciled = true;
+      dropCancelOp(state, e.client_msg_id); // stored: the delete op below (or the tombstone) settles it
       if (!rec.is_deleted) {
         if (e.pending_delete) addDeleteOp(state, rec.id);
         else if (e.pending_edit !== null && e.pending_edit !== rec.text) state.ops.push(newOp('edit', rec.id, e.pending_edit));
       }
+    } else if (state.cancelled.includes(rec.client_msg_id)) {
+      // A cancelled message dropped locally without proof turned up after all (§7.10).
+      forgetCancelled(state, rec.client_msg_id);
+      dropCancelOp(state, rec.client_msg_id);
+      if (!rec.is_deleted) addDeleteOp(state, rec.id);
     }
   }
 
@@ -304,7 +352,7 @@ function pump(state, now, effects) {
       op.state = 'sending';
       op.ack_deadline = now + ACK_TIMEOUT_MS;
       op.next_attempt_at = null;
-      effects.push({ type: 'schedule', at: op.ack_deadline, event: { type: 'op_timeout', message_id: op.message_id, attempt: op.attempts } });
+      effects.push({ type: 'schedule', at: op.ack_deadline, event: opTimeoutEvent(op) });
     }
   }
   state.ops = state.ops.filter((op) => !sentEdits.has(op));
@@ -357,7 +405,10 @@ function completeChain(state, effects) {
   // Cancelled entries that are not in flight (§7.10): this chain started after their last attempt.
   const unresolved = state.outbox.filter((e) => e.pending_delete && e.state !== 'sending');
   if (!state.sync.bootstrap) {
-    for (const e of unresolved) removeEntry(state, e.client_msg_id);
+    for (const e of unresolved) {
+      removeEntry(state, e.client_msg_id);
+      rememberCancelled(state, e.client_msg_id);
+    }
   } else {
     const seen = new Set(state.visible !== null ? [state.visible] : []);
     for (const e of unresolved) {
@@ -458,6 +509,7 @@ function onCancel(state, ev, effects) {
   if (!e.maybe_stored) { removeEntry(state, e.client_msg_id); return; }
   e.pending_delete = true;
   e.pending_edit = null;
+  addCancelOp(state, e.client_msg_id);
   if (e.state === 'failed') {
     e.state = 'queued';
     e.failure = null;
@@ -490,7 +542,101 @@ function onRetry(state, ev, effects) {
 
 // ── server frames ───────────────────────────────────────────────────────────
 
-function onFrame(state, frame, effects) {
+// error frames (§6.3, §7.12). New signals are recognized by their fields; frames of an older
+// server (no retryable, no messageId) take the old paths.
+function onError(state, frame, now, effects) {
+  const rateLimited = frame.code === 'RATE_LIMITED';
+  const retryAfter = Number.isInteger(frame.retry_after_ms) && frame.retry_after_ms > 0 ? frame.retry_after_ms : RATE_LIMITED_RETRY_MS;
+  switch (frame.context) {
+    case 'send_message': {
+      if (frame.client_msg_id == null) return;
+      const e = entryOf(state, frame.client_msg_id);
+      if (!e || e.state === 'failed') return;
+      if (rateLimited || frame.retryable === true) {
+        // Not a refusal: the frame was dropped or failed before storage. Only the live WS attempt.
+        if (e.state !== 'sending' || e.transport !== 'ws') return;
+        if (rateLimited) attemptRateLimited(state, e, now, retryAfter, effects);
+        else attemptFailed(state, e, now, effects);
+        return;
+      }
+      reject(state, e, frame.code, frame.message);
+      return;
+    }
+    case 'delete_message': {
+      if (!Number.isInteger(frame.messageId)) return;
+      const op = deleteOpOf(state, frame.messageId);
+      if (!op || op.state !== 'sending') return;
+      if (rateLimited) {
+        op.state = 'queued';
+        op.ack_deadline = null;
+        op.next_attempt_at = now + retryAfter;
+      } else if (frame.retryable === true) {
+        opFailed(state, op, now, effects);
+      } else {
+        removeOp(state, op);
+        effects.push({ type: 'user_error', code: 'DELETE_REJECTED' });
+      }
+      return;
+    }
+    case 'edit_message': {
+      if (!Number.isInteger(frame.messageId)) return;
+      if (rateLimited) {
+        // The edit was dropped unprocessed: queue it again unless a newer edit or a delete is pending.
+        const busy = state.ops.some((o) => o.message_id === frame.messageId && (o.op === 'delete' || (o.op === 'edit' && o.state === 'queued')));
+        if (!busy && typeof frame.text === 'string') {
+          const op = newOp('edit', frame.messageId, frame.text);
+          op.next_attempt_at = now + retryAfter;
+          state.ops.push(op);
+        }
+        return;
+      }
+      effects.push({ type: 'user_error', code: 'EDIT_REJECTED' });
+      return;
+    }
+    case 'cancel_message': {
+      if (frame.client_msg_id == null) return;
+      const op = cancelOpOf(state, frame.client_msg_id);
+      if (!op || op.state !== 'sending') return;
+      if (rateLimited) {
+        op.state = 'queued';
+        op.ack_deadline = null;
+        op.next_attempt_at = now + retryAfter;
+      } else if (frame.retryable === true) {
+        opFailed(state, op, now, effects);
+      } else {
+        removeOp(state, op);
+        if (Number.isInteger(frame.messageId)) {
+          // Stored and cannot be deleted any more: stop hiding it, tell the user, show it again.
+          const e = entryOf(state, frame.client_msg_id);
+          forgetCancelled(state, frame.client_msg_id);
+          const del = deleteOpOf(state, frame.messageId);
+          if (del) removeOp(state, del);
+          if (e && e.pending_delete) {
+            removeEntry(state, e.client_msg_id);
+            effects.push({ type: 'load_history', conversation: e.conversation });
+          }
+          effects.push({ type: 'user_error', code: 'DELETE_REJECTED' });
+        }
+      }
+      return;
+    }
+    default:
+  }
+}
+
+// message_cancelled (§7.10): the server will never store this key; a stored copy is deleted.
+function onCancelled(state, frame) {
+  const cmid = frame.client_msg_id;
+  if (typeof cmid !== 'string') return;
+  const op = cancelOpOf(state, cmid);
+  if (op) removeOp(state, op);
+  forgetCancelled(state, cmid);
+  const e = entryOf(state, cmid);
+  if (e && e.pending_delete) removeEntry(state, cmid);
+  if (Number.isInteger(frame.messageId)) confirmDeleted(state, frame.messageId);
+}
+
+function onFrame(state, frame, effects, now) {
   switch (frame.type) {
     case 'auth_success':
       state.me = Number(frame.user.id);
@@ -513,10 +659,12 @@ function onFrame(state, frame, effects) {
         found.m.is_deleted = 1;
         found.m.text = '';
         found.m.metadata_json = null;
+        if (frame.updated_at != null) found.m.updated_at = frame.updated_at;
       }
       confirmDeleted(state, frame.messageId);
       return;
     }
+    case 'message_cancelled': return onCancelled(state, frame);
     case 'message_status_updated': {
       const found = findMessage(state, frame.messageId);
       if (found && found.conv.startsWith('direct:') && found.m.sender_id === state.me && STATUS_RANK[frame.status] >= 2) {
@@ -532,12 +680,7 @@ function onFrame(state, frame, effects) {
       }
       return;
     }
-    case 'error': {
-      if (frame.context !== 'send_message' || frame.client_msg_id == null) return;
-      const e = entryOf(state, frame.client_msg_id);
-      if (e && e.state !== 'failed') reject(state, e, frame.code, frame.message);
-      return;
-    }
+    case 'error': return onError(state, frame, now, effects);
     default:
   }
 }
@@ -555,18 +698,45 @@ function onHttpSendResult(state, ev, effects) {
   else attemptFailed(state, e, ev.now, effects);
 }
 
-function onOpTimeout(state, ev, effects) {
-  const op = deleteOpOf(state, ev.message_id);
-  if (!op || op.state !== 'sending' || op.attempts !== ev.attempt || ev.now < op.ack_deadline) return;
+// A delete/cancel op attempt failed (timeout or a retryable error): pause or give up (§7.3, §7.10).
+// A cancel op gives up silently: an older server ignores cancel_message, the sync path decides.
+function opFailed(state, op, now, effects) {
   op.failures += 1;
   op.ack_deadline = null;
   if (op.failures >= MAX_ATTEMPTS) {
-    state.ops = state.ops.filter((o) => o !== op);
-    effects.push({ type: 'user_error', code: 'DELETE_NOT_CONFIRMED' });
+    removeOp(state, op);
+    if (op.op === 'delete') effects.push({ type: 'user_error', code: 'DELETE_NOT_CONFIRMED' });
   } else {
     op.state = 'queued';
-    op.next_attempt_at = ev.now + backoff(op.failures);
+    op.next_attempt_at = now + backoff(op.failures);
   }
+}
+
+function onOpTimeout(state, ev, effects) {
+  const op = ev.client_msg_id != null ? cancelOpOf(state, ev.client_msg_id) : deleteOpOf(state, ev.message_id);
+  if (!op || op.state !== 'sending' || op.attempts !== ev.attempt || ev.now < op.ack_deadline) return;
+  opFailed(state, op, ev.now, effects);
+}
+
+// unread_snapshot counts, completed with live messages newer than the snapshot (§7.8, G7):
+// last_message_ids[k] is the newest id the server saw when it computed counts[k].
+function snapshotTotals(state, ev) {
+  const lastIds = ev.last_message_ids || {};
+  const totals = {};
+  for (const [k, n] of Object.entries(ev.counts)) {
+    const last = lastIds[k];
+    if (!Object.prototype.hasOwnProperty.call(lastIds, k)) { totals[k] = n; continue; }
+    const list = state.messages[k] || [];
+    let base = n;
+    let from = last ?? 0;
+    if (k.startsWith('channel:')) {
+      // An own channel message newer than the snapshot read the channel up to it (§7.8).
+      const ownNewer = list.filter((m) => m.sender_id === state.me && m.id > from);
+      if (ownNewer.length) { base = 0; from = Math.max(...ownNewer.map((m) => m.id)); }
+    }
+    totals[k] = base + list.filter((m) => m.sender_id !== state.me && m.id > from).length;
+  }
+  return totals;
 }
 
 function resetInFlight(state, { http }) {
@@ -587,7 +757,7 @@ function resetInFlight(state, { http }) {
 function handle(state, ev, effects) {
   const now = ev.now;
   switch (ev.type) {
-    case 'ws': return onFrame(state, ev.frame, effects);
+    case 'ws': return onFrame(state, ev.frame, effects, now);
     case 'ws_disconnected':
       state.connection = 'offline';
       state.sync.running = false;
@@ -630,9 +800,10 @@ function handle(state, ev, effects) {
       return undefined;
     case 'http_send_result': return onHttpSendResult(state, ev, effects);
     case 'unread_snapshot': {
+      const totals = snapshotTotals(state, ev);
       state.unread = {};
-      for (const [k, n] of Object.entries(ev.counts)) if (n > 0 && k !== state.visible) state.unread[k] = n;
-      if (state.visible !== null && ev.counts[state.visible] > 0 && state.connection === 'online') {
+      for (const [k, n] of Object.entries(totals)) if (n > 0 && k !== state.visible) state.unread[k] = n;
+      if (state.visible !== null && totals[state.visible] > 0 && state.connection === 'online') {
         effects.push({ type: 'send_ws', frame: markReadFrame(state.visible) });
       }
       return undefined;
@@ -664,7 +835,7 @@ function handle(state, ev, effects) {
 
 /**
  * Applies one event (§6). Returns a new state and the ordered effect list;
- * `persist` (when outbox/seq, ops or the sync cursor changed) is always first.
+ * `persist` (when outbox/seq, ops, the sync cursor or the cancelled keys changed) is always first.
  */
 export function reduce(input, event) {
   const state = clone(input);
@@ -673,6 +844,7 @@ export function reduce(input, event) {
   pump(state, event.now, effects);
 
   const slices = [];
+  if (!deepEqual(state.cancelled, input.cancelled)) slices.push('cancelled');
   if (state.sync.cursor !== input.sync.cursor) slices.push('cursor');
   if (!deepEqual(state.ops, input.ops)) slices.push('ops');
   if (state.seq !== input.seq || !deepEqual(state.outbox, input.outbox)) slices.push('outbox');

@@ -22,6 +22,7 @@
       {
         "op": "delete",
         "message_id": 321,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 5,
@@ -50,7 +51,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {

@@ -1,11 +1,13 @@
 {
   "name": "52-cancel-reconnect-empty-sync-dropped",
-  "description": "Отмена без сети записи, которая уже уходила: она не отправляется ни при переподключении, ни после. Синхронизация (не bootstrap) после её последней попытки не вернула этот client_msg_id — сервера у него нет, запись удаляется локально. Отменённая запись не занимает переписку: следующая уходит сразу.",
+  "description": "Отмена без сети записи, которая уже уходила: она не отправляется ни при переподключении, ни после. Синхронизация (не bootstrap) после её последней попытки не вернула этот client_msg_id — сервера у него нет, запись удаляется локально. Отменённая запись не занимает переписку: следующая уходит сразу. Задача 16: отмена ставит операцию cancel (persist ops), и после цепочки уходит cancel_message (раньше — ничего); ключ удалённой без доказательства записи запоминается в cancelled (persist cancelled). Ответа нет — здесь старый сервер, операция ждёт таймаута.",
   "covers": [
     "T42",
     "T24",
     "T21",
-    "T06"
+    "T06",
+    "T46",
+    "T51"
   ],
   "initialState": {
     "me": 2,
@@ -63,7 +65,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -136,6 +139,7 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
       }
@@ -152,12 +156,30 @@
       {
         "type": "persist",
         "slices": [
+          "cancelled",
           "cursor",
+          "ops",
           "outbox"
         ]
       },
       {
         "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000080-0000-4000-8000-000000000080"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000080-0000-4000-8000-000000000080",
+          "attempt": 1
+        }
       },
       {
         "type": "send_ws",
@@ -210,6 +232,22 @@
         "pending_edit": null,
         "pending_delete": false
       }
+    ],
+    "ops": [
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000080-0000-4000-8000-000000000080",
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 12100,
+        "next_attempt_at": null
+      }
+    ],
+    "cancelled": [
+      "a0000080-0000-4000-8000-000000000080"
     ]
   }
 }

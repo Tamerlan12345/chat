@@ -1,11 +1,13 @@
 {
   "name": "56-cancel-in-flight-entries",
-  "description": "Отмена записей в полёте (WS и REST): они остаются sending до ответа, но не занимают переписку — следующая запись уходит сразу. Таймаут отменённой записи не тратит бюджет и сразу начинает синхронизацию; завершение цепочки удаляет только записи не в полёте; ответ 503 по отменённой REST-записи — новая цепочка, которая удаляет и её.",
+  "description": "Отмена записей в полёте (WS и REST): они остаются sending до ответа, но не занимают переписку — следующая запись уходит сразу. Таймаут отменённой записи не тратит бюджет и сразу начинает синхронизацию; завершение цепочки удаляет только записи не в полёте; ответ 503 по отменённой REST-записи — новая цепочка, которая удаляет и её. Задача 16: отмена записи в полёте сразу отправляет cancel_message (операция cancel, schedule op_timeout); ключи записей, удалённых цепочками без доказательства, — в cancelled (persist cancelled). Сервер здесь старый: на cancel_message ответа нет.",
   "covers": [
     "T24",
     "T06",
     "T42",
-    "T19"
+    "T19",
+    "T46",
+    "T51"
   ],
   "initialState": {
     "me": 2,
@@ -84,7 +86,8 @@
       500
     ],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -163,8 +166,25 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000110-0000-4000-8000-000000000110"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000110-0000-4000-8000-000000000110",
+          "attempt": 1
+        }
       },
       {
         "type": "send_ws",
@@ -193,8 +213,25 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000112-0000-4000-8000-000000000112"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11001,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000112-0000-4000-8000-000000000112",
+          "attempt": 1
+        }
       }
     ],
     [
@@ -223,6 +260,7 @@
       {
         "type": "persist",
         "slices": [
+          "cancelled",
           "cursor",
           "outbox"
         ]
@@ -249,6 +287,7 @@
       {
         "type": "persist",
         "slices": [
+          "cancelled",
           "cursor",
           "outbox"
         ]
@@ -282,6 +321,34 @@
           "status": "sent"
         }
       ]
-    }
+    },
+    "ops": [
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000110-0000-4000-8000-000000000110",
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000112-0000-4000-8000-000000000112",
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11001,
+        "next_attempt_at": null
+      }
+    ],
+    "cancelled": [
+      "a0000110-0000-4000-8000-000000000110",
+      "a0000112-0000-4000-8000-000000000112"
+    ]
   }
 }

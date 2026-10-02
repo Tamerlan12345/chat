@@ -64,7 +64,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": 25000
+    "wake_at": 25000,
+    "cancelled": []
   },
   "events": [
     {

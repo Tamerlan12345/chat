@@ -1,0 +1,359 @@
+{
+  "name": "65-delete-op-errors-with-message-id",
+  "description": "G4: ошибки delete_message несут messageId и code. RATE_LIMITED — кадр не обработан: delete снова в очереди через retry_after_ms без неудачи; окончательный отказ (DELETE_WINDOW_EXPIRED, retryable = false) — операция снята сразу, user_error DELETE_REJECTED (раньше — пять таймаутов и DELETE_NOT_CONFIRMED); retryable INTERNAL_ERROR — неудачная попытка с паузой backoff. Надгробие (message_deleted) по-прежнему подтверждает удаление и снимает операцию.",
+  "covers": [
+    "T49",
+    "T39"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 340,
+        "client_msg_id": null,
+        "text": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 341,
+        "client_msg_id": null,
+        "text": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 342,
+        "client_msg_id": null,
+        "text": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 340,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Удалить",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 341,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Окно истекло",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 342,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сбой",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 1000
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "delete_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "messageId": 340,
+        "retry_after_ms": 500
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1110,
+      "frame": {
+        "type": "error",
+        "context": "delete_message",
+        "message": "Время на удаление сообщения истекло",
+        "code": "DELETE_WINDOW_EXPIRED",
+        "retryable": false,
+        "messageId": 341
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1120,
+      "frame": {
+        "type": "error",
+        "context": "delete_message",
+        "message": "Не удалось обработать запрос — повторите позже",
+        "code": "INTERNAL_ERROR",
+        "retryable": true,
+        "messageId": 342
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1600
+    },
+    {
+      "type": "ws",
+      "now": 1700,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 340,
+        "conversationType": "direct",
+        "targetId": 3,
+        "updated_at": "2026-10-02T09:00:03.000Z"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 340
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 340,
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 341
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 341,
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 342
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 342,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 1600,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "user_error",
+        "code": "DELETE_REJECTED"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 340
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11600,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 340,
+          "attempt": 2
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 2120,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 342,
+        "client_msg_id": null,
+        "text": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 1,
+        "ack_deadline": null,
+        "next_attempt_at": 2120
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 340,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:03.000Z",
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 341,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Окно истекло",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 342,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сбой",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "opsLog": [
+      1000,
+      1000,
+      1000,
+      1600
+    ],
+    "wake_at": 2120
+  }
+}

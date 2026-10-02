@@ -1,13 +1,14 @@
 {
   "name": "23-cancel-failed-max-attempts-never-resent",
-  "description": "Отмена failed (max_attempts): сообщение могло сохраниться, но повторно оно не отправляется — запись скрыта (pending_delete) и выясняется синхронизацией: сервер уже хранил его под id 69, поэтому уходит delete_message 69. Соседняя запись подтверждается живым эхом.",
+  "description": "Отмена failed (max_attempts): сообщение могло сохраниться, но повторно оно не отправляется — запись скрыта (pending_delete) и выясняется синхронизацией: сервер уже хранил его под id 69, поэтому уходит delete_message 69. Соседняя запись подтверждается живым эхом. Задача 16: отмена ставит операцию cancel (persist ops); запись сервера с ключом заменяет её на delete.",
   "covers": [
     "T24",
     "T42",
     "T06",
     "T08",
     "T26",
-    "T41"
+    "T41",
+    "T46"
   ],
   "initialState": {
     "me": 2,
@@ -71,7 +72,8 @@
       1000
     ],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -172,6 +174,7 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
       },
@@ -266,6 +269,7 @@
           "status": "sent"
         }
       ]
-    }
+    },
+    "cancelled": []
   }
 }

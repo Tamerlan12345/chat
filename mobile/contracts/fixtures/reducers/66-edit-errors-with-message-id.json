@@ -1,0 +1,229 @@
+{
+  "name": "66-edit-errors-with-message-id",
+  "description": "G4: ошибки edit_message несут messageId, code и присланный text. RATE_LIMITED — правка не обработана: она снова ставится в ops с паузой retry_after_ms и уходит тем же текстом (если для сообщения уже не ждёт более новая правка или удаление). Окончательный отказ (EDIT_WINDOW_EXPIRED) — user_error EDIT_REJECTED. error edit_message без messageId (старый сервер) модель не меняет.",
+  "covers": [
+    "T50",
+    "T39",
+    "T38"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [
+      {
+        "op": "edit",
+        "message_id": 350,
+        "client_msg_id": null,
+        "text": "Стало",
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      },
+      {
+        "op": "edit",
+        "message_id": 351,
+        "client_msg_id": null,
+        "text": "Новое",
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 350,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Было",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 351,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 1000
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "text": "Стало",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "messageId": 350,
+        "retry_after_ms": 200
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1110,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Время на изменение сообщения истекло",
+        "text": "Новое",
+        "code": "EDIT_WINDOW_EXPIRED",
+        "retryable": false,
+        "messageId": 351
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1120,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Нельзя редактировать чужое сообщение"
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1300
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "Стало"
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 351,
+          "text": "Новое"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 1300,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "EDIT_REJECTED"
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "Стало"
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [],
+    "opsLog": [
+      1000,
+      1000,
+      1300
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 350,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Было",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 351,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

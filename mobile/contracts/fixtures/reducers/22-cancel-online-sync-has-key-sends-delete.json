@@ -1,6 +1,6 @@
 {
   "name": "22-cancel-online-sync-has-key-sends-delete",
-  "description": "Отмена записи, которая уже уходила без ответа (maybe_stored): она больше НИКОГДА не отправляется; редьюсер сразу запускает /api/sync. Синхронизация вернула сообщение с этим client_msg_id — оно было сохранено, поэтому уходит delete_message по серверному id; удаление подтверждает message_deleted.",
+  "description": "Отмена записи, которая уже уходила без ответа (maybe_stored): она больше НИКОГДА не отправляется; редьюсер сразу запускает /api/sync. Синхронизация вернула сообщение с этим client_msg_id — оно было сохранено, поэтому уходит delete_message по серверному id; удаление подтверждает message_deleted. Задача 16: отмена теперь ставит и операцию cancel (persist ops); её вытесняет delete, как только синхронизация нашла сообщение с ключом — лишний cancel_message не уходит.",
   "covers": [
     "T24",
     "T42",
@@ -8,7 +8,8 @@
     "T26",
     "T39",
     "T41",
-    "T32"
+    "T32",
+    "T46"
   ],
   "initialState": {
     "me": 2,
@@ -49,7 +50,8 @@
       1000
     ],
     "opsLog": [],
-    "wake_at": 12000
+    "wake_at": 12000,
+    "cancelled": []
   },
   "events": [
     {
@@ -108,6 +110,7 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
       },
@@ -186,6 +189,7 @@
     "opsLog": [
       12100
     ],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   }
 }
