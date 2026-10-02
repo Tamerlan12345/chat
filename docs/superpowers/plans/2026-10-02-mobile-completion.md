@@ -278,4 +278,28 @@ Worktree `m-qa`. Runs after Tasks 1–9 are merged into the integration branch.
 - Live run on `emulator-5554` against the dev stand: onboarding → login as alice → inbox → open chat → send → logout; record results.
 - List parity deviations between iOS and Android screenshots/behaviour as blockers for the next wave.
 
-> Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 11+ after the Wave 1 gate, in the same structure.
+### Shared requirements for Tasks 11–12: fixed production server + branded login (owner request 2026-10-02)
+
+Owner: "remove the connect-to-server button, preset the working server, brand the login page, make it convenient and secure".
+
+- **Production server** `https://centychat-production.up.railway.app` (same default as desktop `desktop/src/main/main.js:92`; `/api/health` 200, valid Let's Encrypt chain, HSTS present). API base `…/api`, WS `wss://centychat-production.up.railway.app/ws`.
+- **Release builds:** the server URL is a compile-time constant. No server-setup screen, no "change server" control, no runtime override (no deep link, launch argument, intent extra, or stored value can change it). A previously stored custom server URL from older installs is ignored; if a stored session/device credential was issued for a different host, it is wiped and the user lands on login.
+- **Debug builds only:** the URL comes from build configuration (Android `BuildConfig.SERVER_URL` from Gradle property `centychat.serverUrl`, default = production; iOS `CENTYCHAT_SERVER_URL` in the Debug xcconfig/Info.plist key, default = production; iOS UI tests may pass a launch argument honoured only under `#if DEBUG`). Used for the dev stand (`https://10.0.2.2:8443` / `https://localhost:8443`). Still no runtime UI to switch.
+- **Threat model (security-and-hardening):**
+  - Spoofing/phishing: removing the editable server field removes the "type your corporate password into an attacker's server" vector — keep it removed. Standard system TLS validation + hostname check; HTTPS/WSS only. Certificate pinning is NOT added now (Railway wildcard cert, Let's Encrypt root rotation would brick the app) — recorded as a follow-up once a company domain exists.
+  - Information disclosure: password never logged, never persisted (only tokens/device secret in Keychain/Keystore, fail-closed as today); password field is secure entry with autocorrect/suggestions off; login form errors are generic («Неверный логин или пароль») — never reveal whether the login exists; server `company_name` from `/api/settings/info` is rendered as plain text only and length-capped.
+  - DoS / abuse: disable the submit button while a request is in flight (no double submit); honour `429 ACCOUNT_THROTTLED` / `Retry-After` and `503 LOGIN_BUSY` with a countdown message instead of retry loops.
+  - Convenience without weakening: system password autofill (iOS `textContentType(.username/.password)` + associated-domains not required; Android autofill hints `username`/`password`), keyboard "next"/"go", remember the last login name (not the password) in non-secret prefs, show/hide password toggle, passwordless re-entry via existing device knock/claim untouched.
+- **Branded login (design brief):** gradient C mark + «CentyChat» lockup, company name from `/api/settings/info` (fallback «Корпоративный мессенджер»), single card with login/password and full-width primary «Войти», error box styled like desktop `.login-error-box`, content in the upper third and keyboard-safe, light/dark, Dynamic Type / fontScale safe, motion: mark fades/scales in once (respect Reduce Motion), button shows in-place progress.
+- Tests (TDD): release config resolves exactly the production URL and exposes no override path; stale stored server URL is ignored and foreign-host session wiped; login error mapping (401 generic, 429 with Retry-After countdown, 503, offline); double-submit prevented; first launch goes straight to login.
+
+### Task 11: iOS — fixed production server and branded login
+
+Worktree `m-ios`. Depends on Task 6. Implement the shared requirements above on iOS: remove `Features/ServerConnect` from the app flow (delete the screen and its routing), introduce `ServerEnvironment` (compile-time constant in Release, xcconfig-driven in Debug), migrate/wipe stale stored server and foreign-host credentials, rebuild `LoginView` per the design brief, update `ScreenshotTourTests` and `AppLaunchTests` (fresh install now shows login, not server setup). Acceptance: green CI with screenshots of login light/dark/AX size.
+
+### Task 12: Android — fixed production server and branded login
+
+Worktree `m-android`. Depends on Task 8. Implement the shared requirements above on Android: remove the server-connect destination and screen, `BuildConfig.SERVER_URL` (release = production constant, debug overridable via Gradle property), migrate/wipe stale stored server and foreign-host credentials, rebuild the login screen per the design brief, Compose UI tests for first launch → login and error states. Debug build pointed at the dev stand must log in as `alice` on `emulator-5554` (trust of the dev CA in debug network-security config only — this moves here from Task 9). Acceptance: Android command + `connectedDebugAndroidTest` green; screenshots light/dark/fontScale 2.0.
+
+> Execution order per lane: iOS 1 → 6 → 11 → 7; Android 2 → 8 → 12 → 9; Integration 3 → 4 → 5; QA 10 after all.
+> Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
