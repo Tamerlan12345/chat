@@ -331,7 +331,7 @@ private fun appEntryProvider(
             if (key.conversationType == ConversationType.CHANNEL.value) ConversationType.CHANNEL else ConversationType.DIRECT
         ChatScreen(
             viewModel = hiltViewModel<ChatViewModel, ChatViewModel.Factory> { factory ->
-                factory.create(conversationType, key.targetId)
+                factory.create(conversationType, key.targetId, key.focusMessageId)
             },
             title = key.title,
             avatarUrl = key.avatarUrl,

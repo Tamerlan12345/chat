@@ -37,17 +37,23 @@ sealed interface ChatUiState {
 @HiltViewModel(assistedFactory = ChatViewModel.Factory::class)
 class ChatViewModel @AssistedInject constructor(
     @Assisted val conversationType: ConversationType,
-    @Assisted val targetId: Long,
+    @Assisted("target") val targetId: Long,
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
     private val sessionRepository: SessionRepository,
     private val activeConversations: ActiveConversationRegistry,
-    private val historyCache: ChatHistoryCache
+    private val historyCache: ChatHistoryCache,
+    /** Открыть на этом сообщении (переход из поиска). */
+    @Assisted("focus") focusMessageId: Long? = null
 ) : ViewModel() {
 
     @AssistedFactory
     interface Factory {
-        fun create(conversationType: ConversationType, targetId: Long): ChatViewModel
+        fun create(
+            conversationType: ConversationType,
+            @Assisted("target") targetId: Long,
+            @Assisted("focus") focusMessageId: Long?
+        ): ChatViewModel
     }
 
     private val _uiState = MutableStateFlow<ChatUiState>(ChatUiState.Loading)
@@ -73,6 +79,20 @@ class ChatViewModel @AssistedInject constructor(
 
     private val _editingMessage = MutableStateFlow<Message?>(null)
     val editingMessage: StateFlow<Message?> = _editingMessage.asStateFlow()
+
+    /** Сообщение, к которому прокрутить и которое подсветить; null — после показа или без перехода. */
+    private val _focus = MutableStateFlow<Long?>(null)
+    val focus: StateFlow<Long?> = _focus.asStateFlow()
+
+    /** Найденное сообщение слишком давнее: чат открыт на последних сообщениях. */
+    private val _jumpUnavailable = MutableStateFlow(false)
+    val jumpUnavailable: StateFlow<Boolean> = _jumpUnavailable.asStateFlow()
+
+    /** Переход ещё не выполнен. */
+    private var pendingFocus: Long? = focusMessageId
+
+    /** История собрана вокруг этого сообщения: обновление собирает её так же, без дыры. */
+    private var windowAnchor: Long? = null
 
     private val conversation = ConversationRef(conversationType, targetId)
 
@@ -114,6 +134,11 @@ class ChatViewModel @AssistedInject constructor(
         super.onCleared()
     }
 
+    /** Экран прокрутил к сообщению и подсветил его. */
+    fun onFocusShown() {
+        _focus.value = null
+    }
+
     fun loadMessages() {
         viewModelScope.launch {
             if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
@@ -121,13 +146,21 @@ class ChatViewModel @AssistedInject constructor(
             val shownBefore = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty().mapTo(HashSet()) { it.id }
             _refreshFailed.value = false
             try {
-                val history = chatRepository.messages(conversationType, targetId)
+                val jump = pendingFocus
+                val anchor = jump ?: windowAnchor
+                val window = anchor?.let { chatRepository.messagesAround(conversationType, targetId, it) }
+                if (jump != null) {
+                    pendingFocus = null
+                    if (window != null) windowAnchor = jump else _jumpUnavailable.value = true
+                }
+                val history = window ?: chatRepository.messages(conversationType, targetId)
                 _uiState.update { state ->
                     // Keep realtime messages that arrived while the history request was in flight.
                     val live = (state as? ChatUiState.Content)?.messages.orEmpty()
                     val historyIds = history.mapTo(HashSet()) { it.id }
                     ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
                 }
+                if (jump != null && window != null) _focus.value = jump
             } catch (e: Exception) {
                 // A cached history stays on screen; the screen says it could not be refreshed.
                 if (_uiState.value is ChatUiState.Content) _refreshFailed.value = true

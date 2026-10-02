@@ -18,12 +18,27 @@ sealed interface NavKey : androidx.navigation3.runtime.NavKey {
         val targetId: Long,
         val title: String,
         val avatarUrl: String? = null,
-        val status: String? = null
+        val status: String? = null,
+        /** Открыть переписку на этом сообщении (из поиска) и подсветить его. */
+        val focusMessageId: Long? = null
     ) : NavKey {
         /** Identity of the conversation, ignoring presentation details such as the peer's status. */
         fun isSameConversation(other: Chat): Boolean =
             conversationType == other.conversationType && targetId == other.targetId
     }
+
+    /** «Сотрудники»: справочник «Все» / «Отделы». */
+    @Serializable
+    data object People : NavKey
+
+    /** Карточка сотрудника. Имя, фото и статус — для мгновенного заголовка до загрузки. */
+    @Serializable
+    data class Person(
+        val userId: Long,
+        val name: String,
+        val avatarUrl: String? = null,
+        val status: String? = null
+    ) : NavKey
 
     @Serializable
     data object Announcements : NavKey
@@ -45,7 +60,7 @@ sealed interface NavKey : androidx.navigation3.runtime.NavKey {
 }
 
 /** Destinations shown in the navigation bar/rail, in display order. Conversations is the start tab. */
-val TopLevelRoutes: List<NavKey> = listOf(NavKey.Conversations, NavKey.Announcements, NavKey.Profile)
+val TopLevelRoutes: List<NavKey> = listOf(NavKey.Conversations, NavKey.People, NavKey.Announcements, NavKey.Profile)
 
 internal val NavKey.isAuthDestination: Boolean
     get() = this is NavKey.Login

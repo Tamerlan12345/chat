@@ -59,7 +59,7 @@ class FakeRealtimeRepository : RealtimeRepository {
     override fun sendAudioFrame(targetUserId: Long, pcmSamples: ShortArray) = record("audio $targetUserId")
 }
 
-class FakeChatRepository(
+open class FakeChatRepository(
     var direct: List<DirectConversation> = emptyList(),
     var channels: List<Channel> = emptyList(),
     var history: List<Message> = emptyList()
@@ -90,6 +90,16 @@ class FakeChatRepository(
         historyGate?.await()
         historyFailure?.let { throw it }
         return history
+    }
+
+    /** История вокруг сообщения (переход из поиска); null — «слишком давнее». */
+    var around: List<Message>? = null
+    val aroundRequests = mutableListOf<Long>()
+
+    override suspend fun messagesAround(conversationType: ConversationType, targetId: Long, messageId: Long): List<Message>? {
+        aroundRequests += messageId
+        historyGate?.await()
+        return around
     }
 }
 
