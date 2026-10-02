@@ -90,6 +90,9 @@ class LoginViewModel @Inject constructor(
     var lastEnteredPassword = ""
         private set
 
+    /** The brand mark's intro plays once per login screen, not again after rotation. */
+    var introPlayed = false
+
     private var screenShown = false
     private var countdown: Job? = null
 
