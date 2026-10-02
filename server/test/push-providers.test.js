@@ -125,13 +125,12 @@ test('FCM: токен доступа — JWT RS256 сервисного акка
   assert.ok(!('notification' in body.message), 'нет блока notification: текст показывает само приложение');
 });
 
-test('FCM: звонок — высокий приоритет и ttl 30 с', async () => {
+test('FCM: звонок — высокий приоритет и ttl 30 с, без collapse_key (всё тело целиком)', async () => {
   const h = fcmHarness([]);
   await h.provider.send({ token: FCM_TOKEN, notification: CALL });
-  const body = JSON.parse(h.calls[1].init.body);
-  assert.deepStrictEqual(body.message.data, { type: 'call', callerId: '7' });
-  assert.strictEqual(body.message.android.priority, 'HIGH');
-  assert.strictEqual(body.message.android.ttl, '30s');
+  assert.deepStrictEqual(JSON.parse(h.calls[1].init.body), {
+    message: { token: FCM_TOKEN, data: { type: 'call', callerId: '7' }, android: { priority: 'HIGH', ttl: '30s' } }
+  });
 });
 
 test('FCM: токен доступа кэшируется до истечения (с запасом минута), потом обновляется', async () => {
@@ -151,14 +150,16 @@ test('FCM: 401 — токен доступа обновляется и отпр�
   assert.strictEqual(h.calls.filter((c) => c.url === GOOGLE_TOKEN_URL).length, 2);
 });
 
-test('FCM: разбор ответов — недействительный токен, повтор (Retry-After), окончательная ошибка', async () => {
+test('FCM: разбор ответов — удаляется только UNREGISTERED; чужой проект и 404 без кода — ошибка настройки; повтор (Retry-After)', async () => {
   const fcmError = (status, code, errorCode, message = '') => json(status, {
     error: { code: status, status: code, message, details: errorCode ? [{ '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode }] : [] }
   });
   const cases = [
     [fcmError(404, 'NOT_FOUND', 'UNREGISTERED'), 'invalid'],
-    [fcmError(400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', 'The registration token is not a valid FCM registration token'), 'invalid'],
-    [fcmError(403, 'PERMISSION_DENIED', 'SENDER_ID_MISMATCH'), 'invalid'],
+    [fcmError(400, 'INVALID_ARGUMENT', 'UNREGISTERED'), 'invalid'],
+    [fcmError(404, 'NOT_FOUND', null), 'config'],
+    [fcmError(403, 'PERMISSION_DENIED', 'SENDER_ID_MISMATCH'), 'config'],
+    [fcmError(400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', 'The registration token is not a valid FCM registration token'), 'failed'],
     [fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED'), 'retry'],
     [fcmError(503, 'UNAVAILABLE', 'UNAVAILABLE'), 'retry'],
     [fcmError(500, 'INTERNAL', 'INTERNAL'), 'retry'],
@@ -263,17 +264,18 @@ test('APNs: токен поставщика живёт 50 минут и выпу
   assert.notStrictEqual(h.calls[2].headers.authorization, h.calls[1].headers.authorization);
 });
 
-test('APNs: разбор ответов — 410/BadDeviceToken/чужой topic удаляются, ExpiredProviderToken — новый токен и повтор', async () => {
+test('APNs: разбор ответов — удаляются только 410 и BadDeviceToken; чужой topic — ошибка настройки; ExpiredProviderToken — новый токен и повтор', async () => {
   const cases = [
     [apnsError(410, 'Unregistered'), 'invalid'],
     [apnsError(400, 'BadDeviceToken'), 'invalid'],
-    [apnsError(400, 'DeviceTokenNotForTopic'), 'invalid'],
+    [apnsError(400, 'DeviceTokenNotForTopic'), 'config'],
+    [apnsError(400, 'ExpiredToken'), 'failed'],
     [apnsError(429, 'TooManyRequests'), 'retry'],
     [apnsError(500, 'InternalServerError'), 'retry'],
     [apnsError(503, 'ServiceUnavailable'), 'retry'],
     [new Error('ECONNRESET'), 'retry'],
     [apnsError(400, 'PayloadTooLarge'), 'failed'],
-    [apnsError(403, 'InvalidProviderToken'), 'failed']
+    [apnsError(403, 'InvalidProviderToken'), 'config']
   ];
   for (const [response, expected] of cases) {
     const h = apnsHarness([response]);
@@ -288,6 +290,34 @@ test('APNs: разбор ответов — 410/BadDeviceToken/чужой topic 
   const bad = apnsHarness([]);
   assert.strictEqual((await bad.provider.send({ token: '../../3/device/x', environment: 'production', notification: MESSAGE })).status, 'invalid');
   assert.strictEqual(bad.calls.length, 0);
+});
+
+test('APNs: ExpiredProviderToken не обновляет токен, если его уже обновил параллельный запрос', async () => {
+  const h = apnsHarness([]);
+  let concurrent = null;
+  let first = true;
+  h.provider.request = async (req) => {
+    h.calls.push(req);
+    if (first) {
+      first = false;
+      // Пока этот запрос ждал ответа, другой уже получил отказ и обновил токен.
+      h.advance(60 * 1000);
+      h.provider.providerToken(true);
+      concurrent = h.provider.cached.jwt;
+      return apnsError(403, 'ExpiredProviderToken');
+    }
+    return { status: 200, headers: {}, body: '' };
+  };
+  assert.deepStrictEqual(await h.provider.send({ token: APNS_TOKEN, environment: 'production', notification: MESSAGE }), { status: 'ok' });
+  assert.strictEqual(h.calls[1].headers.authorization, `bearer ${concurrent}`, 'повтор — с уже обновлённым токеном, без второго обновления');
+  assert.strictEqual(h.provider.cached.jwt, concurrent);
+});
+
+test('APNs: срок звонка — от времени вызова (expiresAtMs), а не от попытки', async () => {
+  const h = apnsHarness([]);
+  const expiresAtMs = h.now() + 12_345;
+  await h.provider.send({ token: APNS_TOKEN, environment: 'production', notification: { ...CALL, ttlSeconds: 13, expiresAtMs } });
+  assert.strictEqual(h.calls[0].headers['apns-expiration'], String(Math.floor(expiresAtMs / 1000)));
 });
 
 test('APNs: ключ .p8 — только EC P-256', () => {

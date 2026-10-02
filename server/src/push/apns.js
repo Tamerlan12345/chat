@@ -16,7 +16,11 @@ const APNS_HOSTS = Object.freeze({
 // минут нельзя (TooManyProviderTokenUpdates). 50 минут — с запасом в обе стороны.
 const PROVIDER_TOKEN_TTL_MS = 50 * 60 * 1000;
 const DEVICE_TOKEN_RE = /^[0-9a-fA-F]{64,200}$/;
-const INVALID_TOKEN_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered', 'ExpiredToken']);
+// Удаляется только токен, который Apple назвала недействительным (410 и
+// BadDeviceToken). DeviceTokenNotForTopic — токен другого приложения: значит,
+// неверен PUSH_APNS_BUNDLE_ID, это ошибка настройки, и токены не удаляются.
+const INVALID_TOKEN_REASONS = new Set(['BadDeviceToken', 'Unregistered']);
+const CONFIG_REASONS = new Set(['DeviceTokenNotForTopic', 'TopicDisallowed', 'BadTopic', 'InvalidProviderToken', 'MissingProviderToken']);
 
 /** Ключ .p8 (PEM PKCS#8, EC P-256). «\n» из переменной окружения превращаются в переводы строк. */
 function parseApnsKey(pem) {
@@ -106,7 +110,10 @@ function apnsRequest({ bundleId, notification, nowMs }) {
     'apns-topic': call ? `${bundleId}.voip` : bundleId,
     'apns-push-type': call ? 'voip' : 'alert',
     'apns-priority': '10',
-    'apns-expiration': String(Math.floor(nowMs / 1000) + notification.ttlSeconds)
+    // Срок звонка задаётся от времени вызова (expiresAtMs), а не от попытки.
+    'apns-expiration': String(notification.expiresAtMs
+      ? Math.floor(notification.expiresAtMs / 1000)
+      : Math.floor(nowMs / 1000) + notification.ttlSeconds)
   };
   if (!call && notification.collapseKey) headers['apns-collapse-id'] = notification.collapseKey;
   const payload = call
@@ -152,9 +159,13 @@ class ApnsProvider {
 
   build(token, notification) {
     const { headers, payload } = apnsRequest({ bundleId: this.bundleId, notification, nowMs: this.now() });
+    const jwt = this.providerToken();
     return {
-      headers: { ':method': 'POST', ':path': `/3/device/${token}`, authorization: `bearer ${this.providerToken()}`, ...headers },
-      body: JSON.stringify(payload)
+      jwt,
+      request: {
+        headers: { ':method': 'POST', ':path': `/3/device/${token}`, authorization: `bearer ${jwt}`, ...headers },
+        body: JSON.stringify(payload)
+      }
     };
   }
 
@@ -164,10 +175,13 @@ class ApnsProvider {
     const origin = APNS_HOSTS[environment];
     if (!origin) return { status: 'failed', reason: 'BAD_ENVIRONMENT' };
     try {
-      let res = await this.request({ origin, ...this.build(token, notification), timeoutMs: this.timeoutMs });
+      const first = this.build(token, notification);
+      let res = await this.request({ origin, ...first.request, timeoutMs: this.timeoutMs });
       if (res.status === 403 && reasonOf(res) === 'ExpiredProviderToken') {
-        this.providerToken(true);
-        res = await this.request({ origin, ...this.build(token, notification), timeoutMs: this.timeoutMs });
+        // Новый токен — только если отклонён тот, что ещё в кэше: параллельный
+        // запрос мог уже обновить его, а частое обновление Apple запрещает.
+        if (this.cached && this.cached.jwt === first.jwt) this.providerToken(true);
+        res = await this.request({ origin, ...this.build(token, notification).request, timeoutMs: this.timeoutMs });
       }
       return this.classify(res);
     } catch {
@@ -179,6 +193,7 @@ class ApnsProvider {
     if (res.status === 200) return { status: 'ok' };
     const reason = reasonOf(res);
     if (res.status === 410 || INVALID_TOKEN_REASONS.has(reason)) return { status: 'invalid', reason: reason || 'Unregistered' };
+    if (CONFIG_REASONS.has(reason)) return { status: 'config', reason };
     if (res.status === 429 || res.status >= 500) return { status: 'retry', reason: reason || `HTTP_${res.status}` };
     return { status: 'failed', reason: reason || `HTTP_${res.status}` };
   }

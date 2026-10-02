@@ -182,9 +182,13 @@ class FcmProvider {
   async classify(res) {
     if (res.ok) return { status: 'ok' };
     const { errorCode, message } = await readError(res);
-    if (res.status === 404 || errorCode === 'UNREGISTERED') return { status: 'invalid', reason: 'UNREGISTERED' };
-    if (errorCode === 'SENDER_ID_MISMATCH') return { status: 'invalid', reason: 'SENDER_ID_MISMATCH' };
-    if (res.status === 400 && /registration token/i.test(message)) return { status: 'invalid', reason: 'INVALID_TOKEN' };
+    // Удаляется только токен, про который FCM прямо говорит «не зарегистрирован».
+    if (errorCode === 'UNREGISTERED') return { status: 'invalid', reason: 'UNREGISTERED' };
+    // Чужой проект Firebase или 404 без кода — ошибка настройки сервера, а не
+    // токена: удалять токены нельзя (неверный project_id стёр бы их все).
+    if (errorCode === 'SENDER_ID_MISMATCH') return { status: 'config', reason: 'SENDER_ID_MISMATCH' };
+    if (res.status === 404) return { status: 'config', reason: 'HTTP_404' };
+    if (res.status === 400 && /registration token/i.test(message)) return { status: 'failed', reason: 'INVALID_TOKEN' };
     if (res.status === 429 || res.status >= 500) {
       const after = retryAfterMs(res);
       return after === null ? { status: 'retry', reason: `HTTP_${res.status}` } : { status: 'retry', reason: `HTTP_${res.status}`, retryAfterMs: after };

@@ -102,6 +102,8 @@ test.beforeEach(() => {
   configurePush();
   chat.prepare('DELETE FROM push_tokens').run();
   wsServer.dndUsers.clear();
+  wsServer.pendingOffers.clear();
+  wsServer.endedPushOffers?.clear();
 });
 
 test.afterEach(async () => {
@@ -481,7 +483,8 @@ test('Звонок отменён до входа вызываемого — п�
   a.sock.send(JSON.stringify({ type: 'call_end', targetUserId: people.bob.id }));
   await sleep(50);
   const b = await connect('bob');
-  await sleep(100);
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'cancelled');
   assert.ok(!b.inbox.some((m) => m.type === 'call_offer'));
 });
 
@@ -496,4 +499,156 @@ test('Журнал запуска: строка о состоянии push бе�
   }
   assert.ok(lines.some((l) => /push-уведомления выключены/i.test(l)), lines.join(' | '));
   assert.strictEqual(push.enabled, false);
+});
+
+// ══ Исправления ревью (раунд 1) ════════════════════════════════════════════
+
+async function waitCalls(provider, n, timeoutMs = 2000) {
+  const started = Date.now();
+  while (provider.calls.length < n && Date.now() - started < timeoutMs) await sleep(5);
+  assert.ok(provider.calls.length >= n, `ожидалось ${n} вызовов поставщика, было ${provider.calls.length}`);
+}
+
+test('Повтор доставки перепроверяет владельца: токен перешёл к другому сотруднику — повтора нет', async () => {
+  configurePush({ baseDelayMs: 150 });
+  await android('alice', 130);
+  fcm.reply = () => ({ status: 'retry', reason: 'HTTP_503' });
+  await restSend('bob', 'direct', people.alice.id, 'Алисе', 'push-recheck-owner');
+  await waitCalls(fcm, 1);
+  await android('bob', 130); // тот же телефон теперь у Боба
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1, 'уведомление Алисы не ушло на телефон Боба');
+});
+
+test('Повтор доставки перепроверяет сеанс: сотрудник вышел — повтора нет', async () => {
+  configurePush({ baseDelayMs: 150 });
+  const session = await tokenFor(people.alice.id);
+  await register('alice', { platform: 'android', token: ANDROID(131), environment: 'production' }, session);
+  fcm.reply = () => ({ status: 'retry', reason: 'HTTP_503' });
+  await restSend('bob', 'direct', people.alice.id, 'Алисе', 'push-recheck-logout');
+  await waitCalls(fcm, 1);
+  assert.strictEqual((await api('POST', '/api/auth/logout', { token: session, body: {} })).status, 200);
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1);
+});
+
+test('Ошибка настройки поставщика не удаляет токены (громкая запись в журнал)', async () => {
+  await android('bob', 132);
+  fcm.reply = () => ({ status: 'config', reason: 'SENDER_ID_MISMATCH' });
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    await restSend('alice', 'direct', people.bob.id, 'Раз', 'push-config-1');
+    await restSend('alice', 'direct', people.bob.id, 'Два', 'push-config-2');
+    await push.idle();
+  } finally {
+    console.error = original;
+  }
+  assert.deepStrictEqual(tokensOf('bob'), [ANDROID(132)]);
+  assert.strictEqual(errors.filter((e) => e.includes('ОШИБКА НАСТРОЙКИ')).length, 1, 'одна запись на причину');
+});
+
+test('Звонок: вызывающий сбросил — повтор уведомления не уходит, а телефон при входе получает call_end', async () => {
+  configurePush({ baseDelayMs: 150 });
+  await android('bob', 140);
+  fcm.reply = () => ({ status: 'retry', reason: 'HTTP_503' });
+  const a = await connect('alice');
+  a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  await waitCalls(fcm, 1);
+  a.sock.send(JSON.stringify({ type: 'call_end', targetUserId: people.bob.id }));
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1, 'после сброса повтора нет');
+  const b = await connect('bob');
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.senderId, people.alice.id);
+  assert.strictEqual(end.reason, 'cancelled');
+  assert.ok(!b.inbox.some((m) => m.type === 'call_offer'));
+});
+
+test('Звонок: срок у поставщика — от времени вызова; повтор за окно звонка не планируется', async () => {
+  configurePush({ baseDelayMs: 20 });
+  await android('bob', 141);
+  let n = 0;
+  fcm.reply = () => (++n === 1 ? { status: 'retry', reason: 'HTTP_503' } : { status: 'ok' });
+  const a = await connect('alice');
+  a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 2);
+  const [first, second] = fcm.calls.map((c) => c.notification);
+  assert.strictEqual(first.expiresAtMs, second.expiresAtMs, 'одна и та же граница');
+  assert.ok(first.ttlSeconds <= 30 && second.ttlSeconds <= first.ttlSeconds);
+  a.sock.send(JSON.stringify({ type: 'call_end', targetUserId: people.bob.id }));
+
+  // Пауза повтора длиннее окна звонка (30 с): вызывающему сразу call_unavailable.
+  configurePush({ baseDelayMs: 40000 });
+  await android('bob', 141);
+  fcm.reply = () => ({ status: 'retry', reason: 'HTTP_503' });
+  a.inbox.length = 0;
+  a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  const unavailable = await waitFor(a, (m) => m.type === 'call_unavailable');
+  assert.strictEqual(unavailable.reason, 'Сотрудник сейчас не в сети');
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1);
+});
+
+test('Звонок: живого устройства нет (сеанс токена закончился) — call_unavailable сразу, без отправки', async () => {
+  const session = await tokenFor(people.carol.id);
+  await register('carol', { platform: 'android', token: ANDROID(142), environment: 'production' }, session);
+  await identity.run('UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1', [people.carol.id]);
+  try {
+    const a = await connect('alice');
+    a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.carol.id }));
+    const unavailable = await waitFor(a, (m) => m.type === 'call_unavailable');
+    assert.strictEqual(unavailable.targetUserId, people.carol.id);
+    await push.idle();
+    assert.strictEqual(allCalls().length, 0);
+    assert.deepStrictEqual(tokensOf('carol'), [], 'мёртвый токен удалён');
+  } finally {
+    people.carol.token = await tokenFor(people.carol.id);
+  }
+});
+
+test('Звонок: все доставки не удались — вызывающему call_unavailable, вызов снят', async () => {
+  await android('bob', 143);
+  await ios('bob', 144, { kind: 'voip' });
+  fcm.reply = () => ({ status: 'invalid', reason: 'UNREGISTERED' });
+  apns.reply = () => ({ status: 'failed', reason: 'PayloadTooLarge' });
+  const a = await connect('alice');
+  a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  const unavailable = await waitFor(a, (m) => m.type === 'call_unavailable');
+  assert.strictEqual(unavailable.targetUserId, people.bob.id);
+  assert.ok(!wsServer.pendingOffers.has(people.alice.id), 'ждущий вызов снят');
+  const b = await connect('bob');
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'unavailable');
+});
+
+test('Ответ на вызов, которого нет, — отвечающему call_end', async () => {
+  await connect('alice');
+  const b = await connect('bob');
+  b.sock.send(JSON.stringify({ type: 'call_answer', targetUserId: people.alice.id }));
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.senderId, people.alice.id);
+  assert.strictEqual(end.reason, 'no_call');
+  assert.strictEqual(end.senderName, 'Алиса Тестова');
+  assert.ok(!wsServer.activeCalls.has(people.bob.id), 'разговор не начался');
+});
+
+test('Продление: регистрация старым токеном в паузу после продления привязывается к новому сеансу', async () => {
+  const old = await tokenFor(people.dave.id);
+  const refreshed = await api('POST', '/api/auth/refresh', { token: old });
+  assert.strictEqual(refreshed.status, 200);
+  const late = await register('dave', { platform: 'android', token: ANDROID(150), environment: 'production' }, old);
+  assert.strictEqual(late.status, 200, late.text);
+  await api('POST', '/api/auth/logout', { token: refreshed.json.token, body: {} });
+  assert.deepStrictEqual(tokensOf('dave'), []);
+});
+
+test('Выход сеансом старого формата (без jti) снимает токены без jti этого сотрудника/устройства', () => {
+  const session = { jti: null, tokenVersion: 1, authTime: Math.floor(Date.now() / 1000) };
+  PushTokens.register({ userId: people.dave.id, token: ANDROID(151), platform: 'android', kind: 'alert', environment: 'production', deviceId: 'legacy-1', session });
+  PushTokens.register({ userId: people.dave.id, token: ANDROID(152), platform: 'android', kind: 'alert', environment: 'production', deviceId: 'other', session: { ...session, jti: 'a'.repeat(32) } });
+  PushTokens.removeForLogout({ userId: people.dave.id, jti: null, deviceId: null });
+  assert.deepStrictEqual(tokensOf('dave'), [ANDROID(152)]);
 });
