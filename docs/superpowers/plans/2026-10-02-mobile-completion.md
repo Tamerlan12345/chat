@@ -301,5 +301,25 @@ Worktree `m-ios`. Depends on Task 6. Implement the shared requirements above on 
 
 Worktree `m-android`. Depends on Task 8. Implement the shared requirements above on Android: remove the server-connect destination and screen, `BuildConfig.SERVER_URL` (release = production constant, debug overridable via Gradle property), migrate/wipe stale stored server and foreign-host credentials, rebuild the login screen per the design brief, Compose UI tests for first launch → login and error states. Debug build pointed at the dev stand must log in as `alice` on `emulator-5554` (trust of the dev CA in debug network-security config only — this moves here from Task 9). Acceptance: Android command + `connectedDebugAndroidTest` green; screenshots light/dark/fontScale 2.0.
 
+### Task 13: Integration — delivery-state contract and shared reducer test vectors (Wave 2 contract-first)
+
+Worktree `m-integration`. Depends on Task 5 (`client_msg_id`, `/api/sync`, delivered-on-reconnect).
+- `mobile/contracts/delivery-state.md`: the single client-side model of a message's life, binding on iOS and Android:
+  - states `queued → sending → sent → delivered → read` and `failed`;
+  - transition table with triggers: enqueue, WS send attempt, echo matched by `client_msg_id`, `message_status_updated`, `messages_read`, ack timeout, WS rate-limit drop, 409 `CLIENT_MSG_ID_CONFLICT`, permanent 4xx, reconnect replay, user retry, user cancel;
+  - `client_msg_id` generation rule (charset `[A-Za-z0-9_-]`, ≤64, e.g. UUIDv4 without braces);
+  - per-conversation ordering and replay order;
+  - retry/backoff policy and max attempts before `failed`;
+  - the composer is cleared only after a durable enqueue;
+  - temp-id → server-id reconciliation;
+  - dedupe of `new_message` vs `direct_message`/`channel_message`;
+  - unread rules (no unread for own messages or the open chat);
+  - sync merge rules (upsert by id, tombstones, cursor persistence, 410 → full resync);
+  - edit/delete while queued.
+- `mobile/contracts/reference/delivery-reducer.mjs`: a small pure reference reducer implementing the spec (no I/O).
+- `mobile/contracts/fixtures/reducers/*.json`: table-driven test vectors `{ name, initialState, events[], expectedState }` covering every transition and the abuse/edge cases above (at least 30 vectors). Use the same JSON event shapes as the WS/HTTP fixtures.
+- A server-side test (`server/test/mobile-delivery-reducer.test.js`, added to the explicit test list) runs every vector against the reference reducer, so vectors are self-consistent. Both platforms will later run the same vectors against their own reducers.
+- Acceptance: `cd server && npm test` green; README in `fixtures/reducers/` explains the vector format and that iOS/Android must run all of them.
+
 > Execution order per lane: iOS 1 → 6 → 11 → 7; Android 2 → 8 → 12 → 9; Integration 3 → 4 → 5; QA 10 after all.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
