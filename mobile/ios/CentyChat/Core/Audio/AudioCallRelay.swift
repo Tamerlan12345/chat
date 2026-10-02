@@ -1,5 +1,4 @@
 import AVFoundation
-import Darwin
 import Foundation
 import QuartzCore
 
@@ -439,7 +438,9 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         isPlaybackInFlight = true
         let generation = playbackGeneration
         let delay = max(0, next.time - CACurrentMediaTime())
-        let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay)
+        // System uptime (declared as SystemBootTime / 35F9.1 in PrivacyInfo.xcprivacy)
+        // shares the host-time clock and is used only to measure the scheduling delay.
+        let hostTime = AVAudioTime.hostTime(forSeconds: ProcessInfo.processInfo.systemUptime + delay)
         player.scheduleBuffer(
             next.buffer,
             at: AVAudioTime(hostTime: hostTime),

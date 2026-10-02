@@ -111,6 +111,16 @@
     
     <!-- Системные API с обязательным обоснованием использования -->
     <key>NSPrivacyAccessedAPITypes</key>
-    <array/>
+    <array>
+        <!-- Время работы системы: планирование воспроизведения звонка (35F9.1 — интервалы внутри приложения) -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>35F9.1</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
