@@ -196,6 +196,10 @@
     <string name="person_wake_wait">Через %1$d с</string>
     <string name="person_call_not_permitted">Звонки недоступны для вашей роли</string>
     <string name="person_call_offline">Не в сети — звонок сейчас не дойдёт</string>
+    <string name="person_call_dnd">Не беспокоить — звонок не пройдёт</string>
+    <string name="person_inactive">Сотрудник больше не работает</string>
+    <string name="search_in_direct">личная переписка</string>
+    <string name="search_in_direct_with">переписка с %1$s</string>
     <string name="person_status_away">Отошёл(ла)</string>
     <string name="person_seen_today">Был(а) в сети сегодня в %1$s</string>
     <string name="person_seen_yesterday">Был(а) в сети вчера в %1$s</string>

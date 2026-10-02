@@ -70,6 +70,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
@@ -255,38 +260,56 @@ private fun StatusLine(person: Person) {
 private fun ActionRow(person: Person, state: PersonCardState, actions: PersonCardActions) {
     val tokens = CentyTheme.tokens
     val haptics = rememberHaptics()
+    val active = !state.inactive
+    val labels = listOf(
+        stringResource(R.string.person_write),
+        stringResource(R.string.person_call),
+        if (state.wakeCooldown > 0) stringResource(R.string.person_wake_wait, state.wakeCooldown) else stringResource(R.string.person_wake)
+    )
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    // Одна величина подписи на весь ряд: самая крупная, при которой все три влезают в плитку.
+    val labelStyle = rowLabelStyle(labels, tileWidth = (maxWidth - 16.dp) / 3 - 8.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ActionTile(
             icon = Icons.AutoMirrored.Outlined.Chat,
-            label = stringResource(R.string.person_write),
+            label = labels[0],
+            labelStyle = labelStyle,
             primary = true,
-            enabled = true,
+            enabled = active,
             onClick = { haptics.tick(); actions.onWrite(person) },
             modifier = Modifier.weight(1f).testTag("person-write")
         )
         ActionTile(
             icon = Icons.Outlined.Call,
-            label = stringResource(R.string.person_call),
+            label = labels[1],
+            labelStyle = labelStyle,
             primary = false,
-            enabled = state.call == CallAvailability.AVAILABLE,
+            enabled = active && state.call == CallAvailability.AVAILABLE,
             onClick = { haptics.tick(); actions.onCall(person) },
             modifier = Modifier.weight(1f).testTag("person-call")
         )
         ActionTile(
             icon = Icons.Outlined.NotificationsActive,
-            label = if (state.wakeCooldown > 0) stringResource(R.string.person_wake_wait, state.wakeCooldown) else stringResource(R.string.person_wake),
+            label = labels[2],
+            labelStyle = labelStyle,
             primary = false,
-            enabled = state.wakeCooldown == 0,
+            enabled = active && state.wakeCooldown == 0,
             onClick = actions::onWake,
             modifier = Modifier.weight(1f).testTag("person-wake")
         )
     }
+    }
     // Почему звонок недоступен — подписью под рядом, а не всплывающим сообщением.
-    AnimatedVisibility(visible = state.call != CallAvailability.AVAILABLE) {
+    val reason = when {
+        state.inactive -> R.string.person_inactive
+        state.call == CallAvailability.NOT_PERMITTED -> R.string.person_call_not_permitted
+        state.call == CallAvailability.PEER_DND -> R.string.person_call_dnd
+        state.call == CallAvailability.PEER_OFFLINE -> R.string.person_call_offline
+        else -> null
+    }
+    AnimatedVisibility(visible = reason != null) {
         Text(
-            stringResource(
-                if (state.call == CallAvailability.NOT_PERMITTED) R.string.person_call_not_permitted else R.string.person_call_offline
-            ),
+            stringResource(reason ?: R.string.person_call_offline),
             style = MaterialTheme.typography.bodySmall,
             color = tokens.textDim,
             textAlign = TextAlign.Center,
@@ -299,6 +322,7 @@ private fun ActionRow(person: Person, state: PersonCardState, actions: PersonCar
 private fun ActionTile(
     icon: ImageVector,
     label: String,
+    labelStyle: TextStyle,
     primary: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -340,13 +364,8 @@ private fun ActionTile(
         val color = if (enabled) content else tokens.textDim
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
         Spacer(Modifier.height(4.dp))
-        // Одна строка, при крупном шрифте сжимается, а не рвёт слово («Написат-ь»).
-        BasicText(
-            label,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold, color = color, textAlign = TextAlign.Center),
-            maxLines = 1,
-            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = MaterialTheme.typography.labelLarge.fontSize)
-        )
+        // Одна строка; величина общая для ряда (rowLabelStyle) — слово не рвётся («Написат-ь»).
+        Text(label, style = labelStyle, color = color, maxLines = 1, textAlign = TextAlign.Center, softWrap = false)
     }
 }
 
@@ -359,13 +378,12 @@ private fun ActionTile(
 private fun InfoGroup(person: Person, actions: PersonCardActions) {
     val tokens = CentyTheme.tokens
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     val snackbar = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
     val copied = stringResource(R.string.person_copied)
     val noApp = stringResource(R.string.person_no_app)
-    fun copy(value: String) {
-        clipboard.setText(AnnotatedString(value))
+    fun copy(value: String, sensitive: Boolean = false) {
+        copyToClipboard(context, value, sensitive)
         scope.launch { snackbar.showSnackbar(copied) }
     }
     fun open(intent: Intent) {
@@ -385,8 +403,8 @@ private fun InfoGroup(person: Person, actions: PersonCardActions) {
             add(
                 InfoRowData(
                     R.string.person_phone, phone, trailing = Icons.Outlined.Phone, hint = R.string.person_call_phone,
-                    onTap = { open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + phone.filter { it.isDigit() || it == '+' }))) },
-                    onLongPress = { copy(phone) }
+                    onTap = { ContactLinks.dial(phone)?.let { open(Intent(Intent.ACTION_DIAL, it)) } ?: copy(phone, sensitive = true) },
+                    onLongPress = { copy(phone, sensitive = true) }
                 )
             )
         }
@@ -394,8 +412,8 @@ private fun InfoGroup(person: Person, actions: PersonCardActions) {
             add(
                 InfoRowData(
                     R.string.person_email, email, trailing = Icons.Outlined.Email, hint = R.string.person_write_email,
-                    onTap = { open(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email"))) },
-                    onLongPress = { copy(email) }
+                    onTap = { ContactLinks.mail(email)?.let { open(Intent(Intent.ACTION_SENDTO, it)) } ?: copy(email, sensitive = true) },
+                    onLongPress = { copy(email, sensitive = true) }
                 )
             )
         }
@@ -466,6 +484,39 @@ private fun InfoRow(row: InfoRowData) {
             Icon(it, contentDescription = null, tint = tokens.textSecondary, modifier = Modifier.size(22.dp))
         }
     }
+}
+
+/**
+ * Самая крупная величина подписи (от labelLarge до 9 sp), при которой все подписи ряда помещаются в
+ * плитку одной строкой. Одна на весь ряд — плитки не расходятся по размеру шрифта.
+ */
+@Composable
+private fun rowLabelStyle(labels: List<String>, tileWidth: Dp): TextStyle {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val base = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+    val widthPx = with(density) { tileWidth.roundToPx() }.coerceAtLeast(1)
+    return remember(labels, widthPx, base, density) {
+        var size = base.fontSize.value
+        while (size > 9f) {
+            val style = base.copy(fontSize = size.sp)
+            if (labels.all { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width <= widthPx }) break
+            size -= 0.5f
+        }
+        base.copy(fontSize = size.sp)
+    }
+}
+
+/** Копия в буфер; телефон и почту система помечает как «секретное» (Android 13+: без превью). */
+private fun copyToClipboard(context: android.content.Context, value: String, sensitive: Boolean) {
+    val manager = context.getSystemService(android.content.ClipboardManager::class.java) ?: return
+    val clip = android.content.ClipData.newPlainText("CentyChat", value)
+    if (sensitive && android.os.Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = android.os.PersistableBundle().apply {
+            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+    manager.setPrimaryClip(clip)
 }
 
 /** Сотрудник не найден (удалён из справочника, нет сети и кэша). */
