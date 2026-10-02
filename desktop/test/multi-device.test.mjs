@@ -59,3 +59,23 @@ test('уведомление: открытый в фокусе чат — нет
   assert.strictEqual(shouldNotify({ own: false, activeHere: false, notify: true }), true);
   assert.strictEqual(shouldNotify({ own: false, activeHere: false, notify: false }), false, 'чат открыт на телефоне');
 });
+
+test('auth: настоящее присутствие и открытый чат; без чата — без поля viewing', async () => {
+  const { authFrame } = await import('../src/renderer/src/lib/multi-device.mjs');
+  assert.deepStrictEqual(authFrame({ token: 't', presence: 'online', viewing: 'direct:5' }),
+    { type: 'auth', token: 't', platform: 'desktop', presence: 'online', viewing: { conversationType: 'direct', targetId: 5 } });
+  assert.deepStrictEqual(authFrame({ token: 't', presence: 'away', viewing: null }),
+    { type: 'auth', token: 't', platform: 'desktop', presence: 'away' });
+});
+
+test('conversation_read снимает карточки только своей переписки', async () => {
+  const { toastIsForConversation } = await import('../src/renderer/src/lib/multi-device.mjs');
+  const dm = { type: 'chat', data: { user: { id: 5 } } };
+  const ch = { type: 'channel', data: { channel: { id: 5 } } };
+  const wake = { type: 'wake', data: { user: { id: 5 } } };
+  assert.ok(toastIsForConversation(dm, { conversationType: 'direct', targetId: 5 }));
+  assert.ok(!toastIsForConversation(ch, { conversationType: 'direct', targetId: 5 }));
+  assert.ok(toastIsForConversation(ch, { conversationType: 'channel', targetId: 5 }));
+  assert.ok(!toastIsForConversation(dm, { conversationType: 'direct', targetId: 6 }));
+  assert.ok(!toastIsForConversation(wake, { conversationType: 'direct', targetId: 5 }), 'побудку не трогаем');
+});

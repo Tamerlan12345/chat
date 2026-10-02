@@ -29,7 +29,7 @@ import { uploadProblem } from './lib/attachments.mjs';
 import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
 import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
-import { viewingKey, viewingFrame, applyConversationRead, shouldNotify } from './lib/multi-device.mjs';
+import { viewingKey, viewingFrame, applyConversationRead, shouldNotify, authFrame, toastIsForConversation } from './lib/multi-device.mjs';
 
 // Токен живёт 12 часов; продлеваем с большим запасом, чтобы работающий
 // человек не упирался в истечение посреди дня.
@@ -1055,7 +1055,18 @@ export default function App() {
     // Раньше зелёная точка загоралась на открытии сокета, и отвергнутый сеанс
     // выглядел рабочим, а отправленные сообщения пропадали.
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'auth', token: authToken }));
+      // Настоящее состояние окна (свёрнуто/простой — away) и открытый чат —
+      // сразу в auth (multi-device.md §3): сервер не считает свёрнутое окно
+      // «в сети» и не уведомляет о чате, который человек уже читает.
+      const viewing = viewingKey({
+        chat: activeChatRef.current,
+        chatVisible: isChatVisibleRef.current,
+        focused: windowFocusedRef.current,
+        connected: true,
+        presence: presenceRef.current
+      });
+      lastViewingRef.current = viewing;
+      ws.send(JSON.stringify(authFrame({ token: authToken, presence: presenceRef.current, viewing })));
     };
 
     ws.onclose = () => {
@@ -1097,10 +1108,11 @@ export default function App() {
 
       // ── Состояние сеанса ────────────────────────────────────────────────
       case 'auth_success':
-        // Сервер считает только что подключившегося человека «в сети».
-        presenceRef.current = 'online';
-        // Новый сокет: сервер не знает, какой чат открыт, — сообщить заново.
-        lastViewingRef.current = undefined;
+        // Присутствие ушло в auth. Сервер прежней версии поле не знает и
+        // считает вход «в сети» — свёрнутое окно повторяет away кадром.
+        if (presenceRef.current === 'away') {
+          wsRef.current?.send(JSON.stringify({ type: 'presence', state: 'away' }));
+        }
         setWsConnected(true);
         syncViewing();
         reconnectAttemptRef.current = 0;
@@ -1277,6 +1289,11 @@ export default function App() {
         } else {
           setUnreadMap((prev) => applyConversationRead({ unreadMap: prev, channelUnread: {} }, event).unreadMap);
         }
+        // Прочитано на телефоне — карточки этой переписки и мигание кнопки
+        // на панели задач здесь больше не нужны. Системные уведомления
+        // Windows, уже показанные, приложение снять не может.
+        setToasts((prev) => (prev.some((t) => toastIsForConversation(t, event)) ? prev.filter((t) => !toastIsForConversation(t, event)) : prev));
+        window.electronAPI?.flashFrame?.(false);
         break;
       }
 

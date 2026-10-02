@@ -43,3 +43,23 @@ export function shouldNotify({ own, activeHere, notify }) {
   if (own || activeHere) return false;
   return notify !== false;
 }
+
+// Кадр auth: настоящее присутствие окна (свёрнуто/простой — away) и открытый
+// чат сразу, без окна до первого viewing (multi-device.md §3). Старый сервер
+// лишние поля игнорирует.
+export function authFrame({ token, presence, viewing }) {
+  const frame = { type: 'auth', token, platform: 'desktop', presence: presence === 'away' ? 'away' : 'online' };
+  const v = viewingFrame(viewing);
+  if (v.conversationType) frame.viewing = { conversationType: v.conversationType, targetId: v.targetId };
+  return frame;
+}
+
+// Карточка уведомления относится к прочитанной переписке: личный — по
+// собеседнику (data.user), канал — по каналу (data.channel).
+export function toastIsForConversation(toast, event) {
+  const id = Number(event?.targetId);
+  if (!toast || !Number.isInteger(id)) return false;
+  if (event.conversationType === 'channel') return toast.type === 'channel' && Number(toast.data?.channel?.id) === id;
+  if (event.conversationType === 'direct') return toast.type === 'chat' && Number(toast.data?.user?.id) === id;
+  return false;
+}
