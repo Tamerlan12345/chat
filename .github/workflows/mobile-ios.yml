@@ -55,7 +55,9 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl keychain "$udid" add-root-cert mobile/dev/certs/dev-ca.crt
           echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
-      - name: Run unsigned iOS simulator tests
+      # Ad-hoc ("Sign to Run Locally") signing, no team needed: an unsigned simulator app has
+      # no entitlements, so every Keychain write fails with errSecMissingEntitlement.
+      - name: Run iOS simulator tests (ad-hoc signed)
         env:
           # xcodebuild forwards TEST_RUNNER_* variables to the test processes (prefix stripped).
           TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
@@ -68,7 +70,8 @@ jobs:
             -destination "id=$SIMULATOR_UDID" \
             -resultBundlePath mobile/ios/build/CentyChat.xcresult \
             clean test \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
             CENTYCHAT_SERVER_URL=https://localhost:8443
       - name: Dev stand log
         if: always()
