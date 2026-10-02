@@ -61,9 +61,8 @@ fun CentyNavigation(
     val entryProvider = remember(navigator) { appEntryProvider(navigator, hasConfiguredServer) }
     val entries = state.toDecoratedEntries(entryProvider)
 
-    // [session] only triggers recomposition; the decision uses the synchronous snapshot, because the
-    // collected value can lag behind a sign-in that has just switched the navigator to the main flow.
-    @Suppress("UNUSED_EXPRESSION") session
+    // A new [session] value recomposes this function; the decision itself uses the synchronous
+    // snapshot, because the collected value can lag behind a sign-in that just switched the flow.
     if (!state.isAuthFlow && !SessionRouteGuard.hasAuthenticatedSession(currentSession())) {
         // Never render a protected destination without a session, not even for one frame.
         Box(modifier = modifier.fillMaxSize())
@@ -74,8 +73,9 @@ fun CentyNavigation(
     }
 
     val adaptiveInfo = currentWindowAdaptiveInfo()
-    val isWideWindow = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
-    val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>(isWideWindow)
+    val isListDetail = usesListDetailPanes(adaptiveInfo.windowSizeClass)
+    val isCompact = !adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>(isListDetail)
 
     val display: @Composable () -> Unit = {
         NavDisplay(
@@ -93,7 +93,8 @@ fun CentyNavigation(
     val currentKey = state.currentKey
     val layoutType = when {
         currentKey is NavKey.Call -> NavigationSuiteType.None
-        currentKey is NavKey.Chat && !isWideWindow -> NavigationSuiteType.None
+        // Phones show a chat full screen; medium windows keep the rail next to the single pane.
+        currentKey is NavKey.Chat && isCompact -> NavigationSuiteType.None
         else -> NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(adaptiveInfo)
     }
     val colors = MaterialTheme.colorScheme
@@ -136,6 +137,10 @@ fun CentyNavigation(
         display()
     }
 }
+
+/** Conversations and the open chat share the screen only on expanded widths (>= 840dp). */
+internal fun usesListDetailPanes(windowSizeClass: WindowSizeClass): Boolean =
+    windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
 
 private fun appEntryProvider(
     navigator: AppNavigator,
