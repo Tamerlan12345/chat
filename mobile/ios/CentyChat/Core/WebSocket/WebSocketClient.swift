@@ -18,7 +18,8 @@ struct ReconnectBackoff: Sendable {
     /// Advances to the next attempt. `jitter` is a factor in -0.2...0.2.
     mutating func nextDelay(jitter: Double) -> TimeInterval {
         attempt += 1
-        let exponential = min(Self.maxSeconds, Self.baseSeconds * pow(2.0, Double(min(attempt, 6))))
+        let exponent = Double(min(attempt - 1, 16))
+        let exponential = min(Self.maxSeconds, Self.baseSeconds * pow(2.0, exponent))
         return max(Self.baseSeconds, exponential + jitter * exponential)
     }
 
@@ -143,7 +144,6 @@ public actor WebSocketClient {
         let transport = makeTransport(request)
         self.transport = transport
         generation += 1
-        backoff.reset()
         connectionState = .connecting
         transport.resume()
 
@@ -213,7 +213,10 @@ public actor WebSocketClient {
     private func handleReceived(_ frame: WebSocketFrame, generation: Int) {
         guard generation == self.generation else { return }
         if connectionState != .connected {
+            // The server answered: only a working connection resets the backoff,
+            // so a server that accepts and immediately drops sockets is not hammered.
             connectionState = .connected
+            backoff.reset()
         }
         switch frame {
         case .text(let text):
