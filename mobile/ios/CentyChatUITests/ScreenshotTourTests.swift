@@ -29,8 +29,7 @@ final class ScreenshotTourTests: XCTestCase {
 
         let urlField = application.textFields.firstMatch
         XCTAssertTrue(urlField.waitForExistence(timeout: 5))
-        urlField.tap()
-        urlField.typeText("http://chat.example.com")
+        type("http://chat.example.com", into: urlField, of: application)
         checkConnectionButton(in: application).tap()
         XCTAssertTrue(
             application.staticTexts[Self.invalidURLMessage].waitForExistence(timeout: 5),
@@ -42,8 +41,7 @@ final class ScreenshotTourTests: XCTestCase {
         let relaunched = launchFreshInstall()
         let freshURLField = relaunched.textFields.firstMatch
         XCTAssertTrue(freshURLField.waitForExistence(timeout: 10))
-        freshURLField.tap()
-        freshURLField.typeText("https://127.0.0.1:9")
+        type("https://127.0.0.1:9", into: freshURLField, of: relaunched)
         checkConnectionButton(in: relaunched).tap()
         let failure = relaunched.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@", Self.connectionFailurePrefix)
@@ -63,6 +61,19 @@ final class ScreenshotTourTests: XCTestCase {
         application.launchArguments += ["-reset-secure-state"]
         application.launch()
         return application
+    }
+
+    /// Focuses the field and waits for the keyboard before typing; typing right after a tap
+    /// intermittently fails with "Neither element nor any descendant has keyboard focus".
+    private func type(_ text: String, into field: XCUIElement, of application: XCUIApplication) {
+        for _ in 0..<3 {
+            field.tap()
+            if application.keyboards.firstMatch.waitForExistence(timeout: 3) {
+                break
+            }
+        }
+        XCTAssertTrue(application.keyboards.firstMatch.exists, "The URL field must receive keyboard focus")
+        field.typeText(text)
     }
 
     private func checkConnectionButton(in application: XCUIApplication) -> XCUIElement {

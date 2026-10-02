@@ -2,21 +2,22 @@ import SwiftUI
 
 /// Экран корпоративных оповещений и распоряжений с подтверждением ознакомления
 public struct AnnouncementsView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(AppContainer.self) private var container
+    @Environment(AnnouncementsStore.self) private var store
+
     @State private var selectedAnnouncement: Announcement? = nil
     @State private var filterUnconfirmedOnly: Bool = false
     @State private var isAcknowledging: Bool = false
-    
+
     public init() {}
-    
+
     private var displayedAnnouncements: [Announcement] {
         if filterUnconfirmedOnly {
-            return appState.announcements.filter { !$0.isConfirmed }
+            return store.announcements.filter { !$0.isConfirmed }
         }
-        return appState.announcements
+        return store.announcements
     }
-    
+
     public var body: some View {
         NavigationStack {
             List {
@@ -24,14 +25,21 @@ public struct AnnouncementsView: View {
                 Toggle("Только требующие ознакомления", isOn: $filterUnconfirmedOnly)
                     .font(.subheadline)
                     .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
-                
+
                 if displayedAnnouncements.isEmpty {
-                    ContentUnavailableView(
-                        filterUnconfirmedOnly ? "Все распоряжения подписаны" : "Нет активных оповещений",
-                        systemImage: "bell.slash",
-                        description: Text("Здесь отображаются важные корпоративные приказы и новости компании")
-                    )
-                    .listRowBackground(Color.clear)
+                    if ListLoadStateView.replacesEmptyState(store.loadState) {
+                        ListLoadStateView(state: store.loadState, failureTitle: "Не удалось загрузить распоряжения") {
+                            await store.load()
+                        }
+                        .listRowBackground(Color.clear)
+                    } else {
+                        ContentUnavailableView(
+                            filterUnconfirmedOnly ? "Все распоряжения подписаны" : "Нет активных оповещений",
+                            systemImage: "bell.slash",
+                            description: Text("Здесь отображаются важные корпоративные приказы и новости компании")
+                        )
+                        .listRowBackground(Color.clear)
+                    }
                 } else {
                     ForEach(displayedAnnouncements) { announcement in
                         announcementCard(announcement)
@@ -44,24 +52,24 @@ public struct AnnouncementsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Распоряжения")
             .refreshable {
-                await appState.loadAllData()
+                await container.loadAllData()
             }
             .sheet(item: $selectedAnnouncement) { ann in
                 announcementDetailSheet(ann)
             }
         }
     }
-    
+
     // MARK: - Announcement Card
-    
+
     private func announcementCard(_ ann: Announcement) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 // Приоритет
                 priorityBadge(ann.priority)
-                
+
                 Spacer()
-                
+
                 // Статус подтверждения
                 if ann.isConfirmed {
                     HStack(spacing: 4) {
@@ -81,23 +89,23 @@ public struct AnnouncementsView: View {
                     }
                 }
             }
-            
+
             Text(ann.title)
                 .font(.headline)
                 .foregroundColor(.primary)
-            
+
             Text(ann.content)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .lineLimit(3)
-            
+
             HStack {
                 Text(ann.authorName)
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
+
                 Text(DateParser.format(ann.createdAt).prefix(10))
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -105,7 +113,7 @@ public struct AnnouncementsView: View {
         }
         .padding(.vertical, 6)
     }
-    
+
     private func priorityBadge(_ priority: AnnouncementPriority) -> some View {
         HStack(spacing: 4) {
             Circle()
@@ -120,7 +128,7 @@ public struct AnnouncementsView: View {
         .background(priorityColor(priority).opacity(0.12))
         .clipShape(Capsule())
     }
-    
+
     private func priorityColor(_ priority: AnnouncementPriority) -> Color {
         switch priority {
         case .normal: return CentyColors.priorityNormal
@@ -128,9 +136,9 @@ public struct AnnouncementsView: View {
         case .critical: return CentyColors.priorityCritical
         }
     }
-    
+
     // MARK: - Detail Sheet
-    
+
     private func announcementDetailSheet(_ ann: Announcement) -> some View {
         NavigationStack {
             ScrollView {
@@ -144,10 +152,10 @@ public struct AnnouncementsView: View {
                                 .foregroundColor(.green)
                         }
                     }
-                    
+
                     Text(ann.title)
                         .font(.title2.weight(.bold))
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Автор: \(ann.authorName)")
                             .font(.subheadline.weight(.semibold))
@@ -157,15 +165,15 @@ public struct AnnouncementsView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
-                    
+
                     Divider()
-                    
+
                     Text(ann.content)
                         .font(.body)
                         .lineSpacing(4)
-                    
+
                     Spacer(minLength: 40)
-                    
+
                     if !ann.isConfirmed {
                         CentyButton(
                             title: isAcknowledging ? "Фиксация..." : "Подтверждаю ознакомление",
@@ -187,26 +195,18 @@ public struct AnnouncementsView: View {
             }
         }
     }
-    
+
     private func acknowledgeAction(_ id: Int64) async {
         isAcknowledging = true
         defer { isAcknowledging = false }
-        
-        do {
-            let res = try await APIClient.shared.acknowledgeAnnouncement(id: id)
-            if res.success {
-                if let idx = appState.announcements.firstIndex(where: { $0.id == id }) {
-                    appState.announcements[idx].isConfirmed = true
-                    appState.announcements[idx].confirmedAt = Date()
-                }
-                if selectedAnnouncement?.id == id {
-                    selectedAnnouncement?.isConfirmed = true
-                    selectedAnnouncement?.confirmedAt = Date()
-                }
-                CentyHaptics.success()
+
+        if await store.acknowledge(id: id) {
+            if selectedAnnouncement?.id == id {
+                selectedAnnouncement?.isConfirmed = true
+                selectedAnnouncement?.confirmedAt = Date()
             }
-        } catch {
-            print("[AnnouncementsView] Acknowledge error: \(error)")
+            CentyHaptics.success()
+        } else {
             CentyHaptics.error()
         }
     }

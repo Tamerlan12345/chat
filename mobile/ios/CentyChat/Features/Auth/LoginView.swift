@@ -2,21 +2,20 @@ import SwiftUI
 
 /// Экран авторизации пользователя по корпоративным учетным данным
 public struct LoginView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(SessionStore.self) private var session
+
     @State private var usernameInput: String = ""
     @State private var passwordInput: String = ""
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
-    @State private var showChangePasswordModal: Bool = false
-    
+
     public init() {}
-    
+
     private var isFormValid: Bool {
         !usernameInput.trimmingCharacters(in: .whitespaces).isEmpty &&
         !passwordInput.isEmpty
     }
-    
+
     public var body: some View {
         NavigationStack {
             ScrollView {
@@ -27,16 +26,16 @@ public struct LoginView: View {
                             .font(.system(size: 60))
                             .foregroundColor(CentyColors.primaryBlue)
                             .padding(.top, 40)
-                        
+
                         Text("Вход в CentyChat")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
-                        
-                        Text(appState.serverInfo.companyName)
+
+                        Text(session.serverInfo.companyName)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                     }
-                    
+
                     // Поля ввода учетных данных
                     VStack(spacing: 14) {
                         CentyTextField(
@@ -46,7 +45,7 @@ public struct LoginView: View {
                             textContentType: .username,
                             autocapitalization: .never
                         )
-                        
+
                         CentyTextField(
                             placeholder: "Пароль",
                             text: $passwordInput,
@@ -56,7 +55,7 @@ public struct LoginView: View {
                         )
                     }
                     .padding(.horizontal)
-                    
+
                     if let error = errorMessage {
                         Text(error)
                             .font(.footnote)
@@ -64,7 +63,7 @@ public struct LoginView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                     }
-                    
+
                     // Кнопка входа
                     CentyButton(
                         title: isLoading ? "Авторизация..." : "Войти",
@@ -75,13 +74,13 @@ public struct LoginView: View {
                         Task { await performLogin() }
                     }
                     .padding(.horizontal)
-                    
+
                     // Информация об устройстве
                     VStack(spacing: 4) {
                         Text("Устройство: \(UIDevice.current.name)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        Text("Сервер: \(KeychainManager.shared.serverUrl)")
+                        Text("Сервер: \(session.serverAddress)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -92,7 +91,7 @@ public struct LoginView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
-                        appState.isServerConfigured = false
+                        session.returnToServerSetup()
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
@@ -103,67 +102,30 @@ public struct LoginView: View {
                 }
             }
             .onAppear {
-                if let saved = KeychainManager.shared.savedUsername {
+                if let saved = session.savedUsername {
                     usernameInput = saved
                 }
             }
-            .sheet(isPresented: $showChangePasswordModal) {
-                ChangePasswordModalView(isMandatory: true)
-            }
         }
     }
-    
+
     private func performLogin() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
-        
-        let cleanedUsername = usernameInput.trimmingCharacters(in: .whitespaces).lowercased()
-        
+
         do {
-            try KeychainManager.shared.saveUsername(cleanedUsername)
-            let req = LoginRequest(username: cleanedUsername, password: passwordInput)
-            let res = try await APIClient.shared.login(request: req)
-            appState.currentUser = res.user
-            
-            // Device Claim для беспарольного входа (Parity Matrix Section 2)
-            let secret = generateDeviceSecret()
-            let deviceId = try KeychainManager.shared.deviceID()
-            let claimed = try? await APIClient.shared.claimDevice(deviceId: deviceId, deviceSecret: secret)
-            if claimed == true {
-                try KeychainManager.shared.saveDeviceSecret(secret)
-            }
-            
-            // Подключение WebSocket
-            await WebSocketClient.shared.connect()
-            
-            // Проверка обязательной смены пароля
-            if res.user.mustChangePassword {
-                appState.mustChangePasswordRequired = true
-                showChangePasswordModal = true
+            // Device Claim для беспарольного входа (Parity Matrix Section 2) выполняет SessionStore
+            // The root view switches to the mandatory password change when required.
+            let outcome = try await session.login(username: usernameInput, password: passwordInput)
+            if outcome == .passwordChangeRequired {
+                CentyHaptics.warning()
             } else {
-                appState.isAuthenticated = true
-                await appState.loadAllData()
+                CentyHaptics.success()
             }
-            
-            CentyHaptics.success()
-        } catch APIError.mustChangePassword(let msg) {
-            appState.mustChangePasswordRequired = true
-            showChangePasswordModal = true
-            errorMessage = msg
-            CentyHaptics.warning()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.userMessage
             CentyHaptics.error()
         }
-    }
-    
-    private func generateDeviceSecret() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

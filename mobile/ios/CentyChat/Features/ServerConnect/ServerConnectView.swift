@@ -2,16 +2,16 @@ import SwiftUI
 
 /// Экран настройки и проверки адреса корпоративного сервера CentyChat
 public struct ServerConnectView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(SessionStore.self) private var session
+
     @State private var serverUrlInput: String = ""
     @State private var isChecking: Bool = false
     @State private var checkSuccess: Bool = false
     @State private var serverDetails: ServerInfo? = nil
     @State private var errorMessage: String? = nil
-    
+
     public init() {}
-    
+
     public var body: some View {
         NavigationStack {
             ScrollView {
@@ -22,29 +22,29 @@ public struct ServerConnectView: View {
                             .font(.system(size: 64))
                             .foregroundColor(CentyColors.primaryBlue)
                             .padding(.top, 40)
-                        
+
                         Text("CentyChat")
                             .font(.system(size: 32, weight: .bold, design: .rounded))
-                        
+
                         Text("Корпоративный защищённый мессенджер\nАО СК «Сентрас Иншуранс»")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                     }
-                    
+
                     // Форма ввода URL
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Адрес сервера компании")
                             .font(.footnote.weight(.semibold))
                             .foregroundColor(.secondary)
-                        
+
                         CentyTextField(
                             placeholder: "https://chat.example.com",
                             text: $serverUrlInput,
                             icon: "server.rack",
                             keyboardType: .URL
                         )
-                        
+
                         if let error = errorMessage {
                             Text(error)
                                 .font(.caption)
@@ -52,7 +52,7 @@ public struct ServerConnectView: View {
                         }
                     }
                     .padding(.horizontal)
-                    
+
                     // Кнопка проверки доступности
                     CentyButton(
                         title: isChecking ? "Проверка связи..." : "Проверить подключение",
@@ -63,7 +63,7 @@ public struct ServerConnectView: View {
                         Task { await checkConnection() }
                     }
                     .padding(.horizontal)
-                    
+
                     // Карточка успешного подключения
                     if let details = serverDetails, checkSuccess {
                         VStack(spacing: 8) {
@@ -73,26 +73,25 @@ public struct ServerConnectView: View {
                                 Text("Сервер доступен")
                                     .font(.headline)
                             }
-                            
+
                             Text(details.serverName)
                                 .font(.subheadline.weight(.semibold))
-                            
+
                             Text(details.companyName)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            
+
                             CentyButton(
                                 title: "Перейти ко входу",
                                 icon: "arrow.right"
                             ) {
                                 do {
-                                    try KeychainManager.shared.saveServerURL(
-                                        serverUrlInput.trimmingCharacters(in: .whitespaces)
+                                    try session.configureServer(
+                                        address: serverUrlInput.trimmingCharacters(in: .whitespaces),
+                                        info: details
                                     )
-                                    appState.serverInfo = details
-                                    appState.isServerConfigured = true
                                 } catch {
-                                    errorMessage = error.localizedDescription
+                                    errorMessage = error.userMessage
                                     CentyHaptics.error()
                                 }
                             }
@@ -110,39 +109,34 @@ public struct ServerConnectView: View {
             .navigationTitle("Подключение")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                serverUrlInput = KeychainManager.shared.serverUrl
+                serverUrlInput = session.serverAddress
             }
         }
     }
-    
+
     private func checkConnection() async {
         isChecking = true
         errorMessage = nil
         checkSuccess = false
         serverDetails = nil
         defer { isChecking = false }
-        
+
         let cleaned = serverUrlInput.trimmingCharacters(in: .whitespaces)
         guard let serverURL = ServerEndpointPolicy.configuredURL(from: cleaned) else {
-            errorMessage = "Введите корректный URL (например, https://chat.example.com)"
+            errorMessage = String(localized: "Введите корректный URL (например, https://chat.example.com)")
             CentyHaptics.error()
             return
         }
-        
+
         do {
-            let health = try await APIClient.shared.checkHealth(serverURL: serverURL)
-            guard health.isHealthy else {
-                errorMessage = "Сервер ответил статусом: \(health.status)"
-                CentyHaptics.warning()
-                return
-            }
-            
-            let info = try await APIClient.shared.getServerInfo(serverURL: serverURL)
-            serverDetails = info
+            serverDetails = try await session.probeServer(serverURL)
             checkSuccess = true
             CentyHaptics.success()
+        } catch ServerProbeError.unhealthy(let status) {
+            errorMessage = String(localized: "Сервер ответил статусом: \(status)")
+            CentyHaptics.warning()
         } catch {
-            errorMessage = "Не удалось подключиться: \(error.localizedDescription)"
+            errorMessage = String(localized: "Не удалось подключиться: \(error.userMessage)")
             CentyHaptics.error()
         }
     }

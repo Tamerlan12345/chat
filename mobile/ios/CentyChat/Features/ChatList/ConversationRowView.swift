@@ -45,7 +45,7 @@ public struct ConversationRowView: View {
                 }
                 
                 HStack {
-                    Text(conversation.lastMessageText ?? "Нет сообщений")
+                    Text(conversation.lastMessageText ?? String(localized: "Нет сообщений"))
                         .font(.subheadline)
                         .foregroundColor(conversation.unreadCount > 0 ? .primary : .secondary)
                         .lineLimit(1)

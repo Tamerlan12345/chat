@@ -223,38 +223,41 @@ final class AudioRelayLifecycleTests: XCTestCase {
 
     func testOutgoingCallDoesNotStartMicrophoneBeforePeerAnswer() async {
         let backend = FakeAudioRelayBackend(permission: .granted)
-        let appState = makeAppState(backend: backend)
+        let calls = makeCallStore(backend: backend)
         let peer = PublicUser(id: 42, username: "peer", fullName: "Peer")
 
-        await appState.startOutgoingCall(targetUser: peer)
+        await calls.startOutgoingCall(targetUser: peer)
 
-        XCTAssertEqual(appState.activeCall?.state, .calling)
+        XCTAssertEqual(calls.activeCall?.state, .calling)
         XCTAssertEqual(backend.startCount, 0)
     }
 
     func testPeerAnswerWithDeniedMicrophoneDoesNotActivateOutgoingCall() async {
         let backend = FakeAudioRelayBackend(permission: .denied)
-        let appState = makeAppState(backend: backend)
-        appState.activeCall = CallSession(
+        let calls = makeCallStore(backend: backend)
+        calls.activeCall = CallSession(
             peerId: 42,
             peerName: "Peer",
             state: .calling,
             direction: .outgoing
         )
 
-        await appState.activateAcceptedOutgoingCall(for: 42)
+        await calls.activateAcceptedOutgoingCall(for: 42)
 
-        XCTAssertEqual(appState.activeCall?.state, .failed)
-        XCTAssertEqual(appState.activeCall?.endReason, .micPermissionDenied)
+        XCTAssertEqual(calls.activeCall?.state, .failed)
+        XCTAssertEqual(calls.activeCall?.endReason, .micPermissionDenied)
         XCTAssertEqual(backend.startCount, 0)
-        XCTAssertNotNil(appState.callAudioError)
-        XCTAssertTrue(appState.callAudioRequiresMicrophonePermission)
+        XCTAssertNotNil(calls.callAudioError)
+        XCTAssertTrue(calls.callAudioRequiresMicrophonePermission)
     }
 
-    private func makeAppState(backend: FakeAudioRelayBackend) -> AppState {
-        AppState(audioRelayFactory: { peerId in
-            AudioCallRelay(targetUserId: peerId, backend: backend, sendFrame: { _ in })
-        })
+    private func makeCallStore(backend: FakeAudioRelayBackend) -> CallStore {
+        CallStore(
+            realtime: RealtimeStore(repository: FakeRealtimeRepository()),
+            audioRelayFactory: { peerId in
+                AudioCallRelay(targetUserId: peerId, backend: backend, sendFrame: { _ in })
+            }
+        )
     }
 }
 

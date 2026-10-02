@@ -1,0 +1,123 @@
+import Foundation
+import Observation
+import SwiftUI
+
+/// Composition root: builds the repositories and feature stores and wires
+/// realtime events and session lifecycle between them.
+@Observable
+@MainActor
+public final class AppContainer: SessionLifecycleDelegate {
+    public let session: SessionStore
+    public let realtime: RealtimeStore
+    public let conversations: ConversationsStore
+    public let announcements: AnnouncementsStore
+    public let calls: CallStore
+    public let profile: ProfileStore
+    public let chats: ChatRegistry
+
+    init(
+        server: any ServerRepository,
+        auth: any AuthRepository,
+        chat: any ChatRepository,
+        announcements announcementsRepository: any AnnouncementsRepository,
+        realtime realtimeRepository: any RealtimeRepository,
+        audioRelayFactory: (@MainActor (Int64) -> AudioCallRelay)? = nil,
+        deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice
+    ) {
+        let realtime = RealtimeStore(repository: realtimeRepository)
+        let session = SessionStore(auth: auth, server: server, realtime: realtime, deviceDescriptor: deviceDescriptor)
+        let conversations = ConversationsStore(repository: chat, session: session)
+        let announcements = AnnouncementsStore(repository: announcementsRepository, session: session)
+        let calls = CallStore(
+            realtime: realtime,
+            audioRelayFactory: audioRelayFactory ?? CallStore.makeProductionAudioRelay(repository: realtimeRepository)
+        )
+        let profile = ProfileStore(realtime: realtime, session: session)
+        let chats = ChatRegistry { conversation in
+            ChatStore(
+                conversation: conversation,
+                repository: chat,
+                realtime: realtime,
+                session: session,
+                conversations: conversations
+            )
+        }
+
+        self.realtime = realtime
+        self.session = session
+        self.conversations = conversations
+        self.announcements = announcements
+        self.calls = calls
+        self.profile = profile
+        self.chats = chats
+
+        session.delegate = self
+        realtime.register(session)
+        realtime.register(conversations)
+        realtime.register(chats)
+        realtime.register(announcements)
+        realtime.register(calls)
+        realtime.register(profile)
+        realtime.audioSink = { [weak calls] frame in
+            calls?.receiveAudio(frame)
+        }
+    }
+
+    /// Production wiring over the shared network clients.
+    public static func live() -> AppContainer {
+        let client = APIClient.shared
+        let keychain = KeychainManager.shared
+        return AppContainer(
+            server: LiveServerRepository(client: client, keychain: keychain),
+            auth: LiveAuthRepository(client: client, keychain: keychain),
+            chat: LiveChatRepository(client: client),
+            announcements: LiveAnnouncementsRepository(client: client),
+            realtime: LiveRealtimeRepository(client: WebSocketClient.shared)
+        )
+    }
+
+    // MARK: - Data
+
+    /// Loads every list concurrently; each list keeps its own loading/error state,
+    /// so one failing request does not empty the others.
+    public func loadAllData() async {
+        async let direct: Void = conversations.loadDirectConversations()
+        async let channels: Void = conversations.loadChannels()
+        async let users: Void = conversations.loadUsers()
+        async let announcementItems: Void = announcements.load()
+        _ = await (direct, channels, users, announcementItems)
+    }
+
+    // MARK: - SessionLifecycleDelegate
+
+    func sessionDidAuthenticate() async {
+        await loadAllData()
+    }
+
+    func sessionDidResume() async {
+        await loadAllData()
+        await chats.reloadLoaded()
+    }
+
+    func sessionDidEnd() {
+        conversations.reset()
+        announcements.reset()
+        chats.reset()
+        profile.reset()
+        calls.stopCallSession()
+    }
+}
+
+extension View {
+    /// Injects the container and every feature store into the environment.
+    func appEnvironment(_ container: AppContainer) -> some View {
+        self
+            .environment(container)
+            .environment(container.session)
+            .environment(container.realtime)
+            .environment(container.conversations)
+            .environment(container.announcements)
+            .environment(container.calls)
+            .environment(container.profile)
+    }
+}

@@ -124,7 +124,8 @@ public enum WSServerEvent: Sendable {
     case callOffer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callAnswer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callRejected(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
-    case callEnd(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
+    /// `targetUserId` is absent when the server ends a call because a peer's connection dropped.
+    case callEnd(targetUserId: Int64?, senderId: Int64, senderName: String, reason: String?)
     case callDenied(reason: String)
     case callUnavailable(targetUserId: Int64, reason: String)
     case wakeRing(fromUserId: Int64, fromName: String, at: Int64)
@@ -152,7 +153,7 @@ public enum WSServerEvent: Sendable {
             
         case "auth_error":
             let code = json["code"] as? String ?? "UNKNOWN"
-            let message = json["message"] as? String ?? "Ошибка авторизации"
+            let message = json["message"] as? String ?? String(localized: "Ошибка авторизации")
             return .authError(code: code, message: message)
             
         case "wake_state":
@@ -162,7 +163,7 @@ public enum WSServerEvent: Sendable {
             return .wakeState(targetUserId: targetUserId, at: at, retryAt: retryAt)
             
         case "server_disconnect":
-            let reason = json["reason"] as? String ?? "Отключено сервером"
+            let reason = json["reason"] as? String ?? String(localized: "Отключено сервером")
             return .serverDisconnect(reason: reason)
             
         case "new_message", "direct_message", "channel_message":
@@ -281,19 +282,19 @@ public enum WSServerEvent: Sendable {
             return .callRejected(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_end":
-            guard let tId = (json["targetUserId"] as? NSNumber)?.int64Value,
-                  let sId = (json["senderId"] as? NSNumber)?.int64Value,
-                  let sName = json["senderName"] as? String else { return nil }
+            guard let sId = (json["senderId"] as? NSNumber)?.int64Value else { return nil }
+            let tId = (json["targetUserId"] as? NSNumber)?.int64Value
+            let sName = json["senderName"] as? String ?? ""
             let reason = json["reason"] as? String
             return .callEnd(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_denied":
-            let reason = json["reason"] as? String ?? "Звонок запрещен политикой"
+            let reason = json["reason"] as? String ?? String(localized: "Звонок запрещен политикой")
             return .callDenied(reason: reason)
             
         case "call_unavailable":
             let tId = (json["targetUserId"] as? NSNumber)?.int64Value ?? 0
-            let reason = json["reason"] as? String ?? "Собеседник недоступен"
+            let reason = json["reason"] as? String ?? String(localized: "Собеседник недоступен")
             return .callUnavailable(targetUserId: tId, reason: reason)
             
         case "wake_ring":

@@ -148,7 +148,7 @@ public actor APIClient {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            var errorMessage = "Request failed"
+            var errorMessage = String(localized: "Запрос не выполнен")
             var errorCode: String?
             if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
                 errorMessage = serverError.error
@@ -168,7 +168,7 @@ public actor APIClient {
 
     private func configuredServerURL() throws -> URL {
         guard let serverURL = ServerEndpointPolicy.configuredURL(from: keychain.serverUrl) else {
-            throw APIError.invalidURL("A secure server URL is required.")
+            throw APIError.invalidURL(String(localized: "требуется защищённый адрес сервера (https)"))
         }
         return serverURL
     }
@@ -216,7 +216,7 @@ public actor APIClient {
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                     throw APIError.unauthorized
                 }
-                throw APIError.httpError(statusCode: httpResponse.statusCode, message: "Session refresh failed", code: nil)
+                throw APIError.httpError(statusCode: httpResponse.statusCode, message: String(localized: "Не удалось продлить сессию"), code: nil)
             }
             let refreshedToken = try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
             if keychain.authToken == staleToken {
@@ -436,7 +436,7 @@ public actor APIClient {
             }
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            var message = "File upload failed"
+            var message = String(localized: "Не удалось загрузить файл")
             if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
                 message = serverError.error
             }

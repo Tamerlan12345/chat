@@ -5,7 +5,7 @@ public struct TypingIndicatorView: View {
     public let text: String
     @State private var phase: Int = 0
     
-    public init(text: String = "печатает...") {
+    public init(text: String = String(localized: "печатает...")) {
         self.text = text
     }
     
