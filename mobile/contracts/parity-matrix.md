@@ -38,7 +38,7 @@
 | **Direct Messaging** | Личная переписка, статусы `delivered`/`read`. | ◐ | ◐ | D1 (потеря при разрыве, нет outbox), D2 (iOS: открытый чат без realtime), D3 (двойной `new_message`+`direct_message` → двойной unread), D4. |
 | **Channel Messaging** | Каналы, счётчики непрочитанного. | ◐ | ◐ | Те же D1–D4. |
 | **Create chat / channel** | Новый личный чат, создание канала. | ✗ | ✗ | D6: iOS — сломан sheet; Android — отсутствует. |
-| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер без `afterId`/дельты: догрузка перезапросом страниц (§6.3). |
+| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер готов (задача 5): `GET /api/sync` по курсору и `afterId`; алгоритм — ws-protocol §6.3 «Алгоритм переподключения клиента». Клиенты — волна 2. |
 | **Message Editing** | Правка в окне `message_edit_window_minutes`. | ✗ | ? | D2: на iOS обработчики `updateMessage*` — заглушки. |
 | **Message Deleting** | Удаление в окне `message_delete_window_minutes`. | ✗ | ? | D2 (iOS); Android не проверялся. |
 | **Typing Indicator** | «печатает…», автосброс. | ✗ | ? | D2 (iOS: realtime открытого чата). |
@@ -52,7 +52,7 @@
 | **Org Structure** | Дерево отделов, поиск, карточка коллеги. | ? | ? | Аудитом не проверялось. |
 | **File Policy Filter** | Предпроверка расширений (`/api/files/policy`). | ✗ | ✗ | D5: политика не применяется. Список расширений — **без точки**. |
 | **File Upload/Download** | Загрузка с прогрессом, просмотр картинок/PDF. | ✗ | ✗ | D5: iOS — картинки без Bearer не грузятся; Android — upload отсутствует. |
-| **Offline Cache / Outbox** | Очередь неотправленных, кэш диалогов. | ✗ | ✗ | D1. Идемпотентности на сервере нет (`client_msg_id`). |
+| **Offline Cache / Outbox** | Очередь неотправленных, кэш диалогов. | ✗ | ✗ | D1. Сервер готов (задача 5): идемпотентная отправка по `client_msg_id` (WS и REST), повтор возвращает сохранённую запись. Клиенты — волна 2. |
 | **Error / loading / retry states** | Понятные ошибки вместо `catch {}`. | ✗ | ✗ | D11. |
 | **Навигация** | Корректный back stack, очистка при выходе. | ? | ✗ | D8 (Android: вкладки копятся, `onLoggedOut` не чистит стек). |
 | **Accessibility** | Dynamic Type/fontScale, VoiceOver/TalkBack, 44pt/48dp, локализация RU. | ✗ | ✗ | D12. |
@@ -259,5 +259,6 @@ function canEditOrDelete(createdAt, windowMinutesStr, isSuperAdmin = false) {
 - [x] Протокол WebSocket — `mobile/contracts/ws-protocol.md`; все серверные события из §4 приведены дословными кадрами реального сервера; исправлены §6.2 и §6.3 (нет продления истёкшего токена, нет `afterId`, дубль `new_message`).
 - [x] Общие JSON-фикстуры — `mobile/contracts/fixtures/` (снимаются `mobile/dev/capture-fixtures.mjs`, дрейф ловит `server/test/mobile-contract-fixtures.test.js`).
 - [ ] Обе платформы декодируют **каждую** фикстуру в unit-тестах (iOS — Задача 6, Android — Задача 8).
-- [ ] Серверные пробелы закрыты (идемпотентность `client_msg_id`, дельта-синхронизация, push, «доставлено» после реконнекта) — Задача 5 и далее.
+- [x] Серверные пробелы: идемпотентность `client_msg_id`, дельта-синхронизация `/api/sync` + `afterId`, «доставлено» после реконнекта — задача 5.
+- [ ] Push-уведомления — после задачи 5.
 - [ ] Паритет функций подтверждён на живом стенде (матрица §2 содержит ✓ только после этого).

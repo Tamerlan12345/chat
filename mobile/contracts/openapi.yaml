@@ -789,9 +789,20 @@ paths:
           schema:
             type: integer
           description: Загрузить сообщения старше данного messageId (пагинация назад)
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
-          description: Хронологический список сообщений
+          description: Хронологический список сообщений (всегда по возрастанию id). Для `direct` у каждого есть `delivery_status`.
           content:
             application/json:
               schema:
@@ -835,14 +846,32 @@ paths:
           required: false
           schema:
             type: integer
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
+          description: Страница по возрастанию id
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Message'
+        '400':
+          description: Недопустимый afterId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
@@ -872,8 +901,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Message'
+        '200':
+          description: |
+            Повтор отправки: у этого автора уже есть сообщение с таким `client_msg_id` в этой же
+            переписке. Ничего не записано, в ответе — уже сохранённая запись (та же `id`; если её
+            успели удалить — надгробие `is_deleted = 1`). Получателям повторно не рассылается,
+            эхо `direct_message`/`channel_message` + `new_message` уходит только сокетам автора.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Ошибка проверки (пустой текст, получатель не найден, …). Недопустимый `client_msg_id`
+            (не строка 1–64 символа из `[A-Za-z0-9_-]`) — с `code: INVALID_CLIENT_MSG_ID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            `client_msg_id` уже использован этим автором в ДРУГОЙ переписке
+            (`code: CLIENT_MSG_ID_CONFLICT`). Ничего не записано; запись той переписки не возвращается.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -903,14 +956,32 @@ paths:
           required: false
           schema:
             type: integer
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
+          description: Страница по возрастанию id
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Message'
+        '400':
+          description: Недопустимый afterId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Вы не участник этого канала
           content:
@@ -944,10 +1015,124 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Message'
+        '200':
+          description: |
+            Повтор отправки: у этого автора уже есть сообщение с таким `client_msg_id` в этой же
+            переписке. Ничего не записано, в ответе — уже сохранённая запись (та же `id`; если её
+            успели удалить — надгробие `is_deleted = 1`). Получателям повторно не рассылается,
+            эхо `direct_message`/`channel_message` + `new_message` уходит только сокетам автора.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Ошибка проверки (пустой текст, получатель не найден, …). Недопустимый `client_msg_id`
+            (не строка 1–64 символа из `[A-Za-z0-9_-]`) — с `code: INVALID_CLIENT_MSG_ID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            `client_msg_id` уже использован этим автором в ДРУГОЙ переписке
+            (`code: CLIENT_MSG_ID_CONFLICT`). Ничего не записано; запись той переписки не возвращается.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Вы не участник этого канала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sync:
+    get:
+      summary: Дельта-синхронизация после переподключения
+      description: |
+        Всё, что изменилось после курсора `since` во ВСЕХ переписках, видимых пользователю:
+        личные — где он отправитель или получатель; каналы — где он участник (`channel_members`,
+        то же правило, что у истории канала и поиска). Возвращаются:
+        - новые сообщения;
+        - отредактированные (новый `text`, непустой `updated_at`);
+        - удалённые — надгробием: `is_deleted = 1`, `text = ""`, `metadata_json = null`,
+          `file_original_name = null`;
+        - личные сообщения, у которых сменился статус доставки/прочтения (`delivery_status`).
+
+        Каждое сообщение — **один раз, в текущем состоянии** (не журнал событий), по возрастанию
+        номера изменения. Клиент применяет их как upsert по `id`.
+
+        **Курсор.** `next_cursor` — непрозрачная строка из цифр (сейчас это номер изменения
+        `change_seq`: глобальная монотонная последовательность; каждое создание, правка, удаление
+        и смена статуса личного сообщения получает следующий номер). Курсор не зависит от времени,
+        поэтому одинаковые метки `created_at`/`updated_at` ничего не ломают. Сравнивать курсоры
+        или вычислять их на клиенте нельзя — только хранить последний `next_cursor` и передавать
+        его в `since`.
+
+        **Начало.** Без `since` — `{ messages: [], next_cursor: <голова>, has_more: false }`.
+        Порядок для нового клиента: (1) `GET /sync` без `since` → запомнить курсор; (2) загрузить
+        списки и страницы переписок обычными маршрутами; (3) дальше — `GET /sync?since=<курсор>`.
+        Изменения между шагами 1 и 2 придут повторно — upsert по `id` это поглощает.
+        `since=0` — вся видимая история (постранично).
+
+        **Страницы.** `has_more = true` — сразу запросить следующую страницу с `since = next_cursor`.
+        `has_more = false` — изменений больше нет; `next_cursor` = голова на момент ответа
+        (не меньше `since`), сохранить его.
+
+        **Что сюда не попадает:** удаление канала целиком (сообщения стираются физически —
+        обновите `GET /channels`), прочтение в каналах (`last_read_message_id`, `unread_count` —
+        из `GET /channels`), сообщения канала, в который пользователя добавили позже, — с номером
+        изменения ниже курсора (загрузить историю канала обычным маршрутом).
+      operationId: syncMessages
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]{1,15}$'
+          description: Последний полученный `next_cursor`. Без параметра — только текущая голова.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 100
+            maximum: 200
+          description: Размер страницы; больше 200 урезается до 200. Не целое или < 1 — HTTP 400.
+      responses:
+        '200':
+          description: Страница изменений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+        '400':
+          description: Недопустимый `since` или `limit`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '410':
+          description: |
+            Курсор больше текущей головы (`code: SYNC_CURSOR_INVALID`) — база сервера восстановлена
+            из резервной копии или курсор от другого сервера. Сбросить локальный курсор, заново
+            `GET /sync` без `since` и перезагрузить открытые переписки.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Больше 60 запросов синхронизации в минуту на пользователя. Заголовок `Retry-After` = 60.
           content:
             application/json:
               schema:
@@ -1534,7 +1719,7 @@ paths:
   /admin/users/{id}/reset-password:
     post:
       summary: Сброс пароля пользователя администратором
-      description: Генерирует временный пароль со флагом `must_change_password: 1` или устанавливает заданный.
+      description: 'Генерирует временный пароль со флагом `must_change_password: 1` или устанавливает заданный.'
       operationId: adminResetPassword
       tags:
         - AdminUsers
@@ -3134,6 +3319,16 @@ components:
           type: integer
           enum: [0, 1]
           example: 0
+        client_msg_id:
+          type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          description: |
+            Ключ идемпотентности, присланный автором при отправке (`null`, если не присылался —
+            например, настольным клиентом). Есть во всех формах сообщения: REST-ответы, страницы
+            истории, `/sync`, WS-кадры. Уникален в пределах автора (`sender_id`), не глобально:
+            сопоставлять с локальной очередью только вместе с `sender_id == мой id`.
+          example: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b'
         sender_username:
           type: string
           nullable: true
@@ -3156,7 +3351,29 @@ components:
           type: string
           nullable: true
           enum: [delivered, read]
+          description: |
+            Только в страницах истории личной переписки и в `/sync` (в `/sync` у сообщений канала
+            всегда `null`). В живых WS-кадрах и ответе POST поля нет. Для своего сообщения —
+            статус у собеседника, для входящего — ваш собственный.
           example: read
+
+    SyncResponse:
+      type: object
+      required: [messages, next_cursor, has_more]
+      properties:
+        messages:
+          type: array
+          description: По возрастанию номера изменения; каждое сообщение не больше одного раза.
+          items:
+            $ref: '#/components/schemas/Message'
+        next_cursor:
+          type: string
+          pattern: '^[0-9]{1,15}$'
+          description: Непрозрачный курсор для следующего `since`. Хранить как строку.
+          example: '23'
+        has_more:
+          type: boolean
+          description: true — есть ещё изменения, сразу запросить `since=next_cursor`.
 
     SendMessageRequest:
       type: object
@@ -3177,11 +3394,22 @@ components:
           example: 238
         metadata:
           type: object
-          description: Метаданные вложения, например { file_id: 12 }
+          description: 'Метаданные вложения, например { file_id: 12 }'
           properties:
             file_id:
               type: integer
               example: 42
+        client_msg_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          maxLength: 64
+          description: |
+            Необязательный ключ идемпотентности (рекомендуется UUID v4, генерируется клиентом
+            один раз на сообщение и хранится в его очереди отправки). Повтор с тем же ключом
+            от того же автора в ту же переписку не создаёт второе сообщение (HTTP 200 и сохранённая
+            запись). Тот же ключ у ДРУГОГО автора — независимое сообщение. Не строка, пустая строка,
+            длиннее 64 или символы вне `[A-Za-z0-9_-]` — HTTP 400 `INVALID_CLIENT_MSG_ID`.
+          example: '0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607'
 
     Announcement:
       type: object
