@@ -104,6 +104,10 @@ test.beforeEach(() => {
   wsServer.dndUsers.clear();
   wsServer.pendingOffers.clear();
   wsServer.endedPushOffers?.clear();
+  // Предел частоты регистрации (30/мин на сотрудника) — свой в каждом тесте:
+  // иначе регистрации предыдущих тестов молча оставляли бы без токена.
+  const limiter = require('../src/services/rate-limiter');
+  for (const p of Object.values(people)) if (p && p.id) limiter.resetLimit(`push-token:${p.id}`);
 });
 
 test.afterEach(async () => {
@@ -651,4 +655,202 @@ test('Выход сеансом старого формата (без jti) сн�
   PushTokens.register({ userId: people.dave.id, token: ANDROID(152), platform: 'android', kind: 'alert', environment: 'production', deviceId: 'other', session: { ...session, jti: 'a'.repeat(32) } });
   PushTokens.removeForLogout({ userId: people.dave.id, jti: null, deviceId: null });
   assert.deepStrictEqual(tokensOf('dave'), [ANDROID(152)]);
+});
+
+// ══ Задача 19: доводка жизненного цикла звонка через push ═══════════════════
+
+function gate() {
+  let open;
+  const promise = new Promise((resolve) => { open = resolve; });
+  return { promise, open };
+}
+const offerTo = (client, name) => client.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people[name].id }));
+const endTo = (client, name) => client.sock.send(JSON.stringify({ type: 'call_end', targetUserId: people[name].id }));
+const answerTo = (client, name) => client.sock.send(JSON.stringify({ type: 'call_answer', targetUserId: people[name].id }));
+
+test('Т19-1: повторный call_answer при уже начатом разговоре игнорируется — без call_end и без пересылки', async () => {
+  const a = await connect('alice');
+  const b = await connect('bob');
+  offerTo(a, 'bob');
+  await waitFor(b, (m) => m.type === 'call_offer');
+  answerTo(b, 'alice');
+  await waitFor(a, (m) => m.type === 'call_answer');
+  answerTo(b, 'alice'); // CallKit и экран приложения ответили оба
+  await sleep(100);
+  assert.ok(!b.inbox.some((m) => m.type === 'call_end'), 'отвечающему не пришёл call_end');
+  assert.strictEqual(a.inbox.filter((m) => m.type === 'call_answer').length, 1, 'вызывающему ответ не пересылается дважды');
+  assert.strictEqual(wsServer.activeCalls.get(people.bob.id), people.alice.id, 'разговор продолжается');
+  assert.strictEqual(wsServer.activeCalls.get(people.alice.id), people.bob.id);
+  endTo(a, 'bob');
+  await waitFor(b, (m) => m.type === 'call_end');
+});
+
+test('Т19-2: запоздалый провал доставки прежнего вызова не снимает новый вызов той же пары', async () => {
+  await android('bob', 160);
+  const held = gate();
+  let n = 0;
+  fcm.reply = () => (++n === 1 ? held.promise : { status: 'ok' });
+  const a = await connect('alice');
+  offerTo(a, 'bob');
+  await waitCalls(fcm, 1);
+  endTo(a, 'bob');
+  await sleep(20);
+  offerTo(a, 'bob'); // перезвонил
+  await waitCalls(fcm, 2);
+  held.open({ status: 'failed', reason: 'InternalServerError' });
+  await push.idle();
+  await sleep(30);
+  assert.ok(!a.inbox.some((m) => m.type === 'call_unavailable'), 'вызывающему не сказали «не в сети» из-за старого вызова');
+  assert.ok(wsServer.pendingOffers.has(people.alice.id), 'новый вызов ждёт');
+  const b = await connect('bob');
+  await waitFor(b, (m) => m.type === 'call_offer');
+  assert.ok(!b.inbox.some((m) => m.type === 'call_end'), 'нового вызова не гасит call_end');
+});
+
+test('Т19-3: повтор доставки после продления сеанса идёт по новому jti, а не снимается', async () => {
+  configurePush({ baseDelayMs: 400 });
+  const session = await tokenFor(people.alice.id);
+  await register('alice', { platform: 'android', token: ANDROID(161), environment: 'production' }, session);
+  let n = 0;
+  fcm.reply = () => (++n === 1 ? { status: 'retry', reason: 'HTTP_503' } : { status: 'ok' });
+  await restSend('bob', 'direct', people.alice.id, 'Алисе', 'push-refresh-retry');
+  await waitCalls(fcm, 1);
+  const refreshed = await api('POST', '/api/auth/refresh', { token: session });
+  assert.strictEqual(refreshed.status, 200, refreshed.text);
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 2, 'повтор ушёл после продления');
+  assert.strictEqual(fcm.calls[1].token, ANDROID(161));
+  // Выход новым токеном по-прежнему снимает привязку.
+  await api('POST', '/api/auth/logout', { token: refreshed.json.token, body: {} });
+  assert.deepStrictEqual(tokensOf('alice'), []);
+});
+
+test('Т19-4: вызывающий сбросил или отключился, пока сервер проверял вызов, — вызов не встаёт, телефон не будится', async () => {
+  await android('bob', 162);
+  const originalCanRing = push.canRing;
+  const originalFresh = wsServer.freshUser;
+  try {
+    // (а) push: сброс во время проверки устройств.
+    let checking = gate();
+    push.canRing = async (id) => { await checking.promise; return originalCanRing.call(push, id); };
+    let a = await connect('alice');
+    offerTo(a, 'bob');
+    await sleep(40);
+    endTo(a, 'bob');
+    await sleep(40);
+    checking.open();
+    await sleep(50);
+    await push.idle();
+    assert.strictEqual(fcm.calls.length, 0, 'уведомление о сброшенном вызове не ушло');
+    assert.ok(!wsServer.pendingOffers.has(people.alice.id), 'вызов не встал');
+    assert.ok(!a.inbox.some((m) => m.type === 'call_unavailable'), 'сбросившему отвечать нечего');
+
+    // (б) push: вызывающий отключился во время проверки устройств.
+    checking = gate();
+    a = await connect('alice');
+    offerTo(a, 'bob');
+    await sleep(40);
+    await disconnect('alice');
+    checking.open();
+    await sleep(50);
+    await push.idle();
+    assert.strictEqual(fcm.calls.length, 0, 'отключившийся не будит телефон');
+    assert.ok(!wsServer.pendingOffers.has(people.alice.id));
+    push.canRing = originalCanRing;
+
+    // (в) вызываемый в сети: сброс во время проверки сеанса вызывающего.
+    const b = await connect('bob');
+    const verifying = gate();
+    wsServer.freshUser = async function (ws) { await verifying.promise; return originalFresh.call(this, ws); };
+    a = await connect('alice');
+    offerTo(a, 'bob');
+    await sleep(40);
+    endTo(a, 'bob');
+    await sleep(40);
+    verifying.open();
+    await sleep(80);
+    assert.ok(!b.inbox.some((m) => m.type === 'call_offer'), 'после сброса вызываемому не звонит');
+    assert.ok(!wsServer.pendingOffers.has(people.alice.id));
+  } finally {
+    push.canRing = originalCanRing;
+    wsServer.freshUser = originalFresh;
+  }
+  await disconnect('bob');
+  const b = await connect('bob');
+  await sleep(50);
+  assert.ok(!b.inbox.some((m) => m.type === 'call_offer'), 'при входе тоже не звонит');
+});
+
+test('Т19-5: call_end о закончившемся вызове приходит один раз; запоздалый ответ всё равно получает причину', async () => {
+  await android('bob', 163);
+  const a = await connect('alice');
+  offerTo(a, 'bob');
+  await push.idle();
+  endTo(a, 'bob');
+  await sleep(50);
+  let b = await connect('bob');
+  const first = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(first.reason, 'cancelled');
+  await disconnect('bob');
+  b = await connect('bob'); // переподключение в течение минуты
+  await sleep(80);
+  assert.ok(!b.inbox.some((m) => m.type === 'call_end'), 'повторный вход call_end не повторяет');
+  answerTo(b, 'alice');
+  const late = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(late.reason, 'cancelled', 'опоздавший ответ узнаёт причину');
+});
+
+test('Т19-6: очередь push переполнена при вызове — вызывающему call_unavailable, вызов снят', async () => {
+  configurePush({ concurrency: 1, queueMax: 1 });
+  await android('bob', 164);
+  await android('carol', 165);
+  const held = gate();
+  fcm.reply = () => held.promise.then(() => ({ status: 'ok' }));
+  await restSend('alice', 'direct', people.bob.id, 'Раз', 'push-full-1');
+  await waitCalls(fcm, 1); // доставка держит единственный слот
+  await restSend('alice', 'direct', people.bob.id, 'Два', 'push-full-2'); // занимает очередь
+  assert.strictEqual(push.queue.length, 1);
+  const a = await connect('alice');
+  offerTo(a, 'carol');
+  const unavailable = await waitFor(a, (m) => m.type === 'call_unavailable');
+  assert.strictEqual(unavailable.targetUserId, people.carol.id);
+  assert.strictEqual(unavailable.reason, 'Сотрудник сейчас не в сети');
+  assert.ok(!wsServer.pendingOffers.has(people.alice.id), 'вызов снят');
+  held.open();
+  await push.idle();
+});
+
+test('Т19-7а: вызывающий отключился до входа вызываемого — при входе call_end connection_lost', async () => {
+  await android('bob', 166);
+  const a = await connect('alice');
+  offerTo(a, 'bob');
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1);
+  await disconnect('alice');
+  const b = await connect('bob');
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'connection_lost');
+  assert.strictEqual(end.senderId, people.alice.id);
+  assert.strictEqual(end.senderName, 'Алиса Тестова');
+  assert.ok(!b.inbox.some((m) => m.type === 'call_offer'));
+});
+
+test('Т19-7б: вызов истёк до входа вызываемого — при входе call_end timeout, вызов снят', async () => {
+  await android('bob', 167);
+  const a = await connect('alice');
+  offerTo(a, 'bob');
+  await push.idle();
+  wsServer.pendingOffers.get(people.alice.id).at -= 3 * 60 * 1000; // старше 2 минут
+  const b = await connect('bob');
+  const end = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'timeout');
+  assert.strictEqual(end.senderId, people.alice.id);
+  assert.strictEqual(end.senderName, 'Алиса Тестова');
+  assert.ok(!b.inbox.some((m) => m.type === 'call_offer'));
+  assert.ok(!wsServer.pendingOffers.has(people.alice.id));
+  b.inbox.length = 0;
+  answerTo(b, 'alice');
+  const late = await waitFor(b, (m) => m.type === 'call_end');
+  assert.strictEqual(late.reason, 'timeout');
+  assert.ok(!a.inbox.some((m) => m.type === 'call_answer'));
 });

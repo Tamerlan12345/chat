@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { callSignalAction, ringTimeoutAction, RING_TIMEOUT_MS } from '../src/renderer/src/lib/call-signal.mjs';
+import * as signal from '../src/renderer/src/lib/call-signal.mjs';
 import { AudioRelay } from '../src/renderer/src/lib/audioRelay.js';
 
 // ── Сигналы звонка ──────────────────────────────────────────────────────────
@@ -54,6 +55,43 @@ test('после ошибки сигналы уже ничего не меняю
   for (const type of ['call_answer', 'call_end', 'call_rejected', 'call_unavailable']) {
     assert.strictEqual(callSignalAction(ctx('failed'), { type, senderId: 7, targetUserId: 7 }).action, 'ignore', type);
   }
+});
+
+// Сервер сообщает причину конца звонка кодом (no_call, unavailable,
+// cancelled, timeout, connection_lost) — показывать нужно русский текст, а не
+// код. Причину, которую написал собеседник (уже по-русски), — как есть.
+test('коды причин сервера показываются по-русски, а не как есть', () => {
+  const codes = ['no_call', 'unavailable', 'cancelled', 'timeout', 'connection_lost'];
+  const seen = new Set();
+  for (const code of codes) {
+    const text = signal.callReasonText?.(code);
+    assert.ok(typeof text === 'string' && /[а-яё]/i.test(text), `${code}: русский текст, а не ${text}`);
+    assert.ok(!text.includes(code), `${code}: код не показывается`);
+    seen.add(text);
+    for (const [phase, direction] of [['active', 'outgoing'], ['connecting', 'incoming'], ['calling', 'outgoing']]) {
+      const r = callSignalAction(ctx(phase, direction), { type: 'call_end', senderId: 7, reason: code });
+      assert.strictEqual(r.action, 'fail', `${code} в фазе ${phase}`);
+      assert.strictEqual(r.error, text, `${code} в фазе ${phase}`);
+    }
+    const rejected = callSignalAction(ctx('calling'), { type: 'call_rejected', senderId: 7, reason: code });
+    assert.strictEqual(rejected.error, text);
+    const unavailable = callSignalAction(ctx('calling'), { type: 'call_unavailable', targetUserId: 7, reason: code });
+    assert.strictEqual(unavailable.error, text);
+  }
+  assert.strictEqual(seen.size, codes.length, 'у каждого кода свой текст');
+  assert.match(signal.callReasonText('connection_lost'), /связь/i);
+  assert.match(signal.callReasonText('cancelled'), /отмен/i);
+
+  // Причина от собеседника — уже русский текст — показывается как есть.
+  assert.strictEqual(signal.callReasonText('У собеседника не включился микрофон'), 'У собеседника не включился микрофон');
+  assert.strictEqual(signal.callReasonText('Сотрудник сейчас не в сети'), 'Сотрудник сейчас не в сети');
+  // Неизвестный код не показывается: вместо него — запасной текст.
+  const unknown = callSignalAction(ctx('active'), { type: 'call_end', senderId: 7, reason: 'some_new_code' });
+  assert.strictEqual(unknown.action, 'fail');
+  assert.ok(!unknown.error.includes('some_new_code') && /[а-яё]/i.test(unknown.error), unknown.error);
+  // Без причины — как раньше.
+  assert.strictEqual(callSignalAction(ctx('active'), { type: 'call_end', senderId: 7 }).action, 'close');
+  assert.strictEqual(signal.callReasonText('', 'Запасной'), 'Запасной');
 });
 
 test('никто не берёт трубку: исходящий завершается с «Нет ответа», входящий исчезает', () => {
