@@ -1,6 +1,19 @@
 package com.openmychat.mobile.features.conversations
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.graphics.Color
+import com.openmychat.mobile.ui.components.Illustration
+import com.openmychat.mobile.ui.components.SharedKeys
+import com.openmychat.mobile.ui.components.liftSurface
+import com.openmychat.mobile.ui.components.rememberLift
+import com.openmychat.mobile.ui.components.sharedConversationElement
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,11 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Forum
-import androidx.compose.material.icons.outlined.PersonSearch
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Tag
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -158,14 +167,29 @@ fun ConversationsContent(
     currentUserId: Long? = null
 ) {
     val tokens = CentyTheme.tokens
+    val directState = rememberLazyListState()
+    val channelState = rememberLazyListState()
+    val listState = if (selectedTab == ConversationsTab.CHATS) directState else channelState
+    // The header (bar, banner, search, segments) is flat on the list plane until rows pass under it.
+    val scrolledUnder by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val lift = rememberLift(scrolledUnder)
     Scaffold(
         modifier = modifier,
         containerColor = tokens.list,
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.inbox_title)) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = tokens.list, titleContentColor = tokens.textStrong)
-            )
+            Column(Modifier.liftSurface(lift, rest = tokens.list)) {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.inbox_title)) },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
+                        titleContentColor = tokens.textStrong
+                    )
+                )
+                ConnectionBanner(connectionState)
+                SearchField(query = searchQuery, onQueryChange = actions::onSearch)
+                Segments(selectedTab, uiState, actions::onSelectTab)
+            }
         }
     ) { innerPadding ->
         Column(
@@ -174,10 +198,6 @@ fun ConversationsContent(
                 .padding(top = innerPadding.calculateTopPadding())
                 .consumeWindowInsets(innerPadding)
         ) {
-            ConnectionBanner(connectionState)
-            SearchField(query = searchQuery, onQueryChange = actions::onSearch)
-            Segments(selectedTab, uiState, actions::onSelectTab)
-            HorizontalDivider(color = tokens.border)
 
             val listPadding = PaddingValues(top = 4.dp, bottom = innerPadding.calculateBottomPadding() + 8.dp)
             when (uiState) {
@@ -201,9 +221,9 @@ fun ConversationsContent(
                         }
                     ) {
                         if (selectedTab == ConversationsTab.CHATS) {
-                            DirectList(uiState.directConversations, searchQuery, listPadding, typing, openConversation, currentUserId, actions)
+                            DirectList(directState, uiState.directConversations, searchQuery, listPadding, typing, openConversation, currentUserId, actions)
                         } else {
-                            ChannelList(uiState.channels, searchQuery, listPadding, typing, openConversation, actions)
+                            ChannelList(channelState, uiState.channels, searchQuery, listPadding, typing, openConversation, actions)
                         }
                     }
                 }
@@ -299,6 +319,7 @@ private fun Segments(selected: ConversationsTab, uiState: ConversationsUiState, 
 
 @Composable
 private fun DirectList(
+    state: LazyListState,
     all: List<DirectConversation>,
     query: String,
     padding: PaddingValues,
@@ -311,18 +332,18 @@ private fun DirectList(
     val reduce = LocalReduceMotion.current
     when {
         list.isEmpty() && query.isNotBlank() -> EmptyState(
-            icon = Icons.Outlined.PersonSearch,
+            illustration = Illustration.SEARCH,
             title = stringResource(R.string.inbox_no_results),
             message = stringResource(R.string.inbox_no_results_message)
         )
         list.isEmpty() -> EmptyState(
-            icon = Icons.Outlined.Forum,
+            illustration = Illustration.INBOX,
             title = stringResource(R.string.inbox_empty_direct),
             message = stringResource(R.string.inbox_empty_direct_message),
             actionLabel = stringResource(R.string.action_refresh),
             onAction = actions::onRefresh
         )
-        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), contentPadding = padding) {
+        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
             items(list, key = { "d-${it.userId}" }) { conversation ->
                 val ref = ConversationRef(ConversationType.DIRECT, conversation.userId)
                 DirectRow(
@@ -340,6 +361,7 @@ private fun DirectList(
 
 @Composable
 private fun ChannelList(
+    state: LazyListState,
     all: List<Channel>,
     query: String,
     padding: PaddingValues,
@@ -351,16 +373,16 @@ private fun ChannelList(
     val reduce = LocalReduceMotion.current
     when {
         list.isEmpty() && query.isNotBlank() -> EmptyState(
-            icon = Icons.Outlined.PersonSearch,
+            illustration = Illustration.SEARCH,
             title = stringResource(R.string.inbox_no_results),
             message = stringResource(R.string.inbox_no_results_message)
         )
         list.isEmpty() -> EmptyState(
-            icon = Icons.Outlined.Tag,
+            illustration = Illustration.CHANNELS,
             title = stringResource(R.string.inbox_empty_channels),
             message = stringResource(R.string.inbox_empty_channels_message)
         )
-        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), contentPadding = padding) {
+        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
             items(list, key = { "c-${it.id}" }) { channel ->
                 val ref = ConversationRef(ConversationType.CHANNEL, channel.id)
                 ChannelRow(
@@ -391,8 +413,10 @@ private fun DirectRow(
         last != null -> last
         else -> conversation.jobTitle ?: conversation.departmentName ?: stringResource(R.string.inbox_preview_empty)
     }
+    val shared = SharedKeys.conversation(isChannel = false, id = conversation.userId)
     ConversationRow(
         title = conversation.fullName,
+        sharedKey = shared,
         preview = preview,
         time = DateTimeUtils.formatTime(conversation.lastMessageTime),
         unread = conversation.unreadCount,
@@ -401,7 +425,15 @@ private fun DirectRow(
         onClick = onClick,
         modifier = modifier,
         avatar = { ring ->
-            CentyAvatar(conversation.fullName, avatarUrl = conversation.avatarUrl, status = conversation.status, size = 44.dp, ringColor = ring)
+            CentyAvatar(
+                conversation.fullName,
+                avatarUrl = conversation.avatarUrl,
+                status = conversation.status,
+                size = 44.dp,
+                ringColor = ring,
+                typing = isTyping,
+                modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared))
+            )
         }
     )
 }
@@ -411,8 +443,10 @@ private fun ChannelRow(channel: Channel, isTyping: Boolean, isSelected: Boolean,
     val preview = channel.lastMessageText?.takeIf { it.isNotBlank() }
         ?: channel.topic?.takeIf { it.isNotBlank() }
         ?: pluralStringResource(R.plurals.channel_members, channel.membersCount, channel.membersCount)
+    val shared = SharedKeys.conversation(isChannel = true, id = channel.id)
     ConversationRow(
         title = channel.name,
+        sharedKey = shared,
         preview = preview,
         time = DateTimeUtils.formatTime(channel.lastMessageTime),
         unread = channel.unreadCount,
@@ -420,13 +454,16 @@ private fun ChannelRow(channel: Channel, isTyping: Boolean, isSelected: Boolean,
         isSelected = isSelected,
         onClick = onClick,
         modifier = modifier,
-        avatar = { ring -> CentyAvatar(channel.name, size = 44.dp, isChannel = true, ringColor = ring) }
+        avatar = { ring ->
+            CentyAvatar(channel.name, size = 44.dp, isChannel = true, ringColor = ring, modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared)))
+        }
     )
 }
 
 @Composable
 private fun ConversationRow(
     title: String,
+    sharedKey: String,
     preview: String,
     time: String,
     unread: Int,
@@ -437,7 +474,14 @@ private fun ConversationRow(
     modifier: Modifier = Modifier
 ) {
     val tokens = CentyTheme.tokens
-    val background = if (isSelected) tokens.primarySoft else androidx.compose.ui.graphics.Color.Transparent
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // Press: the ripple plus a 120 ms primary-soft highlight (brief), the tint of a selected row.
+    val background by animateColorAsState(
+        if (isSelected || pressed) tokens.primarySoft else Color.Transparent,
+        CentyMotion.fast(),
+        label = "row-press"
+    )
     val unreadText = if (unread > 0) pluralStringResource(R.plurals.unread_messages, unread, unread) else null
     val typingText = stringResource(R.string.inbox_typing)
     Row(
@@ -445,7 +489,7 @@ private fun ConversationRow(
             .fillMaxWidth()
             .heightIn(min = 72.dp)
             .background(background)
-            .clickable(onClick = onClick, role = Role.Button)
+            .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick, role = Role.Button)
             .semantics(mergeDescendants = true) {
                 if (unreadText != null) stateDescription = unreadText
             }
@@ -457,14 +501,16 @@ private fun ConversationRow(
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = tokens.textStrong,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Box(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tokens.textStrong,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.sharedConversationElement(SharedKeys.title(sharedKey))
+                    )
+                }
                 if (time.isNotEmpty()) {
                     Spacer(Modifier.width(8.dp))
                     Text(time, style = MaterialTheme.typography.labelSmall, color = if (unread > 0) tokens.accentText else tokens.textDim)

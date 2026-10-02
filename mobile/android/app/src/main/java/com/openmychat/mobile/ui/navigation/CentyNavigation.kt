@@ -3,6 +3,7 @@ package com.openmychat.mobile.ui.navigation
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +40,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -68,7 +70,9 @@ import com.openmychat.mobile.features.profile.ProfileScreen
 import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.components.CentySnackbarHost
 import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
+import com.openmychat.mobile.ui.components.LocalSharedTransitionScope
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import androidx.navigation3.runtime.contains
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
@@ -81,10 +85,17 @@ private val TopLevelItems: Map<NavKey, TopLevelItem> = mapOf(
     NavKey.Profile to TopLevelItem(Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle, R.string.tab_profile)
 )
 
-/** Material shared-axis X for forward/back (system grammar); a short crossfade with reduced motion. */
+/**
+ * Material shared-axis X for forward/back (system grammar). Inbox ↔ chat is the exception (UI layer
+ * v2): the avatar and the name travel as shared elements while the rest fades through (out 90 ms,
+ * in 210 ms after it). Reduce motion: a 150 ms crossfade for everything.
+ */
 private fun <T : Any> sharedAxis(reduce: Boolean, forward: Boolean): AnimatedContentTransitionScope<Scene<T>>.() -> ContentTransform = {
     if (reduce) {
-        fadeIn(tween(CentyMotion.FAST)) togetherWith fadeOut(tween(CentyMotion.FAST))
+        fadeIn(tween(CentyMotion.REDUCED_CROSSFADE)) togetherWith fadeOut(tween(CentyMotion.REDUCED_CROSSFADE))
+    } else if (isInboxChatPair()) {
+        fadeIn(tween(CentyMotion.SHARED - CentyMotion.FADE_THROUGH_OUT, delayMillis = CentyMotion.FADE_THROUGH_OUT, easing = CentyMotion.EaseOut)) togetherWith
+            fadeOut(tween(CentyMotion.FADE_THROUGH_OUT, easing = CentyMotion.EaseOut))
     } else {
         val sign = if (forward) 1 else -1
         val enter = slideInHorizontally(tween(CentyMotion.SLOW, easing = CentyMotion.EaseOut)) { width -> sign * width / 12 } +
@@ -93,6 +104,14 @@ private fun <T : Any> sharedAxis(reduce: Boolean, forward: Boolean): AnimatedCon
             fadeOut(tween(CentyMotion.FAST))
         enter togetherWith exit
     }
+}
+
+/** The conversations list and a chat on top of each other (either direction). */
+private fun <T : Any> AnimatedContentTransitionScope<Scene<T>>.isInboxChatPair(): Boolean {
+    val from = initialState.entries.lastOrNull()?.metadata ?: return false
+    val to = targetState.entries.lastOrNull()?.metadata ?: return false
+    return (from.contains(ListDetailScene.ListKey) && to.contains(ListDetailScene.DetailKey)) ||
+        (from.contains(ListDetailScene.DetailKey) && to.contains(ListDetailScene.ListKey))
 }
 
 /**
@@ -128,14 +147,21 @@ fun CentyNavigation(
 
     val reduce = LocalReduceMotion.current
     val display: @Composable () -> Unit = {
-        NavDisplay(
-            entries = entries,
-            onBack = { navigator.goBack() },
-            sceneStrategies = listOf(listDetailStrategy),
-            transitionSpec = sharedAxis(reduce, forward = true),
-            popTransitionSpec = sharedAxis(reduce, forward = false),
-            predictivePopTransitionSpec = { _ -> sharedAxis<NavKey>(reduce, forward = false)(this) }
-        )
+        // Inbox row → chat header: the avatar and the name are shared elements. Only on a single pane
+        // (side by side both are on screen anyway) and only with motion on.
+        SharedTransitionLayout {
+            CompositionLocalProvider(LocalSharedTransitionScope provides if (reduce || isListDetail) null else this) {
+                NavDisplay(
+                    entries = entries,
+                    onBack = { navigator.goBack() },
+                    sceneStrategies = listOf(listDetailStrategy),
+                    sharedTransitionScope = this,
+                    transitionSpec = sharedAxis(reduce, forward = true),
+                    popTransitionSpec = sharedAxis(reduce, forward = false),
+                    predictivePopTransitionSpec = { _ -> sharedAxis<NavKey>(reduce, forward = false)(this) }
+                )
+            }
+        }
     }
 
     val snackbarHost = LocalSnackbarHostState.current
