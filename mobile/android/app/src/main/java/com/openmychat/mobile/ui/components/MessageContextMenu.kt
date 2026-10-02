@@ -141,6 +141,15 @@ private fun LiftedOverlay(lifted: LiftedMessage, origin: Offset, onClosed: () ->
             }
     ) {
         lifted.content()
+    }
+    // The menu anchors to a box 8dp larger than the bubble on each side, so it keeps 8dp from the
+    // bubble whether it opens below or above it.
+    val gap = with(density) { 8.dp.roundToPx() }
+    Box(
+        Modifier
+            .offset { IntOffset((bounds.left - origin.x).roundToInt(), (bounds.top - origin.y).roundToInt() - gap) }
+            .size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() } + 16.dp)
+    ) {
         MessageContextMenu(
             expanded = open,
             actions = lifted.actions,

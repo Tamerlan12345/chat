@@ -91,15 +91,19 @@ fun DeliveryGlyph(
             return@LaunchedEffect
         }
         previous = from
-        draw.snapTo(0f)
-        if (mark == DeliveryMark.FAILED) {
-            launch {
-                shake.snapTo(0f)
-                shake.animateTo(1f, tween(CentyMotion.SHAKE, easing = LinearEasing))
+        try {
+            draw.snapTo(0f)
+            if (mark == DeliveryMark.FAILED) {
+                launch {
+                    shake.snapTo(0f)
+                    shake.animateTo(1f, tween(CentyMotion.SHAKE, easing = LinearEasing))
+                }
             }
+            draw.animateTo(1f, tween(CentyMotion.GLYPH_DRAW, easing = CentyMotion.EaseOut))
+        } finally {
+            // An interrupted draw (the next state arrived) never leaves the old glyph behind.
+            previous = null
         }
-        draw.animateTo(1f, tween(CentyMotion.GLYPH_DRAW, easing = CentyMotion.EaseOut))
-        previous = null
     }
 
     val colors = GlyphColors(tint = tint, read = tokens.accentText, failed = tokens.dangerText)

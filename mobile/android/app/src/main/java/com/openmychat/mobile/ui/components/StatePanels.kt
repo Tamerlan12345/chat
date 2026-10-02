@@ -44,9 +44,9 @@ import com.openmychat.mobile.ui.theme.CentyTheme
  */
 @Composable
 fun EmptyState(
-    icon: ImageVector? = null,
     title: String,
     modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
     message: String? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,

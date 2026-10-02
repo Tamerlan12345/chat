@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.exp
@@ -91,6 +92,7 @@ fun SwipeToReply(
     var raw by remember { mutableFloatStateOf(0f) }
     var offset by remember { mutableFloatStateOf(0f) }
     val armed = remember { BooleanArray(1) }
+    val springBack = remember { arrayOfNulls<Job>(1) }
 
     val dragState = rememberDraggableState { delta ->
         raw += delta
@@ -106,12 +108,17 @@ fun SwipeToReply(
             state = dragState,
             orientation = Orientation.Horizontal,
             enabled = enabled,
+            onDragStarted = {
+                // A new drag catches the bubble where the spring left it.
+                springBack[0]?.cancel()
+                raw = offset
+            },
             onDragStopped = {
                 val reply = SwipeToReplyMath.triggers(offset, thresholdPx)
                 raw = 0f
                 armed[0] = false
                 if (reply) onReply()
-                scope.launch {
+                springBack[0] = scope.launch {
                     animate(
                         initialValue = offset,
                         targetValue = 0f,
