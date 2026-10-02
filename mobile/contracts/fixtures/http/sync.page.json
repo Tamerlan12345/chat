@@ -18,7 +18,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     },
     {
       "id": 3,
@@ -38,7 +41,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     },
     {
       "id": 7,
@@ -58,7 +64,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     },
     {
       "id": 8,
@@ -78,7 +87,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     },
     {
       "id": 9,
@@ -98,7 +110,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     },
     {
       "id": 10,
@@ -118,7 +133,10 @@
       "sender_name": "Алиса Тестова",
       "sender_avatar": null,
       "sender_department": null,
-      "file_original_name": null
+      "file_original_name": null,
+      "file_width": null,
+      "file_height": null,
+      "file_dominant_color": null
     }
   ],
   "next_cursor": "5e7a1c0d9b3f4a62.23",

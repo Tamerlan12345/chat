@@ -2080,6 +2080,9 @@ router.get('/files/thumb/:id', requireAuth, route(async (req, res) => {
     }
     throw err;
   }
+  if (thumb.rendered?.source) {
+    FileService.recordImageInfo(file.id, { ...thumb.rendered.source, dominantColor: thumb.rendered.color });
+  }
   res.setHeader('ETag', thumb.etag);
   res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");

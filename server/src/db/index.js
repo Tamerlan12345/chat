@@ -208,6 +208,22 @@ function migrateMessages(db) {
   }
 }
 
+// Размеры и преобладающий цвет картинки-вложения (задача 20): мобильный
+// клиент рисует по ним заглушку нужной формы, пока грузится миниатюра. У
+// старых вложений пусто — заполняется при первой миниатюре.
+const FILE_COLUMNS_ADDED = [
+  ['width', 'INTEGER'],
+  ['height', 'INTEGER'],
+  ['dominant_color', 'TEXT']
+];
+
+function migrateFiles(db) {
+  const present = new Set(db.prepare('PRAGMA table_info(files)').all().map((c) => c.name));
+  for (const [name, type] of FILE_COLUMNS_ADDED) {
+    if (!present.has(name)) db.exec(`ALTER TABLE files ADD COLUMN ${name} ${type}`);
+  }
+}
+
 function newSyncEpoch() {
   return crypto.randomBytes(8).toString('hex');
 }
@@ -284,6 +300,7 @@ function closeDatabase() {
 function initSchema(db) {
   for (const ddl of Object.values(TABLES)) db.exec(ddl);
   migrateMessages(db);
+  migrateFiles(db);
   for (const ddl of INDEXES) db.exec(ddl);
 }
 

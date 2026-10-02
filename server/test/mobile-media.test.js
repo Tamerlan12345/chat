@@ -294,3 +294,58 @@ test('Миниатюра: битая картинка — 422 IMAGE_UNREADABLE',
   assert.strictEqual(res.status, 422);
   assert.strictEqual(JSON.parse(res.body).code, 'IMAGE_UNREADABLE');
 });
+
+// ══ Размеры и цвет картинки во вложении ══════════════════════════════════════
+
+const COLOR_RE = /^#[0-9a-f]{6}$/;
+
+test('Загрузка картинки: ответ несёт width/height (с учётом поворота) и преобладающий цвет; не картинка — null', async () => {
+  const image = await upload(await photo(), 'размеры.jpg', 'image/jpeg');
+  assert.strictEqual(image.width, 800);
+  assert.strictEqual(image.height, 1200);
+  assert.match(image.dominantColor, COLOR_RE);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(image.dominantColor.slice(i, i + 2), 16));
+  assert.ok(r > 150 && g < 100 && b < 100, `преобладает красный: ${image.dominantColor}`);
+
+  const text = await upload(Buffer.from('не картинка'), 'текст.txt', 'text/plain');
+  assert.strictEqual(text.width, null);
+  assert.strictEqual(text.height, null);
+  assert.strictEqual(text.dominantColor, null);
+
+  const bomb = await upload(decompressionBomb(), 'бомба-2.png', 'image/png');
+  assert.strictEqual(bomb.width, null, '«бомбу» сервер не декодирует');
+});
+
+test('Сообщение с картинкой: file_width, file_height, file_dominant_color; у прочих сообщений — null', async () => {
+  const file = await sharedWithBob(await photo(), 'в-ленте.jpg', 'image/jpeg');
+  await MessageService.sendMessage({
+    conversationType: 'direct', targetId: people['media-bob'].id, senderId: people.admin.id, text: 'просто текст'
+  });
+  const messages = await MessageService.getMessages('direct', people['media-bob'].id, people.admin.id);
+  const withImage = messages.find((m) => m.text === 'в-ленте.jpg');
+  assert.strictEqual(withImage.file_width, 800);
+  assert.strictEqual(withImage.file_height, 1200);
+  assert.match(withImage.file_dominant_color, COLOR_RE);
+  const plain = messages[messages.length - 1];
+  assert.strictEqual(plain.text, 'просто текст');
+  assert.strictEqual(plain.file_width, null);
+  assert.strictEqual(plain.file_height, null);
+  assert.strictEqual(plain.file_dominant_color, null);
+
+  // То же — в REST-ответе страницы сообщений.
+  const res = await fetch(`${baseUrl}/api/messages/direct/${people.admin.id}`, { headers: { Authorization: `Bearer ${people['media-bob'].token}` } });
+  const page = await res.json();
+  const listed = (Array.isArray(page) ? page : page.messages).find((m) => m.text === 'в-ленте.jpg');
+  assert.strictEqual(listed.file_width, 800);
+});
+
+test('Старое вложение без размеров: размеры и цвет дописываются при первой миниатюре', async () => {
+  const file = await sharedWithBob(await photo({ orientation: 1 }), 'старое.jpg', 'image/jpeg');
+  const chatDb = require('../src/db').getDatabase();
+  chatDb.prepare('UPDATE files SET width = NULL, height = NULL, dominant_color = NULL WHERE id = ?').run(file.id);
+  const thumb = await get(`/api/files/thumb/${file.id}?size=m`, { token: people['media-bob'].token });
+  assert.strictEqual(thumb.status, 200);
+  const row = chatDb.prepare('SELECT width, height, dominant_color FROM files WHERE id = ?').get(file.id);
+  assert.deepStrictEqual([row.width, row.height], [1200, 800]);
+  assert.match(row.dominant_color, COLOR_RE);
+});
