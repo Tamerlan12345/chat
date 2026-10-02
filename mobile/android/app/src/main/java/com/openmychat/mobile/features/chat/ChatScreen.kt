@@ -623,105 +623,108 @@ private fun MessageBubble(
             bottomEnd = CentyRadius.control
         )
         Box(Modifier.widthIn(max = 320.dp).fillMaxWidth(0.84f), contentAlignment = if (isOwn) Alignment.CenterEnd else Alignment.CenterStart) {
-            Column(
-                modifier = Modifier
-                    .graphicsLayer {
-                        val p = progress.value
-                        alpha = p
-                        if (!reduce) {
-                            translationY = (1f - p) * rise
-                            val scale = if (isOwn) 0.96f + 0.04f * p else 1f
-                            scaleX = scale
-                            scaleY = scale
-                            transformOrigin = TransformOrigin(if (isOwn) 1f else 0f, 1f)
+            // The menu anchors to the bubble itself, so it opens next to it on either side.
+            Box {
+                Column(
+                    modifier = Modifier
+                        .graphicsLayer {
+                            val p = progress.value
+                            alpha = p
+                            if (!reduce) {
+                                translationY = (1f - p) * rise
+                                val scale = if (isOwn) 0.96f + 0.04f * p else 1f
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin(if (isOwn) 1f else 0f, 1f)
+                            }
                         }
-                    }
-                    .background(if (isOwn) tokens.primarySoft else tokens.card, shape)
-                    .border(1.dp, if (isOwn) tokens.primaryLine else tokens.border, shape)
-                    // combinedClickable performs the long-press haptic itself. A tap opens the same menu,
-                    // so TalkBack's click is a real action rather than a no-op.
-                    .combinedClickable(
-                        onClick = { menuOpen = true },
-                        onClickLabel = stringResource(R.string.chat_message_actions),
-                        onLongClick = { menuOpen = true },
-                        onLongClickLabel = stringResource(R.string.chat_message_actions)
-                    )
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = description
-                        customActions = buildList {
-                            add(CustomAccessibilityAction(copyLabel) { copy(); true })
-                            if (canEdit) add(CustomAccessibilityAction(editLabel) { onEdit(); true })
-                            if (canDelete) add(CustomAccessibilityAction(deleteLabel) { onDelete(); true })
+                        .background(if (isOwn) tokens.primarySoft else tokens.card, shape)
+                        .border(1.dp, if (isOwn) tokens.primaryLine else tokens.border, shape)
+                        // combinedClickable performs the long-press haptic itself. A tap opens the same menu,
+                        // so TalkBack's click is a real action rather than a no-op.
+                        .combinedClickable(
+                            onClick = { menuOpen = true },
+                            onClickLabel = stringResource(R.string.chat_message_actions),
+                            onLongClick = { menuOpen = true },
+                            onLongClickLabel = stringResource(R.string.chat_message_actions)
+                        )
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = description
+                            customActions = buildList {
+                                add(CustomAccessibilityAction(copyLabel) { copy(); true })
+                                if (canEdit) add(CustomAccessibilityAction(editLabel) { onEdit(); true })
+                                if (canDelete) add(CustomAccessibilityAction(deleteLabel) { onDelete(); true })
+                            }
                         }
-                    }
-                    .padding(horizontal = 12.dp, vertical = 7.dp)
-            ) {
-                if (showSenderName) {
-                    Text(
-                        message.senderName,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tokens.accentText,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.size(2.dp))
-                }
-                val reply = message.metadata?.replyText
-                if (!message.isDeleted && !reply.isNullOrBlank()) ReplyQuote(message.metadata?.replySenderName, reply)
-                val textColor = if (isOwn) tokens.accentText else tokens.textMain
-                when {
-                    message.isDeleted -> Text(body, style = MaterialTheme.typography.bodyLarge, fontStyle = FontStyle.Italic, color = tokens.textDim)
-                    message.type == MessageType.FILE -> FileChip(message.fileOriginalName ?: message.metadata?.fileName ?: message.text, message.metadata?.size)
-                    else -> Text(body, style = MaterialTheme.typography.bodyLarge, color = textColor)
-                }
-                Row(
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
                 ) {
-                    // On primary-soft, textDim drops below 4.5:1 in dark; the own footer uses textSecondary.
-                    val meta = if (isOwn) tokens.textSecondary else tokens.textDim
-                    if (!message.updatedAt.isNullOrBlank() && !message.isDeleted) {
-                        Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = meta)
+                    if (showSenderName) {
+                        Text(
+                            message.senderName,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.accentText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.size(2.dp))
                     }
-                    Text(time, style = MaterialTheme.typography.labelSmall, color = meta)
-                    if (mark != null) DeliveryGlyph(mark, tint = meta)
+                    val reply = message.metadata?.replyText
+                    if (!message.isDeleted && !reply.isNullOrBlank()) ReplyQuote(message.metadata?.replySenderName, reply)
+                    val textColor = if (isOwn) tokens.accentText else tokens.textMain
+                    when {
+                        message.isDeleted -> Text(body, style = MaterialTheme.typography.bodyLarge, fontStyle = FontStyle.Italic, color = tokens.textDim)
+                        message.type == MessageType.FILE -> FileChip(message.fileOriginalName ?: message.metadata?.fileName ?: message.text, message.metadata?.size)
+                        else -> Text(body, style = MaterialTheme.typography.bodyLarge, color = textColor)
+                    }
+                    Row(
+                        modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // On primary-soft, textDim drops below 4.5:1 in dark; the own footer uses textSecondary.
+                        val meta = if (isOwn) tokens.textSecondary else tokens.textDim
+                        if (!message.updatedAt.isNullOrBlank() && !message.isDeleted) {
+                            Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = meta)
+                        }
+                        Text(time, style = MaterialTheme.typography.labelSmall, color = meta)
+                        if (mark != null) DeliveryGlyph(mark, tint = meta)
+                    }
                 }
-            }
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = tokens.elevated,
-                shape = RoundedCornerShape(CentyRadius.card)
-            ) {
-                DropdownMenuItem(
-                    text = { Text(copyLabel) },
-                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
-                    onClick = {
-                        menuOpen = false
-                        copy()
-                    }
-                )
-                if (canEdit) {
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    containerColor = tokens.elevated,
+                    shape = RoundedCornerShape(CentyRadius.card)
+                ) {
                     DropdownMenuItem(
-                        text = { Text(editLabel) },
-                        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                        text = { Text(copyLabel) },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
                         onClick = {
                             menuOpen = false
-                            onEdit()
+                            copy()
                         }
                     )
-                }
-                if (canDelete) {
-                    DropdownMenuItem(
-                        text = { Text(deleteLabel, color = tokens.dangerText) },
-                        leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = tokens.dangerText) },
-                        onClick = {
-                            menuOpen = false
-                            onDelete()
-                        }
-                    )
+                    if (canEdit) {
+                        DropdownMenuItem(
+                            text = { Text(editLabel) },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onEdit()
+                            }
+                        )
+                    }
+                    if (canDelete) {
+                        DropdownMenuItem(
+                            text = { Text(deleteLabel, color = tokens.dangerText) },
+                            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = tokens.dangerText) },
+                            onClick = {
+                                menuOpen = false
+                                onDelete()
+                            }
+                        )
+                    }
                 }
             }
         }
