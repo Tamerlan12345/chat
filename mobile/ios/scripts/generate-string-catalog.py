@@ -21,8 +21,8 @@ CATALOG = os.path.join(SOURCES, "Resources", "Localizable.xcstrings")
 
 CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 INTEGER_HINTS = re.compile(r"(count|Count|Unread|Remaining|statusCode|seconds|minutes)\b")
-# Latin-only literals that are still user-facing.
-EXTRA_KEYS = ["OK", "Email", "UIN"]
+# Latin-only literals that are still user-facing (none at the moment).
+EXTRA_KEYS: list[str] = []
 
 
 def interpolation_specifier(expression: str) -> str:

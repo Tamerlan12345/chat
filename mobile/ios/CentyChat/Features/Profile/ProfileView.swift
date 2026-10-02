@@ -90,7 +90,7 @@ public struct ProfileView: View {
                 if let user = session.currentUser {
                     Section(header: Text("Корпоративные реквизиты")) {
                         if let email = user.email {
-                            LabeledContent("Email", value: email)
+                            LabeledContent("Эл. почта", value: email)
                         }
                         if let phone = user.phone {
                             LabeledContent("Телефон", value: phone)
@@ -99,7 +99,7 @@ public struct ProfileView: View {
                             LabeledContent("Внутренний номер", value: ext)
                         }
                         if let uin = user.uin {
-                            LabeledContent("UIN", value: "\(uin)")
+                            LabeledContent("Идентификатор (UIN)", value: "\(uin)")
                         }
                         LabeledContent("Логин", value: user.username)
                     }

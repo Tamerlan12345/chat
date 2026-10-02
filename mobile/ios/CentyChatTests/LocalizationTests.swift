@@ -11,7 +11,7 @@ final class LocalizationTests: XCTestCase {
         let path = appBundle.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "ru")
         let table = try XCTUnwrap(path.flatMap { NSDictionary(contentsOfFile: $0) as? [String: String] },
                                   "Localizable.xcstrings must compile into ru.lproj/Localizable.strings")
-        for key in ["Войти", "Сервер временно недоступен", "Повторить", "Сигнал от коллеги", "%@ печатает..."] {
+        for key in ["Войти", "Сервер временно недоступен", "Повторить", "Сигнал от коллеги", "%@ печатает...", "ОК", "Эл. почта"] {
             XCTAssertNotNil(table[key], "Missing catalog entry: \(key)")
         }
     }

@@ -23,39 +23,6 @@
         }
       }
     },
-    "Email" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Email"
-          }
-        }
-      }
-    },
-    "OK" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OK"
-          }
-        }
-      }
-    },
-    "UIN" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "UIN"
-          }
-        }
-      }
-    },
     "АО \"Страховая компания \"Сентрас Иншуранс\"" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -518,6 +485,17 @@
         }
       }
     },
+    "Идентификатор (UIN)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идентификатор (UIN)"
+          }
+        }
+      }
+    },
     "Идет разговор" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -943,6 +921,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Новый пароль должен содержать не менее 8 символов"
+          }
+        }
+      }
+    },
+    "ОК" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ОК"
           }
         }
       }
@@ -1911,6 +1900,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фиксация..."
+          }
+        }
+      }
+    },
+    "Эл. почта" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эл. почта"
           }
         }
       }
