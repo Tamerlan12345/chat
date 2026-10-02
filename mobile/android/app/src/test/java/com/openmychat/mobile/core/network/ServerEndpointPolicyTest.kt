@@ -33,4 +33,11 @@ class ServerEndpointPolicyTest {
         assertTrue(ServerEndpointPolicy.validate("http://10.0.2.3:2004/api", allowInsecureDebug = true).isFailure)
         assertTrue(ServerEndpointPolicy.validate("http://192.168.1.20:2004/api", allowInsecureDebug = true).isFailure)
     }
+
+    @Test
+    fun invalidServerUrlUsesTheRussianOnboardingMessage() {
+        val failure = ServerEndpointPolicy.validate("ftp", allowInsecureDebug = false).exceptionOrNull()
+
+        assertEquals("Введите корректный адрес сервера", failure?.message)
+    }
 }
