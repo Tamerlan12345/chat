@@ -12,24 +12,24 @@ data class ValidatedEndpoint(
 object ServerEndpointPolicy {
     fun validate(raw: String, allowInsecureDebug: Boolean): Result<ValidatedEndpoint> = runCatching {
         val endpoint = raw.trim().toHttpUrlOrNull()
-            ?: throw IllegalArgumentException("Enter a valid server URL")
+            ?: throw IllegalArgumentException("Введите корректный адрес сервера")
 
         require(endpoint.username.isEmpty() && endpoint.password.isEmpty()) {
-            "Server URL must not include credentials"
+            "Адрес сервера не должен содержать логин и пароль"
         }
         require(endpoint.query == null && endpoint.fragment == null) {
-            "Server URL must not include a query or fragment"
+            "Адрес сервера не должен содержать параметры запроса или фрагмент"
         }
 
         val secure = endpoint.scheme == "https"
         val permittedDebugHttp = endpoint.scheme == "http" && allowInsecureDebug && isLocalDebugHost(endpoint.host)
         require(secure || permittedDebugHttp) {
-            "Use HTTPS. HTTP is available only for an explicit local debug endpoint."
+            "Используйте HTTPS. HTTP доступен только для явного локального отладочного адреса."
         }
 
         val requestedPath = endpoint.encodedPath.trimEnd('/')
         require(requestedPath.isEmpty() || requestedPath == "/api") {
-            "Server URL may only end with /api"
+            "Адрес сервера может заканчиваться только на /api"
         }
 
         val apiUrl = endpoint.newBuilder()
