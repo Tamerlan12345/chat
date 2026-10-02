@@ -59,7 +59,7 @@ fun AcknowledgeButton(
 ) {
     val tokens = CentyTheme.tokens
     val reduce = LocalReduceMotion.current
-    val shape = RoundedCornerShape(CentyRadius.control)
+    val shape = RoundedCornerShape(12.dp)
     AnimatedContent(
         targetState = acknowledged,
         modifier = modifier,
@@ -73,7 +73,7 @@ fun AcknowledgeButton(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 52.dp)
+                    .heightIn(min = 48.dp)
                     .background(tokens.successSoft, shape)
                     .border(1.dp, tokens.successLine, shape)
                     .testTag("acknowledged")
@@ -86,18 +86,12 @@ fun AcknowledgeButton(
                 Text(stringResource(R.string.announcements_acknowledged), style = MaterialTheme.typography.labelLarge, color = tokens.successText)
             }
         } else {
-            Button(
+            CentyPrimaryButton(
+                text = stringResource(R.string.announcements_acknowledge),
                 onClick = onAcknowledge,
-                enabled = !busy,
-                shape = shape,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("acknowledge")
-            ) {
-                if (busy) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tokens.textDim)
-                } else {
-                    Text(stringResource(R.string.announcements_acknowledge))
-                }
-            }
+                loading = busy,
+                modifier = Modifier.fillMaxWidth().testTag("acknowledge")
+            )
         }
     }
 }

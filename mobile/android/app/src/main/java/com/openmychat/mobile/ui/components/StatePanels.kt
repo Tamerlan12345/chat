@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -62,7 +61,7 @@ fun EmptyState(
         message = message,
         modifier = modifier.testTag("empty-state"),
         action = if (actionLabel != null && onAction != null) {
-            { CentyOutlinedButton(onClick = onAction) { Text(actionLabel) } }
+            { CentyTextButton(onClick = onAction) { Text(actionLabel) } }
         } else null
     )
 }
@@ -89,9 +88,7 @@ fun ErrorState(
             .testTag("error-state")
             .semantics { liveRegion = LiveRegionMode.Polite },
         action = {
-            Button(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.action_retry))
-            }
+            CentyTonalButton(text = stringResource(R.string.action_retry), onClick = onRetry)
         }
     )
 }

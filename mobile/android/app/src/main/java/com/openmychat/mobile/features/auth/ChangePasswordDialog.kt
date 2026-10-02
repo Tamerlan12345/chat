@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.components.CentyTextButton
+import com.openmychat.mobile.ui.components.CentyPrimaryButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
@@ -123,13 +124,12 @@ fun ChangePasswordDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onSubmit(current, new) }, enabled = ready && !isLoading, shape = RoundedCornerShape(CentyRadius.control)) {
-                if (isLoading) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = tokens.textDim)
-                } else {
-                    Text(stringResource(R.string.change_password_action))
-                }
-            }
+            CentyPrimaryButton(
+                text = stringResource(R.string.change_password_action),
+                onClick = { onSubmit(current, new) },
+                enabled = ready,
+                loading = isLoading
+            )
         },
         dismissButton = onDismiss?.let {
             { CentyTextButton(onClick = it, enabled = !isLoading) { Text(stringResource(R.string.action_cancel)) } }

@@ -84,6 +84,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.openmychat.mobile.R
+import com.openmychat.mobile.ui.components.CentyPrimaryButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.coroutineScope
@@ -343,34 +344,15 @@ private fun LoginCard(
 
 @Composable
 private fun SubmitButton(isSigningIn: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    Button(
+    // Индикатор встаёт на место подписи; кнопка не меняет ни размер, ни положение.
+    CentyPrimaryButton(
+        text = stringResource(R.string.login),
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 52.dp)
-    ) {
-        // The label crossfades into in-place progress; the button never changes size or position.
-        AnimatedContent(
-            targetState = isSigningIn,
-            transitionSpec = { fadeIn(tween(120)) togetherWith fadeOut(tween(120)) },
-            label = "login-button"
-        ) { signingIn ->
-            if (signingIn) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Text(stringResource(R.string.login_in_progress))
-                }
-            } else {
-                Text(stringResource(R.string.login))
-            }
-        }
-    }
+        loading = isSigningIn,
+        loadingDescription = stringResource(R.string.login_in_progress),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 /** Danger-soft box with a hairline, like desktop `.login-error-box`; announced politely. */

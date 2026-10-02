@@ -91,7 +91,8 @@ import com.openmychat.mobile.ui.components.CallControl
 import com.openmychat.mobile.ui.components.CallToggle
 import com.openmychat.mobile.ui.components.CentyAvatar
 import com.openmychat.mobile.ui.components.LevelMeter
-import com.openmychat.mobile.ui.components.CentyOutlinedButton
+import com.openmychat.mobile.ui.components.CentyPrimaryButton
+import com.openmychat.mobile.ui.components.CentyTonalButton
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
@@ -250,10 +251,11 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                         onClick = viewModel::toggleSpeaker
                     )
                 }
-                is CallUiState.Ended -> CentyOutlinedButton(
+                is CallUiState.Ended -> CentyPrimaryButton(
+                    text = stringResource(R.string.action_close),
                     onClick = onCallFinished,
                     modifier = Modifier.widthIn(min = 160.dp).padding(bottom = 16.dp)
-                ) { Text(stringResource(R.string.action_close)) }
+                )
             }
         }
     }
@@ -280,12 +282,13 @@ private fun PermissionNotice() {
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.size(12.dp))
-        CentyOutlinedButton(
+        CentyTonalButton(
+            text = stringResource(R.string.call_open_settings),
             onClick = {
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             }
-        ) { Text(stringResource(R.string.call_open_settings)) }
+        )
     }
 }

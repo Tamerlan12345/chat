@@ -138,6 +138,26 @@ class ThemeTokensTest {
         }
     }
 
+    /** Кнопки (спецификация «Buttons»): нажатый primary с белым, тональная — accent-text на primary-soft. */
+    @Test
+    fun buttonPairsMeetAaContrast() {
+        assertEquals(Color(0xFF4336C2), LightCentyTokens.primaryPressed)
+        assertEquals(Color(0xFF5549DE), DarkCentyTokens.primaryPressed)
+        listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
+            val theme = if (t.isDark) "dark" else "light"
+            listOf(
+                Triple("white on primary-pressed", Color.White, t.primaryPressed),
+                Triple("tonal label", t.accentText, t.primarySoft.compositeOver(t.canvas)),
+                Triple("tonal label on list", t.accentText, t.primarySoft.compositeOver(t.list)),
+                Triple("online pill", t.successText, t.successSoft.compositeOver(t.list)),
+                Triple("danger text in lists", t.dangerText, t.card)
+            ).forEach { (name, fg, bg) ->
+                val ratio = contrast(fg, bg)
+                assertTrue("$theme $name: ${"%.2f".format(ratio)}:1", ratio >= 4.5)
+            }
+        }
+    }
+
     private fun contrast(a: Color, b: Color): Double {
         val la = a.luminance() + 0.05
         val lb = b.luminance() + 0.05

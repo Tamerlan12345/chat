@@ -70,6 +70,7 @@ import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.InlineNotice
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.StatusDot
+import com.openmychat.mobile.ui.components.CentyTonalButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.components.presenceLabel
 import com.openmychat.mobile.ui.components.rememberHaptics
@@ -217,7 +218,8 @@ fun ProfileScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             val cooldown = uiState.wakeCooldownSeconds
-                            Button(
+                            CentyTonalButton(
+                                text = if (cooldown > 0) stringResource(R.string.profile_wake_wait, cooldown) else stringResource(R.string.profile_wake_send),
                                 onClick = {
                                     wakeTarget.toLongOrNull()?.let {
                                         viewModel.sendWakeToColleague(it)
@@ -225,11 +227,8 @@ fun ProfileScreen(
                                     }
                                 },
                                 enabled = cooldown == 0 && wakeTarget.isNotBlank(),
-                                shape = RoundedCornerShape(CentyRadius.control),
-                                modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
-                            ) {
-                                Text(if (cooldown > 0) stringResource(R.string.profile_wake_wait, cooldown) else stringResource(R.string.profile_wake_send))
-                            }
+                                modifier = Modifier.align(Alignment.End)
+                            )
                         }
                     }
                 }
