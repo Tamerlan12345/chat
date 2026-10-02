@@ -298,7 +298,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 
 `mark_read(conv)` = `{"type":"mark_read","conversationType":…,"targetId":…}`.
 
-**`edit`** (сначала цель, затем текст):
+**`edit`** (сначала цель, затем текст; указаны оба id или ни одного — `NOT_EDITABLE`):
 - по `client_msg_id`: записи нет, у неё `pending_delete` или `msgType != "text"` → `NOT_EDITABLE`; пустой/длинный текст → `EMPTY_TEXT`/`TEXT_TOO_LONG`; `!maybe_stored` → `text` заменяется на месте; иначе `pending_edit = text`;
 - по `message_id`: сообщение должно существовать, быть своим, `is_deleted == 0`, `type == "text"`, иначе `NOT_EDITABLE`; текст проверяется так же; в `ops` добавляется `{type:"edit_message", messageId, text}`. Локальный текст **не** меняется до `message_updated`.
 
