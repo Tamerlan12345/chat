@@ -42,10 +42,11 @@ final class ScreenshotTourTests: XCTestCase {
             XCTAssertTrue(loginScreen(of: application).waitForExistence(timeout: 15), "Login must open first.")
             signIn(application, username: "alice", password: "Alice-Dev-Stand-5271")
 
-            XCTAssertTrue(
-                application.tabBars.firstMatch.waitForExistence(timeout: 30),
-                "Alice must reach the signed-in tabs."
-            )
+            guard application.tabBars.firstMatch.waitForExistence(timeout: 30) else {
+                capture(application, named: "03-inbox-alice-\(suffix)-not-reached")
+                XCTFail("Alice must reach the signed-in tabs.")
+                return
+            }
             XCTAssertTrue(
                 application.staticTexts["Боб Тестов"].waitForExistence(timeout: 30),
                 "The seeded dialog with Bob must load from the stand."

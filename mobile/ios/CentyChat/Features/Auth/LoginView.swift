@@ -68,7 +68,7 @@ public struct LoginView: View {
                     .font(.subheadline)
                     .foregroundStyle(CentyColors.textSecondary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("login-company")
             }
         }
