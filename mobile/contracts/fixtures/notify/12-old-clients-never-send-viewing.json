@@ -1,0 +1,37 @@
+{
+  "name": "12-old-clients-never-send-viewing",
+  "description": "Старый настольный клиент не шлёт viewing и device_id: считается «не смотрит» — баннер ему; телефон без сокета — push.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "old-desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "old-desk"
+    ],
+    "quiet": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "11-no-sockets",
+  "description": "Ни одного сокета (приложения закрыты, компьютер выключен) — push на все устройства с токеном.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "channel",
+      "targetId": 7,
+      "senderId": 5
+    },
+    "sockets": [],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      },
+      {
+        "id": "ios-91c2"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a",
+      "ios-91c2"
+    ],
+    "banner": [],
+    "quiet": []
+  }
+}

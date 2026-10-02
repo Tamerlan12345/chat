@@ -1,0 +1,40 @@
+{
+  "name": "05-desktop-away-while-viewing",
+  "description": "Компьютер простаивает (away), хотя на нём открыт этот чат: «смотрит» только сокет online — уведомить. Компьютеру баннер (push у него нет), телефону push.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "away",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "desk"
+    ],
+    "quiet": []
+  }
+}
