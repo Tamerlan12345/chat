@@ -174,7 +174,7 @@ F10, F11, S4 + F12 (при наличии аккаунтов Apple Developer / F
 - All user-facing copy in Russian.
 - TDD: failing test first for every behaviour change; small logical commits with conventional messages ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Verification commands:
-  - Android (Windows, Cyrillic path workaround): `cd mobile/android && JAVA_HOME=/c/tmp/jdk17 GRADLE_USER_HOME=/c/tmp/gradle-user-home ./gradlew.bat --project-cache-dir /c/tmp/m-android-project-cache testDebugUnitTest lint assembleDebug`. Emulator `Pixel_8` is running as `emulator-5554`; adb at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`.
+  - Android (Windows, Cyrillic path workaround): `cd mobile/android && JAVA_HOME=/c/tmp/jdk17/jdk-17.0.20.1+1 GRADLE_USER_HOME=/c/tmp/gradle-user-home ./gradlew.bat --project-cache-dir /c/tmp/m-android-project-cache testDebugUnitTest lint assembleDebug`. Emulator `Pixel_8` is running as `emulator-5554`; adb at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`.
   - iOS: no local Xcode. Push branch `mobile/ios` to `origin` and watch `gh run list --branch mobile/ios --workflow mobile-ios` / `gh run watch <id> --exit-status`; read failures with `gh run view <id> --log-failed`. A task is not done until the run is green.
   - Server: `cd server && npm test`.
 
