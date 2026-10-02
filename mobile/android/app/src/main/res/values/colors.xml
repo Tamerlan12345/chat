@@ -4,5 +4,4 @@
          ui/theme/Tokens.kt; these exist only so the first frame is never a foreign colour. -->
     <color name="centy_canvas">#FCFCFD</color>
     <color name="centy_primary">#5B4EE6</color>
-    <color name="centy_text_strong">#16161D</color>
 </resources>

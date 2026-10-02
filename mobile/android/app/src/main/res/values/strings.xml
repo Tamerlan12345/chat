@@ -94,8 +94,6 @@
     <string name="password_rule_match">Пароли совпадают</string>
     <string name="password_rule_met">выполнено</string>
     <string name="password_rule_unmet">не выполнено</string>
-    <string name="password_error_current">Введите текущий пароль.</string>
-    <string name="password_error_failed">Не удалось сменить пароль. Повторите попытку.</string>
 
     <!-- Inbox -->
     <string name="inbox_title">Чаты</string>
@@ -205,7 +203,6 @@
     <string name="call_mic_denied">Нет доступа к микрофону</string>
     <string name="call_mic_denied_message">Разрешите CentyChat использовать микрофон, чтобы разговаривать.</string>
     <string name="call_open_settings">Открыть настройки</string>
-    <string name="call_busy">Абонент занят другим звонком</string>
 
     <!-- App-wide events -->
     <string name="wake_received">Вас зовёт %1$s</string>

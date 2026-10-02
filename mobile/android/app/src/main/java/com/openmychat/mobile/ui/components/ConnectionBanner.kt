@@ -125,8 +125,11 @@ fun rememberNetworkAvailable(): Boolean {
     val context = LocalContext.current
     val manager = remember(context) { context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager }
     fun current(): Boolean = try {
-        manager?.getNetworkCapabilities(manager.activeNetwork)
-            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: true
+        // No manager: assume online (the realtime state still drives the banner). No active
+        // network: offline.
+        if (manager == null) true
+        else manager.getNetworkCapabilities(manager.activeNetwork)
+            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     } catch (_: Exception) {
         true
     }
@@ -137,8 +140,9 @@ fun rememberNetworkAvailable(): Boolean {
                 available = true
             }
 
+            // The default network is gone; a replacement arrives through onAvailable.
             override fun onLost(network: Network) {
-                available = current()
+                available = false
             }
         }
         try {
