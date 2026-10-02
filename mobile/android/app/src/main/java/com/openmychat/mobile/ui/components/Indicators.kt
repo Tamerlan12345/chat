@@ -39,7 +39,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.runtime.State
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -135,7 +136,7 @@ fun TypingDots(color: Color, modifier: Modifier = Modifier, dot: Dp = 4.dp) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(3) { index ->
-            val alpha = transition?.animateFloat(
+            val alpha: State<Float>? = transition?.animateFloat(
                 initialValue = 0.25f,
                 targetValue = 0.25f,
                 animationSpec = infiniteRepeatable(
@@ -149,8 +150,9 @@ fun TypingDots(color: Color, modifier: Modifier = Modifier, dot: Dp = 4.dp) {
                     initialStartOffset = StartOffset(index * CentyMotion.TYPING_STAGGER)
                 ),
                 label = "dot-$index"
-            )?.value ?: 0.6f
-            Box(Modifier.size(dot).alpha(alpha).background(color, CircleShape))
+            )
+            // Read in the draw layer: the wave runs without recomposition.
+            Box(Modifier.size(dot).graphicsLayer { this.alpha = alpha?.value ?: 0.6f }.background(color, CircleShape))
         }
     }
 }

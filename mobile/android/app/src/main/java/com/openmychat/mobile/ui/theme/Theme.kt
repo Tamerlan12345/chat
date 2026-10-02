@@ -1,6 +1,8 @@
 package com.openmychat.mobile.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -105,9 +107,12 @@ fun CentyChatTheme(
     content: @Composable () -> Unit
 ) {
     val systemReduceMotion = rememberSystemReduceMotion()
+    val tokens = if (darkTheme) DarkCentyTokens else LightCentyTokens
     CompositionLocalProvider(
-        LocalCentyTokens provides if (darkTheme) DarkCentyTokens else LightCentyTokens,
-        LocalReduceMotion provides (reduceMotion ?: systemReduceMotion)
+        LocalCentyTokens provides tokens,
+        LocalReduceMotion provides (reduceMotion ?: systemReduceMotion),
+        // Selection handles and highlight in accent text, not the fill-only primary.
+        LocalTextSelectionColors provides TextSelectionColors(tokens.accentText, tokens.accentText.copy(alpha = 0.3f))
     ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,

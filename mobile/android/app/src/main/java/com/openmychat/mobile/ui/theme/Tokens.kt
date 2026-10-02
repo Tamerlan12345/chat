@@ -64,7 +64,9 @@ data class CentyTokens(
     val dnd: Color,
     val offline: Color,
     /** Channel avatars: slate instead of a per-person hue. */
-    val channelAvatar: Color
+    val channelAvatar: Color,
+    /** Selected pill of the navigation bar/rail: primary-soft on frame with a visible tone step. */
+    val navIndicator: Color
 )
 
 internal val LightCentyTokens = CentyTokens(
@@ -104,7 +106,8 @@ internal val LightCentyTokens = CentyTokens(
     away = Color(0xFFD4951C),
     dnd = Color(0xFFD9363B),
     offline = Color(0xFF9A9AA6),
-    channelAvatar = Color(0xFF475569)
+    channelAvatar = Color(0xFF475569),
+    navIndicator = Color(0xFFD2D0EF) // rgba(91,78,230,.18) on frame #ececf1
 )
 
 internal val DarkCentyTokens = CentyTokens(
@@ -144,7 +147,8 @@ internal val DarkCentyTokens = CentyTokens(
     away = Color(0xFFE5A13A),
     dnd = Color(0xFFE5484D),
     offline = Color(0xFF7D7D89),
-    channelAvatar = Color(0xFF3A3A44)
+    channelAvatar = Color(0xFF2B2B2B), // desktop dark channel slate
+    navIndicator = Color(0xFF36354C) // primary-soft on canvas
 )
 
 internal val LocalCentyTokens = staticCompositionLocalOf { LightCentyTokens }

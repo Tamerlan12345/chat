@@ -76,7 +76,10 @@ import com.openmychat.mobile.ui.components.ErrorState
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.TypingIndicator
 import com.openmychat.mobile.ui.components.UnreadPill
+import androidx.compose.animation.core.tween
+import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
+import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
 
 interface ConversationsActions {
@@ -191,7 +194,7 @@ fun ConversationsContent(
                             PullToRefreshDefaults.Indicator(
                                 state = pullState,
                                 isRefreshing = isRefreshing,
-                                color = tokens.primary,
+                                color = tokens.accentText,
                                 containerColor = tokens.elevated,
                                 modifier = Modifier.align(Alignment.TopCenter)
                             )
@@ -219,7 +222,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
         onValueChange = onQueryChange,
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = tokens.textMain),
-        cursorBrush = SolidColor(tokens.primary),
+        cursorBrush = SolidColor(tokens.accentText),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
         modifier = Modifier
@@ -305,6 +308,7 @@ private fun DirectList(
     actions: ConversationsActions
 ) {
     val list = remember(all, query) { filterByName(all, query) }
+    val reduce = LocalReduceMotion.current
     when {
         list.isEmpty() && query.isNotBlank() -> EmptyState(
             icon = Icons.Outlined.PersonSearch,
@@ -327,7 +331,7 @@ private fun DirectList(
                     isSelected = ref == open,
                     currentUserId = currentUserId,
                     onClick = { actions.onOpenDirect(conversation) },
-                    modifier = Modifier.animateItem()
+                    modifier = Modifier.animateItem(placementSpec = if (reduce) null else tween(CentyMotion.BASE, easing = CentyMotion.EaseOut))
                 )
             }
         }
@@ -344,6 +348,7 @@ private fun ChannelList(
     actions: ConversationsActions
 ) {
     val list = remember(all, query) { filterChannelsByName(all, query) }
+    val reduce = LocalReduceMotion.current
     when {
         list.isEmpty() && query.isNotBlank() -> EmptyState(
             icon = Icons.Outlined.PersonSearch,
@@ -363,7 +368,7 @@ private fun ChannelList(
                     isTyping = ref in typing,
                     isSelected = ref == open,
                     onClick = { actions.onOpenChannel(channel) },
-                    modifier = Modifier.animateItem()
+                    modifier = Modifier.animateItem(placementSpec = if (reduce) null else tween(CentyMotion.BASE, easing = CentyMotion.EaseOut))
                 )
             }
         }

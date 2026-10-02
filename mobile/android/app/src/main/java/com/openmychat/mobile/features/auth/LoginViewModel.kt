@@ -204,10 +204,10 @@ class LoginViewModel @Inject constructor(
                     _changePasswordError.value = resp.message.ifBlank { "Ошибка смены пароля" }
                 }
             } catch (e: SecureStorageUnavailableException) {
-                _changePasswordError.value = e.message ?: "Не удалось сменить пароль. Повторите попытку."
+                _changePasswordError.value = e.message ?: PASSWORD_CHANGE_GENERIC_ERROR
             } catch (_: Exception) {
                 // Raw exception text (often English, technical) never reaches the dialog.
-                _changePasswordError.value = "Не удалось сменить пароль. Повторите попытку."
+                _changePasswordError.value = PASSWORD_CHANGE_GENERIC_ERROR
             } finally {
                 _changePasswordLoading.value = false
             }

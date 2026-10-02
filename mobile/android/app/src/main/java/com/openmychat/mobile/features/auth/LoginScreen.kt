@@ -84,6 +84,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.openmychat.mobile.R
+import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -414,12 +415,7 @@ private fun errorText(error: LoginError, retryAfterSeconds: Long): String = when
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-    unfocusedContainerColor = CentyTheme.tokens.card,
-    focusedContainerColor = CentyTheme.tokens.card,
-    disabledContainerColor = CentyTheme.tokens.card
-)
+private fun fieldColors() = centyFieldColors()
 
 /** "Remove animations" (animator duration scale 0) turns the intro off entirely. */
 @Composable

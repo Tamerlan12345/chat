@@ -21,7 +21,6 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -61,7 +60,7 @@ fun EmptyState(
         message = message,
         modifier = modifier.testTag("empty-state"),
         action = if (actionLabel != null && onAction != null) {
-            { OutlinedButton(onClick = onAction, modifier = Modifier.heightIn(min = 48.dp)) { Text(actionLabel) } }
+            { CentyOutlinedButton(onClick = onAction) { Text(actionLabel) } }
         } else null
     )
 }
@@ -164,7 +163,7 @@ fun InlineNotice(text: String, modifier: Modifier = Modifier, actionLabel: Strin
     ) {
         Text(text, color = tokens.dangerText, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         if (actionLabel != null && onAction != null) {
-            androidx.compose.material3.TextButton(onClick = onAction) { Text(actionLabel) }
+            CentyTextButton(onClick = onAction) { Text(actionLabel) }
         }
     }
 }

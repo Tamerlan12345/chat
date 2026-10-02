@@ -25,7 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +42,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.R
+import com.openmychat.mobile.ui.components.CentyTextButton
+import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
 import com.openmychat.mobile.ui.theme.CentyTheme
@@ -56,6 +57,9 @@ internal object PasswordPolicy {
     fun satisfied(current: String, new: String, confirm: String) =
         current.isNotBlank() && longEnough(new) && differs(current, new) && matches(new, confirm)
 }
+
+/** Passed as the error to show the generic «Не удалось сменить пароль» from strings.xml. */
+const val PASSWORD_CHANGE_GENERIC_ERROR = ""
 
 /**
  * Forced (or voluntary) password change. The rules tick off live while typing; «Сменить пароль»
@@ -110,7 +114,7 @@ fun ChangePasswordDialog(
 
                 if (errorMessage != null) {
                     Text(
-                        errorMessage,
+                        errorMessage.ifEmpty { stringResource(R.string.password_error_failed) },
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.dangerText,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
@@ -128,7 +132,7 @@ fun ChangePasswordDialog(
             }
         },
         dismissButton = onDismiss?.let {
-            { TextButton(onClick = it, enabled = !isLoading) { Text(stringResource(R.string.action_cancel)) } }
+            { CentyTextButton(onClick = it, enabled = !isLoading) { Text(stringResource(R.string.action_cancel)) } }
         }
     )
 }
@@ -152,10 +156,7 @@ private fun PasswordField(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
         trailingIcon = trailing,
         shape = RoundedCornerShape(CentyRadius.control),
-        colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = CentyTheme.tokens.card,
-            focusedContainerColor = CentyTheme.tokens.card
-        ),
+        colors = centyFieldColors(),
         modifier = Modifier.fillMaxWidth()
     )
 }

@@ -47,11 +47,27 @@ class ThemeTokensTest {
                 Triple("white on primary", Color.White, t.primary),
                 Triple("white on danger fill", Color.White, t.dangerFill),
                 Triple("white on success fill", Color.White, t.successFill),
-                Triple("white on channel avatar", Color.White, t.channelAvatar)
+                Triple("white on channel avatar", Color.White, t.channelAvatar),
+                // Foreground brand colour: text and outlined buttons, focused fields, cursors.
+                Triple("accent text on elevated (dialog/sheet buttons)", t.accentText, t.elevated),
+                Triple("accent text on card (focused field label)", t.accentText, t.card),
+                Triple("accent text on list (inline/empty actions)", t.accentText, t.list),
+                Triple("accent text on canvas", t.accentText, t.canvas),
+                Triple("accent text on frame (call screen buttons)", t.accentText, t.frame),
+                Triple("time in own bubble", t.textSecondary, ownBubble),
+                Triple("selected nav item on its indicator", t.accentText, t.navIndicator)
             ).forEach { (name, fg, bg) ->
                 val ratio = contrast(fg, bg)
                 assertTrue("$theme $name: ${"%.2f".format(ratio)}:1", ratio >= 4.5)
             }
+        }
+    }
+
+    @Test
+    fun theSelectedNavigationPillStandsOffTheBar() {
+        listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
+            val ratio = contrast(t.navIndicator, t.frame)
+            assertTrue("${if (t.isDark) "dark" else "light"} indicator vs frame: ${"%.2f".format(ratio)}:1", ratio >= 1.2)
         }
     }
 

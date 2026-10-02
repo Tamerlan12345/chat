@@ -70,6 +70,7 @@ import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.InlineNotice
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.StatusDot
+import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.components.presenceLabel
 import com.openmychat.mobile.ui.components.rememberHaptics
 import com.openmychat.mobile.ui.theme.CentyRadius
@@ -173,7 +174,7 @@ fun ProfileScreen(
                             trailingIcon = {
                                 IconButton(onClick = viewModel::saveCustomStatus, enabled = !uiState.isSaving) {
                                     if (uiState.isSaving) {
-                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tokens.accentText)
                                     } else {
                                         Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.profile_save_status), tint = tokens.accentText)
                                     }
@@ -246,7 +247,7 @@ fun ProfileScreen(
                         Spacer(Modifier.width(12.dp))
                         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.bodyLarge, color = tokens.textStrong, modifier = Modifier.weight(1f))
                         Text(
-                            "${stringResource(R.string.profile_version)} ${BuildConfig.VERSION_NAME}",
+                            stringResource(R.string.profile_version_value, BuildConfig.VERSION_NAME),
                             style = MaterialTheme.typography.labelMedium,
                             color = tokens.textDim
                         )
@@ -354,8 +355,6 @@ private fun InfoRow(label: String, value: String) {
             value,
             style = MaterialTheme.typography.bodyMedium,
             color = tokens.textStrong,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f)
         )
@@ -363,8 +362,4 @@ private fun InfoRow(label: String, value: String) {
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-    unfocusedContainerColor = CentyTheme.tokens.card,
-    focusedContainerColor = CentyTheme.tokens.card
-)
+private fun fieldColors() = centyFieldColors()

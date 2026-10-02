@@ -20,6 +20,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.State
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,7 +53,6 @@ import androidx.compose.material.icons.rounded.VolumeDown
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -81,6 +87,7 @@ import androidx.core.view.WindowCompat
 import com.openmychat.mobile.R
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.ui.components.CentyAvatar
+import com.openmychat.mobile.ui.components.CentyOutlinedButton
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
@@ -232,10 +239,9 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                         onClick = viewModel::toggleSpeaker
                     )
                 }
-                is CallUiState.Ended -> OutlinedButton(
+                is CallUiState.Ended -> CentyOutlinedButton(
                     onClick = onCallFinished,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 160.dp).padding(bottom = 16.dp)
+                    modifier = Modifier.widthIn(min = 160.dp).padding(bottom = 16.dp)
                 ) { Text(stringResource(R.string.action_close)) }
             }
         }
@@ -248,16 +254,17 @@ private fun BreathingAvatar(name: String, breathing: Boolean, size: Dp = 120.dp)
     val tokens = CentyTheme.tokens
     val reduce = LocalReduceMotion.current
     val animate = breathing && !reduce
-    // The loop exists only while ringing; it stops once the call connects.
-    val scale = if (animate) {
+    // The loop exists only while ringing; it stops once the call connects. The value is read in
+    // the draw layer, so the ring breathes without recomposing the screen.
+    val scale: State<Float>? = if (animate) {
         rememberInfiniteTransition(label = "breath").animateFloat(
             initialValue = 1f,
             targetValue = 1.08f,
             animationSpec = infiniteRepeatable(tween(CentyMotion.BREATH, easing = CentyMotion.EaseOut), RepeatMode.Reverse),
             label = "ring-scale"
-        ).value
+        )
     } else {
-        1f
+        null
     }
     val ringAlpha by animateColorAsState(if (breathing) tokens.primaryLine else Color.Transparent, CentyMotion.slow(), label = "ring")
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size + 40.dp)) {
@@ -265,8 +272,9 @@ private fun BreathingAvatar(name: String, breathing: Boolean, size: Dp = 120.dp)
             Modifier
                 .size(size + 24.dp)
                 .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
+                    val value = scale?.value ?: 1f
+                    scaleX = value
+                    scaleY = value
                 }
                 .border(2.dp, ringAlpha, CircleShape)
         )
@@ -295,50 +303,50 @@ private fun PermissionNotice() {
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.size(12.dp))
-        OutlinedButton(
+        CentyOutlinedButton(
             onClick = {
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
-            },
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.heightIn(min = 48.dp)
+            }
         ) { Text(stringResource(R.string.call_open_settings)) }
     }
 }
 
+/** A 64dp round button with its label under it; the whole column is one target, read once. */
 @Composable
 private fun RoundAction(icon: ImageVector, label: String, container: Color, content: Color, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            onClick = onClick,
-            shape = CircleShape,
-            color = container,
-            contentColor = content,
-            modifier = Modifier.size(64.dp).semantics { role = Role.Button }
-        ) {
-            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = label, modifier = Modifier.size(30.dp)) }
-        }
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+    ) {
+        Box(
+            Modifier.size(64.dp).clip(CircleShape).background(container).indication(interaction, ripple(color = content)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(30.dp)) }
         Spacer(Modifier.size(8.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = CentyTheme.tokens.textSecondary)
     }
 }
 
+/** Mute / speaker: a switch (Role.Switch) whose name is the visible label and whose state is spoken. */
 @Composable
 private fun ToggleAction(icon: ImageVector, label: String, state: String, active: Boolean, onClick: () -> Unit) {
     val tokens = CentyTheme.tokens
     val container by animateColorAsState(if (active) tokens.textStrong else tokens.elevated, CentyMotion.base(), label = "toggle-bg")
     val content by animateColorAsState(if (active) tokens.frame else tokens.textStrong, CentyMotion.base(), label = "toggle-fg")
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            onClick = onClick,
-            shape = CircleShape,
-            color = container,
-            contentColor = content,
-            modifier = Modifier.size(64.dp).semantics { stateDescription = state }
-        ) {
-            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = label, modifier = Modifier.size(28.dp)) }
-        }
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .toggleable(value = active, interactionSource = interaction, indication = null, role = Role.Switch, onValueChange = { onClick() })
+            .semantics { stateDescription = state }
+    ) {
+        Box(
+            Modifier.size(64.dp).clip(CircleShape).background(container).indication(interaction, ripple(color = content)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(28.dp)) }
         Spacer(Modifier.size(8.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = tokens.textSecondary)
     }

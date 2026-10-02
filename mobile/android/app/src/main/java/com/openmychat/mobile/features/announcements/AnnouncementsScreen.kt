@@ -154,7 +154,7 @@ fun AnnouncementsContent(
                             PullToRefreshDefaults.Indicator(
                                 state = pullState,
                                 isRefreshing = uiState.isRefreshing,
-                                color = tokens.primary,
+                                color = tokens.accentText,
                                 containerColor = tokens.elevated,
                                 modifier = Modifier.align(Alignment.TopCenter)
                             )
@@ -167,6 +167,7 @@ fun AnnouncementsContent(
                                 message = stringResource(R.string.announcements_empty_message)
                             )
                         } else {
+                            val reduce = LocalReduceMotion.current
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize().testTag("announcement-list"),
                                 contentPadding = PaddingValues(
@@ -176,7 +177,13 @@ fun AnnouncementsContent(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 items(uiState.announcements, key = { it.id }) { item ->
-                                    AnnouncementCard(item, onClick = { actions.onOpen(item) }, modifier = Modifier.animateItem())
+                                    AnnouncementCard(
+                                        item,
+                                        onClick = { actions.onOpen(item) },
+                                        modifier = Modifier.animateItem(
+                                            placementSpec = if (reduce) null else androidx.compose.animation.core.tween(CentyMotion.BASE, easing = CentyMotion.EaseOut)
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -235,9 +242,7 @@ private fun AnnouncementCard(announcement: Announcement, onClick: () -> Unit, mo
         Text(
             stringResource(R.string.announcements_author, announcement.authorName, DateTimeUtils.formatDateTime(announcement.createdAt)),
             style = MaterialTheme.typography.labelSmall,
-            color = tokens.textDim,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            color = tokens.textDim
         )
     }
 }
