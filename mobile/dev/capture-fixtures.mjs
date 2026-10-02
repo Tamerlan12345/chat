@@ -102,7 +102,8 @@ function normalizeFixture(value) {
     if (typeof v === 'string') {
       // Токен сеанса (JWT). Токены устройств push (FCM/APNs) в фикстурах — заведомые заглушки.
       if (key === 'token' && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(v)) return FAKE_JWT;
-      if (key === 'storedFilename') return '1790000000000_0123456789abcdef.txt';
+      // Имя на диске: время + случайная часть; расширение (от имени файла) остаётся.
+      if (key === 'storedFilename') return v.replace(/^\d+_[0-9a-f]+/, '1790000000000_0123456789abcdef');
       // sync cursor "<epoch>.<seq>": the epoch is random per database.
       if (key === 'next_cursor') return v.replace(/^[0-9a-f]{16}\./, '5e7a1c0d9b3f4a62.');
       if (ISO_RE.test(v)) return mapTime(v);
@@ -122,8 +123,11 @@ function normalizeFixture(value) {
 
 // ── tiny HTTP / WebSocket clients ───────────────────────────────────────────
 
+// Фикстуры — то, что видит мобильный клиент: он просит фото адресами
+// (X-Avatar-Format: url по HTTP, ?avatars=url у WebSocket; openapi.yaml,
+// User.avatar_url). Без этого сервер отдаёт прежнюю форму — data URL.
 async function call(baseUrl, method, urlPath, { body, token, form } = {}) {
-  const headers = {};
+  const headers = { 'X-Avatar-Format': 'url' };
   if (token) headers.Authorization = `Bearer ${token}`;
   let payload;
   if (form) payload = form;
@@ -196,7 +200,7 @@ export async function captureFixtures({ dataDir } = {}) {
   const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'centy-fixtures-'));
   const server = await startServerProcess({ dataDir: dir, port: 0, quiet: true });
   const base = `http://127.0.0.1:${server.port}`;
-  const wsUrl = `ws://127.0.0.1:${server.port}/ws`;
+  const wsUrl = `ws://127.0.0.1:${server.port}/ws?avatars=url`;
   const sockets = [];
 
   const raw = {}; // path -> value (insertion order = capture order, drives timestamp numbering)

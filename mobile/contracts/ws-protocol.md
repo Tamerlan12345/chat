@@ -8,7 +8,7 @@
 
 - **Транспорт**: WebSocket (RFC 6455) поверх TLS/TCP (WSS / WS).
 - **Порт по умолчанию**: `2004` (HTTP/WS) или `443` (HTTPS/WSS в production).
-- **Путь подключения**: `/ws`.
+- **Путь подключения**: `/ws`. Мобильные клиенты подключаются по `/ws?avatars=url` — фото сотрудников в кадрах приходят адресами, а не data URL (§ про `auth_success`, задача 20).
 - **Кодировка текста**: UTF-8. Все текстовые сообщения представляют собой валидный JSON.
 - **Двоичные данные**: Бинарные кадры зарезервированы исключительно для потоковой передачи голоса (Audio Relay).
 
@@ -398,7 +398,7 @@
 ### 4.1. Авторизация и статус соединения
 
 #### `auth_success` — сокет авторизован
-Фото сотрудников во всех кадрах (`user.avatar_url` здесь, в `user_created`/`user_updated`, `sender_avatar` сообщений) — адрес `/api/users/{id}/avatar?v=…` или `null`, как в REST (`openapi.yaml`, `User.avatar_url`); data URL получает только настольный клиент (User-Agent с `Electron/`). Сообщения с вложением-картинкой несут `file_width`, `file_height`, `file_dominant_color` (у прочих — `null`).
+Фото сотрудников во всех кадрах (`user.avatar_url` здесь, в `user_created`/`user_updated`, `sender_avatar` сообщений) по умолчанию — строка data URL, как раньше. Сокет, подключившийся по адресу **`/ws?avatars=url`** (мобильные клиенты подключаются так всегда), получает во всех кадрах вместо неё адрес `/api/users/{id}/avatar?v=…`, а значения, которые не data URL (внешние ссылки из старых версий), — `null`; правила — как у REST с заголовком `X-Avatar-Format: url` (`openapi.yaml`, `User.avatar_url`). Выбор делается один раз при подключении. Сообщения с вложением-картинкой несут `file_width`, `file_height`, `file_dominant_color` (у прочих — `null`).
 
 Объект `user` — полный профиль сессии (как `user` в `/auth/me`): помимо базовых полей содержит служебные (`permissions_json` — те же права, но строкой; `token_version`, `bound_ip`, `last_login_ip`). Клиент использует `id`, `username`, `full_name`, `permissions`, `status`, остальное игнорирует.
 ```json

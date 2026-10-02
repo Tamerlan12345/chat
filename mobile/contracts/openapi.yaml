@@ -8,6 +8,11 @@ info:
     оргструктуры, каналов, личных и групповых сообщений, оповещений, файлов,
     настроек и консоли администрирования.
     
+    Фото сотрудников (`avatar_url`, `sender_avatar`) по умолчанию приходят строкой data URL, как
+    раньше. Клиент, который загружает фото по адресу с токеном, присылает в каждом запросе заголовок
+    `X-Avatar-Format: url` и получает адреса `/api/users/{id}/avatar?v=…` (подробнее — `User.avatar_url`);
+    WebSocket — тем же выбором при подключении: `/ws?avatars=url` (`ws-protocol.md`).
+
     Спецификация полностью отражает серверную реализацию CentyChat (`server/src/api/index.js`,
     `server/src/app.js`, `server/src/files/policy-router.js`, `server/src/updates/admin-router.js`,
     `server/src/updates/router.js`).
@@ -1798,7 +1803,12 @@ paths:
         MIME и не по имени: SVG, PDF и прочее — `415`. Картинка, заявляющая в заголовке больше 50 Мп,
         файл больше 40 МБ — `422 IMAGE_TOO_LARGE` (без декодирования); битая — `422 IMAGE_UNREADABLE`.
         Отрисовка ленивая (при первом запросе), дальше — из кэша на диске; одновременно отрисовывается
-        не больше двух, при переполненной очереди — `503 IMAGE_BUSY` с `Retry-After`. Клиенту стоит
+        не больше двух, при переполненной очереди — `503 IMAGE_BUSY` с `Retry-After`. Новых отрисовок
+        (промахов кэша) — не больше 60 в минуту на сотрудника, сверх — `429 RATE_LIMITED` с
+        `Retry-After`; готовые миниатюры пределом не ограничены. Отказ по самому файлу (415/422)
+        запоминается на 10 минут — повторный запрос получает его без декодирования.
+        `Cache-Control: private, no-cache`: клиент хранит миниатюру и перепроверяет её по `ETag`
+        (в метке — ключ содержимого файла), сервер отвечает `304`. Клиенту стоит
         запрашивать миниатюру только для вложений с `file_width != null` или с картинным расширением.
       operationId: getFileThumbnail
       tags:
@@ -1841,7 +1851,7 @@ paths:
             Cache-Control:
               schema:
                 type: string
-                example: 'private, max-age=604800, immutable'
+                example: 'private, no-cache'
           content:
             image/webp:
               schema:
@@ -1877,6 +1887,16 @@ paths:
                 $ref: '#/components/schemas/ImageErrorResponse'
         '422':
           description: Слишком большая (`IMAGE_TOO_LARGE`) или нечитаемая (`IMAGE_UNREADABLE`) картинка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '429':
+          description: Больше 60 новых миниатюр в минуту (`RATE_LIMITED`)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -3296,11 +3316,12 @@ components:
           type: string
           nullable: true
           description: |
-            Фото сотрудника. Мобильным и прочим клиентам — адрес `/api/users/{id}/avatar?v=<версия>`
-            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото)
-            или `null`, если фото нет. Настольный клиент (User-Agent с `Electron/`) по-прежнему получает
-            `data:image/...;base64` — та же строка, что хранится. Значения из старых версий, которые не
-            data URL, новым клиентам приходят как `null`.
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
           example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
@@ -3419,11 +3440,12 @@ components:
           type: string
           nullable: true
           description: |
-            Фото сотрудника. Мобильным и прочим клиентам — адрес `/api/users/{id}/avatar?v=<версия>`
-            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото)
-            или `null`, если фото нет. Настольный клиент (User-Agent с `Electron/`) по-прежнему получает
-            `data:image/...;base64` — та же строка, что хранится. Значения из старых версий, которые не
-            data URL, новым клиентам приходят как `null`.
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
           example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
@@ -3737,11 +3759,12 @@ components:
           type: string
           nullable: true
           description: |
-            Фото сотрудника. Мобильным и прочим клиентам — адрес `/api/users/{id}/avatar?v=<версия>`
-            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото)
-            или `null`, если фото нет. Настольный клиент (User-Agent с `Electron/`) по-прежнему получает
-            `data:image/...;base64` — та же строка, что хранится. Значения из старых версий, которые не
-            data URL, новым клиентам приходят как `null`.
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
           example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
@@ -3873,8 +3896,8 @@ components:
           type: string
           nullable: true
           description: |
-            Фото автора — по тем же правилам, что `User.avatar_url`: адрес `/api/users/{sender_id}/avatar?v=…`
-            или `null` (настольному клиенту — data URL).
+            Фото автора — по тем же правилам, что `User.avatar_url`: по умолчанию data URL; с
+            `X-Avatar-Format: url` (или `/ws?avatars=url`) — адрес `/api/users/{sender_id}/avatar?v=…` или `null`.
           example: '/api/users/7/avatar?v=3f2a9c1e0b7d4a65'
         sender_department:
           type: string
