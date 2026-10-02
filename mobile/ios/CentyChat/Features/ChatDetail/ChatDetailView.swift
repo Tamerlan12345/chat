@@ -3,27 +3,14 @@ import PhotosUI
 
 /// Детальный экран диалога или канала с поддержкой сообщений, вложений, тайпинга и звонков
 public struct ChatDetailView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(AppContainer.self) private var container
+
     public let conversationType: ConversationType
     public let targetId: Int64
     public let title: String
     public let avatarUrl: String?
     public let status: UserStatus?
-    
-    @State private var messages: [Message] = []
-    @State private var inputText: String = ""
-    @State private var isLoading: Bool = false
-    @State private var editingMessage: Message? = nil
-    
-    // Вложения
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil
-    @State private var showAttachmentActionSheet: Bool = false
-    @State private var isUploadingAttachment: Bool = false
-    
-    // Typing throttling
-    @State private var lastTypingSent: Date = Date.distantPast
-    
+
     public init(
         conversationType: ConversationType,
         targetId: Int64,
@@ -37,32 +24,65 @@ public struct ChatDetailView: View {
         self.avatarUrl = avatarUrl
         self.status = status
     }
-    
-    private var typingKey: String {
-        "\(conversationType.rawValue)_\(targetId)"
-    }
-    
-    private var isCallingAllowed: Bool {
-        conversationType == .direct && (appState.currentUser?.permissions?.canCall ?? true)
-    }
-    
+
     public var body: some View {
+        ChatDetailContent(
+            store: container.chats.store(for: ConversationKey(type: conversationType, targetId: targetId)),
+            title: title,
+            avatarUrl: avatarUrl,
+            status: status
+        )
+    }
+}
+
+/// The chat screen bound to one `ChatStore`.
+private struct ChatDetailContent: View {
+    @Environment(SessionStore.self) private var session
+    @Environment(ConversationsStore.self) private var conversations
+    @Environment(CallStore.self) private var calls
+
+    let store: ChatStore
+    let title: String
+    let avatarUrl: String?
+    let status: UserStatus?
+
+    @State private var inputText: String = ""
+    @State private var editingMessage: Message? = nil
+
+    // Вложения
+    @State private var selectedPhotoItem: PhotosPickerItem? = nil
+
+    private var conversationType: ConversationType { store.conversation.type }
+    private var targetId: Int64 { store.conversation.targetId }
+
+    private var typingText: String? {
+        conversations.typingUsers[ConversationsStore.typingKey(for: store.conversation)]
+    }
+
+    private var isCallingAllowed: Bool {
+        conversationType == .direct && (session.currentUser?.permissions?.canCall ?? true)
+    }
+
+    var body: some View {
         VStack(spacing: 0) {
             // Список сообщений
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(messages) { message in
+                        ForEach(store.messages) { message in
                             MessageBubbleView(
                                 message: message,
-                                isCurrentUser: message.senderId == appState.currentUser?.id,
+                                isCurrentUser: message.senderId == session.currentUser?.id,
                                 showSenderHeader: conversationType == .channel,
                                 onEdit: { msg in
                                     editingMessage = msg
                                     inputText = msg.text
                                 },
                                 onDelete: { msg in
-                                    Task { await deleteMessage(msg) }
+                                    Task {
+                                        await store.delete(msg)
+                                        CentyHaptics.warning()
+                                    }
                                 }
                             )
                             .id(message.id)
@@ -72,31 +92,31 @@ public struct ChatDetailView: View {
                     .padding(.vertical, 8)
                 }
                 .background(CentyColors.chatBackground)
-                .onChange(of: messages.count) {
-                    if let last = messages.last {
+                .onChange(of: store.messages.count) {
+                    if let last = store.messages.last {
                         withAnimation {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
                 }
                 .onAppear {
-                    if let last = messages.last {
+                    if let last = store.messages.last {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
-            
+
             // Индикатор набора текста
-            if let typingUser = appState.typingUsers[typingKey] {
+            if let typingText {
                 HStack {
-                    TypingIndicatorView(text: typingUser)
+                    TypingIndicatorView(text: typingText)
                     Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
                 .background(Color(uiColor: .systemBackground))
             }
-            
+
             // Баннер редактирования сообщения
             if let editMsg = editingMessage {
                 HStack {
@@ -117,12 +137,13 @@ public struct ChatDetailView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
                     }
+                    .accessibilityLabel("Отменить редактирование")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
                 .background(Color(uiColor: .secondarySystemBackground))
             }
-            
+
             // Панель ввода сообщения
             inputBar
         }
@@ -144,31 +165,32 @@ public struct ChatDetailView: View {
                     }
                 }
             }
-            
+
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
                     if isCallingAllowed {
                         Button(action: {
                             Task {
                                 let colleague = PublicUser(id: targetId, username: "", fullName: title, avatarUrl: avatarUrl, status: status ?? .online)
-                                await appState.startOutgoingCall(targetUser: colleague)
+                                await calls.startOutgoingCall(targetUser: colleague)
                             }
                         }) {
                             Image(systemName: "phone.fill")
                                 .foregroundColor(CentyColors.primaryBlue)
                         }
+                        .accessibilityLabel("Позвонить")
                     }
                 }
             }
         }
         .task {
-            await loadMessages()
-            markAsRead()
+            await store.load()
+            await store.markAsRead()
         }
     }
-    
+
     // MARK: - Input Bar
-    
+
     private var inputBar: some View {
         HStack(spacing: 8) {
             // Кнопка вложения
@@ -177,10 +199,11 @@ public struct ChatDetailView: View {
                     .font(.system(size: 20))
                     .foregroundColor(CentyColors.primaryBlue)
             }
+            .accessibilityLabel("Прикрепить фото")
             .onChange(of: selectedPhotoItem) {
                 Task { await handleSelectedPhoto() }
             }
-            
+
             // Текстовое поле ввода
             TextField("Сообщение...", text: $inputText)
                 .padding(.horizontal, 12)
@@ -188,9 +211,9 @@ public struct ChatDetailView: View {
                 .background(Color(uiColor: .secondarySystemBackground))
                 .clipShape(Capsule())
                 .onChange(of: inputText) {
-                    sendTypingIndicatorIfNeeded()
+                    Task { await store.sendTypingIfNeeded() }
                 }
-            
+
             // Кнопка отправки
             Button(action: {
                 Task { await sendOrUpdateMessage() }
@@ -199,134 +222,44 @@ public struct ChatDetailView: View {
                     .font(.system(size: 32))
                     .foregroundColor(inputText.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : CentyColors.primaryBlue)
             }
-            .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || isUploadingAttachment)
+            .accessibilityLabel(editingMessage != nil ? "Сохранить изменения" : "Отправить")
+            .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || store.isUploadingAttachment)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(uiColor: .systemBackground))
     }
-    
+
     // MARK: - Actions
-    
-    private func loadMessages() async {
-        isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            let loaded = try await APIClient.shared.getMessages(conversationType: conversationType, targetId: targetId)
-            self.messages = loaded
-        } catch {
-            print("[ChatDetailView] Error loading messages: \(error)")
-        }
-    }
-    
-    private func markAsRead() {
-        Task {
-            await WebSocketClient.shared.send(clientMessage: .markRead(conversationType: conversationType, targetId: targetId))
-            if conversationType == .direct {
-                if let idx = appState.directConversations.firstIndex(where: { $0.userId == targetId }) {
-                    appState.directConversations[idx].unreadCount = 0
-                }
-            } else {
-                if let idx = appState.channels.firstIndex(where: { $0.id == targetId }) {
-                    appState.channels[idx].unreadCount = 0
-                }
-            }
-        }
-    }
-    
-    private func sendTypingIndicatorIfNeeded() {
-        let now = Date()
-        guard now.timeIntervalSince(lastTypingSent) > 2.0 else { return }
-        lastTypingSent = now
-        Task {
-            await WebSocketClient.shared.send(clientMessage: .typing(conversationType: conversationType, targetId: targetId, isTyping: true))
-        }
-    }
-    
+
     private func sendOrUpdateMessage() async {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
-        
+
         if let editing = editingMessage {
-            // Редактирование
-            await WebSocketClient.shared.send(clientMessage: .editMessage(messageId: editing.id, text: text))
-            if let idx = messages.firstIndex(where: { $0.id == editing.id }) {
-                messages[idx].text = text
-                messages[idx].updatedAt = Date()
-            }
             editingMessage = nil
             inputText = ""
-            CentyHaptics.light()
+            await store.edit(editing, text: text)
         } else {
-            // Отправка нового сообщения
             inputText = ""
-            await WebSocketClient.shared.send(clientMessage: .sendMessage(
-                conversationType: conversationType,
-                targetId: targetId,
-                text: text,
-                msgType: .text
-            ))
-            
-            // Оптимистичное добавление в локальный список
-            let tempMsg = Message(
-                id: Int64(Date().timeIntervalSince1970 * 1000),
-                conversationType: conversationType,
-                targetId: targetId,
-                senderId: appState.currentUser?.id ?? 0,
-                text: text,
-                type: .text,
-                createdAt: Date(),
-                senderName: appState.currentUser?.fullName ?? "Я",
-                deliveryStatus: .sent
-            )
-            messages.append(tempMsg)
-            CentyHaptics.light()
+            await store.send(text: text)
         }
+        CentyHaptics.light()
     }
-    
-    private func deleteMessage(_ msg: Message) async {
-        await WebSocketClient.shared.send(clientMessage: .deleteMessage(messageId: msg.id))
-        if let idx = messages.firstIndex(where: { $0.id == msg.id }) {
-            messages[idx].isDeleted = true
-            messages[idx].text = ""
-        }
-        CentyHaptics.warning()
-    }
-    
+
     private func handleSelectedPhoto() async {
         guard let item = selectedPhotoItem else { return }
-        isUploadingAttachment = true
-        defer {
-            isUploadingAttachment = false
-            selectedPhotoItem = nil
-        }
-        
+        defer { selectedPhotoItem = nil }
+
         do {
-            if let data = try await item.loadTransferable(type: Data.self) {
-                let fileName = "photo_\(Int(Date().timeIntervalSince1970)).jpg"
-                let uploadRes = try await APIClient.shared.uploadFile(fileData: data, fileName: fileName, mimeType: "image/jpeg")
-                
-                let metadata = MessageMetadata(
-                    fileId: uploadRes.id,
-                    fileName: uploadRes.originalName,
-                    fileSize: uploadRes.fileSize,
-                    mimeType: uploadRes.mimeType,
-                    url: uploadRes.url
-                )
-                
-                await WebSocketClient.shared.send(clientMessage: .sendMessage(
-                    conversationType: conversationType,
-                    targetId: targetId,
-                    text: fileName,
-                    msgType: .image,
-                    metadata: metadata
-                ))
-                
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            if await store.sendImage(data: data) {
                 CentyHaptics.success()
+            } else {
+                CentyHaptics.error()
             }
         } catch {
-            print("[ChatDetailView] Error uploading photo: \(error)")
+            Log.chat.error("Loading picked photo failed: \(error.localizedDescription, privacy: .public)")
             CentyHaptics.error()
         }
     }

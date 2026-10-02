@@ -2,14 +2,14 @@ import SwiftUI
 
 /// Пузырь сообщения в переписке с поддержкой форматирования, вложений и контекстного меню
 public struct MessageBubbleView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(SessionStore.self) private var session
+
     public let message: Message
     public let isCurrentUser: Bool
     public let showSenderHeader: Bool
     public let onEdit: (Message) -> Void
     public let onDelete: (Message) -> Void
-    
+
     public init(
         message: Message,
         isCurrentUser: Bool,
@@ -23,41 +23,41 @@ public struct MessageBubbleView: View {
         self.onEdit = onEdit
         self.onDelete = onDelete
     }
-    
+
     private var formattedTime: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: message.createdAt)
     }
-    
+
     private var canEdit: Bool {
         guard isCurrentUser, !message.isDeleted, message.type == .text else { return false }
-        let isSuperAdmin = appState.currentUser?.permissions?.isAdmin ?? false
+        let isSuperAdmin = session.currentUser?.permissions?.isAdmin ?? false
         return ValidationRules.canEditOrDelete(
             createdAt: message.createdAt,
-            windowMinutesStr: appState.serverInfo.messageEditWindowMinutes,
+            windowMinutesStr: session.serverInfo.messageEditWindowMinutes,
             isSuperAdmin: isSuperAdmin,
             action: .edit
         )
     }
-    
+
     private var canDelete: Bool {
         guard !message.isDeleted else { return false }
-        let isSuperAdmin = appState.currentUser?.permissions?.isAdmin ?? false
+        let isSuperAdmin = session.currentUser?.permissions?.isAdmin ?? false
         if isSuperAdmin { return true }
         guard isCurrentUser else { return false }
         return ValidationRules.canEditOrDelete(
             createdAt: message.createdAt,
-            windowMinutesStr: appState.serverInfo.messageDeleteWindowMinutes,
+            windowMinutesStr: session.serverInfo.messageDeleteWindowMinutes,
             isSuperAdmin: isSuperAdmin,
             action: .delete
         )
     }
-    
+
     public var body: some View {
         HStack {
             if isCurrentUser { Spacer(minLength: 40) }
-            
+
             VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 3) {
                 // Имя автора в канале (если входящее)
                 if showSenderHeader && !isCurrentUser {
@@ -66,7 +66,7 @@ public struct MessageBubbleView: View {
                         .foregroundColor(CentyColors.primaryBlue)
                         .padding(.horizontal, 4)
                 }
-                
+
                 VStack(alignment: .trailing, spacing: 4) {
                     if message.isDeleted {
                         HStack(spacing: 4) {
@@ -81,8 +81,7 @@ public struct MessageBubbleView: View {
                     } else {
                         // Вложение-картинка
                         if message.type == .image, let meta = message.metadata, let urlStr = meta.url {
-                            let fullUrl = "\(KeychainManager.shared.serverUrl)\(urlStr)"
-                            if let url = URL(string: fullUrl) {
+                            if let url = session.attachmentURL(for: urlStr) {
                                 AsyncImage(url: url) { phase in
                                     switch phase {
                                     case .success(let image):
@@ -97,7 +96,7 @@ public struct MessageBubbleView: View {
                                 }
                             }
                         }
-                        
+
                         // Вложение-файл
                         if message.type == .file, let meta = message.metadata {
                             HStack(spacing: 8) {
@@ -117,7 +116,7 @@ public struct MessageBubbleView: View {
                             .padding(.horizontal, 8)
                             .padding(.top, 4)
                         }
-                        
+
                         // Текст сообщения
                         if !message.text.isEmpty && message.type != .image {
                             Text(message.text)
@@ -127,7 +126,7 @@ public struct MessageBubbleView: View {
                                 .padding(.top, 8)
                                 .padding(.bottom, 2)
                         }
-                        
+
                         // Время и статус галочек
                         HStack(spacing: 4) {
                             if message.updatedAt != nil {
@@ -135,11 +134,11 @@ public struct MessageBubbleView: View {
                                     .font(.system(size: 9))
                                     .foregroundColor(isCurrentUser ? .white.opacity(0.7) : .secondary)
                             }
-                            
+
                             Text(formattedTime)
                                 .font(.system(size: 10))
                                 .foregroundColor(isCurrentUser ? .white.opacity(0.75) : .secondary)
-                            
+
                             if isCurrentUser {
                                 DeliveryStatusView(status: message.deliveryStatus, isOutgoing: true)
                             }
@@ -158,7 +157,7 @@ public struct MessageBubbleView: View {
                         }) {
                             Label("Скопировать текст", systemImage: "doc.on.doc")
                         }
-                        
+
                         if canEdit {
                             Button(action: {
                                 onEdit(message)
@@ -166,7 +165,7 @@ public struct MessageBubbleView: View {
                                 Label("Редактировать", systemImage: "pencil")
                             }
                         }
-                        
+
                         if canDelete {
                             Button(role: .destructive, action: {
                                 onDelete(message)
@@ -177,7 +176,7 @@ public struct MessageBubbleView: View {
                     }
                 }
             }
-            
+
             if !isCurrentUser { Spacer(minLength: 40) }
         }
     }

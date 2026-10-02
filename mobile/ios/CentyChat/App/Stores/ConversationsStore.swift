@@ -1,0 +1,178 @@
+import Foundation
+import Observation
+
+/// Direct conversations, channels, the colleague directory and typing indicators.
+@Observable
+@MainActor
+public final class ConversationsStore: RealtimeEventHandling {
+    public var directConversations: [DirectConversation] = []
+    public var channels: [Channel] = []
+    public var users: [PublicUser] = []
+    /// "\(conversationType)_\(targetId)" → «Алия печатает...»
+    public private(set) var typingUsers: [String: String] = [:]
+
+    @ObservationIgnored private let repository: any ChatRepository
+    @ObservationIgnored private let session: SessionStore
+    @ObservationIgnored private var typingResetTimers: [String: Task<Void, Never>] = [:]
+    /// Asks the container to reload everything (e.g. a message from an unknown dialog).
+    @ObservationIgnored var onNeedsReload: (@MainActor () -> Void)?
+
+    init(repository: any ChatRepository, session: SessionStore) {
+        self.repository = repository
+        self.session = session
+    }
+
+    public var totalDirectUnread: Int {
+        directConversations.reduce(0) { $0 + $1.unreadCount }
+    }
+
+    public var totalChannelUnread: Int {
+        channels.reduce(0) { $0 + $1.unreadCount }
+    }
+
+    public static func typingKey(for conversation: ConversationKey) -> String {
+        "\(conversation.type.rawValue)_\(conversation.targetId)"
+    }
+
+    // MARK: - Mutations
+
+    func markConversationRead(_ conversation: ConversationKey) {
+        switch conversation.type {
+        case .direct:
+            if let index = directConversations.firstIndex(where: { $0.userId == conversation.targetId }) {
+                directConversations[index].unreadCount = 0
+            }
+        case .channel:
+            if let index = channels.firstIndex(where: { $0.id == conversation.targetId }) {
+                channels[index].unreadCount = 0
+            }
+        }
+    }
+
+    public func createChannel(name rawName: String, topic: String, isPrivate: Bool) async throws {
+        var name = rawName.trimmingCharacters(in: .whitespaces)
+        if !name.hasPrefix("#") {
+            name = "#" + name
+        }
+        let created = try await repository.createChannel(
+            name: name,
+            topic: topic.isEmpty ? nil : topic,
+            type: isPrivate ? .private : .public
+        )
+        if !channels.contains(where: { $0.id == created.id }) {
+            channels.insert(created, at: 0)
+        }
+    }
+
+    func reset() {
+        directConversations = []
+        channels = []
+        users = []
+        typingResetTimers.values.forEach { $0.cancel() }
+        typingResetTimers = [:]
+        typingUsers = [:]
+    }
+
+    // MARK: - Realtime
+
+    func handle(_ event: WSServerEvent) {
+        switch event {
+        case .newMessage(let message):
+            handleIncomingMessage(message)
+
+        case .messagesRead(let byUserId, _):
+            if let index = directConversations.firstIndex(where: { $0.userId == byUserId }) {
+                directConversations[index].unreadCount = 0
+            }
+
+        case .userTyping(let userId, let userName, let conversationType, let targetId, let isTyping):
+            handleTypingIndicator(
+                userId: userId,
+                userName: userName,
+                conversationType: conversationType,
+                targetId: targetId,
+                isTyping: isTyping
+            )
+
+        case .userStatusChanged(let userId, let status, let customStatus):
+            updateUserPresence(userId: userId, status: status, customStatus: customStatus)
+
+        case .channelCreated(let channel):
+            if !channels.contains(where: { $0.id == channel.id }) {
+                channels.insert(channel, at: 0)
+            }
+
+        case .channelDeleted(let channelId):
+            channels.removeAll { $0.id == channelId }
+
+        default:
+            break
+        }
+    }
+
+    private func handleIncomingMessage(_ message: Message) {
+        let currentUserId = session.currentUser?.id
+        if message.conversationType == .direct {
+            let partnerId = (message.senderId == currentUserId) ? message.targetId : message.senderId
+            if let index = directConversations.firstIndex(where: { $0.userId == partnerId }) {
+                directConversations[index].lastMessageId = message.id
+                directConversations[index].lastMessageText = message.text
+                directConversations[index].lastMessageTime = message.createdAt
+                directConversations[index].lastMessageSenderId = message.senderId
+                directConversations[index].lastMessageType = message.type
+                if message.senderId != currentUserId {
+                    directConversations[index].unreadCount += 1
+                }
+                let updated = directConversations.remove(at: index)
+                directConversations.insert(updated, at: 0)
+            } else {
+                onNeedsReload?()
+            }
+        } else {
+            if let index = channels.firstIndex(where: { $0.id == message.targetId }) {
+                channels[index].lastMessageText = message.text
+                channels[index].lastMessageTime = message.createdAt
+                if message.senderId != currentUserId {
+                    channels[index].unreadCount += 1
+                }
+                let updated = channels.remove(at: index)
+                channels.insert(updated, at: 0)
+            }
+        }
+    }
+
+    private func handleTypingIndicator(
+        userId: Int64,
+        userName: String,
+        conversationType: ConversationType,
+        targetId: Int64,
+        isTyping: Bool
+    ) {
+        let key = Self.typingKey(for: ConversationKey(type: conversationType, targetId: targetId))
+        if isTyping {
+            typingUsers[key] = String(localized: "\(userName) печатает...")
+
+            // Автосброс через 3 секунды
+            typingResetTimers[key]?.cancel()
+            typingResetTimers[key] = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.typingUsers.removeValue(forKey: key)
+            }
+        } else {
+            typingResetTimers[key]?.cancel()
+            typingUsers.removeValue(forKey: key)
+        }
+    }
+
+    private func updateUserPresence(userId: Int64, status: UserStatus, customStatus: String?) {
+        if let index = users.firstIndex(where: { $0.id == userId }) {
+            users[index].status = status
+            users[index].customStatus = customStatus
+        }
+        if let index = directConversations.firstIndex(where: { $0.userId == userId }) {
+            directConversations[index].status = status
+            directConversations[index].customStatus = customStatus
+        }
+    }
+}

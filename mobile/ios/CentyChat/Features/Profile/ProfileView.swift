@@ -2,32 +2,34 @@ import SwiftUI
 
 /// Экран профиля сотрудника с управлением статусом присутствия и функцией побудки
 public struct ProfileView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(SessionStore.self) private var session
+    @Environment(ProfileStore.self) private var profile
+    @Environment(ConversationsStore.self) private var conversations
+
     @State private var showChangePasswordSheet: Bool = false
     @State private var showWakeColleagueSheet: Bool = false
     @State private var selectedStatus: UserStatus = .online
     @State private var customStatusText: String = ""
-    
+
     public init() {}
-    
+
     public var body: some View {
         NavigationStack {
             List {
                 // Карточка пользователя
-                if let user = appState.currentUser {
+                if let user = session.currentUser {
                     Section {
                         HStack(spacing: 16) {
                             AvatarView(name: user.fullName, avatarUrl: user.avatarUrl, size: 70)
-                            
+
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(user.fullName)
                                     .font(.title3.weight(.bold))
-                                
+
                                 Text(user.jobTitle ?? user.roleName ?? "Сотрудник")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
-                                
+
                                 Text(user.departmentName ?? user.company ?? "")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -36,7 +38,7 @@ public struct ProfileView: View {
                         .padding(.vertical, 8)
                     }
                 }
-                
+
                 // Статус присутствия
                 Section(header: Text("Статус присутствия")) {
                     Picker("Статус", selection: $selectedStatus) {
@@ -52,7 +54,7 @@ public struct ProfileView: View {
                         Task { await updatePresenceStatus() }
                     }
                 }
-                
+
                 // Побудка (Wake Buzzer)
                 Section(header: Text("Привлечение внимания (Побудка)")) {
                     HStack {
@@ -63,11 +65,11 @@ public struct ProfileView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         Spacer()
-                        
-                        if appState.wakeCooldownRemaining > 0 {
-                            Text("\(appState.wakeCooldownRemaining) с")
+
+                        if profile.wakeCooldownRemaining > 0 {
+                            Text("\(profile.wakeCooldownRemaining) с")
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal, 10)
@@ -83,9 +85,9 @@ public struct ProfileView: View {
                         }
                     }
                 }
-                
+
                 // Контактная информация
-                if let user = appState.currentUser {
+                if let user = session.currentUser {
                     Section(header: Text("Корпоративные реквизиты")) {
                         if let email = user.email {
                             LabeledContent("Email", value: email)
@@ -102,7 +104,7 @@ public struct ProfileView: View {
                         LabeledContent("Логин", value: user.username)
                     }
                 }
-                
+
                 // Безопасность
                 Section(header: Text("Безопасность")) {
                     Button(action: {
@@ -115,9 +117,9 @@ public struct ProfileView: View {
                                 .foregroundColor(.primary)
                         }
                     }
-                    
+
                     Button(role: .destructive, action: {
-                        appState.logout()
+                        Task { await session.logout() }
                     }) {
                         HStack {
                             Image(systemName: "rectangle.portrait.and.arrow.right")
@@ -129,7 +131,7 @@ public struct ProfileView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Профиль")
             .onAppear {
-                if let user = appState.currentUser {
+                if let user = session.currentUser {
                     selectedStatus = user.status
                 }
             }
@@ -141,16 +143,16 @@ public struct ProfileView: View {
             }
         }
     }
-    
+
     // MARK: - Wake Colleague Picker
-    
+
     private var wakeColleaguePickerSheet: some View {
         NavigationStack {
-            List(appState.users.filter { $0.id != appState.currentUser?.id }) { colleague in
+            List(conversations.users.filter { $0.id != session.currentUser?.id }) { colleague in
                 Button(action: {
                     showWakeColleagueSheet = false
                     Task {
-                        await appState.sendWake(targetUserId: colleague.id)
+                        await profile.sendWake(targetUserId: colleague.id)
                     }
                 }) {
                     HStack(spacing: 12) {
@@ -177,14 +179,8 @@ public struct ProfileView: View {
             }
         }
     }
-    
+
     private func updatePresenceStatus() async {
-        appState.currentUser?.status = selectedStatus
-        if selectedStatus == .dnd {
-            await WebSocketClient.shared.send(clientMessage: .setDnd(enabled: true, customStatus: nil))
-        } else {
-            await WebSocketClient.shared.send(clientMessage: .presence(state: selectedStatus.rawValue, customStatus: nil))
-        }
-        CentyHaptics.light()
+        await profile.updatePresence(selectedStatus)
     }
 }

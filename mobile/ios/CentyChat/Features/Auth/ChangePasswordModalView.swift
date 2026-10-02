@@ -2,26 +2,26 @@ import SwiftUI
 
 /// Модальный экран обязательной или плановой смены пароля сотрудника
 public struct ChangePasswordModalView: View {
-    @Environment(AppState.self) private var appState
+    @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
-    
+
     public var isMandatory: Bool
-    
+
     @State private var oldPassword: String = ""
     @State private var newPassword: String = ""
     @State private var confirmPassword: String = ""
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
     @State private var successMessage: String? = nil
-    
+
     public init(isMandatory: Bool = true) {
         self.isMandatory = isMandatory
     }
-    
+
     private var isValid: Bool {
         !oldPassword.isEmpty && newPassword.count >= 8 && newPassword == confirmPassword
     }
-    
+
     public var body: some View {
         NavigationStack {
             ScrollView {
@@ -32,10 +32,10 @@ public struct ChangePasswordModalView: View {
                             .font(.system(size: 56))
                             .foregroundColor(isMandatory ? CentyColors.centrasRed : CentyColors.primaryBlue)
                             .padding(.top, 24)
-                        
+
                         Text(isMandatory ? "Обязательная смена пароля" : "Смена пароля")
                             .font(.title2.weight(.bold))
-                        
+
                         Text(isMandatory
                              ? "По требованиям корпоративной безопасности АО СК «Сентрас Иншуранс» вам необходимо установить новый пароль перед продолжением работы."
                              : "Введите текущий пароль и новый надежный пароль (минимум 8 символов).")
@@ -44,7 +44,7 @@ public struct ChangePasswordModalView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                     }
-                    
+
                     // Поля ввода
                     VStack(spacing: 14) {
                         CentyTextField(
@@ -53,14 +53,14 @@ public struct ChangePasswordModalView: View {
                             icon: "lock",
                             isSecure: true
                         )
-                        
+
                         CentyTextField(
                             placeholder: "Новый пароль (мин. 8 симв.)",
                             text: $newPassword,
                             icon: "key.fill",
                             isSecure: true
                         )
-                        
+
                         CentyTextField(
                             placeholder: "Повторите новый пароль",
                             text: $confirmPassword,
@@ -69,21 +69,21 @@ public struct ChangePasswordModalView: View {
                         )
                     }
                     .padding(.horizontal)
-                    
+
                     if let error = errorMessage {
                         Text(error)
                             .font(.subheadline)
                             .foregroundColor(.red)
                             .padding(.horizontal)
                     }
-                    
+
                     if let success = successMessage {
                         Text(success)
                             .font(.subheadline)
                             .foregroundColor(.green)
                             .padding(.horizontal)
                     }
-                    
+
                     // Кнопка подтверждения
                     CentyButton(
                         title: isLoading ? "Сохранение..." : "Сменить пароль",
@@ -94,7 +94,7 @@ public struct ChangePasswordModalView: View {
                         Task { await performPasswordChange() }
                     }
                     .padding(.horizontal)
-                    
+
                     if !isMandatory {
                         Button("Отмена") {
                             dismiss()
@@ -109,7 +109,7 @@ public struct ChangePasswordModalView: View {
             .interactiveDismissDisabled(isMandatory)
         }
     }
-    
+
     private func performPasswordChange() async {
         guard newPassword == confirmPassword else {
             errorMessage = "Пароли не совпадают"
@@ -121,25 +121,17 @@ public struct ChangePasswordModalView: View {
             CentyHaptics.error()
             return
         }
-        
+
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
-        
+
         do {
-            let req = ChangePasswordRequest(oldPassword: oldPassword, newPassword: newPassword)
-            let res = try await APIClient.shared.changePassword(request: req)
-            
-            appState.currentUser = res.user
-            appState.mustChangePasswordRequired = false
+            try await session.changePassword(oldPassword: oldPassword, newPassword: newPassword)
             CentyHaptics.success()
-            
-            // Если сокет был отсоединен сервером из-за token_version — переподключаем
-            await WebSocketClient.shared.connect()
-            
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.userMessage
             CentyHaptics.error()
         }
     }

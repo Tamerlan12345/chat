@@ -4,7 +4,7 @@ import XCTest
 @testable import CentyChat
 
 final class DTOParsingTests: XCTestCase {
-    
+
     func testUserParsing() throws {
         let json = """
         {
@@ -36,9 +36,9 @@ final class DTOParsingTests: XCTestCase {
             "created_at": "2025-01-10T08:00:00.000Z"
         }
         """.data(using: .utf8)!
-        
+
         let user = try JSONDecoder().decode(User.self, from: json)
-        
+
         XCTAssertEqual(user.id, 7)
         XCTAssertEqual(user.username, "k.akhmetov")
         XCTAssertEqual(user.fullName, "Ахметов Канат")
@@ -49,7 +49,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(user.permissions?.canCreateChannels, true)
         XCTAssertEqual(user.uin, 1042)
     }
-    
+
     func testChannelParsing() throws {
         let json = """
         {
@@ -66,9 +66,9 @@ final class DTOParsingTests: XCTestCase {
             "last_message_time": "2026-09-30T09:00:00.000Z"
         }
         """.data(using: .utf8)!
-        
+
         let channel = try JSONDecoder().decode(Channel.self, from: json)
-        
+
         XCTAssertEqual(channel.id, 1)
         XCTAssertEqual(channel.name, "#Общий")
         XCTAssertEqual(channel.type, .public)
@@ -76,7 +76,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(channel.unreadCount, 5)
         XCTAssertEqual(channel.lastMessageText, "Всем доброе утро!")
     }
-    
+
     func testMessageParsingWithMetadata() throws {
         let json = """
         {
@@ -97,9 +97,9 @@ final class DTOParsingTests: XCTestCase {
             "delivery_status": "read"
         }
         """.data(using: .utf8)!
-        
+
         let message = try JSONDecoder().decode(Message.self, from: json)
-        
+
         XCTAssertEqual(message.id, 240)
         XCTAssertEqual(message.conversationType, .direct)
         XCTAssertEqual(message.targetId, 12)
@@ -111,7 +111,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(message.metadata?.fileName, "spec.pdf")
         XCTAssertEqual(message.metadata?.fileSize, 1048576)
     }
-    
+
     func testAnnouncementParsing() throws {
         let json = """
         {
@@ -127,16 +127,16 @@ final class DTOParsingTests: XCTestCase {
             "is_confirmed": 0
         }
         """.data(using: .utf8)!
-        
+
         let announcement = try JSONDecoder().decode(Announcement.self, from: json)
-        
+
         XCTAssertEqual(announcement.id, 3)
         XCTAssertEqual(announcement.title, "Плановые работы")
         XCTAssertEqual(announcement.priority, .urgent)
         XCTAssertFalse(announcement.isConfirmed)
         XCTAssertNil(announcement.confirmedAt)
     }
-    
+
     func testWebSocketEventParsing() throws {
         let rawWsJson = """
         {
@@ -146,14 +146,14 @@ final class DTOParsingTests: XCTestCase {
             "at": 1759230000000
         }
         """.data(using: .utf8)!
-        
+
         let event = WSServerEvent.parse(from: rawWsJson)
-        
+
         guard case .wakeRing(let fromId, let fromName, let at) = event else {
             XCTFail("Failed to parse wake_ring event")
             return
         }
-        
+
         XCTAssertEqual(fromId, 12)
         XCTAssertEqual(fromName, "Данияр Нурпеисов")
         XCTAssertEqual(at, 1759230000000)
@@ -257,14 +257,10 @@ final class KeychainFailClosedTests: XCTestCase {
         let keychain = KeychainManager(testStore: store)
         try keychain.saveServerURL("https://chat.example.com")
         let client = APIClient(session: makeSession(), keychain: keychain)
-        let appState = await MainActor.run { AppState() }
+        let session = await makeSessionStore(client: client, keychain: keychain)
 
         do {
-            let response = try await client.login(request: LoginRequest(username: "qa", password: "password"))
-            await MainActor.run {
-                appState.currentUser = response.user
-                appState.isAuthenticated = true
-            }
+            _ = try await session.login(username: "qa", password: "password")
             XCTFail("Login must fail when its bearer token cannot be persisted securely.")
         } catch let error as KeychainManagerError {
             XCTAssertEqual(error, .addFailed(status: errSecAuthFailed))
@@ -273,7 +269,7 @@ final class KeychainFailClosedTests: XCTestCase {
         }
 
         XCTAssertNil(keychain.authToken)
-        let isAuthenticated = await MainActor.run { appState.isAuthenticated }
+        let isAuthenticated = await MainActor.run { session.isAuthenticated }
         XCTAssertFalse(isAuthenticated)
     }
 
@@ -283,16 +279,13 @@ final class KeychainFailClosedTests: XCTestCase {
         try keychain.saveServerURL("https://chat.example.com")
         try keychain.saveAuthToken("persisted-token")
         let client = APIClient(session: makeSession(), keychain: keychain)
-        let appState = await MainActor.run {
-            let state = AppState()
-            state.isAuthenticated = true
-            return state
-        }
+        let session = await makeSessionStore(client: client, keychain: keychain)
+        await MainActor.run { session.isAuthenticated = true }
 
-        await appState.logout(using: client)
+        await session.logout()
 
         XCTAssertEqual(keychain.authToken, "persisted-token")
-        let state = await MainActor.run { (appState.isAuthenticated, appState.errorMessage) }
+        let state = await MainActor.run { (session.isAuthenticated, session.errorMessage) }
         XCTAssertTrue(state.0)
         XCTAssertEqual(state.1, KeychainManagerError.deleteFailed(status: errSecAuthFailed).localizedDescription)
     }
@@ -301,6 +294,16 @@ final class KeychainFailClosedTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AuthResponseURLProtocol.self]
         return URLSession(configuration: configuration)
+    }
+
+    @MainActor
+    private func makeSessionStore(client: APIClient, keychain: KeychainManager) -> SessionStore {
+        SessionStore(
+            auth: LiveAuthRepository(client: client, keychain: keychain),
+            server: LiveServerRepository(client: client, keychain: keychain),
+            realtime: RealtimeStore(repository: FakeRealtimeRepository()),
+            deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") }
+        )
     }
 }
 

@@ -4,7 +4,7 @@ import XCTest
 /// Store-review metadata is checked against the files actually bundled into the app,
 /// not against the sources, so a build-setting regression cannot hide a missing key.
 final class BundleMetadataTests: XCTestCase {
-    private var appBundle: Bundle { Bundle(for: AppState.self) }
+    private var appBundle: Bundle { Bundle(for: AppContainer.self) }
 
     func testPrivacyManifestDeclaresSystemBootTimeWithElapsedTimeReason() throws {
         let manifest = try bundledPropertyList(named: "PrivacyInfo", extension: "xcprivacy")
