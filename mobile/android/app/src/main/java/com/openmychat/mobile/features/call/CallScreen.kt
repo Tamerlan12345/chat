@@ -86,7 +86,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.openmychat.mobile.R
 import com.openmychat.mobile.core.util.DateTimeUtils
+import com.openmychat.mobile.ui.components.BreathingRing
+import com.openmychat.mobile.ui.components.CallControl
+import com.openmychat.mobile.ui.components.CallToggle
 import com.openmychat.mobile.ui.components.CentyAvatar
+import com.openmychat.mobile.ui.components.LevelMeter
 import com.openmychat.mobile.ui.components.CentyOutlinedButton
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyMotion
@@ -172,7 +176,9 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Spacer(Modifier.size(32.dp))
-                BreathingAvatar(name = uiState.peerName, breathing = ringing)
+                BreathingRing(breathing = ringing) {
+                    CentyAvatar(name = uiState.peerName, size = 120.dp, ringColor = tokens.frame)
+                }
                 Spacer(Modifier.size(28.dp))
                 Text(
                     uiState.peerName,
@@ -189,6 +195,11 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                     is CallUiState.Incoming -> stringResource(R.string.call_incoming)
                     is CallUiState.Active -> DateTimeUtils.formatDuration(state.durationSeconds)
                     is CallUiState.Ended -> state.reason.ifBlank { stringResource(R.string.call_ended) }
+                }
+                if (uiState is CallUiState.Active) {
+                    // The peer's voice, live: five bars from the audio RMS (read in the draw phase).
+                    val level = viewModel.peerLevel.collectAsState()
+                    LevelMeter(level = { level.value }, modifier = Modifier.padding(bottom = 10.dp))
                 }
                 AnimatedContent(
                     targetState = statusText,
@@ -214,8 +225,8 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                     Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    RoundAction(Icons.Rounded.CallEnd, stringResource(R.string.call_decline), tokens.dangerFill, Color.White) { viewModel.rejectCall() }
-                    RoundAction(Icons.Rounded.Call, stringResource(R.string.call_accept), tokens.successFill, Color.White) {
+                    CallControl(Icons.Rounded.CallEnd, stringResource(R.string.call_decline), tokens.dangerFill, Color.White) { viewModel.rejectCall() }
+                    CallControl(Icons.Rounded.Call, stringResource(R.string.call_accept), tokens.successFill, Color.White) {
                         if (!hasAudioPermission) audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) else viewModel.acceptCall()
                     }
                 }
@@ -223,15 +234,15 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                     Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    ToggleAction(
+                    CallToggle(
                         icon = if (state.isMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
                         label = stringResource(R.string.call_mute),
                         state = stringResource(if (state.isMuted) R.string.call_mic_off else R.string.call_mic_on),
                         active = state.isMuted,
                         onClick = viewModel::toggleMute
                     )
-                    RoundAction(Icons.Rounded.CallEnd, stringResource(R.string.call_end), tokens.dangerFill, Color.White) { viewModel.hangUp() }
-                    ToggleAction(
+                    CallControl(Icons.Rounded.CallEnd, stringResource(R.string.call_end), tokens.dangerFill, Color.White) { viewModel.hangUp() }
+                    CallToggle(
                         icon = if (state.isSpeakerOn) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeDown,
                         label = stringResource(R.string.call_speaker),
                         state = stringResource(if (state.isSpeakerOn) R.string.call_speaker_on else R.string.call_speaker_off),
@@ -245,40 +256,6 @@ private fun CallContent(viewModel: CallViewModel, onCallFinished: () -> Unit) {
                 ) { Text(stringResource(R.string.action_close)) }
             }
         }
-    }
-}
-
-/** Incoming/outgoing: a ring breathes around the avatar (1 → 1.08, 1.6 s). Still with reduce motion. */
-@Composable
-private fun BreathingAvatar(name: String, breathing: Boolean, size: Dp = 120.dp) {
-    val tokens = CentyTheme.tokens
-    val reduce = LocalReduceMotion.current
-    val animate = breathing && !reduce
-    // The loop exists only while ringing; it stops once the call connects. The value is read in
-    // the draw layer, so the ring breathes without recomposing the screen.
-    val scale: State<Float>? = if (animate) {
-        rememberInfiniteTransition(label = "breath").animateFloat(
-            initialValue = 1f,
-            targetValue = 1.08f,
-            animationSpec = infiniteRepeatable(tween(CentyMotion.BREATH, easing = CentyMotion.EaseOut), RepeatMode.Reverse),
-            label = "ring-scale"
-        )
-    } else {
-        null
-    }
-    val ringAlpha by animateColorAsState(if (breathing) tokens.primaryLine else Color.Transparent, CentyMotion.slow(), label = "ring")
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size + 40.dp)) {
-        Box(
-            Modifier
-                .size(size + 24.dp)
-                .graphicsLayer {
-                    val value = scale?.value ?: 1f
-                    scaleX = value
-                    scaleY = value
-                }
-                .border(2.dp, ringAlpha, CircleShape)
-        )
-        CentyAvatar(name = name, size = size, ringColor = tokens.frame)
     }
 }
 
@@ -310,44 +287,5 @@ private fun PermissionNotice() {
                 context.startActivity(intent)
             }
         ) { Text(stringResource(R.string.call_open_settings)) }
-    }
-}
-
-/** A 64dp round button with its label under it; the whole column is one target, read once. */
-@Composable
-private fun RoundAction(icon: ImageVector, label: String, container: Color, content: Color, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-    ) {
-        Box(
-            Modifier.size(64.dp).clip(CircleShape).background(container).indication(interaction, ripple(color = content)),
-            contentAlignment = Alignment.Center
-        ) { Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(30.dp)) }
-        Spacer(Modifier.size(8.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = CentyTheme.tokens.textSecondary)
-    }
-}
-
-/** Mute / speaker: a switch (Role.Switch) whose name is the visible label and whose state is spoken. */
-@Composable
-private fun ToggleAction(icon: ImageVector, label: String, state: String, active: Boolean, onClick: () -> Unit) {
-    val tokens = CentyTheme.tokens
-    val container by animateColorAsState(if (active) tokens.textStrong else tokens.elevated, CentyMotion.base(), label = "toggle-bg")
-    val content by animateColorAsState(if (active) tokens.frame else tokens.textStrong, CentyMotion.base(), label = "toggle-fg")
-    val interaction = remember { MutableInteractionSource() }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .toggleable(value = active, interactionSource = interaction, indication = null, role = Role.Switch, onValueChange = { onClick() })
-            .semantics { stateDescription = state }
-    ) {
-        Box(
-            Modifier.size(64.dp).clip(CircleShape).background(container).indication(interaction, ripple(color = content)),
-            contentAlignment = Alignment.Center
-        ) { Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(28.dp)) }
-        Spacer(Modifier.size(8.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = tokens.textSecondary)
     }
 }

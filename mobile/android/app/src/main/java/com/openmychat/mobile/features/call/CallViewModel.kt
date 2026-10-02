@@ -98,6 +98,11 @@ class CallViewModel @AssistedInject constructor(
 
     private var durationJob: Job? = null
 
+    /** The peer's voice level (RMS, rises at once, falls gently) for the call's level meter. */
+    private val _peerLevel = MutableStateFlow(0f)
+    val peerLevel: StateFlow<Float> = _peerLevel
+    private var levelJob: Job? = null
+
     /** This call's microphone sink; the shared audio engine may already serve a newer call. */
     private val frameCallback: (ShortArray) -> Unit = { samples ->
         if (_callSession.value.state == CallState.ACTIVE) {
@@ -149,6 +154,7 @@ class CallViewModel @AssistedInject constructor(
             realtimeRepository.audioFrames.collect { frame ->
                 if (frame.senderId == peerId && _callSession.value.state == CallState.ACTIVE) {
                     callAudio.onIncomingAudioFrame(frame.pcmSamples)
+                    _peerLevel.value = AudioLevel.smooth(_peerLevel.value, AudioLevel.rms(frame.pcmSamples))
                 }
             }
         }
@@ -199,12 +205,23 @@ class CallViewModel @AssistedInject constructor(
                 )
             }
         }
+        // When the peer goes quiet (or mutes and stops sending), the meter falls back to rest.
+        levelJob?.cancel()
+        levelJob = viewModelScope.launch {
+            while (_callSession.value.state == CallState.ACTIVE) {
+                delay(100)
+                _peerLevel.value = AudioLevel.smooth(_peerLevel.value, 0f)
+            }
+        }
     }
 
     private fun endCall(reason: String) {
         if (isFinished) return
         durationJob?.cancel()
         durationJob = null
+        levelJob?.cancel()
+        levelJob = null
+        _peerLevel.value = 0f
         callAudio.stop()
         _callSession.value = _callSession.value.copy(
             state = CallState.ENDED,
@@ -239,6 +256,7 @@ class CallViewModel @AssistedInject constructor(
             callAudio.stop()
         }
         durationJob?.cancel()
+        levelJob?.cancel()
         super.onCleared()
     }
 }
