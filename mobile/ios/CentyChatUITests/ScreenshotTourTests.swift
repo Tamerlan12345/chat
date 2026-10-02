@@ -71,10 +71,11 @@ final class ScreenshotTourTests: XCTestCase {
         let submit = application.buttons["login-submit"]
         XCTAssertTrue(submit.exists)
         XCTAssertFalse(submit.isEnabled, "«Войти» stays disabled until both fields are filled.")
+        waitForAnimations()
         capture(application, named: "01-login-\(suffix)")
 
         // A login that does not exist on the stand: the answer must be generic.
-        signIn(application, username: "qa.screenshots", password: "Wrong-Password-1")
+        signIn(application, username: "qa.screenshots.\(suffix)", password: "Wrong-Password-1")
         let error = application.descendants(matching: .any)["login-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 30), "A failed login must show the error box.")
         if standURL != nil {
@@ -142,6 +143,11 @@ final class ScreenshotTourTests: XCTestCase {
         guard application.keyboards.firstMatch.exists else { return }
         application.descendants(matching: .any)["login-brand"].tap()
         _ = application.keyboards.firstMatch.waitForNonExistence(timeout: 3)
+    }
+
+    /// Lets the one-time mark animation and field transitions finish before a screenshot.
+    private func waitForAnimations() {
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
     }
 
     private func capture(_ application: XCUIApplication, named name: String) {

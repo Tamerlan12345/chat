@@ -12,7 +12,7 @@ final class AppLaunchTests: XCTestCase {
             application.launch()
 
             XCTAssertTrue(
-                application.otherElements["login-screen"].waitForExistence(timeout: 10),
+                application.descendants(matching: .any)["login-screen"].waitForExistence(timeout: 10),
                 "A fresh install must open on login."
             )
             XCTAssertFalse(application.otherElements["server-setup"].exists, "Server setup was removed.")
