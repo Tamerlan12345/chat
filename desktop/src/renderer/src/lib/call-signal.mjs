@@ -20,7 +20,8 @@ const REASON_TEXT = {
   unavailable: 'Не удалось дозвониться: сотрудник недоступен',
   cancelled: 'Вызов отменён',
   timeout: 'Время вызова истекло',
-  connection_lost: 'Связь с собеседником прервалась'
+  connection_lost: 'Связь с собеседником прервалась',
+  answered_elsewhere: 'Звонок принят на другом устройстве'
 };
 const REASON_CODE_RE = /^[a-z][a-z0-9_]*$/;
 

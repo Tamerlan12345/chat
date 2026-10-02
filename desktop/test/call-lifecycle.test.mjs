@@ -94,6 +94,16 @@ test('коды причин сервера показываются по-рус�
   assert.strictEqual(signal.callReasonText('', 'Запасной'), 'Запасной');
 });
 
+// Задача 20: на звонок ответило другое устройство того же сотрудника
+// (телефон) — сервер шлёт остальным call_end с кодом answered_elsewhere.
+test('звонок принят на другом устройстве: звонящая панель тихо закрывается, опоздавший ответ — по-русски', () => {
+  const text = signal.callReasonText('answered_elsewhere');
+  assert.strictEqual(text, 'Звонок принят на другом устройстве');
+  const msg = { type: 'call_end', senderId: 7, reason: 'answered_elsewhere' };
+  assert.strictEqual(callSignalAction(ctx('ringing', 'incoming'), msg).action, 'dismiss');
+  assert.deepStrictEqual(callSignalAction(ctx('connecting', 'incoming'), msg), { action: 'fail', error: text });
+});
+
 test('никто не берёт трубку: исходящий завершается с «Нет ответа», входящий исчезает', () => {
   assert.ok(RING_TIMEOUT_MS >= 30000 && RING_TIMEOUT_MS <= 60000);
   assert.deepStrictEqual(ringTimeoutAction('outgoing'), { action: 'fail', notify: 'call_end', error: 'Нет ответа' });
