@@ -105,6 +105,8 @@ private sealed interface ComposerBanner {
 internal fun ChatComposer(
     editingMessage: Message?,
     replyTo: Message?,
+    /** The draft answers one of my own messages: «Ответ · Вы». */
+    replyToIsOwn: Boolean,
     onCancelReply: () -> Unit,
     onSent: () -> Unit,
     actions: ChatActions,
@@ -189,7 +191,10 @@ internal fun ChatComposer(
                     )
                     is ComposerBanner.Replying -> ComposerBannerRow(
                         icon = Icons.AutoMirrored.Outlined.Reply,
-                        title = stringResource(R.string.chat_replying_to, shown.message.senderName.ifBlank { stringResource(R.string.chat_from_you) }),
+                        title = stringResource(
+                            R.string.chat_replying_to,
+                            if (replyToIsOwn || shown.message.senderName.isBlank()) stringResource(R.string.chat_from_you) else shown.message.senderName
+                        ),
                         text = shown.message.text,
                         closeLabel = stringResource(R.string.chat_cancel_reply),
                         onClose = onCancelReply,

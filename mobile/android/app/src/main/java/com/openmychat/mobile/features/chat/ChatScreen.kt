@@ -247,6 +247,7 @@ fun ChatContent(
                 ChatComposer(
                     editingMessage = editingMessage,
                     replyTo = replyTo,
+                    replyToIsOwn = replyTo?.senderId == currentUserId,
                     onCancelReply = { replyToId = null },
                     onSent = { replyToId = null },
                     actions = actions

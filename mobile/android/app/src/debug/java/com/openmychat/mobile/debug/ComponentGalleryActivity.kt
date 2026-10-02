@@ -216,7 +216,7 @@ private fun EmptyStates() {
     var shown by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().background(CentyTheme.tokens.list)) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Диалоги", "Каналы", "Объявления", "Поиск", "Нет сети").forEachIndexed { i, label ->
+            listOf("Чаты", "Каналы", "Объявления", "Поиск", "Сеть").forEachIndexed { i, label ->
                 FilterChip(selected = shown == i, onClick = { shown = i }, label = { Text(label) })
             }
         }
