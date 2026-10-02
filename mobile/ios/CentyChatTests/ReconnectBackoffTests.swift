@@ -19,7 +19,7 @@ final class ReconnectBackoffTests: XCTestCase {
         let harness = SocketHarness(script: [
             .failImmediately,
             .failImmediately,
-            .deliverThenFail(#"{"type":"wake_state","retryAt":0}"#),
+            .deliverThenFail(SocketFrames.authSuccess),
             .failImmediately,
         ])
         let client = harness.makeClient()
@@ -29,6 +29,70 @@ final class ReconnectBackoffTests: XCTestCase {
         await client.disconnect()
 
         XCTAssertEqual(delays, [1, 2, 1, 2])
+    }
+
+    func testFramesBeforeAuthSuccessDoNotResetTheBackoff() async throws {
+        let harness = SocketHarness(script: [
+            .failImmediately,
+            .failImmediately,
+            .deliverThenFail(#"{"type":"wake_state","retryAt":0}"#),
+            .failImmediately,
+        ])
+        let client = harness.makeClient()
+
+        await client.connect()
+        let delays = try await harness.clock.waitForDelays(count: 4)
+        await client.disconnect()
+
+        XCTAssertEqual(delays, [1, 2, 4, 8])
+    }
+
+    func testAuthErrorClosesTheSocketWithoutResettingTheBackoff() async throws {
+        // The server answers auth_error and keeps the socket open until its 10 s auth timeout.
+        let harness = SocketHarness(script: [
+            .failImmediately,
+            .failImmediately,
+            .deliverThenHang(SocketFrames.rateLimited),
+            .failImmediately,
+        ])
+        let client = harness.makeClient()
+
+        await client.connect()
+        let delays = try await harness.clock.waitForDelays(count: 4)
+        await client.disconnect()
+
+        XCTAssertEqual(delays, [1, 2, 4, 8])
+    }
+
+    func testRepeatedAuthErrorIsReportedOnce() async throws {
+        let harness = SocketHarness(script: Array(repeating: .deliverThenHang(SocketFrames.rateLimited), count: 4))
+        let client = harness.makeClient()
+        let events = await client.makeEventStream()
+        let counter = Locked(0)
+        let consumer = Task {
+            for await event in events {
+                if case .authError = event { counter.withValue { $0 += 1 } }
+            }
+        }
+
+        await client.connect()
+        _ = try await harness.clock.waitForDelays(count: 3)
+        await client.disconnect()
+        consumer.cancel()
+
+        XCTAssertEqual(counter.value, 1, "A repeated auth_error must be reported once, not on every retry")
+        XCTAssertGreaterThanOrEqual(harness.transportCount, 3)
+    }
+
+    func testJitterNeverPushesTheDelayAboveTheCap() {
+        var backoff = ReconnectBackoff()
+        var delays: [TimeInterval] = []
+        for _ in 0..<10 {
+            delays.append(backoff.nextDelay(jitter: 0.2))
+        }
+
+        XCTAssertLessThanOrEqual(delays.max() ?? 0, ReconnectBackoff.maxSeconds)
+        XCTAssertEqual(delays.first ?? 0, 1.2, accuracy: 0.0001)
     }
 
     func testConnectionStateReportsTheScheduledReconnect() async throws {
@@ -62,6 +126,13 @@ final class ReconnectBackoffTests: XCTestCase {
 private enum TransportStep: Sendable {
     case failImmediately
     case deliverThenFail(String)
+    /// Delivers one frame, then keeps the socket open until it is cancelled.
+    case deliverThenHang(String)
+}
+
+private enum SocketFrames {
+    static let authSuccess = #"{"type":"auth_success","user":{"id":1,"username":"qa","full_name":"QA User","is_active":1,"must_change_password":0}}"#
+    static let rateLimited = #"{"type":"auth_error","code":"RATE_LIMITED","message":"Слишком много попыток. Повторите через минуту."}"#
 }
 
 private struct TransportClosed: Error {}
@@ -69,11 +140,19 @@ private struct TransportClosed: Error {}
 private final class ScriptedTransport: WebSocketTransport, @unchecked Sendable {
     private let pending: Locked<[WebSocketFrame]>
     private let sent: Locked<[WebSocketFrame]>
+    private let hangsWhenDrained: Bool
 
     init(step: TransportStep, sent: Locked<[WebSocketFrame]>) {
         switch step {
-        case .failImmediately: pending = Locked([])
-        case .deliverThenFail(let text): pending = Locked([.text(text)])
+        case .failImmediately:
+            pending = Locked([])
+            hangsWhenDrained = false
+        case .deliverThenFail(let text):
+            pending = Locked([.text(text)])
+            hangsWhenDrained = false
+        case .deliverThenHang(let text):
+            pending = Locked([.text(text)])
+            hangsWhenDrained = true
         }
         self.sent = sent
     }
@@ -89,7 +168,13 @@ private final class ScriptedTransport: WebSocketTransport, @unchecked Sendable {
         let next = pending.withValue { frames -> WebSocketFrame? in
             frames.isEmpty ? nil : frames.removeFirst()
         }
-        guard let next else { throw TransportClosed() }
+        guard let next else {
+            if hangsWhenDrained {
+                // Like a server waiting for its auth timeout; ends when the client cancels the task.
+                try await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            }
+            throw TransportClosed()
+        }
         return next
     }
 
@@ -139,6 +224,9 @@ private final class SocketHarness: @unchecked Sendable {
     let clock: ManualClock
     private let script: Locked<[TransportStep]>
     private let sent = Locked<[WebSocketFrame]>([])
+    private let created = Locked(0)
+
+    var transportCount: Int { created.value }
 
     init(script: [TransportStep], holdReconnects: Bool = false) {
         self.script = Locked(script)
@@ -153,9 +241,11 @@ private final class SocketHarness: @unchecked Sendable {
         let script = self.script
         let sent = self.sent
         let clock = self.clock
+        let created = self.created
         return WebSocketClient(
             credentials: { ("https://chat.example.com", "secret-token") },
             makeTransport: { _ in
+                created.withValue { $0 += 1 }
                 let step = script.withValue { steps -> TransportStep in
                     steps.isEmpty ? .failImmediately : steps.removeFirst()
                 }

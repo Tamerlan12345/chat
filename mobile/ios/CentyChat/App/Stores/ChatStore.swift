@@ -9,6 +9,8 @@ public final class ChatStore: RealtimeEventHandling {
     public private(set) var messages: [Message] = []
     public private(set) var loadState: LoadState = .idle
     public private(set) var isUploadingAttachment = false
+    /// True while the chat screen is on screen.
+    public private(set) var isVisible = false
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let realtime: RealtimeStore
@@ -31,6 +33,12 @@ public final class ChatStore: RealtimeEventHandling {
         self.realtime = realtime
         self.session = session
         self.conversations = conversations
+    }
+
+    // MARK: - Visibility
+
+    public func setVisible(_ visible: Bool) {
+        isVisible = visible
     }
 
     // MARK: - Loading

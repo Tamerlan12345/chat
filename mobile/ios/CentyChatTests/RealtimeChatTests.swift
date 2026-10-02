@@ -55,6 +55,37 @@ final class RealtimeChatTests: XCTestCase {
         XCTAssertEqual(conversations.channels.first?.unreadCount, 1)
     }
 
+    func testIncomingPairForADialogThatIsNotOnScreenRaisesUnreadByExactlyOne() async {
+        conversations.directConversations = [TestModels.direct(with: 12)]
+        let chat = await openChat(with: 12)
+        chat.setVisible(true)
+        chat.setVisible(false)
+        let message = messageJSON(id: 700, from: 12, to: 1)
+
+        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
+        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+
+        XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1)
+        await settle()
+        let sentTypes = await app.realtime.sentTypes
+        XCTAssertFalse(sentTypes.contains("mark_read"), "A dialog that is not on screen must stay unread")
+    }
+
+    func testIncomingMessageInTheVisibleChatStaysReadAndIsMarkedRead() async {
+        conversations.directConversations = [TestModels.direct(with: 12)]
+        let chat = await openChat(with: 12)
+        chat.setVisible(true)
+        let message = messageJSON(id: 701, from: 12, to: 1)
+
+        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
+        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+
+        XCTAssertEqual(conversations.directConversations.first?.unreadCount, 0)
+        let realtimeRepository = app.realtime
+        let markedRead = await eventually { await realtimeRepository.sentTypes.contains("mark_read") }
+        XCTAssertTrue(markedRead, "The visible chat must send mark_read so the sender sees the message as read")
+    }
+
     // MARK: - Open chat reflects realtime events
 
     func testIncomingMessageAppearsOnceInTheOpenChat() async {
