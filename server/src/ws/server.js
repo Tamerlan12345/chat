@@ -554,6 +554,10 @@ class WsServer {
       ws.send(JSON.stringify({ type: 'auth_success', user }));
       ws.send(JSON.stringify(this.wakeStateFor(user.id)));
 
+      // Получатель снова на связи: всё, что пришло ему, пока его не было,
+      // теперь доставлено — и авторы, кто в сети, узнают об этом сразу.
+      this.announcePendingDeliveries(user.id);
+
       // Broadcast online status to all connected clients
       this.broadcast({
         type: 'user_status_changed',
@@ -575,6 +579,7 @@ class WsServer {
     // 2. Chat messaging
     if (type === 'send_message' || type === 'direct_message' || type === 'channel_message') {
       let { conversationType, targetId, text, msgType, replyToId, metadata, recipient_id, channel_id } = msg;
+      const clientMsgId = msg.client_msg_id;
 
       if (!conversationType) {
         if (type === 'channel_message' || channel_id) conversationType = 'channel';
@@ -585,46 +590,33 @@ class WsServer {
       }
 
       let savedMsg;
+      let duplicate = false;
       try {
-        savedMsg = await MessageService.sendMessage({
+        ({ message: savedMsg, duplicate } = await MessageService.sendMessageIdempotent({
           conversationType,
           targetId: Number(targetId),
           senderId: currentUser.id,
           text,
           type: msgType || 'text',
           replyToId: replyToId ? Number(replyToId) : null,
-          metadata
-        });
+          metadata,
+          clientMsgId
+        }));
       } catch (err) {
         const message = err.message === 'NOT_CHANNEL_MEMBER' ? 'Вы не участник этого канала' : err.message;
         // Текст возвращается клиенту: поле ввода у него уже очищено, и без
-        // этого сообщение пропало бы без следа.
-        return ws.send(JSON.stringify({ type: 'error', context: 'send_message', message, text }));
+        // этого сообщение пропало бы без следа. client_msg_id — чтобы клиент
+        // нашёл в своей очереди, какая именно отправка не удалась; недопустимое
+        // значение обратно не отражается.
+        const frame = { type: 'error', context: 'send_message', message, text };
+        if (err.code === 'INVALID_CLIENT_MSG_ID' || err.code === 'CLIENT_MSG_ID_CONFLICT') frame.code = err.code;
+        if (typeof clientMsgId === 'string' && MessageService.CLIENT_MSG_ID_RE.test(clientMsgId)) {
+          frame.client_msg_id = clientMsgId;
+        }
+        return ws.send(JSON.stringify(frame));
       }
 
-      if (conversationType === 'channel') {
-        for (const memberId of MessageService.getChannelMemberIds(targetId)) {
-          this.sendToUser(memberId, { type: 'channel_message', message: savedMsg });
-          this.sendToUser(memberId, { type: 'new_message', message: savedMsg });
-        }
-      } else {
-        for (const userId of [targetId, currentUser.id]) {
-          this.sendToUser(userId, { type: 'direct_message', message: savedMsg });
-          this.sendToUser(userId, { type: 'new_message', message: savedMsg });
-        }
-
-        // Получатель на связи — отметка о доставке ставится сразу.
-        if (this.isUserOnline(targetId)) {
-          const now = MessageService.markDelivered(savedMsg.id, targetId);
-          this.sendToUser(currentUser.id, {
-            type: 'message_status_updated',
-            messageId: savedMsg.id,
-            status: 'delivered',
-            userId: targetId,
-            timestamp: now
-          });
-        }
-      }
+      this.publishNewMessage(savedMsg, { duplicate });
       return;
     }
 
@@ -1170,6 +1162,67 @@ class WsServer {
   isUserOnline(userId) {
     const sockets = this.userSockets.get(Number(userId));
     return Boolean(sockets && sockets.size > 0);
+  }
+
+  /**
+   * Рассылка только что сохранённого сообщения — одна для WS и REST:
+   * direct_message/channel_message и следом new_message каждому участнику;
+   * для личного — отметка «доставлено», если получатель на связи.
+   *
+   * Повтор отправки (тот же client_msg_id) — не новое сообщение: эхо уходит
+   * только сокетам самого автора как подтверждение, получатели второй раз
+   * его не получают (настольный клиент показал бы уведомление повторно).
+   */
+  publishNewMessage(message, { duplicate = false } = {}) {
+    const specific = message.conversation_type === 'channel' ? 'channel_message' : 'direct_message';
+    const senderId = Number(message.sender_id);
+    let recipients;
+    if (duplicate) recipients = [senderId];
+    else if (message.conversation_type === 'channel') recipients = MessageService.getChannelMemberIds(message.target_id);
+    else recipients = [Number(message.target_id), senderId];
+
+    for (const userId of recipients) {
+      this.sendToUser(userId, { type: specific, message });
+      this.sendToUser(userId, { type: 'new_message', message });
+    }
+
+    if (!duplicate && message.conversation_type === 'direct') this.markDeliveredIfOnline(message);
+  }
+
+  // Получатель личного сообщения на связи — «доставлено» ставится сразу.
+  markDeliveredIfOnline(message) {
+    const recipientId = Number(message.target_id);
+    if (!this.isUserOnline(recipientId)) return;
+    const now = MessageService.markDelivered(message.id, recipientId);
+    this.sendToUser(Number(message.sender_id), {
+      type: 'message_status_updated',
+      messageId: message.id,
+      status: 'delivered',
+      userId: recipientId,
+      timestamp: now
+    });
+  }
+
+  // S3: при входе получателя — его недоставленные личные сообщения
+  // становятся доставленными, авторам уходит тот же message_status_updated,
+  // что и при отправке получателю в сети (по кадру на сообщение).
+  announcePendingDeliveries(recipientId) {
+    let result;
+    try {
+      result = MessageService.markPendingDelivered(recipientId);
+    } catch (err) {
+      console.warn('[WS] отметка доставки при входе не удалась:', err.message);
+      return;
+    }
+    for (const { messageId, senderId } of result.delivered) {
+      this.sendToUser(senderId, {
+        type: 'message_status_updated',
+        messageId,
+        status: 'delivered',
+        userId: Number(recipientId),
+        timestamp: result.timestamp
+      });
+    }
   }
 
   sendToUser(userId, data) {

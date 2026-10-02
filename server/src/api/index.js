@@ -1283,18 +1283,41 @@ router.get('/conversations/direct', requireAuth, route(async (req, res) => {
   res.json(await MessageService.getDirectConversations(req.user.id));
 }));
 
+// afterId — необязательный, но если передан, то только неотрицательное целое:
+// молча превращать «abc» в «с начала» значило бы отдать клиенту всю переписку
+// вместо ошибки в его коде.
+function parseAfterId(raw) {
+  if (raw === undefined) return { ok: true, value: null };
+  if (typeof raw !== 'string' || !/^\d{1,15}$/.test(raw)) return { ok: false };
+  return { ok: true, value: Number(raw) };
+}
+
+const AFTER_ID_ERROR = 'afterId — неотрицательное целое (id последнего известного сообщения)';
+
+// Отказ отправки: известные коды client_msg_id — машинным полем code (409 для
+// повтора ключа в другой переписке), остальное — как раньше.
+function sendErrorResponse(res, err) {
+  if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
+  if (err.code === 'CLIENT_MSG_ID_CONFLICT') return res.status(409).json({ error: err.message, code: err.code });
+  if (err.code === 'INVALID_CLIENT_MSG_ID') return res.status(400).json({ error: err.message, code: err.code });
+  return res.status(400).json({ error: err.message });
+}
+
 router.get('/messages', requireAuth, route(async (req, res) => {
   try {
     const { conversationType, targetId, limit, beforeId } = req.query;
     if (!conversationType || !targetId) {
       return res.status(400).json({ error: 'Укажите conversationType и targetId' });
     }
+    const after = parseAfterId(req.query.afterId);
+    if (!after.ok) return res.status(400).json({ error: AFTER_ID_ERROR });
     res.json(await MessageService.getMessages(
       conversationType,
       Number(targetId),
       req.user.id,
       limit ? parseInt(limit, 10) : 50,
-      beforeId ? parseInt(beforeId, 10) : null
+      beforeId ? parseInt(beforeId, 10) : null,
+      after.value
     ));
   } catch (err) {
     if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
@@ -1303,48 +1326,54 @@ router.get('/messages', requireAuth, route(async (req, res) => {
 }));
 
 router.get('/messages/direct/:targetId', requireAuth, route(async (req, res) => {
+  const after = parseAfterId(req.query.afterId);
+  if (!after.ok) return res.status(400).json({ error: AFTER_ID_ERROR });
   res.json(await MessageService.getMessages(
     'direct',
     Number(req.params.targetId),
     req.user.id,
     req.query.limit ? parseInt(req.query.limit, 10) : 50,
-    req.query.beforeId ? parseInt(req.query.beforeId, 10) : null
+    req.query.beforeId ? parseInt(req.query.beforeId, 10) : null,
+    after.value
   ));
 }));
 
-router.post('/messages/direct/:targetId', requireAuth, route(async (req, res) => {
+// REST-отправка: 201 — сообщение создано; 200 — повтор с тем же client_msg_id,
+// в ответе уже сохранённая запись. Рассылка — та же, что у WS (publishNewMessage):
+// включая «доставлено», если получатель на связи.
+async function sendViaRest(req, res, conversationType) {
   try {
-    const { text, type, reply_to_id, metadata } = req.body || {};
-    const targetId = Number(req.params.targetId);
-    const msg = await MessageService.sendMessage({
-      conversationType: 'direct',
-      targetId,
+    const { text, type, reply_to_id, metadata, client_msg_id } = req.body || {};
+    const { message, duplicate } = await MessageService.sendMessageIdempotent({
+      conversationType,
+      targetId: Number(req.params.targetId),
       senderId: req.user.id,
       text,
       type: type || 'text',
       replyToId: reply_to_id || null,
-      metadata
+      metadata,
+      clientMsgId: client_msg_id
     });
-
-    for (const userId of [targetId, req.user.id]) {
-      wsServer.sendToUser(userId, { type: 'direct_message', message: msg });
-      wsServer.sendToUser(userId, { type: 'new_message', message: msg });
-    }
-
-    res.status(201).json(msg);
+    wsServer.publishNewMessage(message, { duplicate });
+    res.status(duplicate ? 200 : 201).json(message);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendErrorResponse(res, err);
   }
-}));
+}
+
+router.post('/messages/direct/:targetId', requireAuth, route((req, res) => sendViaRest(req, res, 'direct')));
 
 router.get('/messages/channels/:targetId', requireAuth, route(async (req, res) => {
   try {
+    const after = parseAfterId(req.query.afterId);
+    if (!after.ok) return res.status(400).json({ error: AFTER_ID_ERROR });
     res.json(await MessageService.getMessages(
       'channel',
       Number(req.params.targetId),
       req.user.id,
       req.query.limit ? parseInt(req.query.limit, 10) : 50,
-      req.query.beforeId ? parseInt(req.query.beforeId, 10) : null
+      req.query.beforeId ? parseInt(req.query.beforeId, 10) : null,
+      after.value
     ));
   } catch (err) {
     if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
@@ -1352,29 +1381,40 @@ router.get('/messages/channels/:targetId', requireAuth, route(async (req, res) =
   }
 }));
 
-router.post('/messages/channels/:targetId', requireAuth, route(async (req, res) => {
-  try {
-    const { text, type, reply_to_id, metadata } = req.body || {};
-    const targetId = Number(req.params.targetId);
-    const msg = await MessageService.sendMessage({
-      conversationType: 'channel',
-      targetId,
-      senderId: req.user.id,
-      text,
-      type: type || 'text',
-      replyToId: reply_to_id || null,
-      metadata
-    });
+router.post('/messages/channels/:targetId', requireAuth, route((req, res) => sendViaRest(req, res, 'channel')));
 
-    for (const memberId of MessageService.getChannelMemberIds(targetId)) {
-      wsServer.sendToUser(memberId, { type: 'channel_message', message: msg });
-      wsServer.sendToUser(memberId, { type: 'new_message', message: msg });
+// ── Синхронизация после переподключения (мобильные клиенты) ──
+// Курсор — номер изменения (строка из цифр, не время). Без since — только
+// текущая голова: с неё клиент начинает, загрузив страницы переписок обычным
+// путём. Предел частоты — как у поиска: обход длинного пропуска — это десятки
+// страниц, а не тысячи запросов в минуту.
+const SYNC_RATE_LIMIT = { maxAttempts: 60, windowMs: 60000 };
+const SYNC_CURSOR_RE = /^\d{1,15}$/;
+
+router.get('/sync', requireAuth, route(async (req, res) => {
+  if (!checkRateLimit(`sync:${req.user.id}`, SYNC_RATE_LIMIT)) {
+    res.set('Retry-After', '60');
+    return res.status(429).json({ error: 'Слишком много запросов синхронизации. Повторите через минуту.' });
+  }
+  const { since, limit } = req.query;
+  if (since !== undefined && (typeof since !== 'string' || !SYNC_CURSOR_RE.test(since))) {
+    return res.status(400).json({ error: 'since — курсор из next_cursor (строка из цифр)' });
+  }
+  let pageSize = MessageService.SYNC_DEFAULT_LIMIT;
+  if (limit !== undefined) {
+    if (typeof limit !== 'string' || !/^\d{1,6}$/.test(limit) || Number(limit) < 1) {
+      return res.status(400).json({ error: `limit — целое от 1 (больше ${MessageService.SYNC_MAX_LIMIT} урезается)` });
     }
-
-    res.status(201).json(msg);
+    pageSize = Number(limit);
+  }
+  if (since === undefined) {
+    return res.json({ messages: [], next_cursor: String(MessageService.syncHead()), has_more: false });
+  }
+  try {
+    res.json(await MessageService.syncSince(req.user.id, since, pageSize));
   } catch (err) {
-    if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
-    res.status(400).json({ error: err.message });
+    if (err.code === 'SYNC_CURSOR_INVALID') return res.status(410).json({ error: err.message, code: err.code });
+    throw err;
   }
 }));
 

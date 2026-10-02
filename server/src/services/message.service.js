@@ -59,6 +59,56 @@ function isWithinWindow(createdAt, windowMinutesRaw) {
   return ageMs <= minutes * 60 * 1000;
 }
 
+// Ключ идемпотентности отправки, который придумывает клиент (обычно UUID).
+// Только безопасный набор символов и не длиннее 64: значение хранится в базе,
+// попадает в индекс и отражается в ответах — произвольный текст здесь не нужен.
+const CLIENT_MSG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+// /api/sync: страница по умолчанию и потолок, как у GET /api/messages.
+const SYNC_DEFAULT_LIMIT = 100;
+const SYNC_MAX_LIMIT = 200;
+
+// Сколько последних входящих личных сообщений просматривается при входе
+// получателя в поисках недоставленных (S3). Без предела каждый вход проверял
+// бы всю историю человека, а после перезапуска сервера в сеть входит весь
+// офис разом. Недоставленные — это всегда последние входящие.
+const PENDING_DELIVERY_SCAN = 1000;
+
+// Видимость сообщения пользователю — одна и та же для поиска и синхронизации:
+// канал — только при участии (как assertChannelMember в getMessages), личное —
+// только своё (отправитель или получатель). Параметры: user_id трижды.
+const VISIBLE_TO_USER_SQL = `(
+  (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
+  (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
+)`;
+
+// Номер следующего изменения. Подзапрос внутри той же инструкции: node:sqlite
+// синхронен, и между чтением максимума и записью никто не вклинится; уникальный
+// индекс idx_messages_change_seq — последняя страховка.
+const NEXT_CHANGE_SEQ_SQL = '(SELECT COALESCE(MAX(change_seq), 0) + 1 FROM messages)';
+
+function clientMsgIdError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+/**
+ * Проверяет client_msg_id из запроса. undefined/null — поля нет (как у
+ * настольного клиента). Любое другое значение обязано быть строкой из
+ * безопасного набора, иначе — ошибка с кодом INVALID_CLIENT_MSG_ID.
+ */
+function normalizeClientMsgId(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string' || !CLIENT_MSG_ID_RE.test(raw)) {
+    throw clientMsgIdError(
+      'INVALID_CLIENT_MSG_ID',
+      'Недопустимый client_msg_id: строка 1–64 символа из A–Z, a–z, 0–9, «_» и «-»'
+    );
+  }
+  return raw;
+}
+
 // Экранирование для LIKE … ESCAPE '\': символы шаблона из строки поиска
 // сотрудника ищутся буквально.
 function escapeLike(text) {
@@ -185,7 +235,12 @@ class MessageService {
       .sort((a, b) => String(b.last_message_time || '').localeCompare(String(a.last_message_time || '')));
   }
 
-  static async getMessages(conversationType, targetId, currentUserId, limit = 50, beforeId = null) {
+  /**
+   * Страница переписки. beforeId — назад, к более старым (последние limit до
+   * него); afterId — вперёд, к более новым (первые limit после него). В обоих
+   * случаях результат по возрастанию id.
+   */
+  static async getMessages(conversationType, targetId, currentUserId, limit = 50, beforeId = null, afterId = null) {
     const db = getDatabase();
     const me = Number(currentUserId);
     const target = Number(targetId);
@@ -217,19 +272,53 @@ class MessageService {
       params.push(Number(beforeId));
     }
 
-    query += ' ORDER BY m.id DESC LIMIT ? ';
+    const forward = afterId !== null && afterId !== undefined;
+    if (forward) {
+      query += ' AND m.id > ? ';
+      params.push(Number(afterId));
+    }
+
+    query += forward ? ' ORDER BY m.id ASC LIMIT ? ' : ' ORDER BY m.id DESC LIMIT ? ';
     params.push(capped);
 
     const rows = db.prepare(query).all(...params);
-    rows.reverse(); // в хронологическом порядке
+    if (!forward) rows.reverse(); // в хронологическом порядке
     return this.attachSenders(rows);
   }
 
-  static async sendMessage({
-    conversationType, targetId, senderId, text, type = 'text', replyToId = null, metadata = null
+  static async sendMessage(params) {
+    return (await this.sendMessageIdempotent(params)).message;
+  }
+
+  /**
+   * Сообщение с тем же client_msg_id этого же отправителя, если оно уже есть.
+   * Повтор в другую переписку — ошибка CLIENT_MSG_ID_CONFLICT: возвращать
+   * запись не той переписки значило бы молча «доставить» не туда.
+   */
+  static findClientDuplicate(db, { senderId, clientMsgId, conversationType, targetId }) {
+    if (!clientMsgId) return null;
+    const existing = db
+      .prepare('SELECT id, conversation_type, target_id FROM messages WHERE sender_id = ? AND client_msg_id = ?')
+      .get(Number(senderId), clientMsgId);
+    if (!existing) return null;
+    if (existing.conversation_type !== conversationType || Number(existing.target_id) !== Number(targetId)) {
+      throw clientMsgIdError('CLIENT_MSG_ID_CONFLICT', 'Этот client_msg_id уже использован для другой переписки');
+    }
+    return Number(existing.id);
+  }
+
+  /**
+   * Отправка с защитой от повтора. Возвращает { message, duplicate }:
+   * duplicate = true, если сообщение с этим client_msg_id у отправителя уже
+   * было, — тогда ничего не записывается и возвращается сохранённая запись
+   * (в том числе удалённая, как надгробие).
+   */
+  static async sendMessageIdempotent({
+    conversationType, targetId, senderId, text, type = 'text', replyToId = null, metadata = null, clientMsgId = null
   }) {
     const db = getDatabase();
     const now = new Date().toISOString();
+    const clientKey = normalizeClientMsgId(clientMsgId);
 
     // Только известные виды переписки и сообщений. Раньше принималось что
     // угодно — например «system» с пустым текстом несуществующему адресату.
@@ -242,6 +331,12 @@ class MessageService {
     if (!Number.isInteger(Number(targetId)) || Number(targetId) <= 0) {
       throw new Error('Не указан получатель');
     }
+
+    // Повтор узнаётся раньше остальных проверок: отправка уже состоялась, и
+    // ответ на её повтор не должен зависеть от того, что изменилось с тех пор.
+    // Ищется только среди сообщений САМОГО отправителя — чужое не вернётся.
+    const knownId = this.findClientDuplicate(db, { senderId, clientMsgId: clientKey, conversationType, targetId });
+    if (knownId) return { message: await this.getMessageById(knownId), duplicate: true };
 
     if (conversationType === 'channel') {
       this.assertChannelMember(Number(targetId), Number(senderId));
@@ -290,21 +385,38 @@ class MessageService {
       }
     }
 
-    const result = db
-      .prepare(`
-        INSERT INTO messages (conversation_type, target_id, sender_id, text, type, reply_to_id, metadata_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        conversationType,
-        Number(targetId),
-        Number(senderId),
-        body,
-        type,
-        replyToId ? Number(replyToId) : null,
-        metadata ? JSON.stringify(metadata) : null,
-        now
-      );
+    // Между первой проверкой и записью были await (получатель, файл) — за это
+    // время мог успеть сохраниться параллельный повтор. Отсюда и до INSERT
+    // кода с await нет, так что вторая проверка и запись неразрывны.
+    const raced = this.findClientDuplicate(db, { senderId, clientMsgId: clientKey, conversationType, targetId });
+    if (raced) return { message: await this.getMessageById(raced), duplicate: true };
+
+    let result;
+    try {
+      result = db
+        .prepare(`
+          INSERT INTO messages (conversation_type, target_id, sender_id, text, type, reply_to_id, metadata_json, created_at, client_msg_id, change_seq)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NEXT_CHANGE_SEQ_SQL})
+        `)
+        .run(
+          conversationType,
+          Number(targetId),
+          Number(senderId),
+          body,
+          type,
+          replyToId ? Number(replyToId) : null,
+          metadata ? JSON.stringify(metadata) : null,
+          now,
+          clientKey
+        );
+    } catch (err) {
+      // Уникальный индекс (sender_id, client_msg_id) — последняя линия защиты.
+      const again = clientKey && /UNIQUE/i.test(String(err.message))
+        ? this.findClientDuplicate(db, { senderId, clientMsgId: clientKey, conversationType, targetId })
+        : null;
+      if (again) return { message: await this.getMessageById(again), duplicate: true };
+      throw err;
+    }
 
     const messageId = Number(result.lastInsertRowid);
 
@@ -316,7 +428,19 @@ class MessageService {
       `).run(Number(targetId), Number(senderId), now, messageId, messageId);
     }
 
-    return this.getMessageById(messageId);
+    return { message: await this.getMessageById(messageId), duplicate: false };
+  }
+
+  /**
+   * Сдвигает сообщения в конец последовательности изменений: правка,
+   * удаление, смена статуса доставки/прочтения. Синхронизация (/api/sync)
+   * вернёт их снова, уже в новом состоянии.
+   */
+  static touchMessages(ids) {
+    const unique = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!unique.length) return;
+    const bump = getDatabase().prepare(`UPDATE messages SET change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`);
+    for (const id of unique) bump.run(id);
   }
 
   /**
@@ -351,7 +475,8 @@ class MessageService {
       VALUES (?, 'edit', ?, ?, ?, ?)
     `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
 
-    db.prepare('UPDATE messages SET text = ?, updated_at = ? WHERE id = ?').run(body, now, message.id);
+    db.prepare(`UPDATE messages SET text = ?, updated_at = ?, change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`)
+      .run(body, now, message.id);
 
     return this.getMessageById(message.id);
   }
@@ -387,7 +512,7 @@ class MessageService {
       VALUES (?, 'delete', ?, ?, ?, ?)
     `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
 
-    db.prepare("UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ? WHERE id = ?")
+    db.prepare(`UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ?, change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`)
       .run(now, message.id);
 
     return {
@@ -413,7 +538,10 @@ class MessageService {
     if (!rows.length) return rows;
     const directory = await UserService.getDirectory(rows.map((r) => r.sender_id));
     const originalNames = this.fileOriginalNames(rows);
-    return rows.map((row) => {
+    return rows.map((fullRow) => {
+      // Номер изменения — внутреннее дело сервера: курсор синхронизации
+      // клиенту выдаёт /api/sync (next_cursor), а не отдельные записи.
+      const { change_seq: _changeSeq, ...row } = fullRow;
       const sender = directory.get(Number(row.sender_id));
       const fileId = this.metadataFileId(row);
       return {
@@ -494,6 +622,7 @@ class MessageService {
       VALUES (?, ?, 'read', ?)
     `);
     for (const message of unread) insertStatus.run(message.id, me, now);
+    this.touchMessages(unread.map((m) => m.id));
 
     return { readCount: unread.length, messageIds: unread.map((m) => m.id) };
   }
@@ -506,10 +635,7 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.is_deleted = 0 AND m.text LIKE ? ESCAPE '\\' AND (
-          (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
-          (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
-        )
+        WHERE m.is_deleted = 0 AND m.text LIKE ? ESCAPE '\\' AND ${VISIBLE_TO_USER_SQL}
         ORDER BY m.id DESC LIMIT 30
       `)
       // % и _ в строке поиска — буквально, а не шаблон: «100%» ищет «100%», а
@@ -616,7 +742,107 @@ class MessageService {
     getDatabase()
       .prepare("INSERT OR REPLACE INTO message_statuses (message_id, user_id, status, timestamp) VALUES (?, ?, 'delivered', ?)")
       .run(Number(messageId), Number(userId), now);
+    this.touchMessages([messageId]);
     return now;
+  }
+
+  /**
+   * S3: получатель появился на связи — его входящие личные сообщения, у
+   * которых ещё нет ни «доставлено», ни «прочитано», отмечаются доставленными.
+   * Прочитанные не трогаются (иначе «доставлено» с более поздним временем
+   * перекрыло бы «прочитано»), удалённые — тоже. Просматриваются последние
+   * PENDING_DELIVERY_SCAN входящих. Возвращает { timestamp, delivered:
+   * [{ messageId, senderId }] } по возрастанию id.
+   */
+  static markPendingDelivered(recipientId) {
+    const db = getDatabase();
+    const me = Number(recipientId);
+    const pending = db
+      .prepare(`
+        SELECT m.id, m.sender_id FROM (
+          SELECT id, sender_id, is_deleted FROM messages
+          WHERE conversation_type = 'direct' AND target_id = ?
+          ORDER BY id DESC LIMIT ?
+        ) m
+        WHERE m.sender_id <> ? AND m.is_deleted = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM message_statuses s
+            WHERE s.message_id = m.id AND s.user_id = ? AND s.status IN ('delivered', 'read')
+          )
+        ORDER BY m.id ASC
+      `)
+      .all(me, PENDING_DELIVERY_SCAN, me, me);
+    if (!pending.length) return { timestamp: null, delivered: [] };
+
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      "INSERT OR IGNORE INTO message_statuses (message_id, user_id, status, timestamp) VALUES (?, ?, 'delivered', ?)"
+    );
+    for (const row of pending) insert.run(row.id, me, now);
+    this.touchMessages(pending.map((r) => r.id));
+    return {
+      timestamp: now,
+      delivered: pending.map((r) => ({ messageId: Number(r.id), senderId: Number(r.sender_id) }))
+    };
+  }
+
+  /**
+   * Текущая «голова» последовательности изменений — курсор, после которого
+   * изменений ещё нет.
+   */
+  static syncHead() {
+    return Number(getDatabase().prepare('SELECT COALESCE(MAX(change_seq), 0) AS head FROM messages').get().head);
+  }
+
+  /**
+   * S2: всё, что изменилось в видимых пользователю переписках после курсора
+   * since: созданные, отредактированные, удалённые (надгробие) сообщения и
+   * личные сообщения со сменившимся статусом доставки/прочтения. Каждое —
+   * один раз, в текущем состоянии, по возрастанию номера изменения.
+   *
+   * Курсор — номер изменения (change_seq), а не время: у многих изменений
+   * одна и та же миллисекунда, а номер у каждого свой.
+   */
+  static async syncSince(userId, since, limit = SYNC_DEFAULT_LIMIT) {
+    const db = getDatabase();
+    const me = Number(userId);
+    const capped = Math.min(Math.max(Number(limit) || SYNC_DEFAULT_LIMIT, 1), SYNC_MAX_LIMIT);
+    const from = Number(since);
+
+    // Всё синхронно до attachSenders: голова и выборка читаются без
+    // промежуточных записей, поэтому next_cursor = голова ничего не пропустит.
+    const head = this.syncHead();
+    if (from > head) {
+      const err = new Error('Курсор синхронизации недействителен — загрузите переписку заново');
+      err.code = 'SYNC_CURSOR_INVALID';
+      throw err;
+    }
+
+    const rows = db
+      .prepare(`
+        SELECT m.*,
+               CASE WHEN m.conversation_type = 'direct' THEN
+                 (SELECT status FROM message_statuses
+                  WHERE message_id = m.id
+                    AND user_id = CASE WHEN m.sender_id = ? THEN m.target_id ELSE ? END
+                  ORDER BY timestamp DESC LIMIT 1)
+               END AS delivery_status
+        FROM messages m
+        WHERE m.change_seq > ? AND ${VISIBLE_TO_USER_SQL}
+        ORDER BY m.change_seq ASC
+        LIMIT ?
+      `)
+      .all(me, me, from, me, me, me, capped + 1);
+
+    const hasMore = rows.length > capped;
+    const page = hasMore ? rows.slice(0, capped) : rows;
+    const nextCursor = hasMore ? Number(page[page.length - 1].change_seq) : Math.max(from, head);
+
+    return {
+      messages: await this.attachSenders(page),
+      next_cursor: String(nextCursor),
+      has_more: hasMore
+    };
   }
 }
 
@@ -628,3 +854,7 @@ module.exports.MAX_TEXT_LENGTH = MAX_TEXT_LENGTH;
 // а не две разные копии одной и той же регулярки.
 module.exports.isValidMessageWindowValue = isValidWindowValue;
 module.exports.MAX_MESSAGE_WINDOW_MINUTES = MAX_WINDOW_MINUTES;
+module.exports.CLIENT_MSG_ID_RE = CLIENT_MSG_ID_RE;
+module.exports.SYNC_DEFAULT_LIMIT = SYNC_DEFAULT_LIMIT;
+module.exports.SYNC_MAX_LIMIT = SYNC_MAX_LIMIT;
+module.exports.PENDING_DELIVERY_SCAN = PENDING_DELIVERY_SCAN;
