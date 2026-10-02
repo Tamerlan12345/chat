@@ -183,6 +183,12 @@ private struct ChatDetailContent: View {
                 }
             }
         }
+        .onAppear {
+            store.setVisible(true)
+        }
+        .onDisappear {
+            store.setVisible(false)
+        }
         .task {
             await store.load()
             await store.markAsRead()

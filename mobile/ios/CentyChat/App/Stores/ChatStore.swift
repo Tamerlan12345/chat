@@ -37,8 +37,11 @@ public final class ChatStore: RealtimeEventHandling {
 
     // MARK: - Visibility
 
+    /// Called by the chat screen on appear/disappear. While visible, incoming
+    /// messages are marked read instead of raising the unread counter.
     public func setVisible(_ visible: Bool) {
         isVisible = visible
+        conversations.setConversation(conversation, visible: visible)
     }
 
     // MARK: - Loading
@@ -149,8 +152,10 @@ public final class ChatStore: RealtimeEventHandling {
     func handle(_ event: WSServerEvent) {
         switch event {
         case .newMessage(let message):
-            if belongsHere(message) {
-                receive(message)
+            guard belongsHere(message) else { return }
+            let isNewIncoming = receive(message) && message.senderId != session.currentUser?.id
+            if isNewIncoming && isVisible {
+                markIncomingRead()
             }
         case .messageStatusUpdated(let messageId, let status, _, _):
             updateMessage(id: messageId) { $0.deliveryStatus = status }
@@ -188,7 +193,18 @@ public final class ChatStore: RealtimeEventHandling {
         }
     }
 
-    private func receive(_ incoming: Message) {
+    private func markIncomingRead() {
+        conversations.markConversationRead(conversation)
+        let conversation = self.conversation
+        let realtime = self.realtime
+        Task {
+            await realtime.send(.markRead(conversationType: conversation.type, targetId: conversation.targetId))
+        }
+    }
+
+    /// Inserts or updates a message. Returns true when it was not shown before.
+    @discardableResult
+    private func receive(_ incoming: Message) -> Bool {
         var message = incoming
         let isOwn = message.senderId == session.currentUser?.id
         if isOwn, message.deliveryStatus == nil {
@@ -197,7 +213,7 @@ public final class ChatStore: RealtimeEventHandling {
         }
         if let index = messages.firstIndex(where: { $0.id == message.id }) {
             messages[index] = message
-            return
+            return false
         }
         if isOwn,
            let index = messages.firstIndex(where: {
@@ -205,9 +221,10 @@ public final class ChatStore: RealtimeEventHandling {
            }) {
             pendingMessageIDs.removeAll { $0 == messages[index].id }
             messages[index] = message
-            return
+            return false
         }
         messages.append(message)
+        return true
     }
 
     private func updateMessage(id: Int64, _ change: (inout Message) -> Void) {

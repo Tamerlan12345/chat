@@ -17,6 +17,8 @@ public final class ConversationsStore: RealtimeEventHandling {
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private var typingResetTimers: [String: Task<Void, Never>] = [:]
+    /// The conversation whose chat screen is on screen; it never accumulates unread messages.
+    @ObservationIgnored private(set) var visibleConversation: ConversationKey?
 
     init(repository: any ChatRepository, session: SessionStore) {
         self.repository = repository
@@ -72,6 +74,14 @@ public final class ConversationsStore: RealtimeEventHandling {
 
     // MARK: - Mutations
 
+    func setConversation(_ conversation: ConversationKey, visible: Bool) {
+        if visible {
+            visibleConversation = conversation
+        } else if visibleConversation == conversation {
+            visibleConversation = nil
+        }
+    }
+
     func markConversationRead(_ conversation: ConversationKey) {
         switch conversation.type {
         case .direct:
@@ -104,6 +114,7 @@ public final class ConversationsStore: RealtimeEventHandling {
         directConversations = []
         channels = []
         users = []
+        visibleConversation = nil
         directState = .idle
         channelsState = .idle
         usersState = .idle
@@ -148,13 +159,14 @@ public final class ConversationsStore: RealtimeEventHandling {
         let currentUserId = session.currentUser?.id
         if message.conversationType == .direct {
             let partnerId = (message.senderId == currentUserId) ? message.targetId : message.senderId
+            let isOnScreen = visibleConversation == ConversationKey(type: .direct, targetId: partnerId)
             if let index = directConversations.firstIndex(where: { $0.userId == partnerId }) {
                 directConversations[index].lastMessageId = message.id
                 directConversations[index].lastMessageText = message.text
                 directConversations[index].lastMessageTime = message.createdAt
                 directConversations[index].lastMessageSenderId = message.senderId
                 directConversations[index].lastMessageType = message.type
-                if message.senderId != currentUserId {
+                if message.senderId != currentUserId && !isOnScreen {
                     directConversations[index].unreadCount += 1
                 }
                 let updated = directConversations.remove(at: index)
@@ -164,10 +176,11 @@ public final class ConversationsStore: RealtimeEventHandling {
                 Task { await loadDirectConversations() }
             }
         } else {
+            let isOnScreen = visibleConversation == ConversationKey(type: .channel, targetId: message.targetId)
             if let index = channels.firstIndex(where: { $0.id == message.targetId }) {
                 channels[index].lastMessageText = message.text
                 channels[index].lastMessageTime = message.createdAt
-                if message.senderId != currentUserId {
+                if message.senderId != currentUserId && !isOnScreen {
                     channels[index].unreadCount += 1
                 }
                 let updated = channels.remove(at: index)
