@@ -103,7 +103,14 @@ fun ConversationsScreen(
                                 color = colors.primary
                             )
                             Text(
-                                text = if (connectionState is ConnectionState.Connected) "Сообщения" else "Подключение…",
+                                text = when (val state = connectionState) {
+                                    is ConnectionState.Connected -> "Сообщения"
+                                    // Shown for the whole refusal streak, not re-announced per retry.
+                                    is ConnectionState.Retrying -> state.message
+                                    else -> "Подключение…"
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onSurfaceVariant
                             )

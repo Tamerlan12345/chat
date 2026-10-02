@@ -99,7 +99,10 @@ class WebSocketClient(
             return
         }
         authenticatingToken = token
-        _connectionState.value = ConnectionState.Connecting
+        // During a refusal streak keep showing the reason instead of flickering to "connecting".
+        if (_connectionState.value !is ConnectionState.Retrying) {
+            _connectionState.value = ConnectionState.Connecting
+        }
 
         val wsUrl = endpoint.webSocketUrl
         val request = Request.Builder()
@@ -112,7 +115,8 @@ class WebSocketClient(
                 if (ws !== webSocket) return
                 isConnected.set(true)
                 isConnecting.set(false)
-                reconnectAttempts = 0
+                // reconnectAttempts is reset only on auth_success: the server refuses sessions
+                // (TOO_MANY_SESSIONS, RATE_LIMITED) on sockets that did open.
                 // Authenticate immediately upon connection
                 sendAuth(token)
             }
@@ -176,25 +180,31 @@ class WebSocketClient(
                 reconnectJob?.cancel()
                 closeCurrentSocket("Authentication rejected")
                 _connectionState.value = ConnectionState.Unauthorized(code, message)
+                _events.tryEmit(WsEvent.AuthError(code, message))
             }
-            // Too many sessions / rate limited / unknown: transient, retry with backoff.
+            // Too many sessions / rate limited / unknown: transient, retry with growing delays.
             else -> {
                 closeCurrentSocket("Authentication deferred")
-                _connectionState.value = ConnectionState.Connecting
-                scheduleReconnect()
+                val alreadyReported = (_connectionState.value as? ConnectionState.Retrying)?.code == code
+                _connectionState.value = ConnectionState.Retrying(code, message)
+                if (!alreadyReported) _events.tryEmit(WsEvent.AuthError(code, message))
+                scheduleReconnect(
+                    minDelayMs = if (code == "TOO_MANY_SESSIONS") SESSION_LIMIT_MIN_DELAY_MS else REFUSAL_MIN_DELAY_MS,
+                    maxDelayMs = REFUSAL_MAX_DELAY_MS
+                )
             }
         }
     }
 
-    private fun scheduleReconnect() {
+    private fun scheduleReconnect(minDelayMs: Long = 1_000L, maxDelayMs: Long = 30_000L) {
         if (isManuallyClosed.get()) return
         val currentScope = scope ?: return
 
         reconnectJob?.cancel()
         reconnectJob = currentScope.launch {
             reconnectAttempts++
-            // Exponential backoff: 1s, 2s, 4s... max 30s with +-20% jitter
-            val baseDelay = min(30000L, (1000L * (1L shl (reconnectAttempts.coerceAtMost(5) - 1))))
+            // Exponential backoff from minDelayMs (x2 per attempt) up to maxDelayMs, +-20% jitter.
+            val baseDelay = min(maxDelayMs, minDelayMs * (1L shl (reconnectAttempts.coerceAtMost(6) - 1)))
             val jitter = (baseDelay * 0.2f * (Random.nextFloat() * 2f - 1f)).toLong()
             val totalDelay = (baseDelay + jitter).coerceAtLeast(500L)
 
@@ -224,6 +234,7 @@ class WebSocketClient(
                     if (userObj != null) {
                         val user = json.decodeFromJsonElement<User>(userObj)
                         sessionManager.currentUser = user
+                        reconnectAttempts = 0
                         _connectionState.value = ConnectionState.Connected
                         _events.tryEmit(WsEvent.AuthSuccess(user))
                     }
@@ -235,7 +246,6 @@ class WebSocketClient(
                         sessionManager.mustChangePassword = true
                     }
                     handleAuthError(code, message)
-                    _events.tryEmit(WsEvent.AuthError(code, message))
                 }
                 "wake_state" -> {
                     val targetUserId = root["targetUserId"]?.jsonPrimitive?.longOrNull
@@ -540,5 +550,11 @@ class WebSocketClient(
         reconnectJob = null
         closeCurrentSocket("Normal closure")
         _connectionState.value = ConnectionState.Disconnected
+    }
+
+    private companion object {
+        const val SESSION_LIMIT_MIN_DELAY_MS = 10_000L
+        const val REFUSAL_MIN_DELAY_MS = 2_000L
+        const val REFUSAL_MAX_DELAY_MS = 60_000L
     }
 }
