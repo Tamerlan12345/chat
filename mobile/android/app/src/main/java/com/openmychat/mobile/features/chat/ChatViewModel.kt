@@ -41,7 +41,8 @@ class ChatViewModel @AssistedInject constructor(
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
     private val sessionRepository: SessionRepository,
-    private val activeConversations: ActiveConversationRegistry
+    private val activeConversations: ActiveConversationRegistry,
+    private val historyCache: ChatHistoryCache
 ) : ViewModel() {
 
     @AssistedFactory
@@ -82,6 +83,11 @@ class ChatViewModel @AssistedInject constructor(
         get() = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty()
 
     init {
+        // A chat opened before shows its last history at once and refreshes underneath.
+        historyCache.get(currentUserId, conversation)?.let { _uiState.value = ChatUiState.Content(it) }
+        viewModelScope.launch {
+            _uiState.collect { state -> if (state is ChatUiState.Content) historyCache.put(currentUserId, conversation, state.messages) }
+        }
         loadMessages()
         observeWebSocketEvents()
     }
@@ -106,13 +112,15 @@ class ChatViewModel @AssistedInject constructor(
     fun loadMessages() {
         viewModelScope.launch {
             if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
+            // What was already shown (a cached history) is replaced by the server, not merged.
+            val shownBefore = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty().mapTo(HashSet()) { it.id }
             try {
                 val history = chatRepository.messages(conversationType, targetId)
                 _uiState.update { state ->
                     // Keep realtime messages that arrived while the history request was in flight.
                     val live = (state as? ChatUiState.Content)?.messages.orEmpty()
                     val historyIds = history.mapTo(HashSet()) { it.id }
-                    ChatUiState.Content(history + live.filter { it.id !in historyIds })
+                    ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
                 }
             } catch (e: Exception) {
                 if (_uiState.value !is ChatUiState.Content) {
