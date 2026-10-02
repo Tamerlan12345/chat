@@ -47,7 +47,9 @@ mobile/ios/
 │   ├── Core/
 │   │   ├── Network/
 │   │   │   ├── APIClient.swift                  # HTTP REST клиент с авторефрешем
-│   │   │   └── APIError.swift                   # Локализованные сетевые ошибки
+│   │   │   ├── APIError.swift                   # Локализованные сетевые ошибки (с Retry-After)
+│   │   │   ├── ServerEnvironment.swift          # Сервер, зафиксированный при сборке (Release — константа)
+│   │   │   └── RetryAfter.swift                 # Разбор заголовка Retry-After
 │   │   ├── Repositories/                        # Протоколы репозиториев и live-реализации
 │   │   ├── Logging/Log.swift                    # Категории os.Logger
 │   │   ├── WebSocket/
@@ -63,10 +65,9 @@ mobile/ios/
 │   │       ├── DateParser.swift                 # Потокобезопасный парсер ISO-8601
 │   │       └── ValidationRules.swift            # Правила окон правки и удаления сообщений
 │   ├── Features/
-│   │   ├── ServerConnect/
-│   │   │   └── ServerConnectView.swift          # Ввод и валидация адреса сервера
 │   │   ├── Auth/
-│   │   │   ├── LoginView.swift                  # Вход по логину и паролю + Device Claim
+│   │   │   ├── LoginView.swift                  # Фирменный вход: знак C, название компании, карточка логин/пароль
+│   │   │   ├── LoginFormModel.swift             # Состояние формы, обратный отсчёт 429/503, защита от двойной отправки
 │   │   │   └── ChangePasswordModalView.swift    # Обязательная/плановая смена пароля
 │   │   ├── ChatList/
 │   │   │   ├── ChatListView.swift               # Список бесед (Личные / Каналы)
@@ -86,6 +87,7 @@ mobile/ios/
 │   │       ├── CentyColors.swift                # Фирменные цвета Light/Dark
 │   │       ├── CentyHaptics.swift               # Тактильный отклик
 │   │       └── Components/
+│   │           ├── BrandMark.swift              # Знак CentyChat (порт BRAND_C_PATH из десктопа) и надпись
 │   │           ├── AvatarView.swift             # Аватар с инициалами и бейджем статуса
 │   │           ├── StatusBadge.swift            # Индикатор онлайн-статуса
 │   │           ├── DeliveryStatusView.swift     # Галочки отправлено/доставлено/прочитано
@@ -97,7 +99,11 @@ mobile/ios/
 │       ├── Info.plist                           # Разрешения микрофона, камеры, фото и VoIP
 │       └── PrivacyInfo.xcprivacy                # Декларация конфиденциальности для App Store
 └── CentyChatTests/                               # Папка синхронизирована с таргетом: новые файлы подключаются сами
-    ├── Support/TestDoubles.swift                # Фейковые репозитории и TestApp-контейнер
+    ├── Support/                                 # Фейковые репозитории, TestApp, in-memory Keychain, URLProtocol-заглушка
+    ├── ServerEnvironmentTests.swift             # Release = ровно прод, Debug = настройка сборки
+    ├── CredentialBindingTests.swift             # Миграция старого адреса сервера и чужих учётных данных
+    ├── LoginFlowTests.swift                     # Ошибки входа, обратный отсчёт, двойная отправка, первый запуск
+    ├── ContractFixtureTests.swift               # Декодирование всех фикстур mobile/contracts/fixtures
     ├── RealtimeChatTests.swift                  # Дедупликация, обновления открытого чата
     ├── SessionLifecycleTests.swift              # Жизненный цикл WS, смена пароля, частичная загрузка
     ├── ReconnectBackoffTests.swift              # Рост бэкоффа реконнекта
@@ -110,7 +116,18 @@ mobile/ios/
 
 ---
 
-## 3. Соответствие контрактам и матрице паритета
+## 3. Сервер и вход
+
+- **Сервер зафиксирован при сборке** (`ServerEnvironment`). Экрана настройки сервера и кнопки «Сменить сервер» нет.
+  - **Release**: `https://centychat-production.up.railway.app` — константа в коде; Info.plist, аргументы запуска, переменные окружения и сохранённые значения не читаются (код переопределения под `#if DEBUG` в Release не компилируется; CI проверяет бинарник Release).
+  - **Debug**: настройка сборки `CENTYCHAT_SERVER_URL` (ключ Info.plist `CentyChatServerURL`, по умолчанию прод), например `xcodebuild … CENTYCHAT_SERVER_URL=https://localhost:8443` для dev-стенда. UI-тесты могут передать `-centychat-server-url <url>` вместе с `CENTYCHAT_UI_TESTING=1`. Принимается только `https`-origin без пути, логина и query.
+- **Миграция**: адрес сервера, сохранённый старыми версиями (`server_url` в Keychain), больше не используется и удаляется. Токен и секрет устройства привязаны к origin выдавшего сервера (`credential_origin`); выданные другим или неизвестным сервером стираются до первого запроса, пользователь попадает на вход.
+- **Вход**: ошибки входа обобщённые («Неверный логин или пароль»), текст сервера не показывается; 429/503 — обратный отсчёт по `Retry-After`; кнопка «Войти» заблокирована, пока идёт запрос. Пароль хранится только в памяти формы и стирается после входа; запоминается только последний удачный логин.
+- **Dev-стенд в CI**: workflow поднимает `mobile/dev/stand.mjs`, доверяет его CA только в симуляторе и передаёт адрес тестам (`TEST_RUNNER_CENTYCHAT_DEV_STAND_URL`). Тесты никогда не обращаются к проду.
+
+---
+
+## 4. Соответствие контрактам и матрице паритета
 
 1. **Модели данных**: Все поля и типы строго выровнены с `mobile/contracts/parity-matrix.md` и `mobile/contracts/openapi.yaml`.
 2. **Временные окна сообщений (`ValidationRules`)**: Проверяет настройки `message_edit_window_minutes` и `message_delete_window_minutes` (-1 = отключено, 0 = без ограничений, >0 = минуты). Суперадминистратор имеет право на модераторское удаление в любое время.
