@@ -15,6 +15,7 @@ const createFilePolicyRouter = require('../files/policy-router');
 const { parseRange, etagListMatches, ifRangeAllows } = require('../files/http-range');
 const Images = require('../media/images');
 const Thumbnails = require('../media/thumbnails');
+const Avatars = require('../media/avatars');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
@@ -29,6 +30,17 @@ const wsServer = require('../ws/server');
 const config = require('../config');
 
 const router = express.Router();
+
+// Аватары ссылкой (задача 20): всем, кроме настольного клиента, data URL
+// фотографий в ответах заменяются адресами /api/users/<id>/avatar?v=… —
+// см. server/src/media/avatars.js.
+router.use((req, res, next) => {
+  if (!Avatars.wantsLegacyAvatars(req.headers)) {
+    const send = res.json.bind(res);
+    res.json = (body) => send(Avatars.shapeAvatars(body));
+  }
+  next();
+});
 const SecurityMonitor = require('../services/security-monitor.service');
 const BackupService = require('../services/backup.service');
 const PushService = require('../push/push.service');
@@ -690,6 +702,79 @@ router.get('/auth/me', requireAuth, (req, res) => {
 // ── 2. USERS ──
 router.get('/users', requireAuth, route(async (req, res) => {
   res.json(await UserService.getAllUsers());
+}));
+
+// ── Аватары (задача 20) ──
+// Загрузка — картинка в поле формы «file», до 5 МБ. Хранится только
+// перекодированная копия (JPEG ≤256 px, без EXIF) — тем же data URL в
+// users.avatar_url, что и у фото из настольного клиента, чтобы тот видел её
+// как раньше.
+const AVATAR_UPLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
+const AVATAR_RATE_LIMIT = { maxAttempts: 10, windowMs: 60000 };
+const avatarUploader = multer({ dest: UPLOAD_TMP_DIR, limits: { fileSize: AVATAR_UPLOAD_LIMIT_BYTES, files: 1, fields: 0 } });
+
+function acceptAvatar(req, res, next) {
+  if (!checkRateLimit(`avatar:${req.user.id}`, AVATAR_RATE_LIMIT)) {
+    res.set('Retry-After', '60');
+    return res.status(429).json({ error: 'Слишком часто. Повторите через минуту.', code: 'RATE_LIMITED' });
+  }
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > AVATAR_UPLOAD_LIMIT_BYTES + FORM_OVERHEAD_BYTES) {
+    res.set('Connection', 'close');
+    return res.status(413).json({ error: 'Фотография больше 5 МБ', code: 'IMAGE_TOO_LARGE' });
+  }
+  // Временный файл не переживает запрос, чем бы тот ни кончился.
+  const cleanup = () => { if (req.file?.path) fs.rm(req.file.path, { force: true }, () => {}); };
+  res.on('finish', cleanup);
+  res.on('close', cleanup);
+  avatarUploader.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    res.status(tooLarge ? 413 : 400).json({
+      error: tooLarge ? 'Фотография больше 5 МБ' : 'Фотография не принята',
+      code: tooLarge ? 'IMAGE_TOO_LARGE' : 'BAD_REQUEST'
+    });
+  });
+}
+
+router.put('/users/avatar', requireAuth, acceptAvatar, route(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Фотография не прикреплена', code: 'BAD_REQUEST' });
+  let jpeg;
+  try {
+    jpeg = await Images.normalizeAvatar(req.file.path);
+  } catch (err) {
+    if (err instanceof Images.ImageError) {
+      if (err.status === 503) res.set('Retry-After', String(jitterSeconds(5)));
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+  res.json(await UserService.setAvatar(req.user.id, Images.toDataUrl(jpeg)));
+}));
+
+router.delete('/users/avatar', requireAuth, route(async (req, res) => {
+  res.json(await UserService.setAvatar(req.user.id, null));
+}));
+
+// Фото коллеги видно любому вошедшему — как и в справочнике сотрудников.
+// Отдаётся всегда перекодированным (квадрат 96 или 256 px), из кэша на диске.
+router.get('/users/:id/avatar', requireAuth, route(async (req, res) => {
+  const size = req.query.size === undefined ? 'm' : req.query.size;
+  if (typeof size !== 'string' || !Object.hasOwn(Images.AVATAR_SIZES, size)) {
+    return res.status(400).json({ error: 'size — s или m', code: 'BAD_REQUEST' });
+  }
+  const id = Number(req.params.id);
+  const row = Number.isSafeInteger(id) && id > 0
+    ? await identity().get('SELECT avatar_url FROM users WHERE id = $1', [id])
+    : null;
+  const avatar = row ? await Avatars.getAvatarFile(id, row.avatar_url, size) : null;
+  if (!avatar) return res.status(404).json({ error: 'Фотографии нет', code: 'NO_AVATAR' });
+  res.setHeader('ETag', avatar.etag);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  if (etagListMatches(req.headers['if-none-match'], avatar.etag)) return res.status(304).end();
+  res.type('image/jpeg');
+  res.sendFile(avatar.path, { lastModified: false, etag: false, dotfiles: 'allow', headers: { 'Cache-Control': 'private, max-age=86400' } });
 }));
 
 router.get('/users/:id', requireAuth, route(async (req, res) => {

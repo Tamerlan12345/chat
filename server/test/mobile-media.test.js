@@ -13,6 +13,7 @@ process.env.INITIAL_ADMIN_PASSWORD = 'парольдлятеста';
 
 let baseUrl;
 let server;
+let wsServer;
 let sharp;
 let UserService;
 let AuthService;
@@ -31,6 +32,8 @@ test.before(async () => {
   MessageService = require('../src/services/message.service');
   const app = require('../src/app');
   server = http.createServer(app);
+  wsServer = require('../src/ws/server');
+  wsServer.init(server);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 
@@ -45,8 +48,15 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  wsServer?.wss?.clients.forEach((client) => client.terminate());
   server?.close();
   await closeAll();
+});
+
+// Предел загрузок фото (10 в минуту) — свой в каждом тесте.
+test.beforeEach(() => {
+  const limiter = require('../src/services/rate-limiter');
+  for (const p of Object.values(people)) limiter.resetLimit(`avatar:${p.id}`);
 });
 
 async function tokenFor(userId) {
@@ -349,4 +359,235 @@ test('Старое вложение без размеров: размеры и �
   const row = chatDb.prepare('SELECT width, height, dominant_color FROM files WHERE id = ?').get(file.id);
   assert.deepStrictEqual([row.width, row.height], [1200, 800]);
   assert.match(row.dominant_color, COLOR_RE);
+});
+
+// ══ Аватары ссылкой ══════════════════════════════════════════════════════════
+
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) CentyChat/1.9.0 Chrome/130.0.0.0 Electron/33.2.0 Safari/537.36 OpenMyChatDesktop/1.9.0 (nsis)';
+const AVATAR_URL_RE = (id) => new RegExp(`^/api/users/${id}/avatar\\?v=[0-9a-f]{16}$`);
+
+async function putAvatar(buffer, { token, type = 'image/jpeg', name = 'avatar.jpg' } = {}) {
+  const form = new FormData();
+  if (buffer) form.append('file', new Blob([buffer], { type }), name);
+  const res = await fetch(`${baseUrl}/api/users/avatar`, {
+    method: 'PUT',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form
+  });
+  return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+async function getJson(urlPath, { token, ua } = {}) {
+  const res = await fetch(baseUrl + urlPath, {
+    headers: { Authorization: `Bearer ${token}`, ...(ua ? { 'User-Agent': ua } : {}) }
+  });
+  const text = await res.text();
+  return { status: res.status, text, json: JSON.parse(text) };
+}
+
+async function storedAvatar(userId) {
+  return (await identity.get('SELECT avatar_url FROM users WHERE id = $1', [userId])).avatar_url;
+}
+
+// Снимок с EXIF, где лежит «секрет» (как координаты съёмки у телефона).
+async function photoWithExif() {
+  return sharp({ create: { width: 900, height: 600, channels: 3, background: '#30a050' } })
+    .jpeg()
+    .withExif({ IFD0: { Copyright: 'SECRET-GPS-55.75N-37.61E' } })
+    .toBuffer();
+}
+
+test('PUT /users/avatar: картинка перекодирована в JPEG ≤256 px без EXIF; в ответе — адрес, а не data URL', async () => {
+  const bob = people['media-bob'];
+  const original = await photoWithExif();
+  assert.ok(original.includes(Buffer.from('SECRET-GPS')), 'исходник несёт EXIF');
+  const res = await putAvatar(original, { token: bob.token });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.json));
+  assert.match(res.json.avatar_url, AVATAR_URL_RE(bob.id));
+  assert.ok(!JSON.stringify(res.json).includes('data:'), 'ответ без data URL');
+
+  const stored = await storedAvatar(bob.id);
+  assert.match(stored, /^data:image\/jpeg;base64,/);
+  const bytes = Buffer.from(stored.split(',')[1], 'base64');
+  assert.ok(!bytes.includes(Buffer.from('SECRET-GPS')), 'EXIF снят');
+  const meta = await sharp(bytes).metadata();
+  assert.strictEqual(meta.format, 'jpeg');
+  assert.ok(Math.max(meta.width, meta.height) <= 256);
+  assert.ok(!meta.exif);
+});
+
+test('PUT /users/avatar: предел — 10 загрузок в минуту, дальше 429', async () => {
+  const carol = people['media-carol'];
+  const statuses = [];
+  for (let i = 0; i < 11; i += 1) statuses.push((await putAvatar(Buffer.from('x'), { token: carol.token, type: 'image/png', name: 'a.png' })).status);
+  assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(415));
+  assert.strictEqual(statuses[10], 429);
+});
+
+test('PUT /users/avatar: не картинка, SVG, «бомба», больше 5 МБ, без файла, без входа — отказ', async () => {
+  const bob = people['media-bob'];
+  const before = await storedAvatar(bob.id);
+  const text = await putAvatar(Buffer.from('просто текст'), { token: bob.token, type: 'image/png', name: 'a.png' });
+  assert.strictEqual(text.status, 415);
+  assert.strictEqual(text.json.code, 'NOT_AN_IMAGE');
+  const svg = await putAvatar(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), { token: bob.token, type: 'image/svg+xml', name: 'a.svg' });
+  assert.strictEqual(svg.status, 415);
+  const bomb = await putAvatar(decompressionBomb(), { token: bob.token, type: 'image/png', name: 'a.png' });
+  assert.strictEqual(bomb.status, 422);
+  assert.strictEqual(bomb.json.code, 'IMAGE_TOO_LARGE');
+  const huge = await putAvatar(Buffer.concat([await photo(), Buffer.alloc(5 * 1024 * 1024)]), { token: bob.token });
+  assert.strictEqual(huge.status, 413);
+  const none = await putAvatar(null, { token: bob.token });
+  assert.strictEqual(none.status, 400);
+  const anon = await putAvatar(await photo(), {});
+  assert.strictEqual(anon.status, 401);
+  assert.strictEqual(await storedAvatar(bob.id), before, 'отказы фото не меняют');
+});
+
+test('GET /users/:id/avatar: квадрат 96/256 JPEG, ETag и 304, кэш; видно любому вошедшему; нет фото — 404', async () => {
+  const bob = people['media-bob'];
+  assert.strictEqual((await putAvatar(await photo({ orientation: 1 }), { token: bob.token })).status, 200);
+  const carol = people['media-carol'].token;
+  const small = await get(`/api/users/${bob.id}/avatar?size=s`, { token: carol });
+  assert.strictEqual(small.status, 200);
+  assert.strictEqual(small.headers.get('content-type'), 'image/jpeg');
+  assert.match(small.headers.get('cache-control'), /private/);
+  const sm = await sharp(small.body).metadata();
+  assert.deepStrictEqual([sm.width, sm.height], [96, 96]);
+  const medium = await get(`/api/users/${bob.id}/avatar`, { token: carol });
+  const mm = await sharp(medium.body).metadata();
+  assert.deepStrictEqual([mm.width, mm.height], [256, 256], 'без size — m');
+  const etag = medium.headers.get('etag');
+  assert.strictEqual((await get(`/api/users/${bob.id}/avatar?size=m`, { token: carol, headers: { 'If-None-Match': etag } })).status, 304);
+  const cached = fs.readdirSync(path.join(config.UPLOADS_DIR, '.avatars')).filter((n) => n.startsWith(`${bob.id}-`));
+  assert.ok(cached.length >= 2 && cached.every((n) => /^\d+-[0-9a-f]{16}-(s|m)\.jpg$/.test(n)), cached.join(','));
+
+  assert.strictEqual((await get(`/api/users/${bob.id}/avatar`)).status, 401);
+  assert.strictEqual((await get(`/api/users/${bob.id}/avatar?size=xl`, { token: carol })).status, 400);
+  assert.strictEqual((await get(`/api/users/${people['media-carol'].id}/avatar`, { token: carol })).status, 404);
+  assert.strictEqual((await get('/api/users/999999/avatar', { token: carol })).status, 404);
+});
+
+test('Ответы API: новым клиентам — адрес аватара; настольному (Electron) — прежний data URL', async () => {
+  const bob = people['media-bob'];
+  assert.strictEqual((await putAvatar(await photo({ orientation: 1 }), { token: bob.token })).status, 200);
+  const stored = await storedAvatar(bob.id);
+
+  const list = await getJson('/api/users', { token: people.admin.token });
+  const listed = list.json.find((u) => u.id === bob.id);
+  assert.match(listed.avatar_url, AVATAR_URL_RE(bob.id));
+  assert.ok(!list.text.includes('data:image'), 'в справочнике нет data URL');
+  const me = await getJson('/api/auth/me', { token: bob.token });
+  assert.match(me.json.user.avatar_url, AVATAR_URL_RE(bob.id));
+
+  const desktop = await getJson('/api/users', { token: people.admin.token, ua: DESKTOP_UA });
+  assert.strictEqual(desktop.json.find((u) => u.id === bob.id).avatar_url, stored, 'настольный клиент видит фото как раньше');
+  const desktopMe = await getJson('/api/auth/me', { token: bob.token, ua: DESKTOP_UA });
+  assert.strictEqual(desktopMe.json.user.avatar_url, stored);
+
+  // Сообщения: sender_avatar — тоже адрес.
+  await MessageService.sendMessage({ conversationType: 'direct', targetId: people.admin.id, senderId: bob.id, text: 'привет с фото' });
+  const page = await getJson(`/api/messages/direct/${bob.id}`, { token: people.admin.token });
+  const rows = Array.isArray(page.json) ? page.json : page.json.messages;
+  const fromBob = rows.find((m) => m.text === 'привет с фото');
+  assert.match(fromBob.sender_avatar, AVATAR_URL_RE(bob.id));
+  const convs = await getJson('/api/conversations/direct', { token: people.admin.token });
+  const withBob = convs.json.find((c) => c.user_id === bob.id);
+  assert.match(withBob.avatar_url, AVATAR_URL_RE(bob.id));
+  const desktopPage = await getJson(`/api/messages/direct/${bob.id}`, { token: people.admin.token, ua: DESKTOP_UA });
+  const desktopRows = Array.isArray(desktopPage.json) ? desktopPage.json : desktopPage.json.messages;
+  assert.strictEqual(desktopRows.find((m) => m.text === 'привет с фото').sender_avatar, stored);
+});
+
+test('Старое фото data URL (сохранено настольным клиентом): работает и по ссылке — отдаётся перекодированным', async () => {
+  const carol = people['media-carol'];
+  const png = await sharp({ create: { width: 200, height: 120, channels: 4, background: { r: 10, g: 20, b: 200, alpha: 0.5 } } }).png().toBuffer();
+  const legacy = `data:image/png;base64,${png.toString('base64')}`;
+  const saved = await fetch(`${baseUrl}/api/users/profile`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${carol.token}`, 'Content-Type': 'application/json', 'User-Agent': DESKTOP_UA },
+    body: JSON.stringify({ avatar_url: legacy })
+  });
+  assert.strictEqual(saved.status, 200);
+  assert.strictEqual((await saved.json()).avatar_url, legacy, 'настольному — его data URL');
+  assert.strictEqual(await storedAvatar(carol.id), legacy, 'хранится как есть (перевод — лениво, при показе)');
+
+  const served = await get(`/api/users/${carol.id}/avatar?size=s`, { token: people.admin.token });
+  assert.strictEqual(served.status, 200);
+  assert.strictEqual((await sharp(served.body).metadata()).format, 'jpeg', 'не исходный PNG');
+  assert.ok(!served.body.equals(png));
+});
+
+test('Сохранение профиля новым клиентом: свой адрес аватара обратно — фото не меняется, прочие поля сохраняются', async () => {
+  const bob = people['media-bob'];
+  assert.strictEqual((await putAvatar(await photo({ orientation: 1 }), { token: bob.token })).status, 200);
+  const stored = await storedAvatar(bob.id);
+  const me = await getJson('/api/auth/me', { token: bob.token });
+  const res = await fetch(`${baseUrl}/api/users/profile`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${bob.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ avatar_url: me.json.user.avatar_url, phone: '+7 701 000 00 00' })
+  });
+  assert.strictEqual(res.status, 200, await res.clone().text());
+  assert.strictEqual(await storedAvatar(bob.id), stored);
+  assert.strictEqual((await res.json()).phone, '+7 701 000 00 00');
+});
+
+test('Старая ссылка (не data URL) в avatar_url: новым клиентам — null, по адресу — 404', async () => {
+  const carol = people['media-carol'];
+  await identity.run('UPDATE users SET avatar_url = $1 WHERE id = $2', ['https://old.example/photo.png', carol.id]);
+  const list = await getJson('/api/users', { token: people.admin.token });
+  assert.strictEqual(list.json.find((u) => u.id === carol.id).avatar_url, null);
+  assert.strictEqual((await get(`/api/users/${carol.id}/avatar`, { token: people.admin.token })).status, 404);
+  const desktop = await getJson('/api/users', { token: people.admin.token, ua: DESKTOP_UA });
+  assert.strictEqual(desktop.json.find((u) => u.id === carol.id).avatar_url, 'https://old.example/photo.png');
+});
+
+test('DELETE /users/avatar: фото снято, по адресу — 404', async () => {
+  const bob = people['media-bob'];
+  assert.strictEqual((await putAvatar(await photo({ orientation: 1 }), { token: bob.token })).status, 200);
+  const res = await fetch(`${baseUrl}/api/users/avatar`, { method: 'DELETE', headers: { Authorization: `Bearer ${bob.token}` } });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual((await res.json()).avatar_url, null);
+  assert.strictEqual(await storedAvatar(bob.id), null);
+  assert.strictEqual((await get(`/api/users/${bob.id}/avatar`, { token: people.admin.token })).status, 404);
+});
+
+test('WebSocket: новому клиенту — адрес аватара в auth_success и в сообщениях; настольному — data URL', async () => {
+  const WebSocket = require('ws');
+  const bob = people['media-bob'];
+  assert.strictEqual((await putAvatar(await photo({ orientation: 1 }), { token: bob.token })).status, 200);
+  const stored = await storedAvatar(bob.id);
+  const wsUrl = baseUrl.replace('http', 'ws') + '/ws';
+  async function open(token, headers = {}) {
+    const sock = new WebSocket(wsUrl, { headers });
+    const inbox = [];
+    sock.on('message', (raw, binary) => { if (!binary) inbox.push(JSON.parse(raw.toString('utf8'))); });
+    await new Promise((resolve) => sock.on('open', resolve));
+    sock.send(JSON.stringify({ type: 'auth', token }));
+    const until = async (pred) => {
+      for (let i = 0; i < 300; i += 1) {
+        const hit = inbox.find(pred);
+        if (hit) return hit;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error('кадр не пришёл');
+    };
+    return { sock, inbox, until };
+  }
+  const mobile = await open(bob.token);
+  const desktop = await open(people.admin.token, { 'User-Agent': DESKTOP_UA });
+  const mobileAdmin = await open(people.admin.token);
+  try {
+    const authed = await mobile.until((m) => m.type === 'auth_success');
+    assert.match(authed.user.avatar_url, AVATAR_URL_RE(bob.id));
+    mobile.sock.send(JSON.stringify({ type: 'direct_message', targetId: people.admin.id, text: 'кадр с фото', client_msg_id: require('node:crypto').randomUUID() }));
+    const onDesktop = await desktop.until((m) => m.message?.text === 'кадр с фото' || m.text === 'кадр с фото');
+    const onMobile = await mobileAdmin.until((m) => m.message?.text === 'кадр с фото' || m.text === 'кадр с фото');
+    const avatarOf = (frame) => (frame.message || frame).sender_avatar;
+    assert.strictEqual(avatarOf(onDesktop), stored);
+    assert.match(avatarOf(onMobile), AVATAR_URL_RE(bob.id));
+  } finally {
+    for (const c of [mobile, desktop, mobileAdmin]) c.sock.close();
+  }
 });

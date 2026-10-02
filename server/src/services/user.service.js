@@ -254,6 +254,10 @@ class UserService {
     // см. adminUpdateUser.
     assertEmail(email);
     assertPhone(phone);
+    // Клиент, получивший профиль с адресом фото (/api/users/<id>/avatar?v=…,
+    // задача 20), отправляет его обратно при сохранении — это «фото не
+    // менялось», а не новое значение.
+    if (require('../media/avatars').isOwnAvatarUrl(userId, avatar_url)) avatar_url = undefined;
     // Фотография уходит каждому сотруднику в каждом ответе справочника. Снимок
     // с телефона на 8 МБ в data URL превращал список сотрудников в десятки
     // мегабайт, а произвольная строка — в ссылку куда угодно.
@@ -286,6 +290,13 @@ class UserService {
        WHERE id = $5`,
       [orNull(email), orNull(phone), orNull(avatar_url), orNull(custom_status), Number(userId)]
     );
+    return this.getUserById(userId);
+  }
+
+  // Фото, уже перекодированное сервером (PUT /api/users/avatar), или null —
+  // снять. Проверок формата здесь нет: значение собирает сам сервер.
+  static async setAvatar(userId, dataUrl) {
+    await identity().run('UPDATE users SET avatar_url = $1 WHERE id = $2', [dataUrl, Number(userId)]);
     return this.getUserById(userId);
   }
 

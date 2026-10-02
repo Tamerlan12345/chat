@@ -8,6 +8,7 @@ const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
 const PushService = require('../push/push.service');
+const Avatars = require('../media/avatars');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -418,6 +419,13 @@ class WsServer {
     });
 
     this.wss.on('connection', (ws, req) => {
+      // Аватары ссылкой (задача 20): всем, кроме настольного клиента, каждый
+      // текстовый кадр с data URL фотографии уходит с адресом вместо неё.
+      // Обёртка на самом send — так её не обходит ни одна рассылка.
+      if (!Avatars.wantsLegacyAvatars(req.headers)) {
+        const rawSend = ws.send.bind(ws);
+        ws.send = (data, ...rest) => rawSend(typeof data === 'string' ? Avatars.shapeFrame(data) : data, ...rest);
+      }
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
       ws.ipKey = rateLimitIpKey(ws.remoteIp);
       this.socketsPerIp.set(ws.ipKey, (this.socketsPerIp.get(ws.ipKey) || 0) + 1);
