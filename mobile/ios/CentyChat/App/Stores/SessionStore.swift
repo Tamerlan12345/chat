@@ -70,7 +70,7 @@ public final class SessionStore: RealtimeEventHandling {
         self.environment = environment
         self.deviceDescriptor = deviceDescriptor
         // A fresh install has nothing to restore and goes straight to login.
-        self.phase = .launching
+        self.phase = auth.hasStoredToken || auth.hasDeviceSecret ? .launching : .signedOut
     }
 
     static func currentDevice() -> DeviceDescriptor {
@@ -94,7 +94,7 @@ public final class SessionStore: RealtimeEventHandling {
 
     public func bootstrap() async {
         // Credentials issued by another server are wiped before anything is sent.
-        guard true else {
+        guard bindStoredCredentials() else {
             // Fail closed: the foreign credentials could not be removed, so they are not used.
             phase = .signedOut
             await refreshServerInfo()
@@ -211,6 +211,9 @@ public final class SessionStore: RealtimeEventHandling {
     /// Signs in with a login and password. The password is passed straight to the request
     /// and never stored. A second call while one is in flight throws `loginInProgress`.
     public func login(username: String, password: String) async throws -> LoginOutcome {
+        guard !isSigningIn else { throw SessionError.loginInProgress }
+        isSigningIn = true
+        defer { isSigningIn = false }
         let cleanedUsername = username.trimmingCharacters(in: .whitespaces).lowercased()
         do {
             let response = try await auth.login(username: cleanedUsername, password: password)

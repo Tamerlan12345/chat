@@ -125,7 +125,30 @@ public final class KeychainManager: @unchecked Sendable {
     /// wiped; the legacy user-entered server URL is removed. Throws when a wipe fails, in
     /// which case the stored credentials must not be used.
     public func bindCredentials(toOrigin origin: String) throws -> StoredCredentialDecision {
-        .nothingStored
+        let legacyServerURL = value(forKey: Keys.legacyServerURL)
+        let boundOrigin = value(forKey: Keys.credentialOrigin)
+        // Older installs recorded the issuer only as the user-entered server URL.
+        let issuer = boundOrigin ?? legacyServerURL.flatMap(ServerEnvironment.origin(of:))
+        let hasCredentials = authToken != nil || deviceSecret != nil
+
+        let decision: StoredCredentialDecision
+        if !hasCredentials {
+            decision = .nothingStored
+        } else if issuer == origin {
+            decision = .kept
+        } else {
+            // Unknown or foreign issuer: never present these credentials to this server.
+            try clearAllAuthData()
+            decision = .wiped
+        }
+
+        if legacyServerURL != nil {
+            try delete(key: Keys.legacyServerURL)
+        }
+        if boundOrigin != origin {
+            try save(value: origin, key: Keys.credentialOrigin)
+        }
+        return decision
     }
 
     // MARK: - Saved Username
