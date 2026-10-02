@@ -125,6 +125,13 @@
     "path": "/api/messages/direct/{id}",
     "status": 200
   },
+  "http/messages.send-cancelled.json": {
+    "kind": "http",
+    "description": "REST-отправка с отозванным client_msg_id: HTTP 409, { error, code: \"CANCELLED\" }.",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 409
+  },
   "http/messages.send-client-msg-id-conflict.json": {
     "kind": "http",
     "description": "client_msg_id уже использован автором в другой переписке: HTTP 409, { error, code: \"CLIENT_MSG_ID_CONFLICT\" }.",
@@ -321,6 +328,20 @@
     "direction": "server->client",
     "trigger": "send_message conversationType=direct"
   },
+  "ws/error.cancel_message.json": {
+    "kind": "ws",
+    "description": "Отзыв не удался: сообщение сохранено, а удалять его уже нельзя (окно удаления): context = \"cancel_message\", code (здесь DELETE_WINDOW_EXPIRED), retryable = false, client_msg_id и messageId. Ключ всё равно помечен отозванным.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "cancel_message при выключенном удалении"
+  },
+  "ws/error.cancelled.json": {
+    "kind": "ws",
+    "description": "Отправка с ключом, который автор отозвал (cancel_message): code = \"CANCELLED\", retryable = false. Сообщение не сохранено.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message с отозванным client_msg_id"
+  },
   "ws/error.client_msg_id_conflict.json": {
     "kind": "ws",
     "description": "Этот client_msg_id автор уже использовал в ДРУГОЙ переписке: code = \"CLIENT_MSG_ID_CONFLICT\", client_msg_id отражается. Сообщение не сохранено.",
@@ -328,9 +349,16 @@
     "direction": "server->client",
     "trigger": "send_message с client_msg_id, уже использованным для личного диалога"
   },
+  "ws/error.delete_message.json": {
+    "kind": "ws",
+    "description": "Ошибка удаления: context = \"delete_message\", code (здесь NOT_OWNER), retryable и messageId из запроса.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "delete_message чужого сообщения"
+  },
   "ws/error.edit_message.json": {
     "kind": "ws",
-    "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины.",
+    "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины, code (здесь NOT_OWNER) и retryable, messageId и text из запроса.",
     "event": "error",
     "direction": "server->client",
     "trigger": "edit_message чужого сообщения"
@@ -341,6 +369,13 @@
     "event": "error",
     "direction": "server->client",
     "trigger": "send_message с недопустимым client_msg_id"
+  },
+  "ws/error.rate_limited.json": {
+    "kind": "ws",
+    "description": "Кадр отброшен пределом частоты сокета (G2): code = \"RATE_LIMITED\", retryable = true, retry_after_ms — через сколько мс повторить (значение в фикстуре нормализовано), и client_msg_id (send/cancel) или messageId (edit/delete) отброшенного кадра. Кадр НЕ обработан. Ответов — не больше 10 в секунду на сокет; сверх того кадр отбрасывается молча.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "больше 10 send_message за секунду с одного сокета"
   },
   "ws/error.send_message.json": {
     "kind": "ws",
@@ -356,6 +391,20 @@
     "direction": "server->client",
     "trigger": "ice_candidate bob → alice внутри вызова"
   },
+  "ws/message_cancelled.json": {
+    "kind": "ws",
+    "description": "Ответ на cancel_message: ключ отозван; messageId = null — сообщение с этим ключом не сохранено и уже не сохранится (отправка с ним — error CANCELLED). Ключ помнится сутки.",
+    "event": "message_cancelled",
+    "direction": "server->client",
+    "trigger": "cancel_message с ещё не отправленным ключом"
+  },
+  "ws/message_cancelled.stored.json": {
+    "kind": "ws",
+    "description": "Ответ на cancel_message, когда сообщение уже было сохранено: messageId — его id; сервер удалил его (окно удаления действует) и разослал участникам message_deleted.",
+    "event": "message_cancelled",
+    "direction": "server->client",
+    "trigger": "cancel_message ключа уже сохранённого сообщения"
+  },
   "ws/message_deleted.channel.json": {
     "kind": "ws",
     "description": "Сообщение удалено в канале.",
@@ -365,10 +414,17 @@
   },
   "ws/message_deleted.direct.json": {
     "kind": "ws",
-    "description": "Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы.",
+    "description": "Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы и updated_at (время удаления).",
     "event": "message_deleted",
     "direction": "server->client",
     "trigger": "delete_message (direct)"
+  },
+  "ws/message_deleted.repeat.json": {
+    "kind": "ws",
+    "description": "Повтор удаления уже удалённого: то же надгробие (тот же updated_at) только запросившему сокету, без ошибки и без повторной рассылки.",
+    "event": "message_deleted",
+    "direction": "server->client",
+    "trigger": "повторный delete_message того же сообщения"
   },
   "ws/message_status_updated.json": {
     "kind": "ws",

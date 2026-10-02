@@ -913,16 +913,29 @@ paths:
                 $ref: '#/components/schemas/Message'
         '400':
           description: |
-            Ошибка проверки (пустой текст, получатель не найден, …). Недопустимый `client_msg_id`
-            (не строка 1–64 символа из `[A-Za-z0-9_-]`) — с `code: INVALID_CLIENT_MSG_ID`.
+            Отказ проверки — всегда с машинным `code`, ничего не записано, повторять бессмысленно:
+            `INVALID_CLIENT_MSG_ID` (ключ не строка 1–64 символа из `[A-Za-z0-9_-]`),
+            `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`,
+            `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: |
-            `client_msg_id` уже использован этим автором в ДРУГОЙ переписке
-            (`code: CLIENT_MSG_ID_CONFLICT`). Ничего не записано; запись той переписки не возвращается.
+            `code: CLIENT_MSG_ID_CONFLICT` — `client_msg_id` уже использован этим автором в ДРУГОЙ
+            переписке; запись той переписки не возвращается. `code: CANCELLED` — автор отозвал этот
+            ключ (WS `cancel_message`), а сохранено с ним ничего не было
+            (`http/messages.send-cancelled.json`). В обоих случаях ничего не записано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Внутренний сбой до записи (база, сеть): `code: INTERNAL_ERROR`, без подробностей.
+            Временный — повтор с тем же `client_msg_id` безопасен. Сбой ПОСЛЕ записи отказом не
+            бывает: ответ — 201 с сохранённой записью.
           content:
             application/json:
               schema:
@@ -983,7 +996,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Вы не участник этого канала
+          description: Вы не участник этого канала (`code: NOT_CHANNEL_MEMBER`)
           content:
             application/json:
               schema:
@@ -1027,16 +1040,29 @@ paths:
                 $ref: '#/components/schemas/Message'
         '400':
           description: |
-            Ошибка проверки (пустой текст, получатель не найден, …). Недопустимый `client_msg_id`
-            (не строка 1–64 символа из `[A-Za-z0-9_-]`) — с `code: INVALID_CLIENT_MSG_ID`.
+            Отказ проверки — всегда с машинным `code`, ничего не записано, повторять бессмысленно:
+            `INVALID_CLIENT_MSG_ID` (ключ не строка 1–64 символа из `[A-Za-z0-9_-]`),
+            `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`,
+            `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: |
-            `client_msg_id` уже использован этим автором в ДРУГОЙ переписке
-            (`code: CLIENT_MSG_ID_CONFLICT`). Ничего не записано; запись той переписки не возвращается.
+            `code: CLIENT_MSG_ID_CONFLICT` — `client_msg_id` уже использован этим автором в ДРУГОЙ
+            переписке; запись той переписки не возвращается. `code: CANCELLED` — автор отозвал этот
+            ключ (WS `cancel_message`), а сохранено с ним ничего не было
+            (`http/messages.send-cancelled.json`). В обоих случаях ничего не записано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Внутренний сбой до записи (база, сеть): `code: INTERNAL_ERROR`, без подробностей.
+            Временный — повтор с тем же `client_msg_id` безопасен. Сбой ПОСЛЕ записи отказом не
+            бывает: ответ — 201 с сохранённой записью.
           content:
             application/json:
               schema:
@@ -3163,6 +3189,15 @@ components:
         unread_count:
           type: integer
           example: 0
+        last_message_id:
+          type: integer
+          nullable: true
+          description: |
+            id последнего сообщения канала в том же снимке, что и `unread_count` (`null` — сообщений нет
+            или пользователь не участник). Клиент досчитывает к `unread_count` чужие сообщения с
+            бОльшим `id`, пришедшие живыми кадрами после расчёта снимка (`delivery-state.md` §6.3,
+            `unread_snapshot`).
+          example: 1520
         last_message_text:
           type: string
           nullable: true

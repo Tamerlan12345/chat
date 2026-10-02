@@ -105,6 +105,8 @@ function normalizeFixture(value) {
     if (typeof v === 'number') {
       if (key === 'at') return BASE;
       if (key === 'retryAt' && v > 0) return BASE + 60000;
+      // time left in the server's rate window: depends on scheduling.
+      if (key === 'retry_after_ms') return 1000;
       if (key === 'uin') return 1000 + Number(parent.id ?? parent.user_id ?? 0);
     }
     return v;
@@ -317,6 +319,15 @@ export async function captureFixtures({ dataDir } = {}) {
     ws('ws/error.invalid_client_msg_id.json', 'error', 'client_msg_id недопустим (не строка 1–64 из [A-Za-z0-9_-]): code = "INVALID_CLIENT_MSG_ID", значение обратно не отражается. Сообщение не сохранено.', await A.takeType('error'), 'send_message с недопустимым client_msg_id');
     A.send({ type: 'send_message', conversationType: 'channel', targetId: devChannel.id, text: 'Тот же ключ в другую переписку', client_msg_id: wsClientMsgId });
     ws('ws/error.client_msg_id_conflict.json', 'error', 'Этот client_msg_id автор уже использовал в ДРУГОЙ переписке: code = "CLIENT_MSG_ID_CONFLICT", client_msg_id отражается. Сообщение не сохранено.', await A.takeType('error'), 'send_message с client_msg_id, уже использованным для личного диалога');
+    // rate limit (G2): a burst of sends from one socket; every frame is refused
+    // before storage (unknown recipient), the 11th+ are not processed at all.
+    for (let i = 0; i < 14; i += 1) {
+      A.send({ type: 'send_message', conversationType: 'direct', targetId: 999999, text: `Поток ${i}`, client_msg_id: `0f0e0d0c-0000-4000-8000-0000000000${String(i).padStart(2, '0')}` });
+    }
+    ws('ws/error.rate_limited.json', 'error', 'Кадр отброшен пределом частоты сокета (G2): code = "RATE_LIMITED", retryable = true, retry_after_ms — через сколько мс повторить (значение в фикстуре нормализовано), и client_msg_id (send/cancel) или messageId (edit/delete) отброшенного кадра. Кадр НЕ обработан. Ответов — не больше 10 в секунду на сокет; сверх того кадр отбрасывается молча.',
+      await A.takeType('error', 'RATE_LIMITED', (f) => f.code === 'RATE_LIMITED'), 'больше 10 send_message за секунду с одного сокета');
+    await sleep(1100); // the send window of socket A opens again
+    A.clear();
 
     // typing
     A.clear(); B.clear();
@@ -336,9 +347,13 @@ export async function captureFixtures({ dataDir } = {}) {
     ws('ws/message_updated.json', 'message_updated', 'Сообщение отредактировано: полная запись сообщения (как new_message) с updated_at.', await A.takeType('message_updated'), 'edit_message');
     const bobsMessage = directPage.find((m) => m.sender_id === bob.id);
     A.send({ type: 'edit_message', messageId: bobsMessage.id, text: 'Чужое сообщение' });
-    ws('ws/error.edit_message.json', 'error', 'Ошибка правки: context = "edit_message", message — русский текст причины.', await A.takeType('error'), 'edit_message чужого сообщения');
+    ws('ws/error.edit_message.json', 'error', 'Ошибка правки: context = "edit_message", message — русский текст причины, code (здесь NOT_OWNER) и retryable, messageId и text из запроса.', await A.takeType('error'), 'edit_message чужого сообщения');
+    A.send({ type: 'delete_message', messageId: bobsMessage.id });
+    ws('ws/error.delete_message.json', 'error', 'Ошибка удаления: context = "delete_message", code (здесь NOT_OWNER), retryable и messageId из запроса.', await A.takeType('error'), 'delete_message чужого сообщения');
     A.send({ type: 'delete_message', messageId: dmId });
-    ws('ws/message_deleted.direct.json', 'message_deleted', 'Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы.', await A.takeType('message_deleted'), 'delete_message (direct)');
+    ws('ws/message_deleted.direct.json', 'message_deleted', 'Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы и updated_at (время удаления).', await A.takeType('message_deleted'), 'delete_message (direct)');
+    A.send({ type: 'delete_message', messageId: dmId });
+    ws('ws/message_deleted.repeat.json', 'message_deleted', 'Повтор удаления уже удалённого: то же надгробие (тот же updated_at) только запросившему сокету, без ошибки и без повторной рассылки.', await A.takeType('message_deleted'), 'повторный delete_message того же сообщения');
     A.send({ type: 'delete_message', messageId: cm.message.id });
     ws('ws/message_deleted.channel.json', 'message_deleted', 'Сообщение удалено в канале.', await A.takeType('message_deleted'), 'delete_message (channel)');
 
@@ -360,6 +375,32 @@ export async function captureFixtures({ dataDir } = {}) {
     const foreignEpoch = syncStart.next_cursor.startsWith('0123456789abcdef.') ? 'fedcba9876543210' : '0123456789abcdef';
     await http('http/sync.cursor-invalid.json', 'Курсор не этой базы (другая эпоха: база восстановлена из резервной копии, другой сервер), прежнего формата или впереди головы: HTTP 410, { error, code: "SYNC_CURSOR_INVALID" } — начать заново с GET /api/sync без since.',
       'GET', `/sync?since=${foreignEpoch}.1`, { token: tAlice }, 410);
+
+    // ── cancel_message (G9): revoke a send by its client_msg_id ──────────
+    A.clear(); B.clear();
+    const cancelledKey = '3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99';
+    A.send({ type: 'cancel_message', client_msg_id: cancelledKey });
+    ws('ws/message_cancelled.json', 'message_cancelled', 'Ответ на cancel_message: ключ отозван; messageId = null — сообщение с этим ключом не сохранено и уже не сохранится (отправка с ним — error CANCELLED). Ключ помнится сутки.',
+      await A.takeType('message_cancelled'), 'cancel_message с ещё не отправленным ключом');
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Отменено до отправки', client_msg_id: cancelledKey });
+    ws('ws/error.cancelled.json', 'error', 'Отправка с ключом, который автор отозвал (cancel_message): code = "CANCELLED", retryable = false. Сообщение не сохранено.', await A.takeType('error'), 'send_message с отозванным client_msg_id');
+    await http('http/messages.send-cancelled.json', 'REST-отправка с отозванным client_msg_id: HTTP 409, { error, code: "CANCELLED" }.',
+      'POST', `/messages/direct/${bob.id}`, { token: tAlice, body: { text: 'Отменено до отправки', client_msg_id: cancelledKey } }, 409);
+    const storedKey = '7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d';
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Отправлено и отозвано', client_msg_id: storedKey });
+    const toCancel = await A.takeType('direct_message', 'stored before cancel', (f) => f.message.client_msg_id === storedKey);
+    A.send({ type: 'cancel_message', client_msg_id: storedKey });
+    await B.takeType('message_deleted', 'cancel deletes the stored message', (f) => f.messageId === toCancel.message.id);
+    ws('ws/message_cancelled.stored.json', 'message_cancelled', 'Ответ на cancel_message, когда сообщение уже было сохранено: messageId — его id; сервер удалил его (окно удаления действует) и разослал участникам message_deleted.',
+      await A.takeType('message_cancelled'), 'cancel_message ключа уже сохранённого сообщения');
+    const keptKey = '1d2c3b4a-5f6e-4d8c-9a0b-c1d2e3f4a5b6';
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Удалять уже нельзя', client_msg_id: keptKey });
+    await A.takeType('direct_message', 'stored before failed cancel', (f) => f.message.client_msg_id === keptKey);
+    await http(null, '', 'PUT', '/admin/settings', { token: adminToken, body: { message_delete_window_minutes: '-1' } }, 200);
+    A.send({ type: 'cancel_message', client_msg_id: keptKey });
+    ws('ws/error.cancel_message.json', 'error', 'Отзыв не удался: сообщение сохранено, а удалять его уже нельзя (окно удаления): context = "cancel_message", code (здесь DELETE_WINDOW_EXPIRED), retryable = false, client_msg_id и messageId. Ключ всё равно помечен отозванным.',
+      await A.takeType('error'), 'cancel_message при выключенном удалении');
+    await http(null, '', 'PUT', '/admin/settings', { token: adminToken, body: { message_delete_window_minutes: '60' } }, 200);
 
     // presence
     A.clear(); B.clear();

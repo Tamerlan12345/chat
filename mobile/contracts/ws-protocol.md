@@ -54,14 +54,33 @@
 |---|---|---|---|
 | `presence`, `set_dnd`, `set_status`, `status_update` | 10 | 1 000 | Игнорирование сообщения |
 | `typing` | 6 | 1 000 | Игнорирование сообщения |
-| `send_message`, `direct_message`, `channel_message` | 10 | 1 000 | Игнорирование сообщения |
-| `edit_message`, `delete_message` | 10 | 1 000 | Игнорирование сообщения |
+| `send_message`, `direct_message`, `channel_message` | 10 | 1 000 | Кадр не обрабатывается; ответ `error` `RATE_LIMITED` (ниже) |
+| `edit_message`, `delete_message`, `cancel_message` | 10 | 1 000 (у каждого типа своё окно) | Кадр не обрабатывается; ответ `error` `RATE_LIMITED` (ниже) |
 | `mark_read` | 20 | 1 000 | Игнорирование сообщения |
 | `call_offer` | 3 | 10 000 | Игнорирование вызова |
 | `wake_send` | 20 | 10 000 | Ответ `wake_error: cooldown` (действует также персональный кулдаун 60 с) |
 | `ice_candidate` | 60 | 1 000 | Игнорирование сообщения |
 | `audio` (бинарные кадры) | 120 | 1 000 | Сброс аудиокадра |
 | Все остальные (`*`) | 60 | 1 000 | Игнорирование сообщения |
+
+**Ответ на отброшенный кадр (G2).** Кадр, на который клиент ждёт ответа (`send_message` и алиасы, `edit_message`, `delete_message`, `cancel_message`), при превышении предела по-прежнему **не обрабатывается**, но вместо молчания отправителю уходит `error` (`ws/error.rate_limited.json`):
+
+```json
+{
+  "type": "error",
+  "context": "send_message",
+  "message": "Слишком много запросов — повторите чуть позже",
+  "text": "Поток 5",
+  "code": "RATE_LIMITED",
+  "retryable": true,
+  "client_msg_id": "0f0e0d0c-0000-4000-8000-000000000005",
+  "retry_after_ms": 1000
+}
+```
+
+`retry_after_ms` — через сколько мс откроется окно этого типа (1…1000); корреляция — `client_msg_id` (отправка, отзыв; только допустимый ключ) или `messageId` (правка, удаление; только целое > 0); `text` — у отправки и правки. Ответ **не гарантирован**: их не больше 10 в секунду на сокет, и их нет, пока клиент не читает свой сокет (больше 1 МБ неотправленного) — поток отброшенных кадров не превращается в поток ответов в памяти сервера. Без ответа клиент узнаёт об отбрасывании по таймауту, как раньше. `mark_read`, `typing`, присутствие и прочее отбрасываются молча.
+
+**Порядок обработки (G1).** Кадры переписки одного сокета — `send_message` (и алиасы), `edit_message`, `delete_message`, `cancel_message`, `mark_read` — обрабатываются **строго по очереди** в порядке получения: сообщения, отправленные подряд по одному сокету, получают `id` по возрастанию. Очередь своя у каждого сокета (медленный кадр одного соединения не задерживает другие), кадры вне переписки (`auth`, звонки, `typing`, присутствие, `rd_*`) идут мимо очереди, как раньше. Очередь ограничена 100 кадрами; кадр сверх неё получает тот же `error` `RATE_LIMITED` (`retry_after_ms: 1000`). Обработчик, не завершившийся за 30 с, перестаёт держать очередь (следующий кадр идёт дальше). Порядок между **разными** сокетами и между WS и REST не гарантируется.
 
 ### 2.4. Сердечный ритм (Heartbeat / Keepalive)
 
@@ -146,8 +165,10 @@
   - ключ не строка, пустой, длиннее 64 или с символами вне набора — отказ `error` с `code: "INVALID_CLIENT_MSG_ID"`, ничего не записано.
   - Без `client_msg_id` (настольный клиент) — прежнее поведение: каждая отправка создаёт новое сообщение, `message.client_msg_id = null`.
 - **Алиасы**: Поддерживаются также типы `direct_message` и `channel_message`, а также поля `recipient_id` и `channel_id`.
+  - ключ, который автор отозвал (`cancel_message`, §3.4.1), а сохранено с ним ничего не было, — отказ `error` с `code: "CANCELLED"`, ничего не записано. Если сообщение с ключом уже сохранено, повтор, как и прежде, возвращает эхо сохранённой записи (после отзыва — надгробие).
 - **Ошибки**:
-  - При ошибке сервер возвращает клиенту `{ "type": "error", "context": "send_message", "message": "...", "text": "..." }`, возвращая исходный текст для восстановления в UI ввода. Если `client_msg_id` был допустимым, он отражается в кадре ошибки (`"client_msg_id": "..."`) — по нему клиент находит отправку в своей очереди. Для ошибок ключа добавляется `code` (см. `error`, §4.2).
+  - При ошибке сервер возвращает клиенту `{ "type": "error", "context": "send_message", "message": "...", "text": "...", "code": "...", "retryable": false }`, возвращая исходный текст для восстановления в UI ввода. Если `client_msg_id` был допустимым, он отражается в кадре ошибки (`"client_msg_id": "..."`) — по нему клиент находит отправку в своей очереди. `code` и `retryable` есть у **каждого** отказа (G3; коды — в §4.2 `error`).
+  - Отказ случается только **до** записи: строка сообщения и отметка прочтения автора в канале пишутся одной точкой сохранения, поэтому отказ (кроме `RATE_LIMITED`, где кадр вообще не обработан) доказывает, что сообщение с этим ключом не сохранено этим кадром. Сбой **после** записи (недоступна база учётных записей при подстановке имени отправителя, рассылка) отказом не бывает — автор получает эхо сохранённой записи.
 
 ---
 
@@ -171,6 +192,7 @@
 - **Результат**:
   - Исходная версия архивируется в `message_history`.
   - Всем участникам переписки рассылается событие `message_updated`.
+- **Ошибки** (`ws/error.edit_message.json`): `{ "type": "error", "context": "edit_message", "message": "...", "text": "...", "code": "...", "retryable": false, "messageId": 1054 }` — `messageId` из запроса (если это целое > 0), `text` — присланный текст. Коды: `NOT_FOUND`, `NOT_OWNER`, `MESSAGE_DELETED`, `NOT_TEXT_MESSAGE`, `EDIT_WINDOW_EXPIRED` (окно истекло или правка выключена), `EMPTY_TEXT`, `TEXT_TOO_LONG`; временные — `RATE_LIMITED`, `INTERNAL_ERROR`.
 
 ---
 
@@ -190,7 +212,29 @@
   - Суперадминистратор может удалять любые сообщения в целях модерации в любое время (с обязательной записью в `audit_logs`).
 - **Результат**:
   - Текст и метаданные сообщения обнуляются, `is_deleted` выставляется в `1`. Исходный текст сохраняется в `message_history`.
-  - Участникам рассылается событие `message_deleted`.
+  - Участникам рассылается событие `message_deleted` (с `updated_at` — временем удаления).
+- **Идемпотентность (G4).** Удаление **уже удалённого** сообщения — не ошибка: автору (и супер-администратору) тому сокету, что прислал запрос, приходит то же надгробие `message_deleted` (тот же `updated_at`, `ws/message_deleted.repeat.json`). Ничего не записывается: ни истории, ни нового номера изменения, ни повторной рассылки. Чужое удалённое сообщение — `NOT_OWNER` (надгробие постороннему не отдаётся).
+- **Ошибки** (`ws/error.delete_message.json`): `{ "type": "error", "context": "delete_message", "message": "...", "code": "...", "retryable": false, "messageId": 1054 }`. Коды: `NOT_FOUND`, `NOT_OWNER`, `DELETE_WINDOW_EXPIRED` (окно истекло или удаление выключено); временные — `RATE_LIMITED`, `INTERNAL_ERROR`.
+
+---
+
+### 3.4.1. `cancel_message` — Отзыв отправки по ключу (G9)
+
+«Если сообщение с этим `client_msg_id` придёт — не сохраняй; если уже сохранено — удали». Для отмены пользователем сообщения, исход отправки которого неизвестен (`delivery-state.md` §7.10).
+
+```json
+{
+  "type": "cancel_message",
+  "client_msg_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d"
+}
+```
+
+- Ключ — только **свой**: пара (отправитель, `client_msg_id`), как у идемпотентности. Отзыв чужого ключа ничего не делает с чужим сообщением.
+- Сервер запоминает отзыв в базе (переживает перезапуск) на **24 часа**, не больше 1000 ключей на отправителя (старые вытесняются). Повторный отзыв продлевает срок.
+- Ничего не сохранено → ответ `{ "type": "message_cancelled", "client_msg_id": "…", "messageId": null }` (`ws/message_cancelled.json`). Любая последующая отправка с этим ключом (WS или REST, в том числе уже идущая в этот момент) отклоняется `code: "CANCELLED"` — отметка и проверка перед записью неразрывны, гонки нет.
+- Сообщение уже сохранено → оно удаляется по правилам `delete_message` автора (окно удаления действует), участникам рассылается `message_deleted`, ответ — `message_cancelled` с `messageId` (`ws/message_cancelled.stored.json`). Уже удалённое — тот же ответ без повторной рассылки (идемпотентно).
+- Удалить нельзя (окно удаления) → `error` `{ "context": "cancel_message", "code": "DELETE_WINDOW_EXPIRED", "retryable": false, "client_msg_id": "…", "messageId": 12, "message": "…" }` (`ws/error.cancel_message.json`); ключ всё равно отозван. Недопустимый ключ — `INVALID_CLIENT_MSG_ID` без `client_msg_id`.
+- Предел частоты — 10 в секунду на сокет (`RATE_LIMITED`, §2.3). Сервер без поддержки `cancel_message` (до этой версии) кадр молча игнорирует — клиент обязан это переживать (`delivery-state.md` §7.12).
 
 ---
 
@@ -652,13 +696,14 @@
 ```
 
 #### `message_deleted` — сообщение удалено
-Записи сообщения в кадре нет: клиент находит его по `messageId` и помечает удалённым (`is_deleted = 1`, пустой `text`). `targetId` — это сохранённый `target_id` сообщения (для личного — id **получателя исходного сообщения**, то есть у одной из сторон это её собственный id, а не id собеседника), поэтому сообщение ищется только по `messageId`, а не по паре `conversationType`/`targetId`.
+Записи сообщения в кадре нет: клиент находит его по `messageId` и помечает удалённым (`is_deleted = 1`, пустой `text`). `targetId` — это сохранённый `target_id` сообщения (для личного — id **получателя исходного сообщения**, то есть у одной из сторон это её собственный id, а не id собеседника), поэтому сообщение ищется только по `messageId`, а не по паре `conversationType`/`targetId`. `updated_at` — время удаления (как `updated_at` надгробия в `/api/sync`, G8); у сервера до этой версии поля нет.
 ```json
 {
   "type": "message_deleted",
   "messageId": 8,
   "conversationType": "direct",
-  "targetId": 3
+  "targetId": 3,
+  "updated_at": "2026-10-02T09:00:00.000Z"
 }
 ```
 ```json
@@ -666,7 +711,19 @@
   "type": "message_deleted",
   "messageId": 9,
   "conversationType": "channel",
-  "targetId": 3
+  "targetId": 3,
+  "updated_at": "2026-10-02T09:00:00.000Z"
+}
+```
+Тот же кадр приходит запросившему сокету в ответ на повторное удаление уже удалённого (`ws/message_deleted.repeat.json`, §3.4) и участникам — при отзыве сохранённого сообщения (`cancel_message`, §3.4.1).
+
+#### `message_cancelled` — отзыв ключа принят
+Ответ на `cancel_message` (§3.4.1) только запросившему сокету. `messageId: null` — сообщения с этим ключом нет и уже не будет; число — сообщение было сохранено и теперь удалено (участники получили `message_deleted`).
+```json
+{
+  "type": "message_cancelled",
+  "client_msg_id": "3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99",
+  "messageId": null
 }
 ```
 
@@ -700,14 +757,20 @@
   "type": "error",
   "context": "send_message",
   "message": "Получатель не найден",
-  "text": "Это сообщение не будет доставлено"
+  "text": "Это сообщение не будет доставлено",
+  "code": "RECIPIENT_NOT_FOUND",
+  "retryable": false
 }
 ```
 ```json
 {
   "type": "error",
   "context": "edit_message",
-  "message": "Нельзя редактировать чужое сообщение"
+  "message": "Нельзя редактировать чужое сообщение",
+  "text": "Чужое сообщение",
+  "code": "NOT_OWNER",
+  "retryable": false,
+  "messageId": 2
 }
 ```
 Ошибки ключа идемпотентности (`ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json`) — с машинным `code`:
@@ -730,7 +793,30 @@
   "client_msg_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b"
 }
 ```
-Значения `context`: `send_message`, `edit_message`, `delete_message`; при внутренней ошибке обработки `context` отсутствует (`{"type":"error","message":"Ошибка обработки запроса"}`). `message` — русский текст для показа. Машинный `code` есть только у двух ошибок ключа: `INVALID_CLIENT_MSG_ID` (ключ недопустим; отправку с ним повторять бессмысленно — это ошибка клиента) и `CLIENT_MSG_ID_CONFLICT` (ключ уже занят другой перепиской этого автора). Остальные ошибки — без `code`. `client_msg_id` в кадре ошибки `send_message` есть, только если присланный ключ допустим.
+Значения `context`: `send_message`, `edit_message`, `delete_message`, `cancel_message`; `message` — русский текст для показа (настольный клиент читает только его и `text`). Поля G2–G4 (с этой версии сервера):
+
+| Поле | Когда | Смысл |
+|---|---|---|
+| `code` | у каждого отказа с `context` | машинный код (таблица ниже) |
+| `retryable` | у каждого отказа с `context` | `true` — временный отказ, повторить тот же запрос (тем же ключом) после паузы; `false` — повторять бессмысленно |
+| `retry_after_ms` | только `RATE_LIMITED` | через сколько мс повторять |
+| `client_msg_id` | `send_message`, `cancel_message` | ключ из запроса, если он допустим |
+| `messageId` | `edit_message`, `delete_message` (из запроса, если целое > 0); `cancel_message` — id сохранённого сообщения, если удалить его нельзя | корреляция |
+| `text` | `send_message`, `edit_message` | присланный текст |
+
+| `code` | `retryable` | Где | Смысл |
+|---|---|---|---|
+| `RATE_LIMITED` | `true` | все четыре | кадр отброшен пределом частоты или переполненной очередью сокета и **не обработан** (§2.3) |
+| `INTERNAL_ERROR` | `true` | все четыре | внутренний сбой до записи; подробностей нет |
+| `INVALID_CLIENT_MSG_ID` | `false` | send, cancel | ключ недопустим — ошибка генератора; `client_msg_id` не отражается |
+| `CLIENT_MSG_ID_CONFLICT` | `false` | send | ключ уже занят другой перепиской этого автора |
+| `CANCELLED` | `false` | send | ключ отозван автором (`cancel_message`), сохранено ничего не было |
+| `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`, `NOT_CHANNEL_MEMBER`, `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE` | `false` | send | отказ проверки; `EMPTY_TEXT`/`TEXT_TOO_LONG` — и у edit |
+| `NOT_FOUND`, `NOT_OWNER` | `false` | edit, delete | нет сообщения / чужое |
+| `MESSAGE_DELETED`, `NOT_TEXT_MESSAGE`, `EDIT_WINDOW_EXPIRED` | `false` | edit | правка невозможна |
+| `DELETE_WINDOW_EXPIRED` | `false` | delete, cancel | окно удаления истекло или удаление выключено |
+
+Ошибка, не перехваченная обработчиком кадра, — `{"type":"error","message":"Ошибка обработки запроса"}`; для четырёх типов выше — с `context`, `code: "INTERNAL_ERROR"`, `retryable: true` и полями корреляции, для прочих — без `context`. **Сервер до этой версии** присылал `code` только у `INVALID_CLIENT_MSG_ID`/`CLIENT_MSG_ID_CONFLICT`, без `retryable` и `messageId`, и молча отбрасывал кадры сверх предела; клиент распознаёт новые сигналы по наличию полей (`delivery-state.md` §7.12).
 
 ---
 
@@ -1150,7 +1236,7 @@ sequenceDiagram
 
 Следствия для клиентов:
 - Автор получает собственное сообщение обратно двумя кадрами (`direct_message` и `new_message`) — это и есть подтверждение сохранения; временную локальную запись (ключ `client_msg_id`) нужно заменить записью сервера, найдя её по `message.client_msg_id` (и `message.sender_id` = свой id).
-- При ошибке сервер отвечает `error` с `context: "send_message"`, возвращает `text` и (если ключ допустим) `client_msg_id`. При обрыве соединения до ответа исход **неизвестен** — и это больше не проблема: повторить отправку с **тем же** `client_msg_id` безопасно, сервер вернёт уже сохранённую запись вместо второй копии.
+- При ошибке сервер отвечает `error` с `context: "send_message"`, возвращает `text`, `code`, `retryable` и (если ключ допустим) `client_msg_id`. При обрыве соединения до ответа исход **неизвестен** — и это больше не проблема: повторить отправку с **тем же** `client_msg_id` безопасно, сервер вернёт уже сохранённую запись вместо второй копии. Передумал — `cancel_message` с тем же ключом (§3.4.1): сервер не сохранит его позже и удалит, если уже сохранил.
 - Отправка через REST (`POST /api/messages/direct|channels/{id}` с `client_msg_id` в теле) даёт то же: `201` — создано, `200` — повтор, тело — сохранённая запись.
 
 ### 6.3. Стратегия переподключения (Reconnection Strategy)
@@ -1188,7 +1274,7 @@ sequenceDiagram
 Хранить локально: `sync_cursor` (строка, переживает перезапуск приложения) и очередь отправки (outbox): для каждого неподтверждённого сообщения — `client_msg_id`, переписка, текст, `reply_to_id`, `metadata`.
 
 1. **Первый запуск / после выхода / после 410.** `GET /api/sync` без `since` → сохранить `next_cursor` как `sync_cursor` **до** загрузки данных; затем `GET /api/channels`, `GET /api/conversations/direct` и страницы открытых переписок (`GET /api/messages/...`). Изменения, случившиеся между этими шагами, придут при следующей синхронизации ещё раз — применение идемпотентно.
-2. **Отправка.** Создать `client_msg_id` (UUID v4), положить запись в outbox и показать сообщение как «отправляется»; послать `send_message` с `client_msg_id` (или REST, если сокета нет). Эхо `direct_message`/`channel_message`/`new_message` с `message.sender_id == мой id` и тем же `client_msg_id` (или REST `201`/`200`) — удалить запись из outbox и заменить локальное сообщение серверным. `error` с `context: "send_message"` и этим `client_msg_id` — ошибка окончательная (получатель не найден, нет доступа к каналу, пустой текст…; `CLIENT_MSG_ID_CONFLICT` — ключ переиспользован, ошибка клиента): запись outbox переходит в `failed`, показать «не отправлено» с текстом; «Повторить» отправляет её **тем же** ключом, новый ключ — только после `CLIENT_MSG_ID_CONFLICT`/`INVALID_CLIENT_MSG_ID` (`delivery-state.md` §7.5). `INVALID_CLIENT_MSG_ID` в кадре нет `client_msg_id` — это ошибка генератора ключей, а не сети. Нет ответа (обрыв, `error` без `context` — «Ошибка обработки запроса», или кадр молча отброшен пределом частоты 10 отправок/с на сокет, §2.3) — запись остаётся в outbox и повторяется с **тем же** ключом: по таймауту (например, 10 с) или при переподключении.
+2. **Отправка.** Создать `client_msg_id` (UUID v4), положить запись в outbox и показать сообщение как «отправляется»; послать `send_message` с `client_msg_id` (или REST, если сокета нет). Эхо `direct_message`/`channel_message`/`new_message` с `message.sender_id == мой id` и тем же `client_msg_id` (или REST `201`/`200`) — удалить запись из outbox и заменить локальное сообщение серверным. `error` с `context: "send_message"` и этим `client_msg_id` — ошибка окончательная (получатель не найден, нет доступа к каналу, пустой текст…; `CLIENT_MSG_ID_CONFLICT` — ключ переиспользован, ошибка клиента): запись outbox переходит в `failed`, показать «не отправлено» с текстом; «Повторить» отправляет её **тем же** ключом, новый ключ — только после `CLIENT_MSG_ID_CONFLICT`/`INVALID_CLIENT_MSG_ID` (`delivery-state.md` §7.5). `INVALID_CLIENT_MSG_ID` в кадре нет `client_msg_id` — это ошибка генератора ключей, а не сети. Нет ответа (обрыв, `error` без `context` — «Ошибка обработки запроса», или кадр отброшен пределом частоты, а ответ `RATE_LIMITED` не пришёл, §2.3) — запись остаётся в outbox и повторяется с **тем же** ключом: по таймауту (например, 10 с) или при переподключении. `error` с `retryable: true` (`RATE_LIMITED` — через `retry_after_ms`, `INTERNAL_ERROR` — с паузой) — тоже повтор тем же ключом, а не `failed`.
 3. **Переподключение.** После `auth_success`:
    1. `GET /api/sync?since=<sync_cursor>&limit=200`; применить `messages` как upsert по `id` (новые — добавить; `is_deleted = 1` — показать надгробие/убрать текст; `updated_at` — показать «изменено»; `delivery_status` — обновить статус своих сообщений). Если среди них есть свои с `client_msg_id` из outbox — удалить эти записи из outbox (сообщение уже сохранено). Сохранить `next_cursor` в `sync_cursor` **после** применения страницы. Пока `has_more = true` — повторять с новым курсором.
    2. **Повторить outbox** по порядку создания — с **теми же** `client_msg_id`. Сервер не создаст копий того, что успел сохранить до обрыва, и вернёт сохранённую запись.
@@ -1213,7 +1299,8 @@ sequenceDiagram
 | `message_status_updated` | `ws/message_status_updated.json` (получатель онлайн при отправке), `.reconnect.json` (получатель вошёл позже) |
 | `messages_read` | `ws/messages_read.json` |
 | `message_updated` | `ws/message_updated.json` |
-| `message_deleted` | `ws/message_deleted.direct.json`, `.channel.json` |
+| `message_deleted` | `ws/message_deleted.direct.json`, `.channel.json`, `.repeat.json` (повтор удаления) |
+| `message_cancelled` | `ws/message_cancelled.json` (не сохранено), `.stored.json` (было сохранено — удалено) |
 | `user_typing` | `ws/user_typing.direct.json`, `.channel.json` |
 | `user_status_changed` | `ws/user_status_changed.online.json`, `.away.json`, `.dnd.json` |
 | `user_created` / `user_updated` | `ws/user_created.json`, `ws/user_updated.json` |
@@ -1224,6 +1311,6 @@ sequenceDiagram
 | `call_denied` / `call_unavailable` | `ws/call_denied.json`, `ws/call_unavailable.dnd.json`, `.offline.json` |
 | `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
 | `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
-| `error` | `ws/error.send_message.json`, `ws/error.edit_message.json`, `ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json` |
+| `error` | `ws/error.send_message.json`, `ws/error.edit_message.json`, `ws/error.delete_message.json`, `ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json`, `ws/error.rate_limited.json`, `ws/error.cancelled.json`, `ws/error.cancel_message.json` |
 
-HTTP-фикстуры надёжной доставки: `http/messages.send-direct-idempotent.json` (201 с `client_msg_id`), `http/messages.send-direct-duplicate.json` (200, повтор), `http/messages.send-client-msg-id-invalid.json` (400), `http/messages.send-client-msg-id-conflict.json` (409), `http/messages.after-page.json` (`afterId`), `http/sync.bootstrap.json`, `http/sync.page.json`, `http/sync.cursor-invalid.json` (410).
+HTTP-фикстуры надёжной доставки: `http/messages.send-direct-idempotent.json` (201 с `client_msg_id`), `http/messages.send-direct-duplicate.json` (200, повтор), `http/messages.send-client-msg-id-invalid.json` (400), `http/messages.send-client-msg-id-conflict.json` (409), `http/messages.send-cancelled.json` (409 `CANCELLED`), `http/messages.after-page.json` (`afterId`), `http/sync.bootstrap.json`, `http/sync.page.json`, `http/sync.cursor-invalid.json` (410).

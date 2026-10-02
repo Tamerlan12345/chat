@@ -2,5 +2,7 @@
   "type": "error",
   "context": "send_message",
   "message": "Получатель не найден",
-  "text": "Это сообщение не будет доставлено"
+  "text": "Это сообщение не будет доставлено",
+  "code": "RECIPIENT_NOT_FOUND",
+  "retryable": false
 }

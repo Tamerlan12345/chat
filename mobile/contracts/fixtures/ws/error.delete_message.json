@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "context": "delete_message",
+  "message": "Нельзя удалить чужое сообщение",
+  "code": "NOT_OWNER",
+  "retryable": false,
+  "messageId": 2
+}

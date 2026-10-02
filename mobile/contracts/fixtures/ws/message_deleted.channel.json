@@ -2,5 +2,6 @@
   "type": "message_deleted",
   "messageId": 9,
   "conversationType": "channel",
-  "targetId": 3
+  "targetId": 3,
+  "updated_at": "2026-10-02T09:00:00.000Z"
 }
