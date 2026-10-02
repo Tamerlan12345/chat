@@ -46,6 +46,7 @@ import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /** How long the sticky date stays after scrolling stops. */
@@ -148,14 +149,15 @@ internal fun MessageList(
     // separator is on screen, and never when the history does not fill the viewport.
     var recentlyScrolled by remember { mutableStateOf(false) }
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collectLatest { scrolling ->
-            if (scrolling) {
+        // Driven by the history actually moving (not by a scroll flag): every change of the first
+        // visible row or its offset shows the pill, and a second without movement hides it.
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .drop(1)
+            .collectLatest {
                 recentlyScrolled = true
-            } else {
                 delay(STICKY_DATE_LINGER)
                 recentlyScrolled = false
             }
-        }
     }
     val stickyDay by remember(items) {
         derivedStateOf {

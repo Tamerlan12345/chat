@@ -44,6 +44,7 @@ import com.openmychat.mobile.ui.components.rememberLift
 import com.openmychat.mobile.ui.components.rememberMessageMenuState
 import com.openmychat.mobile.ui.theme.CentyTheme
 import com.openmychat.mobile.ui.theme.CentyMotion
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -180,6 +181,14 @@ fun ChatContent(
     val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
     val menuState = rememberMessageMenuState()
     val landing = rememberLandingState()
+    // The history composes two frames after the screen: the chat is still invisible then (the
+    // fade-through starts after 90 ms), and the transition's first frame stays light.
+    var historyReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        withFrameNanos { }
+        historyReady = true
+    }
     // Ids on screen the first time the history showed (an empty chat counts): those stay still,
     // everything after animates in, including the first message of a new chat.
     val baseline = remember { HashSet<Long>() }
@@ -235,7 +244,7 @@ fun ChatContent(
                                 title = stringResource(R.string.chat_empty),
                                 message = stringResource(R.string.chat_empty_message)
                             )
-                        } else {
+                        } else if (historyReady) {
                             MessageList(
                                 listState = listState,
                                 messages = uiState.messages,
