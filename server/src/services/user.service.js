@@ -268,11 +268,25 @@ class UserService {
       avatar_url !== undefined && avatar_url !== null && avatar_url !== ''
         ? (await identity().get('SELECT avatar_url FROM users WHERE id = $1', [Number(userId)]))?.avatar_url
         : null;
+    // Фото сменилось или снято (пустая строка) — копии прежнего в кэше не нужны.
+    const avatarChanged =
+      avatar_url === '' || (avatar_url !== undefined && avatar_url !== null && String(avatar_url) !== String(currentAvatar ?? ''));
     if (avatar_url !== undefined && avatar_url !== null && avatar_url !== '' && String(avatar_url) !== String(currentAvatar ?? '')) {
       const value = String(avatar_url);
       const isImageData = /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
       if (!isImageData) throw new Error('Фотография профиля должна быть изображением PNG, JPEG, GIF или WebP');
       if (value.length > 700 * 1024) throw new Error('Фотография слишком большая — выберите файл до 500 КБ');
+      // Новое фото хранится только перекодированным (задача 20): JPEG не
+      // больше 256 px без метаданных (EXIF с координатами съёмки) — той же
+      // строкой data URL, чтобы настольный клиент видел его как раньше.
+      // Что внутри на самом деле, решает сигнатура, а не заявленный тип.
+      const Images = require('../media/images');
+      try {
+        avatar_url = Images.toDataUrl(await Images.normalizeAvatar(Images.decodeDataUrl(value)));
+      } catch (err) {
+        if (err instanceof Images.ImageError && err.status === 503) throw new Error(err.message);
+        throw new Error('Фотография профиля должна быть изображением PNG, JPEG, GIF или WebP');
+      }
     }
     if (custom_status !== undefined && custom_status !== null && String(custom_status).length > 200) {
       throw new Error('Подпись статуса — не длиннее 200 символов');
@@ -290,6 +304,7 @@ class UserService {
        WHERE id = $5`,
       [orNull(email), orNull(phone), orNull(avatar_url), orNull(custom_status), Number(userId)]
     );
+    if (avatarChanged) await require('../media/avatars').purgeAvatarCache(userId);
     return this.getUserById(userId);
   }
 
@@ -297,6 +312,8 @@ class UserService {
   // снять. Проверок формата здесь нет: значение собирает сам сервер.
   static async setAvatar(userId, dataUrl) {
     await identity().run('UPDATE users SET avatar_url = $1 WHERE id = $2', [dataUrl, Number(userId)]);
+    // Перекодированные копии прежнего фото больше не нужны.
+    await require('../media/avatars').purgeAvatarCache(userId);
     return this.getUserById(userId);
   }
 

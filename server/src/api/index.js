@@ -31,11 +31,11 @@ const config = require('../config');
 
 const router = express.Router();
 
-// Аватары ссылкой (задача 20): всем, кроме настольного клиента, data URL
-// фотографий в ответах заменяются адресами /api/users/<id>/avatar?v=… —
-// см. server/src/media/avatars.js.
+// Аватары ссылкой (задача 20): клиенту, приславшему X-Avatar-Format: url,
+// data URL фотографий в ответах заменяются адресами /api/users/<id>/avatar?v=…
+// (старые ссылки — null). Остальным — прежняя форма. См. src/media/avatars.js.
 router.use((req, res, next) => {
-  if (!Avatars.wantsLegacyAvatars(req.headers)) {
+  if (Avatars.wantsAvatarUrls(req.headers)) {
     const send = res.json.bind(res);
     res.json = (body) => send(Avatars.shapeAvatars(body));
   }
@@ -2100,8 +2100,9 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
     res.removeHeader('Content-Disposition');
     return res.status(304).end();
   }
-  let range = parseRange(req.headers.range, size);
-  if (range && !range.invalid && !ifRangeAllows(req.headers['if-range'], etag)) range = null;
+  // If-Range проверяется раньше Range (RFC 9110 §13.2.2): не совпал — Range
+  // не рассматривается вовсе, отдаётся весь файл, даже если Range неверен.
+  const range = ifRangeAllows(req.headers['if-range'], etag) ? parseRange(req.headers.range, size) : null;
   if (range?.invalid) {
     res.removeHeader('Content-Disposition');
     res.setHeader('Content-Range', `bytes */${size}`);
@@ -2157,10 +2158,17 @@ router.get('/files/thumb/:id', requireAuth, route(async (req, res) => {
   }
   let thumb;
   try {
-    thumb = await Thumbnails.getThumbnail(file, { size, format });
+    // Отрисовка (промах кэша) — не больше THUMB_RENDERS_PER_MINUTE в минуту
+    // на сотрудника: готовые миниатюры из кэша пределом не ограничены.
+    const admitRender = () => checkRateLimit(`thumb-render:${req.user.id}`, {
+      maxAttempts: Number(process.env.THUMB_RENDERS_PER_MINUTE) > 0 ? Number(process.env.THUMB_RENDERS_PER_MINUTE) : 60,
+      windowMs: 60000
+    });
+    thumb = await Thumbnails.getThumbnail(file, { size, format, admitRender });
   } catch (err) {
     if (err instanceof Images.ImageError) {
       if (err.status === 503) res.set('Retry-After', String(jitterSeconds(5)));
+      if (err.status === 429) res.set('Retry-After', '60');
       return res.status(err.status).json({ error: err.message, code: err.code });
     }
     throw err;
@@ -2169,11 +2177,14 @@ router.get('/files/thumb/:id', requireAuth, route(async (req, res) => {
     FileService.recordImageInfo(file.id, { ...thumb.rendered.source, dominantColor: thumb.rendered.color });
   }
   res.setHeader('ETag', thumb.etag);
-  res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+  // Не immutable: после восстановления базы id файла может достаться другому
+  // вложению — клиент перепроверяет кэш по ETag (в нём ключ содержимого) и
+  // получает 304, пока миниатюра та же.
+  res.setHeader('Cache-Control', 'private, no-cache');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   if (etagListMatches(req.headers['if-none-match'], thumb.etag)) return res.status(304).end();
   res.type(thumb.contentType);
-  res.sendFile(thumb.path, { headers: { 'Cache-Control': 'private, max-age=604800, immutable' }, lastModified: false, etag: false, dotfiles: 'allow' });
+  res.sendFile(thumb.path, { headers: { 'Cache-Control': 'private, no-cache' }, lastModified: false, etag: false, dotfiles: 'allow' });
 }));
 
 router.get('/files/recent', requireAuth, route(async (req, res) => {

@@ -429,10 +429,11 @@ class WsServer {
     });
 
     this.wss.on('connection', (ws, req) => {
-      // Аватары ссылкой (задача 20): всем, кроме настольного клиента, каждый
-      // текстовый кадр с data URL фотографии уходит с адресом вместо неё.
-      // Обёртка на самом send — так её не обходит ни одна рассылка.
-      if (!Avatars.wantsLegacyAvatars(req.headers)) {
+      // Аватары ссылкой (задача 20): сокету, подключившемуся с ?avatars=url,
+      // в каждом текстовом кадре с полем фото data URL заменяется адресом,
+      // старая ссылка — null. Обёртка на самом send — так её не обходит ни
+      // одна рассылка. Остальным сокетам — прежняя форма.
+      if (Avatars.socketWantsAvatarUrls(req)) {
         const rawSend = ws.send.bind(ws);
         ws.send = (data, ...rest) => rawSend(typeof data === 'string' ? Avatars.shapeFrame(data) : data, ...rest);
       }

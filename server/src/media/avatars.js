@@ -1,19 +1,15 @@
 // Аватары ссылкой (задача 20).
 //
 // Фотография сотрудника хранится, как и раньше, в users.avatar_url строкой
-// data:image/…;base64 — так её по-прежнему получает настольный клиент
-// (рисует <img src=…> в нескольких местах и отправляет обратно при
-// сохранении профиля). Остальным клиентам data URL больше не отдаётся:
-// справочник из сотен сотрудников с фотографиями по 30–700 КБ каждая весил
-// десятки мегабайт. Вместо неё в том же поле avatar_url (и sender_avatar
-// сообщения) — адрес /api/users/<id>/avatar?v=<версия>; картинку по нему
-// сервер всегда перекодирует сам (sharp), исходные байты не отдаёт.
-//
-// Кто «настольный клиент», сервер узнаёт по User-Agent: Electron его не
-// меняет, а приложение лишь дописывает «OpenMyChatDesktop/<версия>»
-// (desktop/src/main/main.js). Это не мера безопасности — подделавший
-// User-Agent получит те же фотографии, что и так видны ему в справочнике, —
-// а только выбор формы ответа.
+// data:image/…;base64 — и по умолчанию так и отдаётся: настольный клиент
+// (в Electron и в браузере) и любые другие потребители API видят прежнюю
+// форму. Клиент, который умеет грузить фото по адресу с токеном (мобильные
+// приложения), просит адреса явно: заголовком X-Avatar-Format: url (HTTP) или
+// параметром ?avatars=url при подключении WebSocket. Тогда в avatar_url (и
+// sender_avatar сообщения) вместо data URL — /api/users/<id>/avatar?v=<версия>:
+// справочник из сотен сотрудников с фотографиями по 30–700 КБ каждая не
+// весит десятки мегабайт, а картинку по адресу сервер всегда перекодирует
+// сам (sharp), исходные байты не отдаёт.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,11 +18,20 @@ const config = require('../config');
 const Images = require('./images');
 
 const AVATARS_DIR = path.join(config.UPLOADS_DIR, '.avatars');
-const LEGACY_UA_RE = /\bElectron\/|\bOpenMyChatDesktop\//;
 const RENDER_VERSION = 'v1';
 
-function wantsLegacyAvatars(headers = {}) {
-  return LEGACY_UA_RE.test(String(headers['user-agent'] || ''));
+// HTTP: X-Avatar-Format: url (без учёта регистра). Любое другое значение или
+// отсутствие заголовка — прежняя форма.
+function wantsAvatarUrls(headers = {}) {
+  return String(headers['x-avatar-format'] || '').trim().toLowerCase() === 'url';
+}
+
+// WebSocket: ?avatars=url в адресе подключения (/ws?avatars=url).
+function socketWantsAvatarUrls(req) {
+  const url = String(req?.url || '');
+  const index = url.indexOf('?');
+  if (index === -1) return false;
+  return new URLSearchParams(url.slice(index + 1)).get('avatars') === 'url';
 }
 
 function isDataUrl(value) {
@@ -94,10 +99,12 @@ function shapeAvatars(value, depth = 0) {
   return out || value;
 }
 
-// Готовый текст кадра WebSocket: разбирается, только если в нём вообще есть
-// data URL — остальные кадры (и звук, он двоичный) идут как есть.
+// Готовый текст кадра WebSocket для сокета, попросившего адреса: разбирается
+// каждый кадр, где есть поле фото, — и с data URL, и со старой ссылкой
+// (её клиент не должен получить: он пошёл бы по ней с токеном). Остальные
+// кадры (и звук, он двоичный) идут как есть.
 function shapeFrame(text) {
-  if (typeof text !== 'string' || !text.includes('"data:')) return text;
+  if (typeof text !== 'string' || !AVATAR_KEYS.some((key) => text.includes(`"${key}"`))) return text;
   try {
     return JSON.stringify(shapeAvatars(JSON.parse(text)));
   } catch {
@@ -149,9 +156,9 @@ async function getAvatarFile(userId, stored, size) {
   return { path: target, etag };
 }
 
-// Прежние версии аватара этого сотрудника. Удаляются только файлы с именем
-// «<id>-<16 hex>-<размер>.jpg» прямо в каталоге .avatars — имя целиком
-// собрано сервером, ничего из запроса.
+// Прежние версии аватара этого сотрудника (currentVersion = null — все).
+// Удаляются только файлы с именем «<id>-<16 hex>-<размер>.jpg» прямо в
+// каталоге .avatars — имя целиком собрано сервером, ничего из запроса.
 async function removeStale(id, currentVersion) {
   let names;
   try {
@@ -166,8 +173,17 @@ async function removeStale(id, currentVersion) {
   }
 }
 
+// Фото сменилось или снято — перекодированные копии прежнего не хранятся.
+async function purgeAvatarCache(userId) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return;
+  await removeStale(id, null);
+}
+
 module.exports = {
-  wantsLegacyAvatars,
+  wantsAvatarUrls,
+  socketWantsAvatarUrls,
+  purgeAvatarCache,
   avatarUrlFor,
   isOwnAvatarUrl,
   shapeAvatars,

@@ -27,6 +27,7 @@ sharp.concurrency(1);
 const MAX_INPUT_PIXELS = 50 * 1000 * 1000; // 50 Мп: снимки телефонов проходят, «бомбы» — нет
 const MAX_SOURCE_BYTES = 40 * 1024 * 1024; // картинка-вложение крупнее — без миниатюры
 const RENDER_TIMEOUT_SECONDS = 15;
+const INSPECT_TIMEOUT_MS = 5000;
 const MAX_PARALLEL_RENDERS = 2;
 const MAX_WAITING_RENDERS = 64;
 
@@ -96,11 +97,21 @@ async function inspect(input) {
   if (!type) throw notAnImage();
   const bytes = Buffer.isBuffer(input) ? input.length : (await fs.promises.stat(input)).size;
   if (bytes > MAX_SOURCE_BYTES) throw tooLarge();
+  // Заголовок читается с пределом времени: зависший разбор не держит слот.
   let meta;
+  let timer;
   try {
-    meta = await sharp(input, inputOptions()).metadata();
+    meta = await Promise.race([
+      sharp(input, inputOptions()).metadata(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('metadata timeout')), INSPECT_TIMEOUT_MS);
+        timer.unref?.();
+      })
+    ]);
   } catch (err) {
     throw /pixel limit/i.test(String(err?.message)) ? tooLarge() : unreadable();
+  } finally {
+    clearTimeout(timer);
   }
   // libvips определил формат сам — он обязан совпасть с сигнатурой.
   if (meta.format !== type) throw notAnImage();
@@ -141,8 +152,8 @@ async function dominantColor(buffer) {
 async function renderThumbnail(input, { size = 's', format = 'webp' } = {}) {
   const px = THUMB_SIZES[size];
   if (!px || !THUMB_FORMATS.has(format)) throw new ImageError('BAD_REQUEST', 'Неверный размер или формат миниатюры', 400);
-  const source = await inspect(input);
   return withRenderSlot(async () => {
+    const source = await inspect(input);
     let pipeline = sharp(input, inputOptions())
       .rotate()
       .resize({ width: px, height: px, fit: 'inside', withoutEnlargement: true });
@@ -161,19 +172,18 @@ async function renderThumbnail(input, { size = 's', format = 'webp' } = {}) {
 
 /** Размеры и цвет картинки для метаданных вложения. null — не картинка. */
 async function probe(input) {
-  let source;
   try {
-    source = await inspect(input);
+    return await withRenderSlot(async () => {
+      const source = await inspect(input);
+      const color = await run(sharp(input, inputOptions()).rotate().resize({ width: 32, height: 32, fit: 'inside' }).png())
+        .then(({ data }) => dominantColor(data))
+        .catch(() => null);
+      return { width: source.width, height: source.height, dominantColor: color };
+    });
   } catch (err) {
-    if (err instanceof ImageError && err.code === 'IMAGE_TOO_LARGE') return null;
     if (err instanceof ImageError) return null;
     throw err;
   }
-  const color = await withRenderSlot(async () => {
-    const { data } = await run(sharp(input, inputOptions()).rotate().resize({ width: 32, height: 32, fit: 'inside' }).png());
-    return dominantColor(data);
-  }).catch(() => null);
-  return { width: source.width, height: source.height, dominantColor: color };
 }
 
 const AVATAR_MASTER_PX = 256;
@@ -184,8 +194,8 @@ const AVATAR_SIZES = { s: 96, m: 256 };
  * обрезал настольный клиент), JPEG без метаданных, прозрачность — на белом.
  */
 async function normalizeAvatar(input) {
-  await inspect(input);
   return withRenderSlot(async () => {
+    await inspect(input);
     const { data } = await run(
       sharp(input, inputOptions())
         .rotate()
@@ -201,8 +211,8 @@ async function normalizeAvatar(input) {
 async function renderAvatar(input, size = 'm') {
   const px = AVATAR_SIZES[size];
   if (!px) throw new ImageError('BAD_REQUEST', 'Неверный размер аватара', 400);
-  await inspect(input);
   return withRenderSlot(async () => {
+    await inspect(input);
     const { data } = await run(
       sharp(input, inputOptions())
         .rotate()
