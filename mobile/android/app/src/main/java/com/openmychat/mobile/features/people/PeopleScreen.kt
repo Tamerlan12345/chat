@@ -84,6 +84,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
@@ -293,7 +296,13 @@ fun PeopleContent(
                                     contentPadding = padding
                                 ) {
                                     items(state.results, key = { it.person.id }) { match ->
-                                        PersonRow(match.person, onClick = { actions.onOpenPerson(match.person) }, highlights = match.highlights)
+                                        PersonRow(
+                                            match.person,
+                                            onClick = { actions.onOpenPerson(match.person) },
+                                            highlights = match.highlights,
+                                            subtitleHighlights = match.subtitleHighlights,
+                                            extensionHighlights = match.extensionHighlights
+                                        )
                                     }
                                 }
                                 else -> AlphabetList(allState, state.sections, padding, actions)
@@ -312,6 +321,7 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
     Row(
         Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -324,7 +334,7 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
             inactiveContentColor = tokens.textSecondary,
             inactiveBorderColor = tokens.borderStrong
         )
-        SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+        SingleChoiceSegmentedButtonRow(Modifier.weight(1f).fillMaxHeight()) {
             listOf(PeopleScope.ALL to R.string.people_scope_all, PeopleScope.DEPARTMENTS to R.string.people_scope_departments)
                 .forEachIndexed { index, (scope, label) ->
                     SegmentedButton(
@@ -342,7 +352,7 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
                                 autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = MaterialTheme.typography.labelLarge.fontSize)
                             )
                         },
-                        modifier = Modifier.testTag("people-scope-${scope.name.lowercase()}")
+                        modifier = Modifier.fillMaxHeight().heightIn(min = 48.dp).testTag("people-scope-${scope.name.lowercase()}")
                     )
                 }
         }
@@ -374,7 +384,7 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
                 borderColor = tokens.borderStrong,
                 selectedBorderColor = tokens.primaryLine
             ),
-            modifier = Modifier.heightIn(min = 48.dp).testTag("people-online-filter")
+            modifier = Modifier.fillMaxHeight().heightIn(min = 48.dp).testTag("people-online-filter")
         )
     }
 }
@@ -449,8 +459,10 @@ private fun AlphabetList(listState: LazyListState, sections: List<LetterSection>
 private const val FAST_SCROLL_MIN = 12
 
 /**
- * Быстрая прокрутка у правого края: тянуть — список едет к букве, рядом пузырь с ней. Полоса
- * появляется, пока список движется или его тянут.
+ * Быстрая прокрутка у правого края: ухватить бегунок (появляется, пока список движется) и тянуть —
+ * список едет к букве, рядом пузырь с ней. Касание принимает только сам бегунок с запасом под
+ * палец: обычная прокрутка у края экрана к букве не прыгает. Для TalkBack полоса скрыта — список
+ * целиком доступен обычной прокруткой, буквы разделов остаются заголовками.
  */
 @Composable
 private fun FastScroller(listState: LazyListState, starts: List<Pair<String, Int>>, modifier: Modifier = Modifier) {
@@ -463,51 +475,60 @@ private fun FastScroller(listState: LazyListState, starts: List<Pair<String, Int
     val letter = starts.lastOrNull { it.second <= (shownFraction * total).roundToInt() }?.first ?: starts.firstOrNull()?.first.orEmpty()
     val visible = dragging || listState.isScrollInProgress
     val alpha by animateFloatAsState(if (visible) 1f else 0f, CentyMotion.base(), label = "fast-scroll")
-    val bubbleLabel = stringResource(R.string.people_fast_scroll, letter)
 
-    BoxWithConstraints(modifier.fillMaxHeight().padding(vertical = 8.dp).width(40.dp)) {
+    BoxWithConstraints(modifier.fillMaxHeight().padding(vertical = 8.dp).width(48.dp).clearAndSetSemantics { }) {
         val trackPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         val thumbHeight = 40.dp
         val thumbPx = with(LocalDensity.current) { thumbHeight.toPx() }
-        fun jump(y: Float) {
-            fraction = (y / trackPx).coerceIn(0f, 1f)
+        fun moveTo(f: Float) {
+            fraction = f.coerceIn(0f, 1f)
             val target = starts.lastOrNull { it.second <= (fraction * total).roundToInt() }?.second ?: 0
             scope.launch { listState.scrollToItem(target) }
         }
+        val y = ((trackPx - thumbPx) * shownFraction.coerceIn(0f, 1f)).roundToInt()
+        // Зона касания — только бегунок (48 × 64 dp вокруг него), и только пока он виден.
         Box(
             Modifier
-                .fillMaxSize()
-                .pointerInput(starts) {
-                    detectVerticalDragGestures(
-                        onDragStart = { dragging = true; jump(it.y) },
-                        onDragEnd = { dragging = false },
-                        onDragCancel = { dragging = false },
-                        onVerticalDrag = { change, _ -> jump(change.position.y) }
-                    )
-                }
-                .pointerInput(starts) { detectTapGestures(onPress = { if (alpha > 0.5f) jump(it.y) }) }
+                .align(Alignment.TopEnd)
+                .offset { IntOffset(0, (y - 12.dp.roundToPx()).coerceAtLeast(0)) }
+                .size(width = 48.dp, height = thumbHeight + 24.dp)
+                .then(
+                    if (alpha > 0f || dragging) {
+                        Modifier.pointerInput(starts, trackPx) {
+                            detectVerticalDragGestures(
+                                onDragStart = {
+                                    fraction = shownFraction
+                                    dragging = true
+                                },
+                                onDragEnd = { dragging = false },
+                                onDragCancel = { dragging = false },
+                                onVerticalDrag = { change, dy ->
+                                    change.consume()
+                                    moveTo(fraction + dy / (trackPx - thumbPx).coerceAtLeast(1f))
+                                }
+                            )
+                        }
+                    } else Modifier
+                )
         ) {
-            val y = ((trackPx - thumbPx) * shownFraction.coerceIn(0f, 1f)).roundToInt()
             Box(
                 Modifier
-                    .align(Alignment.TopEnd)
-                    .offset { IntOffset(0, y) }
-                    .padding(end = 4.dp)
+                    .align(Alignment.Center)
+                    .padding(start = 40.dp)
                     .size(width = 4.dp, height = thumbHeight)
                     .background(tokens.textDim.copy(alpha = 0.6f * alpha), RoundedCornerShape(2.dp))
             )
-            if (dragging && letter.isNotEmpty()) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .offset { IntOffset(-56.dp.roundToPx(), (y - 8.dp.roundToPx()).coerceAtLeast(0)) }
-                        .size(56.dp)
-                        .background(tokens.primary, CircleShape)
-                        .semantics { contentDescription = bubbleLabel },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(letter, style = MaterialTheme.typography.headlineSmall, color = Color.White)
-                }
+        }
+        if (dragging && letter.isNotEmpty()) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset { IntOffset(-56.dp.roundToPx(), (y - 8.dp.roundToPx()).coerceAtLeast(0)) }
+                    .size(56.dp)
+                    .background(tokens.primary, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(letter, style = MaterialTheme.typography.headlineSmall, color = Color.White)
             }
         }
     }

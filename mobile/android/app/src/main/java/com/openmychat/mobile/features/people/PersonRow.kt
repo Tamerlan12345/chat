@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -61,6 +62,9 @@ fun PersonRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     highlights: List<IntRange> = emptyList(),
+    /** Найденное в «должность · отдел» и во вн. номере (поиск не по имени). */
+    subtitleHighlights: List<IntRange> = emptyList(),
+    extensionHighlights: List<IntRange> = emptyList(),
     /** Отступ слева для вложенности в «Отделах». */
     indent: Dp = 0.dp,
     background: Color = CentyTheme.tokens.list
@@ -70,6 +74,13 @@ fun PersonRow(
     val pressed by interaction.collectIsPressedAsState()
     val fill by animateColorAsState(if (pressed) tokens.primarySoft else Color.Transparent, CentyMotion.fast(), label = "person-press")
     val shared = personSharedKey(person.id)
+    val largeText = LocalDensity.current.fontScale > 1.3f
+    val extensionLabel = person.extension?.let { stringResource(R.string.people_extension, it) }
+    // «вн. 214»: подсветка найденного сдвигается на длину префикса «вн. ».
+    val extensionText = extensionLabel?.let { label ->
+        val shift = label.length - person.extension!!.length
+        highlighted(label, extensionHighlights.map { (it.first + shift)..(it.last + shift) }, tokens.accentText)
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -99,9 +110,16 @@ fun PersonRow(
                 modifier = Modifier.sharedConversationElement(SharedKeys.title(shared))
             )
             val subtitle = person.subtitle
-            if (subtitle.isNotEmpty()) {
+            if (subtitle.isNotEmpty() || (largeText && person.extension != null)) {
                 Text(
-                    subtitle,
+                    buildAnnotatedString {
+                        append(highlighted(subtitle, subtitleHighlights, tokens.accentText))
+                        // При крупном шрифте номер переезжает сюда и не сжимает имя.
+                        if (largeText && extensionText != null) {
+                            if (subtitle.isNotEmpty()) append(" · ")
+                            append(extensionText)
+                        }
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.textSecondary,
                     maxLines = 1,
@@ -109,10 +127,10 @@ fun PersonRow(
                 )
             }
         }
-        person.extension?.let { ext ->
+        if (!largeText && extensionText != null) {
             Spacer(Modifier.width(8.dp))
             Text(
-                stringResource(R.string.people_extension, ext),
+                extensionText,
                 style = MaterialTheme.typography.labelSmall,
                 color = tokens.textDim,
                 maxLines = 1

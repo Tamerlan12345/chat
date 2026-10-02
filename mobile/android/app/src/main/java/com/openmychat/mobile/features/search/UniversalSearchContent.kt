@@ -97,6 +97,8 @@ fun UniversalSearchContent(
                     match.person,
                     onClick = { actions.onOpenPerson(match.person) },
                     highlights = match.highlights,
+                    subtitleHighlights = match.subtitleHighlights,
+                    extensionHighlights = match.extensionHighlights,
                     modifier = stagger(index)
                 )
             }
@@ -218,10 +220,11 @@ private fun ChannelRow(match: ChannelMatch, onClick: () -> Unit, modifier: Modif
 private fun MessageRow(hit: MessageHit, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val tokens = CentyTheme.tokens
     val sender = if (hit.isOwn) stringResource(R.string.search_message_from_you) else hit.senderName
+    // Всегда видно, где сообщение: канал или личная переписка (с кем — для своих сообщений).
     val where = when {
-        hit.conversationType == ConversationType.CHANNEL && hit.conversationTitle.isNotBlank() -> "#" + hit.conversationTitle
-        hit.isOwn && hit.conversationTitle.isNotBlank() -> hit.conversationTitle
-        else -> null
+        hit.conversationType == ConversationType.CHANNEL -> "#" + hit.conversationTitle.ifBlank { "…" }
+        hit.isOwn && hit.conversationTitle.isNotBlank() -> stringResource(R.string.search_in_direct_with, hit.conversationTitle)
+        else -> stringResource(R.string.search_in_direct)
     }
     Row(
         modifier
@@ -240,7 +243,7 @@ private fun MessageRow(hit: MessageHit, onClick: () -> Unit, modifier: Modifier 
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (where != null) stringResource(R.string.search_message_in, sender, where) else sender,
+                    stringResource(R.string.search_message_in, sender, where),
                     style = MaterialTheme.typography.titleSmall,
                     color = tokens.textStrong,
                     maxLines = 1,
