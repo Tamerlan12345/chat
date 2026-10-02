@@ -15,7 +15,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import com.openmychat.mobile.core.network.ConnectionState
@@ -99,7 +99,8 @@ class ChatContentTest {
                 ChatContent(title = "Боб Тестов", isDirect = true, uiState = state, currentUserId = me, connectionState = ConnectionState.Connected, actions = actions)
             }
         }
-        compose.onNodeWithTag("message-list").performScrollToIndex(0)
+        // The list runs bottom-up: the oldest message is the far end.
+        compose.onNodeWithTag("message-list").performScrollToKey("msg-1")
         compose.waitForIdle()
 
         state = ChatUiState.Content((state as ChatUiState.Content).messages + message(41, peer, "Новое входящее"))
