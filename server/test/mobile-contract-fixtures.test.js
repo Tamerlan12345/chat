@@ -45,6 +45,11 @@ const REQUIRED_HTTP = [
   'http/users.list.json', 'http/users.get.json',
   'http/channels.list.json', 'http/conversations.direct.json',
   'http/messages.direct-page.json', 'http/messages.channel-page.json', 'http/messages.send-direct.json',
+  // надёжная доставка (задача 5): идемпотентная отправка, страница вперёд, дельта-синхронизация
+  'http/messages.send-direct-idempotent.json', 'http/messages.send-direct-duplicate.json',
+  'http/messages.send-client-msg-id-invalid.json', 'http/messages.send-client-msg-id-conflict.json',
+  'http/messages.after-page.json',
+  'http/sync.bootstrap.json', 'http/sync.page.json', 'http/sync.cursor-invalid.json',
   'http/files.policy.json', 'http/files.upload.json',
   'http/announcements.list.json'
 ];

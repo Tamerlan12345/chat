@@ -1,0 +1,4 @@
+{
+  "error": "Этот client_msg_id уже использован для другой переписки",
+  "code": "CLIENT_MSG_ID_CONFLICT"
+}
