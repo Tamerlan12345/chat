@@ -20,7 +20,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.TransformOrigin
+
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
@@ -63,8 +63,8 @@ import kotlinx.coroutines.launch
  * One message row: the grouped bubble, its entrance, swipe-to-reply and the long-press lift.
  *
  * "The message lands": the composer's text travels into a fresh own bubble ([LandingOverlay]); the
- * bubble stays hidden under it and appears as it lands, then its delivery glyph draws in. An own
- * bubble without a flight (sent elsewhere) rises 24dp; a fresh incoming one fades and rises 8dp.
+ * bubble stays hidden under it and appears as it lands, then its delivery glyph draws in. Any other
+ * fresh bubble (incoming, sent elsewhere, too long to travel) fades and rises 8dp.
  * Reduce motion: a fade. Values are read in the layer only.
  *
  * Within a group, a bubble overlaps the one above it by its hairline, so the group has one outline.
@@ -101,13 +101,13 @@ internal fun ChatBubbleRow(
                 1f,
                 when {
                     reduce -> tween(CentyMotion.FAST)
-                    isOwn -> tween(CentyMotion.SEND, easing = CentyMotion.EaseOutExpo)
                     else -> tween(CentyMotion.INCOMING, easing = CentyMotion.EaseOut)
                 }
             )
         }
     }
-    val rise = with(LocalDensity.current) { (if (isOwn) 24.dp else 8.dp).toPx() }
+    // Without a flight (sent elsewhere, or too long to travel) an own bubble fades and rises 8dp like an incoming one.
+    val rise = with(LocalDensity.current) { 8.dp.toPx() }
 
     val time = remember(message.createdAt) { DateTimeUtils.formatTime(message.createdAt) }
     val body = if (message.isDeleted) strings.deleted else message.text
@@ -202,10 +202,7 @@ internal fun ChatBubbleRow(
                         alpha = if (menuState.isLifted(item.key) || landing.hides(item.key)) 0f else p
                         if (!reduce && p < 1f) {
                             translationY = (1f - p) * rise
-                            val scale = if (isOwn) 0.96f + 0.04f * p else 1f
-                            scaleX = scale
-                            scaleY = scale
-                            transformOrigin = TransformOrigin(if (isOwn) 1f else 0f, 1f)
+
                         }
                     },
                     Modifier

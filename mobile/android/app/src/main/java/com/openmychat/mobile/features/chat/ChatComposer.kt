@@ -67,6 +67,9 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -75,6 +78,9 @@ import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.R
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
+import com.openmychat.mobile.ui.navigation.LocalBottomBarVisible
+import com.openmychat.mobile.ui.navigation.NavBarInset
+import androidx.compose.ui.unit.offset
 import com.openmychat.mobile.ui.components.rememberHaptics
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
@@ -135,6 +141,9 @@ internal fun ChatComposer(
     }
     // Where the typed text sits, for the landing flight; and the placeholder's return after a send.
     val textCoordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val measurer = rememberTextMeasurer()
+    val bodyStyle = MaterialTheme.typography.bodyLarge
+    val bubbleTextWidth = with(density) { bubbleTextMaxWidth(LocalWindowInfo.current.containerSize.width.toDp()).roundToPx() }
     val placeholder = remember { Animatable(1f) }
 
     val canSend = text.isNotBlank()
@@ -142,7 +151,9 @@ internal fun ChatComposer(
         if (canSend) {
             val sent = text
             val start = textCoordinates[0]?.takeIf { it.isAttached }?.positionInRoot()
-            if (!reduce && editingMessage == null && landing != null && start != null) landing.launch(sent.trim(), start)
+            // Only what its bubble shows in a few lines travels; a long message lands with a fade.
+            val fits = measurer.measure(sent.trim(), bodyStyle, constraints = Constraints(maxWidth = bubbleTextWidth.coerceAtLeast(1))).lineCount <= LANDING_MAX_LINES
+            if (!reduce && editingMessage == null && landing != null && start != null && fits) landing.launch(sent.trim(), start)
             actions.onSend(sent, if (editingMessage == null) replyTo else null)
             text = ""
             onSent()
@@ -163,7 +174,7 @@ internal fun ChatComposer(
             .fillMaxWidth()
             .background(tokens.elevated)
             .drawBehind { drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) }
-            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+            .bottomBarAwareInsetsPadding()
     ) {
         Column(Modifier.onSizeChanged { anchor.bottom = with(density) { it.height.toDp() } }) {
             val banner: ComposerBanner? = when {
@@ -365,4 +376,26 @@ private fun Modifier.shrinkSmoothly(): Modifier {
             val shown = if (current < 0f || target >= current) target else current
             layout(placeable.width, shown.toInt()) { placeable.place(0, 0) }
         }
+}
+
+/**
+ * Bottom padding for the keyboard and the gesture bar, computed from the raw insets and the bottom
+ * bar's measured visible height ([LocalBottomBarVisible]) instead of consumed insets: the navigation
+ * scaffold switches its own inset consumption the moment the bar's target changes, which used to
+ * drop the composer by the gesture inset on the first frame of chat → inbox. Here the composer rests
+ * max(keyboard, visible bar or gesture inset) above the bottom edge and moves continuously.
+ */
+@Composable
+private fun Modifier.bottomBarAwareInsetsPadding(): Modifier {
+    val ime = WindowInsets.ime
+    val nav = WindowInsets.navigationBars
+    val barVisible = LocalBottomBarVisible.current
+    return layout { measurable, constraints ->
+        val navInset = nav.getBottom(this)
+        // The bar sits below this screen, so only what it does not cover of the gesture inset is padded.
+        val navPadding = navInset - NavBarInset.consumedBottom(navInset, barVisible())
+        val bottom = maxOf(ime.getBottom(this), navPadding).coerceAtLeast(0)
+        val placeable = measurable.measure(constraints.offset(vertical = -bottom))
+        layout(placeable.width, placeable.height + bottom) { placeable.place(0, 0) }
+    }
 }

@@ -43,7 +43,16 @@ import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSui
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -183,8 +192,11 @@ fun CentyNavigation(
     }
     // Phones show a chat full screen: the bar slides away with the inbox→chat transition and comes
     // back with it, instead of vanishing in one frame. Medium windows keep the rail next to the pane.
-    val navState = rememberNavigationSuiteScaffoldState()
     val hideBar = currentKey is NavKey.Chat && isCompact
+    // Starts where the destination is (a cold start or deep link into a chat must not slide the bar away).
+    val navState = rememberNavigationSuiteScaffoldState(
+        initialValue = if (hideBar) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
+    )
     LaunchedEffect(hideBar, reduce) {
         val target = if (hideBar) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
         when {
@@ -243,17 +255,32 @@ fun CentyNavigation(
             }
         }
     ) {
-        // The bottom bar already pads for the gesture area; screens above it must not pad again.
-        // The bar pads for the gesture area while it is (going to be) shown; a chat pads itself.
-        val barShown = layoutType == NavigationSuiteType.NavigationBar && navState.targetValue == NavigationSuiteScaffoldValue.Visible
-        val barInsets = if (barShown) WindowInsets.navigationBars else WindowInsets(0, 0, 0, 0)
-        Box(Modifier.fillMaxSize().consumeWindowInsets(barInsets)) {
-            display()
+        // The bottom bar pads itself for the gesture area, so the screens above consume that inset, but
+        // only by the part of the bar actually on screen: while the bar slides (inbox ↔ chat) the chat
+        // composer then rests on max(visible bar, gesture inset) and moves continuously. The visible
+        // part is read from this area's height in the same layout pass, before the screen measures.
+        val windowHeight = LocalWindowInfo.current.containerSize.height
+        val barAtBottom = layoutType == NavigationSuiteType.NavigationBar
+        val barVisiblePx = remember { mutableIntStateOf(0) }
+        val density = LocalDensity.current
+        val navInsets = WindowInsets.navigationBars
+        val consumed = remember(density, navInsets) { BarInsetConsumption(density, barVisiblePx) { navInsets.getBottom(density) } }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layout { measurable, constraints ->
+                    barVisiblePx.intValue = if (barAtBottom && constraints.hasBoundedHeight) (windowHeight - constraints.maxHeight).coerceAtLeast(0) else 0
+                    val placeable = measurable.measure(constraints)
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                .consumeWindowInsets(consumed)
+        ) {
+            CompositionLocalProvider(LocalBottomBarVisible provides { barVisiblePx.intValue }) { display() }
             CentySnackbarHost(
                 snackbarHost,
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime).exclude(barInsets))
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     // Above whatever the screen pins to the bottom (the chat composer reports its height).
                     .padding(bottom = snackbarAnchor.bottom)
             )
@@ -333,4 +360,18 @@ private fun appEntryProvider(
             onCallFinished = { navigator.closeCall(key) }
         )
     }
+}
+
+/** Consumes the gesture-bar inset by the visible part of the bottom bar ([NavBarInset]). */
+private class BarInsetConsumption(
+    private val density: Density,
+    private val barVisiblePx: IntState,
+    private val navInsetPx: () -> Int
+) : PaddingValues {
+    override fun calculateBottomPadding(): Dp =
+        with(density) { NavBarInset.consumedBottom(navInsetPx(), barVisiblePx.intValue).toDp() }
+
+    override fun calculateTopPadding(): Dp = 0.dp
+    override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
 }
