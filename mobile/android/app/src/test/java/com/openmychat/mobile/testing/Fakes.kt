@@ -32,10 +32,14 @@ class FakeRealtimeRepository : RealtimeRepository {
     /** Outgoing commands in order, e.g. "mark_read direct 7" or "call_end 7". */
     val sent = mutableListOf<String>()
 
+    /** false — сокет закрыт: команды не уходят (send возвращает false). */
+    var accepting = true
+
     fun emit(event: WsEvent) = check(_events.tryEmit(event))
     fun emitAudio(frame: WsEvent.AudioFrameReceived) = check(_audioFrames.tryEmit(frame))
 
     private fun record(command: String): Boolean {
+        if (!accepting) return false
         sent += command
         return true
     }

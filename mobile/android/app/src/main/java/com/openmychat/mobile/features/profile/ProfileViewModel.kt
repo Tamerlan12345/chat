@@ -84,6 +84,8 @@ class ProfileViewModel @Inject constructor(
                 if (event is WsEvent.UserStatusChanged && event.userId == profileRepository.cachedUser?.id) {
                     _dnd.value = event.status == UserStatus.DND
                 }
+                // Сервер держит «Не беспокоить» в памяти: после входа верна его версия.
+                if (event is WsEvent.AuthSuccess) _dnd.value = event.user.status == UserStatus.DND
             }
         }
     }
@@ -149,7 +151,11 @@ class ProfileViewModel @Inject constructor(
     fun setDnd(enabled: Boolean) {
         if (_dnd.value == enabled) return
         _dnd.value = enabled
-        presenceController.setDnd(enabled)
+        // Не ушло (нет связи) — переключатель возвращается: сервер режим не включил.
+        if (!presenceController.setDnd(enabled)) {
+            _dnd.value = !enabled
+            _events.tryEmit(ProfileEvent.StatusSaveFailed)
+        }
     }
 
     fun saveCustomStatus() {

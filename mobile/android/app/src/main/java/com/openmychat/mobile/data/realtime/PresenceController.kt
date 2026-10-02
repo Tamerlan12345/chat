@@ -1,6 +1,7 @@
 package com.openmychat.mobile.data.realtime
 
 import com.openmychat.mobile.core.network.ConnectionState
+import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.di.ApplicationScope
@@ -23,8 +24,9 @@ enum class Presence(val wire: String, val status: UserStatus) {
  * свёрнуто — «Отошёл». Вручную его не выбрать; «Не беспокоить» — отдельный переключатель
  * поверх присутствия (`set_dnd`), а «Не в сети» ставит только сервер, когда сокет закрылся.
  *
- * Отправляется только смена состояния; после каждого подключения (auth_success) текущее
- * состояние уходит снова, чтобы сервер не застрял на старом.
+ * Отправляется только смена состояния; после каждого подключения текущее состояние уходит
+ * снова — по самому событию auth_success, а не по StateFlow состояния связи: быстрое
+ * «подключено → переподключение → подключено» StateFlow склеил бы, и повтор потерялся бы.
  */
 @Singleton
 class PresenceController @Inject constructor(
@@ -44,11 +46,23 @@ class PresenceController @Inject constructor(
 
     init {
         scope.launch {
-            realtime.connectionState.collect { state ->
-                sent = null
-                if (state is ConnectionState.Connected) push()
-            }
+            realtime.events.collect { event -> if (event is WsEvent.AuthSuccess) onAuthenticated() }
         }
+        scope.launch {
+            // Связь пропала — сервер этого сокета больше не знает: отправим заново после входа.
+            realtime.connectionState.collect { state -> if (state !is ConnectionState.Connected) forget() }
+        }
+    }
+
+    @Synchronized
+    private fun forget() {
+        sent = null
+    }
+
+    @Synchronized
+    private fun onAuthenticated() {
+        sent = null
+        push()
     }
 
     /** Процесс вышел на передний план (ProcessLifecycleOwner ON_START). */

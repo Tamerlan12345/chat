@@ -1,9 +1,12 @@
 package com.openmychat.mobile.data.realtime
 
 import com.openmychat.mobile.core.network.ConnectionState
+import com.openmychat.mobile.core.network.WsEvent
+import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -11,18 +14,20 @@ import org.junit.Test
 /**
  * Присутствие как на настольном клиенте: приложение на экране — «в сети», свёрнуто — «отошёл».
  * Вручную выбирается только «Не беспокоить», и оно не меняет присутствие под собой.
+ * Обычный (не мгновенный) тестовый диспетчер: порядок как в приложении.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PresenceControllerTest {
 
     private val realtime = FakeRealtimeRepository()
+    private val me = User(id = 1, username = "me", fullName = "Я")
 
-    private fun kotlinx.coroutines.test.TestScope.controller() = PresenceController(realtime, backgroundScope)
+    private fun TestScope.controller() = PresenceController(realtime, backgroundScope).also { runCurrent() }
 
     private val presenceSent get() = realtime.sent.filter { it.startsWith("presence") }
 
     @Test
-    fun foregroundIsOnlineAndBackgroundIsAway() = runTest(UnconfinedTestDispatcher()) {
+    fun foregroundIsOnlineAndBackgroundIsAway() = runTest {
         val presence = controller()
         presence.onForeground()
         presence.onBackground()
@@ -32,7 +37,7 @@ class PresenceControllerTest {
     }
 
     @Test
-    fun theSameStateIsNotSentTwice() = runTest(UnconfinedTestDispatcher()) {
+    fun theSameStateIsNotSentTwice() = runTest {
         val presence = controller()
         presence.onForeground()
         presence.onForeground()
@@ -42,7 +47,7 @@ class PresenceControllerTest {
     }
 
     @Test
-    fun nothingIsSentWhileDisconnectedAndTheStateIsResentAfterReconnect() = runTest(UnconfinedTestDispatcher()) {
+    fun nothingIsSentWhileDisconnectedAndTheStateIsResentOnAuthSuccess() = runTest {
         realtime.connectionState.value = ConnectionState.Disconnected
         val presence = controller()
         presence.onForeground()
@@ -50,15 +55,25 @@ class PresenceControllerTest {
         assertEquals(emptyList<String>(), presenceSent)
 
         realtime.connectionState.value = ConnectionState.Connected
+        realtime.emit(WsEvent.AuthSuccess(me))
+        runCurrent()
         assertEquals("после auth_success — текущее состояние", listOf("presence away"), presenceSent)
-
-        realtime.connectionState.value = ConnectionState.Connecting
-        realtime.connectionState.value = ConnectionState.Connected
-        assertEquals("новый сокет — состояние снова", listOf("presence away", "presence away"), presenceSent)
     }
 
     @Test
-    fun doNotDisturbIsSeparateAndLeavesPresenceAlone() = runTest(UnconfinedTestDispatcher()) {
+    fun aQuickReconnectThatTheStateFlowMergesStillResends() = runTest {
+        val presence = controller()
+        presence.onForeground()
+        // Connected → Connecting → Connected без паузы: StateFlow отдаст только Connected.
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+        realtime.emit(WsEvent.AuthSuccess(me))
+        runCurrent()
+        assertEquals(listOf("presence online", "presence online"), presenceSent)
+    }
+
+    @Test
+    fun doNotDisturbIsSeparateAndLeavesPresenceAlone() = runTest {
         val presence = controller()
         presence.onForeground()
         presence.setDnd(true)
@@ -69,7 +84,7 @@ class PresenceControllerTest {
     }
 
     @Test
-    fun aCustomStatusTravelsWithTheCurrentPresence() = runTest(UnconfinedTestDispatcher()) {
+    fun aCustomStatusTravelsWithTheCurrentPresence() = runTest {
         val presence = controller()
         presence.onForeground()
         presence.publishCustomStatus("На встрече")

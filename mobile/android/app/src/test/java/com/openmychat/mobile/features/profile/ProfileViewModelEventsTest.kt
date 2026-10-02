@@ -90,6 +90,24 @@ class ProfileViewModelEventsTest {
     }
 
     @Test
+    fun aDndSwitchThatCouldNotBeSentFlipsBack() = runTest(dispatcher) {
+        val vm = viewModel(Profiles(me, fail = false))
+        runCurrent()
+        realtime.accepting = false
+        vm.setDnd(true)
+        assertFalse(vm.dnd.value)
+    }
+
+    @Test
+    fun authSuccessTellsWhetherDndIsOn() = runTest(dispatcher) {
+        val vm = viewModel(Profiles(me, fail = false))
+        runCurrent()
+        realtime.emit(WsEvent.AuthSuccess(me.copy(status = UserStatus.DND)))
+        runCurrent()
+        assertTrue(vm.dnd.value)
+    }
+
+    @Test
     fun theServerConfirmationOfDndReachesTheSwitch() = runTest(dispatcher) {
         val vm = viewModel(Profiles(me, fail = false))
         runCurrent()
