@@ -64,9 +64,11 @@ function walk(dir, base = dir) {
   return out.sort();
 }
 
+// reducers/ — табличные векторы клиентского редьюсера доставки (delivery-state.md),
+// их пишут руками, а не снимают с сервера; проверяет их mobile-delivery-reducer.test.js.
 function committedFiles() {
   return fs.existsSync(FIXTURES)
-    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json')
+    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json' && !f.startsWith('reducers/'))
     : [];
 }
 

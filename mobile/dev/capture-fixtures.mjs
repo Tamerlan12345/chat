@@ -518,11 +518,13 @@ export async function captureFixtures({ dataDir } = {}) {
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 function writeFixtures({ files, manifest }) {
-  // Drop stale fixtures (events that no longer exist) but keep README.md.
+  // Drop stale fixtures (events that no longer exist) but keep README.md and
+  // reducers/ (hand-written delivery reducer vectors, not captured from the server).
   const stale = (dir) => {
     if (!fs.existsSync(dir)) return;
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
+      if (e.isDirectory() && full === path.join(FIXTURES_DIR, 'reducers')) continue;
       if (e.isDirectory()) stale(full);
       else if (e.name.endsWith('.json')) fs.rmSync(full);
     }

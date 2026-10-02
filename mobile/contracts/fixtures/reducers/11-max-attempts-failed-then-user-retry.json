@@ -1,0 +1,215 @@
+{
+  "name": "11-max-attempts-failed-then-user-retry",
+  "description": "Пятая неудача (failures = 5) → failed (max_attempts). «Повторить» оставляет тот же ключ (сообщение могло сохраниться), обнуляет failures, ставит запись в хвост (seq 2) и отправляет шестой кадр; эхо подтверждает.",
+  "covers": [
+    "T13",
+    "T14",
+    "T23",
+    "T04",
+    "T07"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+        "conversation": "direct:4",
+        "seq": 1,
+        "text": "Отчёт во вложении",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 4,
+        "failures": 3,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 50000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ack_timeout",
+      "now": 50000,
+      "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+      "attempt": 4
+    },
+    {
+      "type": "tick",
+      "now": 58000
+    },
+    {
+      "type": "ack_timeout",
+      "now": 68000,
+      "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+      "attempt": 5
+    },
+    {
+      "type": "retry",
+      "now": 70000,
+      "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+      "new_client_msg_id": "a0000099-0000-4000-8000-000000000099"
+    },
+    {
+      "type": "ws",
+      "now": 70100,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 42,
+          "conversation_type": "direct",
+          "target_id": 4,
+          "sender_id": 2,
+          "text": "Отчёт во вложении",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:01:10.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 58000,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Отчёт во вложении",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 68000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+          "attempt": 5
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Отчёт во вложении",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 80000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+          "attempt": 6
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "seq": 2,
+    "outbox": [],
+    "messages": {
+      "direct:4": [
+        {
+          "id": 42,
+          "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+          "sender_id": 2,
+          "text": "Отчёт во вложении",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:01:10.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "wake_at": null
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "name": "38-cancel-rejected-removes",
+  "description": "Отказанная сервером запись (maybe_stored=false) удаляется отменой без сети.",
+  "covers": [
+    "T24"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000057-0000-4000-8000-000000000057",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Получатель уволен?",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Получатель не найден"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "cancel",
+      "now": 1000,
+      "client_msg_id": "a0000057-0000-4000-8000-000000000057"
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": []
+  }
+}

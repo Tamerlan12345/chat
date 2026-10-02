@@ -1,0 +1,184 @@
+{
+  "name": "36-app-restart-resets-transient",
+  "description": "Перезапуск: записи sending (ws и http) и удаление в полёте возвращаются в queued с сохранением attempts, failures и maybe_stored; сокет, видимая переписка, цепочка синхронизации, кэш сообщений, счётчики, sendLog/opsLog и wake_at сброшены; курсор, seq, outbox и ops сохраняются.",
+  "covers": [
+    "T22"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": "direct:3",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000055-0000-4000-8000-000000000055",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "ws в полёте",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000056-0000-4000-8000-000000000056",
+        "conversation": "channel:3",
+        "seq": 2,
+        "text": "http в полёте",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "http",
+        "ack_deadline": 31000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 171,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 1,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 170,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Кэш",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {
+      "channel:3": 3
+    },
+    "sendLog": [
+      1000
+    ],
+    "opsLog": [
+      1000
+    ],
+    "wake_at": 5000
+  },
+  "events": [
+    {
+      "type": "app_restart",
+      "now": 20000
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops",
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000055-0000-4000-8000-000000000055",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "ws в полёте",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000056-0000-4000-8000-000000000056",
+        "conversation": "channel:3",
+        "seq": 2,
+        "text": "http в полёте",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 171,
+        "text": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 1,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  }
+}

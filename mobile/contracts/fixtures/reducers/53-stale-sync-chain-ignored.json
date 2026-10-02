@@ -1,0 +1,267 @@
+{
+  "name": "53-stale-sync-chain-ignored",
+  "description": "Страница и ошибка от прерванной цепочки (chain 1) приходят во время новой (chain 2) — игнорируются; применяется только страница текущей цепочки.",
+  "covers": [
+    "T43",
+    "T21",
+    "T33"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 1100
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1300,
+      "chain": 1,
+      "body": {
+        "messages": [
+          {
+            "id": 400,
+            "conversation_type": "direct",
+            "target_id": 2,
+            "sender_id": 3,
+            "text": "Из старой цепочки",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:01.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "bob",
+            "sender_name": "Боб Тестов",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.13",
+        "has_more": false
+      }
+    },
+    {
+      "type": "sync_failed",
+      "now": 1301,
+      "chain": 1,
+      "status": 500
+    },
+    {
+      "type": "sync_reset_410",
+      "now": 1302,
+      "chain": 1,
+      "body": {
+        "error": "Курсор синхронизации недействителен — загрузите переписку заново",
+        "code": "SYNC_CURSOR_INVALID"
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1400,
+      "chain": 2,
+      "body": {
+        "messages": [
+          {
+            "id": 401,
+            "conversation_type": "direct",
+            "target_id": 2,
+            "sender_id": 3,
+            "text": "Из новой цепочки",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:02.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "bob",
+            "sender_name": "Боб Тестов",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 2
+      }
+    ],
+    [],
+    [],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      }
+    ]
+  ],
+  "expectedState": {
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": false,
+      "bootstrap": false,
+      "chain": 2
+    },
+    "messages": {
+      "direct:3": [
+        {
+          "id": 401,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Из новой цепочки",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    }
+  }
+}

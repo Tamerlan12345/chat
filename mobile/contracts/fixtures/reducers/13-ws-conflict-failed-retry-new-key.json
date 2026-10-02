@@ -1,0 +1,192 @@
+{
+  "name": "13-ws-conflict-failed-retry-new-key",
+  "description": "Ошибка CLIENT_MSG_ID_CONFLICT по WS → failed (rejected), maybe_stored=false. retry с недопустимым новым ключом — user_error; с допустимым — запись получает новый ключ и уходит (attempts продолжает счёт кадров записи); таймауты устарели.",
+  "covers": [
+    "T16",
+    "T23",
+    "T15",
+    "T07"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Тот же ключ в другую переписку",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Этот client_msg_id уже использован для другой переписки",
+        "text": "Тот же ключ в другую переписку",
+        "code": "CLIENT_MSG_ID_CONFLICT",
+        "client_msg_id": "a0000013-0000-4000-8000-000000000013"
+      }
+    },
+    {
+      "type": "retry",
+      "now": 2000,
+      "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+      "new_client_msg_id": "плохой ключ"
+    },
+    {
+      "type": "retry",
+      "now": 2001,
+      "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+      "new_client_msg_id": "a0000014-0000-4000-8000-000000000014"
+    },
+    {
+      "type": "ws",
+      "now": 2100,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 43,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Тот же ключ в другую переписку",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000014-0000-4000-8000-000000000014",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 11000,
+      "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+      "attempt": 1
+    },
+    {
+      "type": "ack_timeout",
+      "now": 12001,
+      "client_msg_id": "a0000014-0000-4000-8000-000000000014",
+      "attempt": 2
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "INVALID_CLIENT_MSG_ID"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Тот же ключ в другую переписку",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000014-0000-4000-8000-000000000014"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12001,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000014-0000-4000-8000-000000000014",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    []
+  ],
+  "expectedState": {
+    "seq": 2,
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 43,
+          "client_msg_id": "a0000014-0000-4000-8000-000000000014",
+          "sender_id": 2,
+          "text": "Тот же ключ в другую переписку",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

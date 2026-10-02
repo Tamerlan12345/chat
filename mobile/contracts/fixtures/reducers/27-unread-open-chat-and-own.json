@@ -1,0 +1,343 @@
+{
+  "name": "27-unread-open-chat-and-own",
+  "description": "Непрочитанное: в открытой переписке не растёт (вместо этого mark_read), свои сообщения не считаются, своё в канале обнуляет счётчик канала, дубль кадра не считается дважды; открытие переписки обнуляет её счётчик и шлёт mark_read.",
+  "covers": [
+    "T27",
+    "T28",
+    "T29",
+    "T09"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": "direct:3",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 100,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Ты здесь?",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1001,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 101,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 4,
+          "text": "Привет от Карины",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "carol",
+          "sender_name": "Карина Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1002,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 102,
+          "conversation_type": "direct",
+          "target_id": 4,
+          "sender_id": 2,
+          "text": "Ответ с компьютера",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1003,
+      "frame": {
+        "type": "channel_message",
+        "message": {
+          "id": 103,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 3,
+          "text": "В канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1004,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 103,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 3,
+          "text": "В канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1005,
+      "frame": {
+        "type": "channel_message",
+        "message": {
+          "id": 104,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Мой ответ в канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "conversation_closed",
+      "now": 1006
+    },
+    {
+      "type": "ws",
+      "now": 1007,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 105,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Ау",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:05.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "conversation_opened",
+      "now": 1008,
+      "conversation": "direct:4"
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "direct",
+          "targetId": 3
+        }
+      }
+    ],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "direct",
+          "targetId": 4
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "visible": "direct:4",
+    "unread": {
+      "direct:3": 1
+    },
+    "messages": {
+      "channel:3": [
+        {
+          "id": 103,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "В канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 104,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Мой ответ в канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 100,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Ты здесь?",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 105,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Ау",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:05.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "direct:4": [
+        {
+          "id": 101,
+          "client_msg_id": null,
+          "sender_id": 4,
+          "text": "Привет от Карины",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 102,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Ответ с компьютера",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

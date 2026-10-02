@@ -1,0 +1,89 @@
+{
+  "name": "35-disconnect-mid-sync-ignores-late-page",
+  "description": "Сокет закрылся посреди синхронизации: цепочка прервана, запоздавшая страница и 410 игнорируются, курсор не меняется.",
+  "covers": [
+    "T20",
+    "T38",
+    "T43"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws_disconnected",
+      "now": 1000
+    },
+    {
+      "type": "sync_page",
+      "now": 1100,
+      "chain": 1,
+      "body": {
+        "messages": [
+          {
+            "id": 160,
+            "conversation_type": "direct",
+            "target_id": 2,
+            "sender_id": 3,
+            "text": "Запоздало",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:01.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "bob",
+            "sender_name": "Боб Тестов",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "sync_reset_410",
+      "now": 1200,
+      "chain": 1,
+      "body": {
+        "error": "Курсор синхронизации недействителен — загрузите переписку заново",
+        "code": "SYNC_CURSOR_INVALID"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "connection": "offline",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "messages": {}
+  }
+}

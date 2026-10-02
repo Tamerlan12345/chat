@@ -1,0 +1,197 @@
+{
+  "name": "08-own-echo-duplicates-after-retry",
+  "description": "Первая попытка была сохранена, её эхо пришло во время второй: запись подтверждается один раз, эхо повтора (та же id) и new_message — без эффектов, таймаут второй попытки устарел.",
+  "covers": [
+    "T07",
+    "T09",
+    "T15"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Повтор",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 21000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      11000
+    ],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 11100,
+      "frame": {
+        "type": "direct_message",
+        "message": {
+          "id": 31,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Повтор",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 11101,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 31,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Повтор",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 11200,
+      "frame": {
+        "type": "direct_message",
+        "message": {
+          "id": 31,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Повтор",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 11201,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 31,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Повтор",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 21000,
+      "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+      "attempt": 2
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 31,
+          "client_msg_id": "a0000008-0000-4000-8000-000000000008",
+          "sender_id": 2,
+          "text": "Повтор",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {}
+  }
+}

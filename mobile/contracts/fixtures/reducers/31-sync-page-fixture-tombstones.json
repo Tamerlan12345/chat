@@ -1,0 +1,321 @@
+{
+  "name": "31-sync-page-fixture-tombstones",
+  "description": "Страница http/sync.page.json как есть: новые сообщения добавляются, известные 8 (личное) и 9 (канал) становятся надгробиями, статусы своих поднимаются из delivery_status, сообщение с client_msg_id из outbox подтверждает запись; курсор сохраняется после страницы.",
+  "covers": [
+    "T33",
+    "T08",
+    "T32",
+    "T12"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Счёт отправлен на почту.",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 9,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 8,
+          "client_msg_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+          "sender_id": 2,
+          "text": "Привет, Боб! Договор готов к подписанию.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "sync_page",
+      "now": 1000,
+      "chain": 1,
+      "body": {
+        "messages": [
+          {
+            "id": 1,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Привет, Боб! Это тестовое сообщение из dev-стенда.",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:00.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": "read",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 3,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Отлично, проверяем мобильное приложение.",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:01.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": "read",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 7,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Отправлено через REST.",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:02.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": "read",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 8,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:03.000Z",
+            "updated_at": "2026-10-02T09:00:05.000Z",
+            "is_deleted": 1,
+            "client_msg_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+            "delivery_status": "read",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 9,
+            "conversation_type": "channel",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:04.000Z",
+            "updated_at": "2026-10-02T09:00:05.000Z",
+            "is_deleted": 1,
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 10,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Счёт отправлен на почту.",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:06.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": "0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607",
+            "delivery_status": "delivered",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.23",
+        "has_more": false
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      }
+    ]
+  ],
+  "expectedState": {
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.23",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "outbox": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 9,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": "2026-10-02T09:00:05.000Z",
+          "is_deleted": 1,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 1,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Привет, Боб! Это тестовое сообщение из dev-стенда.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 3,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Отлично, проверяем мобильное приложение.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 7,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Отправлено через REST.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 8,
+          "client_msg_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": "2026-10-02T09:00:05.000Z",
+          "is_deleted": 1,
+          "status": "read"
+        },
+        {
+          "id": 10,
+          "client_msg_id": "0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607",
+          "sender_id": 2,
+          "text": "Счёт отправлен на почту.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        }
+      ]
+    },
+    "unread": {}
+  }
+}

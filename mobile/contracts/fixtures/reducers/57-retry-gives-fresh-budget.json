@@ -1,0 +1,137 @@
+{
+  "name": "57-retry-gives-fresh-budget",
+  "description": "«Повторить» после failed (max_attempts) обнуляет failures: следующий таймаут — первая неудача с паузой 1 с, а не сразу failed.",
+  "covers": [
+    "T23",
+    "T13"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000120-0000-4000-8000-000000000120",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Вторая жизнь",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "failures": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "retry",
+      "now": 1000,
+      "client_msg_id": "a0000120-0000-4000-8000-000000000120",
+      "new_client_msg_id": "a0000121-0000-4000-8000-000000000121"
+    },
+    {
+      "type": "ack_timeout",
+      "now": 11000,
+      "client_msg_id": "a0000120-0000-4000-8000-000000000120",
+      "attempt": 6
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Вторая жизнь",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000120-0000-4000-8000-000000000120"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000120-0000-4000-8000-000000000120",
+          "attempt": 6
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000120-0000-4000-8000-000000000120",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Вторая жизнь",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 6,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": 12000,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": 12000
+  }
+}

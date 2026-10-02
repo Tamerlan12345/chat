@@ -1,0 +1,181 @@
+{
+  "name": "37-ws-rejection-pending-ops-and-foreign-errors",
+  "description": "Отказ error send_message с client_msg_id: pending_edit становится текстом, запись с pending_delete удаляется. error без client_msg_id (INVALID_CLIENT_MSG_ID), без context (внутренняя ошибка) и edit_message модель не меняют; повторный отказ для failed — тоже.",
+  "covers": [
+    "T16",
+    "T24",
+    "T38"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000057-0000-4000-8000-000000000057",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Получатель уволен",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": "Получатель уволен?",
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000058-0000-4000-8000-000000000058",
+        "conversation": "channel:3",
+        "seq": 2,
+        "text": "В чужой канал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": true
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Получатель не найден",
+        "text": "Получатель уволен",
+        "client_msg_id": "a0000057-0000-4000-8000-000000000057"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Вы не участник этого канала",
+        "text": "В чужой канал",
+        "client_msg_id": "a0000058-0000-4000-8000-000000000058"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1300,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Недопустимый client_msg_id: строка 1–64 символа из A–Z, a–z, 0–9, «_» и «-»",
+        "text": "Ключ с пробелом",
+        "code": "INVALID_CLIENT_MSG_ID"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1400,
+      "frame": {
+        "type": "error",
+        "message": "Ошибка обработки запроса"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1500,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Нельзя редактировать чужое сообщение"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1600,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Получатель не найден",
+        "text": "Получатель уволен",
+        "client_msg_id": "a0000057-0000-4000-8000-000000000057"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000057-0000-4000-8000-000000000057",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Получатель уволен?",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Получатель не найден"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
+  }
+}

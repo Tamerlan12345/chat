@@ -1,0 +1,361 @@
+{
+  "name": "33-sync-410-full-resync-keeps-outbox",
+  "description": "410 SYNC_CURSOR_INVALID: курсор и кэш сообщений сброшены, синхронизация заново без курсора в той же цепочке; outbox, ops и счётчики сохраняются. По завершении — списки, история открытой переписки, mark_read, ops и повтор outbox с теми же ключами.",
+  "covers": [
+    "T34",
+    "T21",
+    "T36",
+    "T39"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": "channel:3",
+    "sync": {
+      "cursor": "0123456789abcdef.40",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000052-0000-4000-8000-000000000052",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "В очереди",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000053-0000-4000-8000-000000000053",
+        "conversation": "direct:4",
+        "seq": 3,
+        "text": "Не ушло",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "failures": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 150,
+        "text": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 150,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 151,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Ещё старее",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {
+      "direct:4": 2
+    },
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "sync_reset_410",
+      "now": 1000,
+      "chain": 1,
+      "body": {
+        "error": "Курсор синхронизации недействителен — загрузите переписку заново",
+        "code": "SYNC_CURSOR_INVALID"
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1100,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "history_page",
+      "now": 1200,
+      "body": [
+        {
+          "id": 150,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        },
+        {
+          "id": 152,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 3,
+          "text": "Новое в канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      ]
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor"
+        ]
+      },
+      {
+        "type": "sync_request",
+        "cursor": null,
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "load_history",
+        "conversation": "channel:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "channel",
+          "targetId": 3
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 150
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11100,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 150,
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "В очереди",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000052-0000-4000-8000-000000000052"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000052-0000-4000-8000-000000000052",
+          "attempt": 1
+        }
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000052-0000-4000-8000-000000000052",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "В очереди",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11100,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000053-0000-4000-8000-000000000053",
+        "conversation": "direct:4",
+        "seq": 3,
+        "text": "Не ушло",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "failures": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 150,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11100,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 150,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 152,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Новое в канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {
+      "direct:4": 2
+    }
+  }
+}

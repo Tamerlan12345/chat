@@ -1,0 +1,312 @@
+{
+  "name": "14-http-409-and-permanent-4xx",
+  "description": "Фоновая отправка по REST без сокета: головы трёх переписок уходят send_http. 400 (получатель не найден), 409 CLIENT_MSG_ID_CONFLICT и 403 — окончательные отказы: failed (rejected), maybe_stored=false. Устаревший таймаут и повторный background_flush ничего не делают.",
+  "covers": [
+    "T37",
+    "T18",
+    "T15"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Это сообщение не будет доставлено",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000016-0000-4000-8000-000000000016",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Тот же ключ в другую переписку",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000017-0000-4000-8000-000000000017",
+        "conversation": "channel:3",
+        "seq": 3,
+        "text": "В закрытый канал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "background_flush",
+      "now": 1000
+    },
+    {
+      "type": "http_send_result",
+      "now": 1500,
+      "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+      "attempt": 1,
+      "status": 400,
+      "body": {
+        "error": "Получатель не найден"
+      }
+    },
+    {
+      "type": "http_send_result",
+      "now": 1600,
+      "client_msg_id": "a0000016-0000-4000-8000-000000000016",
+      "attempt": 1,
+      "status": 409,
+      "body": {
+        "error": "Этот client_msg_id уже использован для другой переписки",
+        "code": "CLIENT_MSG_ID_CONFLICT"
+      }
+    },
+    {
+      "type": "http_send_result",
+      "now": 1700,
+      "client_msg_id": "a0000017-0000-4000-8000-000000000017",
+      "attempt": 1,
+      "status": 403,
+      "body": {
+        "error": "Вы не участник этого канала"
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 31000,
+      "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+      "attempt": 1
+    },
+    {
+      "type": "background_flush",
+      "now": 32000
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_http",
+        "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+        "attempt": 1,
+        "method": "POST",
+        "path": "/api/messages/direct/3",
+        "body": {
+          "text": "Это сообщение не будет доставлено",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata": null,
+          "client_msg_id": "a0000015-0000-4000-8000-000000000015"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 31000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_http",
+        "client_msg_id": "a0000016-0000-4000-8000-000000000016",
+        "attempt": 1,
+        "method": "POST",
+        "path": "/api/messages/direct/4",
+        "body": {
+          "text": "Тот же ключ в другую переписку",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata": null,
+          "client_msg_id": "a0000016-0000-4000-8000-000000000016"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 31000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000016-0000-4000-8000-000000000016",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_http",
+        "client_msg_id": "a0000017-0000-4000-8000-000000000017",
+        "attempt": 1,
+        "method": "POST",
+        "path": "/api/messages/channels/3",
+        "body": {
+          "text": "В закрытый канал",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata": null,
+          "client_msg_id": "a0000017-0000-4000-8000-000000000017"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 31000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000017-0000-4000-8000-000000000017",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    []
+  ],
+  "expectedState": {
+    "connection": "offline",
+    "outbox": [
+      {
+        "client_msg_id": "a0000015-0000-4000-8000-000000000015",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Это сообщение не будет доставлено",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Получатель не найден"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000016-0000-4000-8000-000000000016",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Тот же ключ в другую переписку",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": "CLIENT_MSG_ID_CONFLICT",
+          "message": "Этот client_msg_id уже использован для другой переписки"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000017-0000-4000-8000-000000000017",
+        "conversation": "channel:3",
+        "seq": 3,
+        "text": "В закрытый канал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Вы не участник этого канала"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,271 @@
+{
+  "name": "23-cancel-failed-max-attempts-never-resent",
+  "description": "Отмена failed (max_attempts): сообщение могло сохраниться, но повторно оно не отправляется — запись скрыта (pending_delete) и выясняется синхронизацией: сервер уже хранил его под id 69, поэтому уходит delete_message 69. Соседняя запись подтверждается живым эхом.",
+  "covers": [
+    "T24",
+    "T42",
+    "T06",
+    "T08",
+    "T26",
+    "T41"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Ушло ли?",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "failures": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Следующее",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "cancel",
+      "now": 2000,
+      "client_msg_id": "a0000043-0000-4000-8000-000000000043"
+    },
+    {
+      "type": "ws",
+      "now": 2100,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 71,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Следующее",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:21.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 2200,
+      "chain": 1,
+      "body": {
+        "messages": [
+          {
+            "id": 69,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Ушло ли?",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:19.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+            "delivery_status": null,
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          },
+          {
+            "id": 71,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Следующее",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:21.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+            "delivery_status": null,
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws",
+      "now": 2300,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 69,
+        "conversationType": "direct",
+        "targetId": 3
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 69
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12200,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 69,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 69,
+          "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:19.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 71,
+          "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+          "sender_id": 2,
+          "text": "Следующее",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:21.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

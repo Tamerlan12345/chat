@@ -1,0 +1,575 @@
+{
+  "name": "54-socket-flaps-do-not-spend-budget",
+  "description": "Четыре обрыва сокета подряд: каждый раз кадр уходит снова тем же ключом (attempts = 5), но обрывы не неудачи. Первый настоящий таймаут — failures = 1 и пауза 1 с, а не failed.",
+  "covers": [
+    "T20",
+    "T13",
+    "T21"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+      "conversation": "direct:3",
+      "text": "Мигающая сеть",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 1100
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1300,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 2100
+    },
+    {
+      "type": "ws",
+      "now": 2200,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 2300,
+      "chain": 2,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 3100
+    },
+    {
+      "type": "ws",
+      "now": 3200,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 3300,
+      "chain": 3,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 4100
+    },
+    {
+      "type": "ws",
+      "now": 4200,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 4300,
+      "chain": 4,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 14300,
+      "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+      "attempt": 5
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Мигающая сеть",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Мигающая сеть",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11300,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 2
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Мигающая сеть",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12300,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+          "attempt": 3
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 3
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Мигающая сеть",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 13300,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+          "attempt": 4
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 4
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Мигающая сеть",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 14300,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+          "attempt": 5
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 15300,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 4
+    },
+    "outbox": [
+      {
+        "client_msg_id": "a0000090-0000-4000-8000-000000000090",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Мигающая сеть",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 5,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": 15300,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": 15300
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "name": "24-edit-and-cancel-queued-offline",
+  "description": "Правка записи в очереди, которая ещё не уходила, меняет текст прямо в outbox; пустая правка и правка неизвестной записи — user_error; отмена второй записи удаляет её. После подключения уходит исправленный текст.",
+  "covers": [
+    "T25",
+    "T24",
+    "T02",
+    "T21"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000045-0000-4000-8000-000000000045",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Черновик",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000046-0000-4000-8000-000000000046",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Лишнее",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "edit",
+      "now": 1000,
+      "client_msg_id": "a0000045-0000-4000-8000-000000000045",
+      "text": "Исправленный текст"
+    },
+    {
+      "type": "edit",
+      "now": 1001,
+      "client_msg_id": "a0000045-0000-4000-8000-000000000045",
+      "text": "   "
+    },
+    {
+      "type": "edit",
+      "now": 1002,
+      "client_msg_id": "a0000047-0000-4000-8000-000000000047",
+      "text": "x"
+    },
+    {
+      "type": "cancel",
+      "now": 1003,
+      "client_msg_id": "a0000046-0000-4000-8000-000000000046"
+    },
+    {
+      "type": "ws",
+      "now": 2000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 2100,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "EMPTY_TEXT"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_EDITABLE"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Исправленный текст",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000045-0000-4000-8000-000000000045"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000045-0000-4000-8000-000000000045",
+          "attempt": 1
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000045-0000-4000-8000-000000000045",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Исправленный текст",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 12100,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
+  }
+}

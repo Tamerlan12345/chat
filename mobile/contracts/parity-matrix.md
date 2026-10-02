@@ -38,7 +38,7 @@
 | **Direct Messaging** | Личная переписка, статусы `delivered`/`read`. | ◐ | ◐ | D1 (потеря при разрыве, нет outbox), D2 (iOS: открытый чат без realtime), D3 (двойной `new_message`+`direct_message` → двойной unread), D4. |
 | **Channel Messaging** | Каналы, счётчики непрочитанного. | ◐ | ◐ | Те же D1–D4. |
 | **Create chat / channel** | Новый личный чат, создание канала. | ✗ | ✗ | D6: iOS — сломан sheet; Android — отсутствует. |
-| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер готов (задача 5): `GET /api/sync` по курсору и `afterId`; алгоритм — ws-protocol §6.3 «Алгоритм переподключения клиента». Клиенты — волна 2. |
+| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер готов (задача 5): `GET /api/sync` по курсору и `afterId`; алгоритм — ws-protocol §6.3 «Алгоритм переподключения клиента». Клиентская модель — `delivery-state.md` (задача 13), реализация клиентами — волна 2. |
 | **Message Editing** | Правка в окне `message_edit_window_minutes`. | ✗ | ? | D2: на iOS обработчики `updateMessage*` — заглушки. |
 | **Message Deleting** | Удаление в окне `message_delete_window_minutes`. | ✗ | ? | D2 (iOS); Android не проверялся. |
 | **Typing Indicator** | «печатает…», автосброс. | ✗ | ? | D2 (iOS: realtime открытого чата). |

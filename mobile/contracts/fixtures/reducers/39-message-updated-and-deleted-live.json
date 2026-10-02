@@ -1,0 +1,239 @@
+{
+  "name": "39-message-updated-and-deleted-live",
+  "description": "message_updated применяется, только если updated_at не старее локального; неизвестное чужое не вставляется. message_deleted ищет только по messageId (targetId личного = сохранённый target_id, здесь — мой id); надгробие окончательно — правка после удаления игнорируется.",
+  "covers": [
+    "T31",
+    "T32",
+    "T38"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 181,
+          "client_msg_id": null,
+          "sender_id": 4,
+          "text": "В канале",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 180,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Версия 1",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 180,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Версия 2",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": "2026-10-02T09:00:10.000Z",
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1001,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 180,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Версия 1.5",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": "2026-10-02T09:00:05.000Z",
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1002,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 999,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Неизвестное",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": "2026-10-02T09:00:06.000Z",
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1003,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 181,
+        "conversationType": "channel",
+        "targetId": 3
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1004,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 180,
+        "conversationType": "direct",
+        "targetId": 2
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1005,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 180,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Воскрешение",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": "2026-10-02T09:00:20.000Z",
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1006,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 12345,
+        "conversationType": "direct",
+        "targetId": 3
+      }
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "messages": {
+      "channel:3": [
+        {
+          "id": 181,
+          "client_msg_id": null,
+          "sender_id": 4,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": null
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 180,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": "2026-10-02T09:00:10.000Z",
+          "is_deleted": 1,
+          "status": null
+        }
+      ]
+    },
+    "unread": {}
+  }
+}
