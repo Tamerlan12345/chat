@@ -22,7 +22,7 @@ class ChatJumpToMessageTest {
     private val bob = 3L
     private val repository = FakeChatRepository(history = (90L..100L).map { message(it, from = bob, to = ME) })
 
-    private fun open(focus: Long?) = ChatViewModel(
+    private fun open(focus: Long?, saved: androidx.lifecycle.SavedStateHandle = androidx.lifecycle.SavedStateHandle()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = bob,
         chatRepository = repository,
@@ -30,6 +30,7 @@ class ChatJumpToMessageTest {
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
         historyCache = ChatHistoryCache(FakeSessionRepository()),
+        saved = saved,
         focusMessageId = focus
     )
 
@@ -68,6 +69,17 @@ class ChatJumpToMessageTest {
         assertEquals(listOf(50L, 50L), repository.aroundRequests)
         assertEquals((40L..100L).toList(), vm.ids())
         assertNull(vm.focus.value)
+    }
+
+    @Test
+    fun afterProcessDeathTheJumpIsNotReplayed() {
+        repository.around = (40L..100L).map { message(it, from = bob, to = ME) }
+        val saved = androidx.lifecycle.SavedStateHandle()
+        open(focus = 50, saved = saved)
+
+        val restored = open(focus = 50, saved = saved)
+        assertNull("без повторной прокрутки и вспышки", restored.focus.value)
+        assertEquals("окно вокруг сообщения то же", (40L..100L).toList(), restored.ids())
     }
 
     @Test

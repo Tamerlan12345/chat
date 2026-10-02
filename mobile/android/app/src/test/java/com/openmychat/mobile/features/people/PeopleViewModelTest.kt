@@ -122,6 +122,20 @@ class PeopleViewModelTest {
     }
 
     @Test
+    fun filtersSurviveProcessDeath() {
+        val saved = androidx.lifecycle.SavedStateHandle()
+        val first = PeopleViewModel(repository, requests, FakeRealtimeRepository(), saved)
+        first.setScope(PeopleScope.DEPARTMENTS)
+        first.toggleOnlineOnly()
+        first.setQuery("бух")
+
+        val restored = PeopleViewModel(repository, PeopleRequests(), FakeRealtimeRepository(), saved)
+        assertEquals("бух", restored.state.value.query)
+        assertEquals(PeopleScope.DEPARTMENTS, restored.state.value.scope)
+        assertTrue(restored.state.value.onlineOnly)
+    }
+
+    @Test
     fun nothingFoundIsAnEmptyResult() {
         val vm = viewModel()
         vm.setQuery("zzz")

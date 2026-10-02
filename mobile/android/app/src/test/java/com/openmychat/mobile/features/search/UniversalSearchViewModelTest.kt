@@ -185,6 +185,15 @@ class UniversalSearchViewModelTest {
     }
 
     @Test
+    fun theQuerySurvivesProcessDeath() = runTest(mainDispatcher.dispatcher) {
+        val saved = androidx.lifecycle.SavedStateHandle()
+        UniversalSearchViewModel(FakePeople(directory), server, recents, FakeSessionRepository(), requests, saved).setQuery("иван")
+        val restored = UniversalSearchViewModel(FakePeople(directory), server, recents, FakeSessionRepository(), requests, saved)
+        runCurrent()
+        assertEquals("иван", restored.state.value.query)
+    }
+
+    @Test
     fun rateLimitIsReportedApart() = runTest(mainDispatcher.dispatcher) {
         server.failure = ApiException(429, null, "Слишком много")
         val vm = viewModel()

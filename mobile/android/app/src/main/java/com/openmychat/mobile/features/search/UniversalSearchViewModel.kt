@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.lifecycle.SavedStateHandle
 import javax.inject.Inject
 
 /** Канал в выдаче и найденные части имени. */
@@ -84,10 +85,12 @@ class UniversalSearchViewModel @Inject constructor(
     private val chats: ChatRepository,
     private val recents: RecentsStore,
     private val session: SessionRepository,
-    private val peopleRequests: PeopleRequests
+    private val peopleRequests: PeopleRequests,
+    /** Строка поиска переживает смерть процесса. */
+    private val saved: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
 
-    private val query = MutableStateFlow("")
+    private val query = MutableStateFlow(saved.get<String>(KEY_QUERY).orEmpty())
     private val channels = MutableStateFlow<List<Channel>>(emptyList())
     private val messages = MutableStateFlow<MessageResults>(MessageResults.Idle)
 
@@ -134,6 +137,7 @@ class UniversalSearchViewModel @Inject constructor(
 
     fun setQuery(value: String) {
         query.value = value
+        saved[KEY_QUERY] = value
         // Сразу, не дожидаясь паузы: скелетон сообщений появляется вместе с локальной выдачей.
         val q = value.trim()
         // Пробел в конце строку поиска не меняет — прежняя выдача остаётся, без вечного скелетона.
@@ -227,6 +231,7 @@ class UniversalSearchViewModel @Inject constructor(
     }
 
     companion object {
+        private const val KEY_QUERY = "search.query"
         const val DEBOUNCE_MILLIS = 300L
         const val MIN_SERVER_QUERY = 2
         const val MAX_PEOPLE = 5

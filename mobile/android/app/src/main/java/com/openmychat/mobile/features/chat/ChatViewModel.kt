@@ -26,6 +26,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.lifecycle.SavedStateHandle
+
+private const val KEY_FOCUS_DONE = "chat.focus_done"
+
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -43,6 +47,8 @@ class ChatViewModel @AssistedInject constructor(
     private val sessionRepository: SessionRepository,
     private val activeConversations: ActiveConversationRegistry,
     private val historyCache: ChatHistoryCache,
+    /** Переход к сообщению уже показан: после восстановления процесса его не повторяем. */
+    private val saved: SavedStateHandle = SavedStateHandle(),
     /** Открыть на этом сообщении (переход из поиска). */
     @Assisted("focus") focusMessageId: Long? = null
 ) : ViewModel() {
@@ -89,10 +95,11 @@ class ChatViewModel @AssistedInject constructor(
     val jumpUnavailable: StateFlow<Boolean> = _jumpUnavailable.asStateFlow()
 
     /** Переход ещё не выполнен. */
-    private var pendingFocus: Long? = focusMessageId
+    private val focusDone = saved.get<Boolean>(KEY_FOCUS_DONE) == true
+    private var pendingFocus: Long? = if (focusDone) null else focusMessageId
 
     /** История собрана вокруг этого сообщения: обновление собирает её так же, без дыры. */
-    private var windowAnchor: Long? = null
+    private var windowAnchor: Long? = if (focusDone) focusMessageId else null
 
     private val conversation = ConversationRef(conversationType, targetId)
 
@@ -151,6 +158,7 @@ class ChatViewModel @AssistedInject constructor(
                 val window = anchor?.let { chatRepository.messagesAround(conversationType, targetId, it) }
                 if (jump != null) {
                     pendingFocus = null
+                    saved[KEY_FOCUS_DONE] = true
                     if (window != null) windowAnchor = jump else _jumpUnavailable.value = true
                 }
                 val history = window ?: chatRepository.messages(conversationType, targetId)

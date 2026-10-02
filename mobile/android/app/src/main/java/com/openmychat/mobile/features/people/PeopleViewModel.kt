@@ -13,8 +13,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.lifecycle.SavedStateHandle
 import javax.inject.Inject
+
 import javax.inject.Singleton
+
+private const val KEY_QUERY = "people.query"
+private const val KEY_SCOPE = "people.scope"
+private const val KEY_ONLINE = "people.online"
+private const val KEY_EXPANDED = "people.expanded"
 
 enum class PeopleScope { ALL, DEPARTMENTS }
 
@@ -76,16 +83,33 @@ private data class PeopleFilters(
 class PeopleViewModel @Inject constructor(
     private val repository: PeopleRepository,
     private val requests: PeopleRequests,
-    realtime: RealtimeRepository
+    realtime: RealtimeRepository,
+    /** Фильтры переживают смерть процесса: запрос, «Все | Отделы», «В сети», раскрытые отделы. */
+    private val saved: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
 
     val connectionState: StateFlow<ConnectionState> = realtime.connectionState
 
-    private val filters = MutableStateFlow(PeopleFilters())
+    private val filters = MutableStateFlow(
+        PeopleFilters(
+            query = saved.get<String>(KEY_QUERY).orEmpty(),
+            scope = saved.get<String>(KEY_SCOPE)?.let { runCatching { PeopleScope.valueOf(it) }.getOrNull() } ?: PeopleScope.ALL,
+            onlineOnly = saved.get<Boolean>(KEY_ONLINE) ?: false,
+            expanded = saved.get<LongArray>(KEY_EXPANDED)?.toSet()
+        )
+    )
     private val _state = MutableStateFlow(PeopleUiState())
     val state: StateFlow<PeopleUiState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            filters.collect { f ->
+                saved[KEY_QUERY] = f.query
+                saved[KEY_SCOPE] = f.scope.name
+                saved[KEY_ONLINE] = f.onlineOnly
+                saved[KEY_EXPANDED] = f.expanded?.toLongArray()
+            }
+        }
         repository.refresh()
         viewModelScope.launch {
             combine(repository.state, filters) { data, f -> present(data, f) }.collect { _state.value = it }
