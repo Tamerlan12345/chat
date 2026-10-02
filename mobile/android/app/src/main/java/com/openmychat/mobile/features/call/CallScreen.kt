@@ -2,6 +2,7 @@ package com.openmychat.mobile.features.call
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -57,6 +58,9 @@ fun CallScreen(
     }
 
     val isEnded = uiState is CallUiState.Ended
+
+    // Back while ringing declines, during a call hangs up; the screen closes once the call ended.
+    BackHandler(enabled = !isEnded) { viewModel.leave() }
     LaunchedEffect(isEnded) {
         if (isEnded) {
             delay(1500)

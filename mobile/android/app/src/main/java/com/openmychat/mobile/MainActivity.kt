@@ -121,12 +121,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             is WsEvent.ServerDisconnect -> {
+                                // The socket reconnects; a revoked token comes back as auth_error and
+                                // is verified over HTTP, which signs out on 401. A still-valid session
+                                // (e.g. a role change) simply continues.
                                 Toast.makeText(
                                     this@MainActivity,
                                     event.reason,
                                     Toast.LENGTH_LONG
                                 ).show()
-                                navigator.onLoggedOut(appViewModel.hasConfiguredServer)
                             }
                             else -> Unit
                         }

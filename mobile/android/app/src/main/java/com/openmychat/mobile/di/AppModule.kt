@@ -6,6 +6,7 @@ import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.realtime.SessionVerifier
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -31,6 +32,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideWebSocketClient(sessionManager: SessionManager): WebSocketClient = WebSocketClient(sessionManager)
+
+    /** A refused WebSocket token is re-checked over HTTP: refresh if possible, sign out on 401. */
+    @Provides
+    fun provideSessionVerifier(apiClient: ApiClient): SessionVerifier = SessionVerifier { apiClient.getMe() }
 
     @Provides
     @Singleton

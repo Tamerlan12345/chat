@@ -136,14 +136,31 @@ class CallViewModel @AssistedInject constructor(
                         }
                     }
                     is WsEvent.CallDenied -> endCall(event.reason)
-                    is WsEvent.AudioFrameReceived -> {
-                        if (event.senderId == peerId && _callSession.value.state == CallState.ACTIVE) {
-                            callAudio.onIncomingAudioFrame(event.pcmSamples)
-                        }
-                    }
                     else -> Unit
                 }
             }
+        }
+        viewModelScope.launch {
+            realtimeRepository.audioFrames.collect { frame ->
+                if (frame.senderId == peerId && _callSession.value.state == CallState.ACTIVE) {
+                    callAudio.onIncomingAudioFrame(frame.pcmSamples)
+                }
+            }
+        }
+    }
+
+    private val isFinished: Boolean
+        get() = _callSession.value.state == CallState.ENDED || _callSession.value.state == CallState.FAILED
+
+    /**
+     * The user leaves the call screen (system back): a ringing call is declined, anything else is
+     * hung up, so the peer is never left in a call nobody sees.
+     */
+    fun leave() {
+        when {
+            isFinished -> Unit
+            _callSession.value.state == CallState.RINGING -> rejectCall()
+            else -> hangUp()
         }
     }
 
@@ -200,8 +217,17 @@ class CallViewModel @AssistedInject constructor(
     }
 
     override fun onCleared() {
-        super.onCleared()
+        // The entry was popped (back, logout, stack reset) while the call was still running.
+        if (!isFinished) {
+            if (_callSession.value.state == CallState.RINGING) {
+                realtimeRepository.sendCallRejected(peerId, "Отклонен пользователем")
+            } else {
+                realtimeRepository.sendCallEnd(peerId, "Завершен пользователем")
+            }
+        }
+        callAudio.onFrameRecorded = null
         callAudio.stop()
         durationJob?.cancel()
+        super.onCleared()
     }
 }

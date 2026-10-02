@@ -8,6 +8,8 @@ import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.MessageType
+import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
@@ -36,7 +38,8 @@ class ChatViewModel @AssistedInject constructor(
     @Assisted val targetId: Long,
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
-    private val sessionRepository: SessionRepository
+    private val sessionRepository: SessionRepository,
+    private val activeConversations: ActiveConversationRegistry
 ) : ViewModel() {
 
     @AssistedFactory
@@ -56,6 +59,11 @@ class ChatViewModel @AssistedInject constructor(
     private val _editingMessage = MutableStateFlow<Message?>(null)
     val editingMessage: StateFlow<Message?> = _editingMessage.asStateFlow()
 
+    private val conversation = ConversationRef(conversationType, targetId)
+
+    /** True while the chat is on screen (resumed); only then are messages marked read. */
+    private var isVisible = false
+
     private var typingResetJob: Job? = null
     private var wakeTimerJob: Job? = null
 
@@ -67,7 +75,23 @@ class ChatViewModel @AssistedInject constructor(
     init {
         loadMessages()
         observeWebSocketEvents()
-        markAsRead()
+    }
+
+    /** Called by the screen on resume/pause. A chat kept in the back stack must not read messages. */
+    fun onVisibilityChanged(visible: Boolean) {
+        if (visible == isVisible) return
+        isVisible = visible
+        if (visible) {
+            activeConversations.enter(conversation)
+            markAsRead()
+        } else {
+            activeConversations.leave(conversation)
+        }
+    }
+
+    override fun onCleared() {
+        activeConversations.leave(conversation)
+        super.onCleared()
     }
 
     fun loadMessages() {
@@ -123,7 +147,7 @@ class ChatViewModel @AssistedInject constructor(
                                     else -> ChatUiState.Content(listOf(msg))
                                 }
                             }
-                            markAsRead()
+                            if (isVisible && msg.senderId != currentUserId) markAsRead()
                         }
                     }
                     is WsEvent.MessageStatusUpdated -> updateMessages { list ->
@@ -150,7 +174,9 @@ class ChatViewModel @AssistedInject constructor(
                     }
                     is WsEvent.MessageDeleted -> {
                         val matches = if (conversationType == ConversationType.DIRECT) {
-                            event.conversationType == "direct" && event.targetId == targetId
+                            // target_id is the message's recipient: the peer for my messages, me for theirs.
+                            event.conversationType == "direct" &&
+                                (event.targetId == targetId || event.targetId == currentUserId)
                         } else {
                             event.conversationType == "channel" && event.targetId == targetId
                         }

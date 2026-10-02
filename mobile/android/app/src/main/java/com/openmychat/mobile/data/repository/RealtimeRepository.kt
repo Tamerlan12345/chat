@@ -1,15 +1,23 @@
 package com.openmychat.mobile.data.repository
 
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ConversationType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Realtime chat, presence and call signalling over the authenticated WebSocket. */
 interface RealtimeRepository {
+    /** Chat, presence and signalling events. Each message arrives once even if the server repeats it. */
     val events: Flow<WsEvent>
+
+    /** Incoming voice frames, kept apart from [events] so they cannot crowd out chat traffic. */
+    val audioFrames: Flow<WsEvent.AudioFrameReceived>
+
+    val connectionState: StateFlow<ConnectionState>
 
     fun sendMessage(conversationType: ConversationType, targetId: Long, text: String): Boolean
     fun editMessage(messageId: Long, text: String): Boolean
@@ -32,6 +40,8 @@ class DefaultRealtimeRepository @Inject constructor(
     private val webSocketClient: WebSocketClient
 ) : RealtimeRepository {
     override val events: Flow<WsEvent> get() = webSocketClient.events
+    override val audioFrames: Flow<WsEvent.AudioFrameReceived> get() = webSocketClient.audioFrames
+    override val connectionState: StateFlow<ConnectionState> get() = webSocketClient.connectionState
 
     override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String) =
         webSocketClient.sendTextMessage(conversationType = conversationType, targetId = targetId, text = text)

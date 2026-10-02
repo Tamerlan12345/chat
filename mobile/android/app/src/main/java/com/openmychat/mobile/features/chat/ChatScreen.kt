@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
@@ -53,6 +54,13 @@ fun ChatScreen(
     val typingUser by viewModel.typingUser.collectAsState()
     val wakeCooldown by viewModel.wakeCooldownSeconds.collectAsState()
     val editingMessage by viewModel.editingMessage.collectAsState()
+
+    // Nav3 gives each entry its own lifecycle: the chat counts as open only while it is resumed,
+    // not while it waits in the back stack under a call or behind another tab.
+    LifecycleResumeEffect(viewModel) {
+        viewModel.onVisibilityChanged(true)
+        onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+    }
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()

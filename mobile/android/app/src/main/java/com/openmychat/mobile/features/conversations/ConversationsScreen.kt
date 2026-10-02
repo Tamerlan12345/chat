@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.Channel
 import com.openmychat.mobile.data.model.DirectConversation
@@ -71,6 +72,7 @@ fun ConversationsScreen(
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
     val content = uiState as? ConversationsUiState.Content
     val directConversations = content?.directConversations.orEmpty()
     val channels = content?.channels.orEmpty()
@@ -101,7 +103,7 @@ fun ConversationsScreen(
                                 color = colors.primary
                             )
                             Text(
-                                text = "Сообщения",
+                                text = if (connectionState is ConnectionState.Connected) "Сообщения" else "Подключение…",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onSurfaceVariant
                             )

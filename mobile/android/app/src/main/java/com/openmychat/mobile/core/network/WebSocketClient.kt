@@ -4,7 +4,11 @@ import com.openmychat.mobile.core.audio.SilenceGater
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.encodeToString
@@ -45,11 +49,36 @@ class WebSocketClient(
     private val isManuallyClosed = AtomicBoolean(false)
     private var reconnectAttempts = 0
 
-    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64)
+    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 256)
     val events: SharedFlow<WsEvent> = _events.asSharedFlow()
+
+    /**
+     * Voice frames (~31/s during a call) have their own lossy flow, so they can never fill the chat
+     * event buffer and make tryEmit drop messages, typing or call signalling.
+     */
+    private val _audioFrames = MutableSharedFlow<WsEvent.AudioFrameReceived>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val audioFrames: SharedFlow<WsEvent.AudioFrameReceived> = _audioFrames.asSharedFlow()
+
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    /** Token the server refused (auth_error); reconnecting with it again would only loop. */
+    @Volatile private var rejectedToken: String? = null
+    @Volatile private var authenticatingToken: String? = null
+
+    /** The server sends new_message and direct_message/channel_message for the same message. */
+    private val recentMessageIds = object : LinkedHashMap<Long, Unit>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Unit>?): Boolean = size > 512
+    }
 
     fun connect(coroutineScope: CoroutineScope) {
         scope = coroutineScope
+        val token = sessionManager.token
+        if (token != null && token == rejectedToken) return
+        rejectedToken = null
         isManuallyClosed.set(false)
         if (isConnected.get() || !isConnecting.compareAndSet(false, true)) return
         establishConnection()
@@ -59,14 +88,18 @@ class WebSocketClient(
         val token = sessionManager.token
         if (token.isNullOrBlank()) {
             isConnecting.set(false)
+            _connectionState.value = ConnectionState.Disconnected
             return
         }
 
         val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull()
         if (endpoint == null || !endpoint.isSecure) {
             isConnecting.set(false)
+            _connectionState.value = ConnectionState.Disconnected
             return
         }
+        authenticatingToken = token
+        _connectionState.value = ConnectionState.Connecting
 
         val wsUrl = endpoint.webSocketUrl
         val request = Request.Builder()
@@ -76,6 +109,7 @@ class WebSocketClient(
 
         val listener = object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                if (ws !== webSocket) return
                 isConnected.set(true)
                 isConnecting.set(false)
                 reconnectAttempts = 0
@@ -84,35 +118,72 @@ class WebSocketClient(
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
-                handleTextMessage(text)
+                if (ws === webSocket) handleTextMessage(text)
             }
 
             override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                handleBinaryMessage(bytes)
+                if (ws === webSocket) handleBinaryMessage(bytes)
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                if (ws !== webSocket) return
                 isConnected.set(false)
                 isConnecting.set(false)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                isConnected.set(false)
-                isConnecting.set(false)
-                if (!isManuallyClosed.get()) {
-                    scheduleReconnect()
-                }
+                // Callbacks of a socket we already replaced or closed ourselves are ignored.
+                if (ws !== webSocket) return
+                onSocketLost()
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                isConnected.set(false)
-                isConnecting.set(false)
-                if (!isManuallyClosed.get()) {
-                    scheduleReconnect()
-                }
+                if (ws !== webSocket) return
+                onSocketLost()
             }
         }
         webSocket = webSocketFactory?.invoke(request, listener) ?: client.newWebSocket(request, listener)
+    }
+
+    private fun onSocketLost() {
+        webSocket = null
+        isConnected.set(false)
+        isConnecting.set(false)
+        if (!isManuallyClosed.get()) {
+            _connectionState.value = ConnectionState.Connecting
+            scheduleReconnect()
+        } else if (_connectionState.value !is ConnectionState.Unauthorized) {
+            _connectionState.value = ConnectionState.Disconnected
+        }
+    }
+
+    /** Closes the current socket without triggering the listener-driven reconnect. */
+    private fun closeCurrentSocket(reason: String) {
+        val ws = webSocket
+        webSocket = null
+        isConnected.set(false)
+        isConnecting.set(false)
+        ws?.close(1000, reason)
+    }
+
+    private fun handleAuthError(code: String, message: String) {
+        when (code) {
+            // The token itself is not acceptable: stop until the session changes (new login, refresh,
+            // password change). The app verifies the session over HTTP and signs out on 401.
+            "INVALID_TOKEN", "MUST_CHANGE_PASSWORD" -> {
+                rejectedToken = authenticatingToken
+                isManuallyClosed.set(true)
+                reconnectJob?.cancel()
+                closeCurrentSocket("Authentication rejected")
+                _connectionState.value = ConnectionState.Unauthorized(code, message)
+            }
+            // Too many sessions / rate limited / unknown: transient, retry with backoff.
+            else -> {
+                closeCurrentSocket("Authentication deferred")
+                _connectionState.value = ConnectionState.Connecting
+                scheduleReconnect()
+            }
+        }
     }
 
     private fun scheduleReconnect() {
@@ -120,7 +191,7 @@ class WebSocketClient(
         val currentScope = scope ?: return
 
         reconnectJob?.cancel()
-        reconnectJob = currentScope.launch(Dispatchers.IO) {
+        reconnectJob = currentScope.launch {
             reconnectAttempts++
             // Exponential backoff: 1s, 2s, 4s... max 30s with +-20% jitter
             val baseDelay = min(30000L, (1000L * (1L shl (reconnectAttempts.coerceAtMost(5) - 1))))
@@ -153,6 +224,7 @@ class WebSocketClient(
                     if (userObj != null) {
                         val user = json.decodeFromJsonElement<User>(userObj)
                         sessionManager.currentUser = user
+                        _connectionState.value = ConnectionState.Connected
                         _events.tryEmit(WsEvent.AuthSuccess(user))
                     }
                 }
@@ -162,6 +234,7 @@ class WebSocketClient(
                     if (code == "MUST_CHANGE_PASSWORD") {
                         sessionManager.mustChangePassword = true
                     }
+                    handleAuthError(code, message)
                     _events.tryEmit(WsEvent.AuthError(code, message))
                 }
                 "wake_state" -> {
@@ -177,7 +250,10 @@ class WebSocketClient(
                     val messageObj = root["message"]
                     if (messageObj != null) {
                         val message = json.decodeFromJsonElement<Message>(messageObj)
-                        _events.tryEmit(WsEvent.NewMessage(message))
+                        val firstDelivery = synchronized(recentMessageIds) {
+                            recentMessageIds.put(message.id, Unit) == null
+                        }
+                        if (firstDelivery) _events.tryEmit(WsEvent.NewMessage(message))
                     }
                 }
                 "message_status_updated" -> {
@@ -320,7 +396,7 @@ class WebSocketClient(
             samples[i] = buffer.short
         }
 
-        _events.tryEmit(WsEvent.AudioFrameReceived(senderId, samples))
+        _audioFrames.tryEmit(WsEvent.AudioFrameReceived(senderId, samples))
     }
 
     private fun sendJson(jsonString: String): Boolean {
@@ -460,11 +536,9 @@ class WebSocketClient(
 
     fun disconnect() {
         isManuallyClosed.set(true)
-        isConnecting.set(false)
         reconnectJob?.cancel()
         reconnectJob = null
-        webSocket?.close(1000, "Normal closure")
-        webSocket = null
-        isConnected.set(false)
+        closeCurrentSocket("Normal closure")
+        _connectionState.value = ConnectionState.Disconnected
     }
 }
