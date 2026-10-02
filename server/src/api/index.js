@@ -13,6 +13,8 @@ const FileService = require('../services/file.service');
 const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
 const { parseRange, etagListMatches, ifRangeAllows } = require('../files/http-range');
+const Images = require('../media/images');
+const Thumbnails = require('../media/thumbnails');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
@@ -2050,6 +2052,41 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   });
   src.pipe(res);
 });
+
+// Миниатюра картинки-вложения (задача 20). Доступ — ровно тот же, что у
+// скачивания (и в том же порядке: 404, затем 403). Тип картинки — по
+// сигнатуре файла, не по MIME из базы; миниатюра отрисовывается один раз и
+// дальше отдаётся из кэша на диске.
+router.get('/files/thumb/:id', requireAuth, route(async (req, res) => {
+  const file = FileService.getFileById(req.params.id);
+  if (!file || !fs.existsSync(file.path)) {
+    return res.status(404).json({ error: 'Файл не найден' });
+  }
+  if (!FileService.canUserAccessFile(req.user.id, req.params.id)) {
+    return res.status(403).json({ error: 'Доступ запрещен: файл вне ваших диалогов и каналов' });
+  }
+  const size = req.query.size === undefined ? 's' : req.query.size;
+  const format = req.query.format === undefined ? 'webp' : req.query.format;
+  if (typeof size !== 'string' || !Object.hasOwn(Images.THUMB_SIZES, size) || (format !== 'webp' && format !== 'jpeg')) {
+    return res.status(400).json({ error: 'size — s или m; format — webp или jpeg', code: 'BAD_REQUEST' });
+  }
+  let thumb;
+  try {
+    thumb = await Thumbnails.getThumbnail(file, { size, format });
+  } catch (err) {
+    if (err instanceof Images.ImageError) {
+      if (err.status === 503) res.set('Retry-After', String(jitterSeconds(5)));
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+  res.setHeader('ETag', thumb.etag);
+  res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  if (etagListMatches(req.headers['if-none-match'], thumb.etag)) return res.status(304).end();
+  res.type(thumb.contentType);
+  res.sendFile(thumb.path, { headers: { 'Cache-Control': 'private, max-age=604800, immutable' }, lastModified: false, etag: false, dotfiles: 'allow' });
+}));
 
 router.get('/files/recent', requireAuth, route(async (req, res) => {
   res.json(await FileService.getRecentFiles(req.user.id));

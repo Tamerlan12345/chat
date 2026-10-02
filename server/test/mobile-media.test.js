@@ -158,3 +158,139 @@ test('Скачивание: доступ проверяется до Range — �
   const anon = await get(`/api/files/download/${file.id}`, { headers: { Range: 'bytes=0-1' } });
   assert.strictEqual(anon.status, 401);
 });
+
+// ══ Миниатюры ════════════════════════════════════════════════════════════════
+
+// Снимок 1200×800, повёрнутый EXIF-ом (orientation 6 — показывать 800×1200),
+// с EXIF внутри: в миниатюру он попасть не должен.
+async function photo({ width = 1200, height = 800, orientation = 6 } = {}) {
+  return sharp({ create: { width, height, channels: 3, background: '#d03030' } })
+    .composite([{ input: { create: { width: Math.round(width / 4), height, channels: 3, background: '#2040c0' } }, left: 0, top: 0 }])
+    .jpeg()
+    .withMetadata({ orientation })
+    .toBuffer();
+}
+
+// PNG, заявляющий 20000×20000 (400 Мп) при размере в сотню байт.
+function decompressionBomb() {
+  const zlib = require('node:zlib');
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(20000, 0);
+  ihdr.writeUInt32BE(20000, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+const thumbsDir = () => path.join(config.UPLOADS_DIR, '.thumbs');
+
+test('Миниатюра: WebP по длинной стороне 160/480, повёрнута по EXIF, без метаданных; кэш на диске по id', async () => {
+  const file = await sharedWithBob(await photo(), 'снимок.jpg', 'image/jpeg');
+  const bob = people['media-bob'].token;
+  const small = await get(`/api/files/thumb/${file.id}?size=s`, { token: bob });
+  assert.strictEqual(small.status, 200, small.body.toString());
+  assert.strictEqual(small.headers.get('content-type'), 'image/webp');
+  assert.strictEqual(small.headers.get('x-content-type-options'), 'nosniff');
+  const meta = await sharp(small.body).metadata();
+  assert.strictEqual(meta.format, 'webp');
+  assert.deepStrictEqual([meta.width, meta.height], [107, 160], 'портрет после поворота по EXIF');
+  assert.ok(!meta.exif, 'EXIF не попал в миниатюру');
+  assert.ok(fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)), 'кэш назван по id файла');
+
+  const medium = await get(`/api/files/thumb/${file.id}?size=m`, { token: bob });
+  assert.strictEqual(medium.status, 200);
+  const m = await sharp(medium.body).metadata();
+  assert.deepStrictEqual([m.width, m.height], [320, 480]);
+
+  const byDefault = await get(`/api/files/thumb/${file.id}`, { token: bob });
+  assert.deepStrictEqual(byDefault.body, small.body, 'без size — маленькая');
+});
+
+test('Миниатюра: ETag и If-None-Match — 304; JPEG по запросу; маленькая картинка не увеличивается', async () => {
+  const file = await sharedWithBob(await photo({ width: 100, height: 60, orientation: 1 }), 'мелкая.jpg', 'image/jpeg');
+  const bob = people['media-bob'].token;
+  const first = await get(`/api/files/thumb/${file.id}?size=m`, { token: bob });
+  assert.strictEqual(first.status, 200);
+  const meta = await sharp(first.body).metadata();
+  assert.deepStrictEqual([meta.width, meta.height], [100, 60]);
+  const etag = first.headers.get('etag');
+  assert.ok(etag);
+  assert.match(first.headers.get('cache-control'), /private/);
+  const again = await get(`/api/files/thumb/${file.id}?size=m`, { token: bob, headers: { 'If-None-Match': etag } });
+  assert.strictEqual(again.status, 304);
+
+  const jpeg = await get(`/api/files/thumb/${file.id}?size=s&format=jpeg`, { token: bob });
+  assert.strictEqual(jpeg.status, 200);
+  assert.strictEqual(jpeg.headers.get('content-type'), 'image/jpeg');
+  assert.strictEqual((await sharp(jpeg.body).metadata()).format, 'jpeg');
+  assert.notStrictEqual(jpeg.headers.get('etag'), etag);
+});
+
+test('Миниатюра: доступ как у скачивания — чужому 403, без токена 401, нет файла 404', async () => {
+  const file = await sharedWithBob(await photo(), 'закрытое.jpg', 'image/jpeg');
+  assert.strictEqual((await get(`/api/files/thumb/${file.id}`, { token: people['media-carol'].token })).status, 403);
+  assert.strictEqual((await get(`/api/files/thumb/${file.id}`)).status, 401);
+  assert.strictEqual((await get('/api/files/thumb/999999', { token: people.admin.token })).status, 404);
+  assert.ok(!fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)), 'отказ не порождает миниатюру');
+});
+
+test('Миниатюра: неверный размер или формат — 400', async () => {
+  const file = await sharedWithBob(await photo(), 'параметры.jpg', 'image/jpeg');
+  const bob = people['media-bob'].token;
+  for (const query of ['size=xl', 'size=../../x', 'format=png', 'format=svg']) {
+    const res = await get(`/api/files/thumb/${file.id}?${query}`, { token: bob });
+    assert.strictEqual(res.status, 400, query);
+  }
+});
+
+test('Миниатюра: тип — по сигнатуре; MIME «image/png» у текста, PDF или SVG — 415', async () => {
+  const bob = people['media-bob'].token;
+  const text = await sharedWithBob(Buffer.from('просто текст'), 'заметка.txt', 'text/plain');
+  const res = await get(`/api/files/thumb/${text.id}`, { token: bob });
+  assert.strictEqual(res.status, 415);
+  assert.strictEqual(JSON.parse(res.body).code, 'NOT_AN_IMAGE');
+
+  // MIME в базе назвал загрузивший — ему не верим.
+  const chatDb = require('../src/db').getDatabase();
+  for (const [name, bytes] of [
+    ['поддельная.png', Buffer.from('%PDF-1.7\n1 0 obj')],
+    ['вектор.png', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')]
+  ]) {
+    const stored = path.join(config.UPLOADS_DIR, `forged-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
+    fs.writeFileSync(stored, bytes);
+    const row = chatDb.prepare(`INSERT INTO files (uploader_id, original_name, stored_filename, file_size, mime_type, sha256, path, created_at)
+      VALUES (?, ?, ?, ?, 'image/png', NULL, ?, ?)`).run(people['media-bob'].id, name, path.basename(stored), bytes.length, stored, new Date().toISOString());
+    const forged = await get(`/api/files/thumb/${row.lastInsertRowid}`, { token: bob });
+    assert.strictEqual(forged.status, 415, name);
+  }
+});
+
+test('Миниатюра: «бомба распаковки» (20000×20000 в сотне байт) — 422 без декодирования', async () => {
+  const file = await sharedWithBob(decompressionBomb(), 'бомба.png', 'image/png');
+  const res = await get(`/api/files/thumb/${file.id}`, { token: people['media-bob'].token });
+  assert.strictEqual(res.status, 422);
+  assert.strictEqual(JSON.parse(res.body).code, 'IMAGE_TOO_LARGE');
+  assert.ok(!fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)));
+});
+
+test('Миниатюра: битая картинка — 422 IMAGE_UNREADABLE', async () => {
+  const good = await photo({ orientation: 1 });
+  const broken = Buffer.concat([good.subarray(0, 40), Buffer.alloc(200, 0x11)]);
+  const file = await sharedWithBob(broken, 'битая.jpg', 'image/jpeg');
+  const res = await get(`/api/files/thumb/${file.id}`, { token: people['media-bob'].token });
+  assert.strictEqual(res.status, 422);
+  assert.strictEqual(JSON.parse(res.body).code, 'IMAGE_UNREADABLE');
+});
