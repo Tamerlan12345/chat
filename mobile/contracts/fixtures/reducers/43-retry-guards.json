@@ -1,0 +1,198 @@
+{
+  "name": "43-retry-guards",
+  "description": "retry только для failed; после обычного отказа ключ тот же, после CLIENT_MSG_ID_CONFLICT — новый, и он должен быть свободен (иначе user_error). Повторённые записи уходят в хвост очереди (seq 4, 5).",
+  "covers": [
+    "T23",
+    "T02"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000061-0000-4000-8000-000000000061",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Не найден",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Получатель не найден"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000062-0000-4000-8000-000000000062",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Конфликт",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": "CLIENT_MSG_ID_CONFLICT",
+          "message": "Этот client_msg_id уже использован для другой переписки"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000063-0000-4000-8000-000000000063",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "В очереди",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "retry",
+      "now": 1000,
+      "client_msg_id": "a0000063-0000-4000-8000-000000000063",
+      "new_client_msg_id": "a0000070-0000-4000-8000-000000000070"
+    },
+    {
+      "type": "retry",
+      "now": 1001,
+      "client_msg_id": "a0000062-0000-4000-8000-000000000062",
+      "new_client_msg_id": "a0000063-0000-4000-8000-000000000063"
+    },
+    {
+      "type": "retry",
+      "now": 1002,
+      "client_msg_id": "a0000061-0000-4000-8000-000000000061",
+      "new_client_msg_id": "a0000071-0000-4000-8000-000000000071"
+    },
+    {
+      "type": "retry",
+      "now": 1003,
+      "client_msg_id": "a0000062-0000-4000-8000-000000000062",
+      "new_client_msg_id": "a0000072-0000-4000-8000-000000000072"
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [
+      {
+        "type": "user_error",
+        "code": "INVALID_CLIENT_MSG_ID"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "seq": 5,
+    "outbox": [
+      {
+        "client_msg_id": "a0000063-0000-4000-8000-000000000063",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "В очереди",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000061-0000-4000-8000-000000000061",
+        "conversation": "direct:3",
+        "seq": 4,
+        "text": "Не найден",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000072-0000-4000-8000-000000000072",
+        "conversation": "direct:4",
+        "seq": 5,
+        "text": "Конфликт",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
+  }
+}

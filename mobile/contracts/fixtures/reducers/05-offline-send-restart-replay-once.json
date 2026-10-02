@@ -1,0 +1,353 @@
+{
+  "name": "05-offline-send-restart-replay-once",
+  "description": "Отправка без сети → перезапуск → auth_success → /api/sync → ровно одна отправка тем же ключом → эхо. Повторное подключение и страница с тем же сообщением ничего не отправляют повторно.",
+  "covers": [
+    "T01",
+    "T22",
+    "T21",
+    "T04",
+    "T07",
+    "T09",
+    "T20",
+    "T33"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+      "conversation": "direct:3",
+      "text": "Счёт отправлен на почту.",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "app_restart",
+      "now": 5000
+    },
+    {
+      "type": "ws",
+      "now": 6000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 6100,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws",
+      "now": 6200,
+      "frame": {
+        "type": "direct_message",
+        "message": {
+          "id": 10,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Счёт отправлен на почту.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 6201,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 10,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Счёт отправлен на почту.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 7000
+    },
+    {
+      "type": "ws",
+      "now": 8000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 8100,
+      "body": {
+        "messages": [
+          {
+            "id": 10,
+            "conversation_type": "direct",
+            "target_id": 3,
+            "sender_id": 2,
+            "text": "Счёт отправлен на почту.",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:06.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+            "delivery_status": "delivered",
+            "sender_username": "alice",
+            "sender_name": "Алиса Тестова",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.13",
+        "has_more": false
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      }
+    ],
+    [],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Счёт отправлен на почту.",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000005-0000-4000-8000-000000000005"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 16100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    [],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.12",
+        "limit": 200
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      }
+    ]
+  ],
+  "expectedState": {
+    "connection": "online",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.13",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 1,
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 10,
+          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
+          "sender_id": 2,
+          "text": "Счёт отправлен на почту.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": []
+  }
+}

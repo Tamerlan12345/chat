@@ -1,0 +1,229 @@
+{
+  "name": "23-cancel-failed-max-attempts-requeues",
+  "description": "Отмена failed (max_attempts): сообщение могло сохраниться, поэтому запись возвращается в queued с pending_delete и прежним seq; она ждёт, пока в переписке есть запись в полёте, затем уходит, получает id (раньше сохранённый, 69) и удаляется.",
+  "covers": [
+    "T24",
+    "T06",
+    "T08",
+    "T26"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Ушло ли?",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Следующее",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "cancel",
+      "now": 2000,
+      "client_msg_id": "a0000043-0000-4000-8000-000000000043"
+    },
+    {
+      "type": "ws",
+      "now": 2100,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 71,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Следующее",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:21.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 2200,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 69,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Ушло ли?",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:19.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 2300,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 69,
+        "conversationType": "direct",
+        "targetId": 3
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Ушло ли?",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000043-0000-4000-8000-000000000043"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 69
+        }
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 69,
+          "client_msg_id": "a0000043-0000-4000-8000-000000000043",
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:19.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 71,
+          "client_msg_id": "a0000044-0000-4000-8000-000000000044",
+          "sender_id": 2,
+          "text": "Следующее",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:21.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

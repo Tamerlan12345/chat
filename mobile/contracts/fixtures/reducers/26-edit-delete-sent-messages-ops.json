@@ -1,0 +1,333 @@
+{
+  "name": "26-edit-delete-sent-messages-ops",
+  "description": "Правка и удаление подтверждённых сообщений без сокета копятся в ops (надёжно записаны) и уходят после синхронизации; чужое, удалённое, файл и неизвестное — user_error. Локальный текст до message_updated не меняется.",
+  "covers": [
+    "T26",
+    "T02",
+    "T21"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 90,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Опечатка",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        },
+        {
+          "id": 91,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Чужое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 92,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 93,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "отчёт.pdf",
+          "type": "file",
+          "reply_to_id": null,
+          "metadata_json": "{\"file_id\":42}",
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "edit",
+      "now": 1000,
+      "message_id": 90,
+      "text": "Без опечатки"
+    },
+    {
+      "type": "edit",
+      "now": 1001,
+      "message_id": 91,
+      "text": "x"
+    },
+    {
+      "type": "edit",
+      "now": 1002,
+      "message_id": 92,
+      "text": "x"
+    },
+    {
+      "type": "edit",
+      "now": 1003,
+      "message_id": 93,
+      "text": "x"
+    },
+    {
+      "type": "edit",
+      "now": 1004,
+      "message_id": 90,
+      "text": ""
+    },
+    {
+      "type": "delete",
+      "now": 1005,
+      "message_id": 91
+    },
+    {
+      "type": "delete",
+      "now": 1006,
+      "message_id": 999
+    },
+    {
+      "type": "delete",
+      "now": 1007,
+      "message_id": 93
+    },
+    {
+      "type": "ws",
+      "now": 2000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 2100,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_EDITABLE"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_EDITABLE"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_EDITABLE"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "EMPTY_TEXT"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_DELETABLE"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "NOT_DELETABLE"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "ops"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 90,
+          "text": "Без опечатки"
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 93
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 90,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Опечатка",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        },
+        {
+          "id": 91,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Чужое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 92,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 93,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "отчёт.pdf",
+          "type": "file",
+          "reply_to_id": null,
+          "metadata_json": "{\"file_id\":42}",
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

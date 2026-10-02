@@ -1,0 +1,215 @@
+{
+  "name": "16-http-401-timeout-late-success",
+  "description": "REST 401 — запись в queued без паузы (attempts сохраняется). Таймаут второй попытки — пауза 2 с; запоздалый 201 подтверждает запись в queued; запоздалая сетевая ошибка первой попытки игнорируется.",
+  "covers": [
+    "T19",
+    "T13",
+    "T17",
+    "T15"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Подпишите, пожалуйста",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "background_flush",
+      "now": 1000
+    },
+    {
+      "type": "http_send_result",
+      "now": 1500,
+      "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+      "attempt": 1,
+      "status": 401,
+      "body": {
+        "error": "Недействительный или истекший токен"
+      }
+    },
+    {
+      "type": "background_flush",
+      "now": 2000
+    },
+    {
+      "type": "ack_timeout",
+      "now": 32000,
+      "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+      "attempt": 2
+    },
+    {
+      "type": "http_send_result",
+      "now": 33000,
+      "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+      "attempt": 2,
+      "status": 201,
+      "body": {
+        "id": 45,
+        "conversation_type": "direct",
+        "target_id": 3,
+        "sender_id": 2,
+        "text": "Подпишите, пожалуйста",
+        "type": "text",
+        "reply_to_id": null,
+        "metadata_json": null,
+        "created_at": "2026-10-02T09:00:30.000Z",
+        "updated_at": null,
+        "is_deleted": 0,
+        "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+        "sender_username": "alice",
+        "sender_name": "Алиса Тестова",
+        "sender_avatar": null,
+        "sender_department": null,
+        "file_original_name": null
+      }
+    },
+    {
+      "type": "http_send_result",
+      "now": 33001,
+      "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+      "attempt": 1,
+      "status": 0,
+      "body": null
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_http",
+        "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+        "attempt": 1,
+        "method": "POST",
+        "path": "/api/messages/direct/3",
+        "body": {
+          "text": "Подпишите, пожалуйста",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata": null,
+          "client_msg_id": "a0000019-0000-4000-8000-000000000019"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 31000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_http",
+        "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+        "attempt": 2,
+        "method": "POST",
+        "path": "/api/messages/direct/3",
+        "body": {
+          "text": "Подпишите, пожалуйста",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata": null,
+          "client_msg_id": "a0000019-0000-4000-8000-000000000019"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 32000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 45,
+          "client_msg_id": "a0000019-0000-4000-8000-000000000019",
+          "sender_id": 2,
+          "text": "Подпишите, пожалуйста",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:30.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

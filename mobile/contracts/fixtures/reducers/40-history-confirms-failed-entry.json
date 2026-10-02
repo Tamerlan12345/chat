@@ -1,0 +1,147 @@
+{
+  "name": "40-history-confirms-failed-entry",
+  "description": "После failed (max_attempts) пользователь открыл переписку: страница истории содержит это сообщение (сохранено, статус read) — запись подтверждается из failed; входящее из истории непрочитанное не меняет.",
+  "covers": [
+    "T08",
+    "T36"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000059-0000-4000-8000-000000000059",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Дошло?",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "history_page",
+      "now": 1000,
+      "body": [
+        {
+          "id": 185,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Дошло?",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000059-0000-4000-8000-000000000059",
+          "delivery_status": "read",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        },
+        {
+          "id": 186,
+          "conversation_type": "direct",
+          "target_id": 2,
+          "sender_id": 3,
+          "text": "Да, дошло",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": "read",
+          "sender_username": "bob",
+          "sender_name": "Боб Тестов",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      ]
+    },
+    {
+      "type": "retry",
+      "now": 1100,
+      "client_msg_id": "a0000059-0000-4000-8000-000000000059",
+      "new_client_msg_id": "a0000098-0000-4000-8000-000000000098"
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 185,
+          "client_msg_id": "a0000059-0000-4000-8000-000000000059",
+          "sender_id": 2,
+          "text": "Дошло?",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 186,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Да, дошло",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {}
+  }
+}

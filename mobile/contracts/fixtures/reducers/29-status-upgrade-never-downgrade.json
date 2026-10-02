@@ -1,0 +1,263 @@
+{
+  "name": "29-status-upgrade-never-downgrade",
+  "description": "message_status_updated поднимает sent → delivered; messages_read — до read (в том числе сразу из sent), только свои сообщения переписки direct:<byUserId>; запоздалые delivered и страница истории с delivery_status ниже статус не понижают.",
+  "covers": [
+    "T10",
+    "T11",
+    "T12",
+    "T36"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 120,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Раз",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 121,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Два",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 122,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Три",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 123,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Ответ",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "message_status_updated",
+        "messageId": 120,
+        "status": "delivered",
+        "userId": 3,
+        "timestamp": "2026-10-02T09:00:10.000Z"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1001,
+      "frame": {
+        "type": "messages_read",
+        "byUserId": 3,
+        "messageIds": [
+          120,
+          121,
+          123,
+          999
+        ]
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1002,
+      "frame": {
+        "type": "message_status_updated",
+        "messageId": 120,
+        "status": "delivered",
+        "userId": 3,
+        "timestamp": "2026-10-02T09:00:11.000Z"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1003,
+      "frame": {
+        "type": "messages_read",
+        "byUserId": 4,
+        "messageIds": [
+          122
+        ]
+      }
+    },
+    {
+      "type": "history_page",
+      "now": 1004,
+      "body": [
+        {
+          "id": 120,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Раз",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": "delivered",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        },
+        {
+          "id": 121,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Два",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        },
+        {
+          "id": 122,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Три",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "delivery_status": "delivered",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      ]
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "messages": {
+      "direct:3": [
+        {
+          "id": 120,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Раз",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 121,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Два",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "read"
+        },
+        {
+          "id": 122,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Три",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "delivered"
+        },
+        {
+          "id": 123,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Ответ",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {}
+  }
+}

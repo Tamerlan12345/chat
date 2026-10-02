@@ -1,0 +1,407 @@
+{
+  "name": "19-reconnect-replay-order",
+  "description": "Обрыв: отправляемые записи возвращаются в queued без паузы (attempts сохраняется). После auth_success и /api/sync повтор идёт по seq с теми же ключами, вторая запись переписки — после подтверждения первой. Таймаут старой попытки устарел.",
+  "covers": [
+    "T20",
+    "T21",
+    "T06",
+    "T15"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000024-0000-4000-8000-000000000024",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Раз",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 14000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000025-0000-4000-8000-000000000025",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Два",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000026-0000-4000-8000-000000000026",
+        "conversation": "channel:3",
+        "seq": 3,
+        "text": "Три",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 14000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      4000,
+      4000
+    ],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ws_disconnected",
+      "now": 5000
+    },
+    {
+      "type": "ws",
+      "now": 6000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 6100,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws",
+      "now": 6200,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 60,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Раз",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000024-0000-4000-8000-000000000024",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 6300,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 61,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Три",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:07.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000026-0000-4000-8000-000000000026",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 6400,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 62,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Два",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:08.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000025-0000-4000-8000-000000000025",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 14000,
+      "client_msg_id": "a0000024-0000-4000-8000-000000000024",
+      "attempt": 1
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Раз",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000024-0000-4000-8000-000000000024"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 16100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000024-0000-4000-8000-000000000024",
+          "attempt": 2
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "Три",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000026-0000-4000-8000-000000000026"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 16100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000026-0000-4000-8000-000000000026",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Два",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000025-0000-4000-8000-000000000025"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 16200,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000025-0000-4000-8000-000000000025",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "connection": "online",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": false,
+      "bootstrap": false
+    },
+    "outbox": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 61,
+          "client_msg_id": "a0000026-0000-4000-8000-000000000026",
+          "sender_id": 2,
+          "text": "Три",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:07.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 60,
+          "client_msg_id": "a0000024-0000-4000-8000-000000000024",
+          "sender_id": 2,
+          "text": "Раз",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 62,
+          "client_msg_id": "a0000025-0000-4000-8000-000000000025",
+          "sender_id": 2,
+          "text": "Два",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:08.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

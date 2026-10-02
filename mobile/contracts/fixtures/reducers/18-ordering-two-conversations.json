@@ -1,0 +1,412 @@
+{
+  "name": "18-ordering-two-conversations",
+  "description": "Две переписки: головы уходят сразу, вторые сообщения каждой ждут подтверждения своей головы (stop-and-wait), подтверждения приходят вразнобой — серверные id в каждой переписке идут в порядке постановки.",
+  "covers": [
+    "T06",
+    "T04",
+    "T07",
+    "T28"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000020-0000-4000-8000-000000000020",
+      "conversation": "direct:3",
+      "text": "Первое Бобу",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "enqueue",
+      "now": 1001,
+      "client_msg_id": "a0000021-0000-4000-8000-000000000021",
+      "conversation": "channel:3",
+      "text": "Первое в канал",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "enqueue",
+      "now": 1002,
+      "client_msg_id": "a0000022-0000-4000-8000-000000000022",
+      "conversation": "direct:3",
+      "text": "Второе Бобу",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "enqueue",
+      "now": 1003,
+      "client_msg_id": "a0000023-0000-4000-8000-000000000023",
+      "conversation": "channel:3",
+      "text": "Второе в канал",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 50,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Первое в канал",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000021-0000-4000-8000-000000000021",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 51,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Первое Бобу",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000020-0000-4000-8000-000000000020",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1300,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 52,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Второе в канал",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000023-0000-4000-8000-000000000023",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1400,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 53,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Второе Бобу",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000022-0000-4000-8000-000000000022",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Первое Бобу",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000020-0000-4000-8000-000000000020"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000020-0000-4000-8000-000000000020",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "channel:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "Первое в канал",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000021-0000-4000-8000-000000000021"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11001,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000021-0000-4000-8000-000000000021",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "channel:3"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "Второе в канал",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000023-0000-4000-8000-000000000023"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000023-0000-4000-8000-000000000023",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Второе Бобу",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000022-0000-4000-8000-000000000022"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11200,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000022-0000-4000-8000-000000000022",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "seq": 4,
+    "outbox": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 50,
+          "client_msg_id": "a0000021-0000-4000-8000-000000000021",
+          "sender_id": 2,
+          "text": "Первое в канал",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 52,
+          "client_msg_id": "a0000023-0000-4000-8000-000000000023",
+          "sender_id": 2,
+          "text": "Второе в канал",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 51,
+          "client_msg_id": "a0000020-0000-4000-8000-000000000020",
+          "sender_id": 2,
+          "text": "Первое Бобу",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 53,
+          "client_msg_id": "a0000022-0000-4000-8000-000000000022",
+          "sender_id": 2,
+          "text": "Второе Бобу",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [
+      1000,
+      1001,
+      1100,
+      1200
+    ]
+  }
+}

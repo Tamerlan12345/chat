@@ -1,0 +1,162 @@
+{
+  "name": "01-enqueue-send-echo",
+  "description": "Онлайн: enqueue → persist до clear_composer → send_ws с client_msg_id → эхо direct_message подтверждает запись, new_message того же id ничего не меняет.",
+  "covers": [
+    "T01",
+    "T04",
+    "T07",
+    "T09"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000001-0000-4000-8000-000000000001",
+      "conversation": "direct:3",
+      "text": "Привет, Боб!",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "direct_message",
+        "message": {
+          "id": 20,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Привет, Боб!",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000001-0000-4000-8000-000000000001",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1201,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 20,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Привет, Боб!",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000001-0000-4000-8000-000000000001",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Привет, Боб!",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000001-0000-4000-8000-000000000001"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000001-0000-4000-8000-000000000001",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "seq": 1,
+    "outbox": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 20,
+          "client_msg_id": "a0000001-0000-4000-8000-000000000001",
+          "sender_id": 2,
+          "text": "Привет, Боб!",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "wake_at": null
+  }
+}

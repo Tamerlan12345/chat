@@ -1,0 +1,119 @@
+{
+  "name": "04-enqueue-duplicate-noop",
+  "description": "Повторная диспетчеризация того же enqueue (ключ уже в outbox) и enqueue с ключом уже подтверждённого своего сообщения — без изменений и без эффектов.",
+  "covers": [
+    "T03"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 20,
+          "client_msg_id": "a0000009-0000-4000-8000-000000000009",
+          "sender_id": 2,
+          "text": "Уже отправлено",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000004-0000-4000-8000-000000000004",
+      "conversation": "direct:3",
+      "text": "Двойное нажатие"
+    },
+    {
+      "type": "enqueue",
+      "now": 1001,
+      "client_msg_id": "a0000004-0000-4000-8000-000000000004",
+      "conversation": "direct:3",
+      "text": "Двойное нажатие"
+    },
+    {
+      "type": "enqueue",
+      "now": 1002,
+      "client_msg_id": "a0000009-0000-4000-8000-000000000009",
+      "conversation": "direct:3",
+      "text": "Уже отправлено"
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      }
+    ],
+    [],
+    []
+  ],
+  "expectedState": {
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000004-0000-4000-8000-000000000004",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Двойное нажатие",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 20,
+          "client_msg_id": "a0000009-0000-4000-8000-000000000009",
+          "sender_id": 2,
+          "text": "Уже отправлено",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}
