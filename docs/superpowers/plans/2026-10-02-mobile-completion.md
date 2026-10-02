@@ -397,6 +397,33 @@ Worktree `m-integration`. Depends on Task 18. Close the Task 18 re-review minors
 
 TDD; full `npm test` and the desktop test for the touched file must be green.
 
+### Task 20: Integration — mobile media (Range, thumbnails, avatar URLs) + call follow-ups
+
+Worktree `m-integration`. Depends on Task 19. Additive and desktop compatible.
+
+**Media (S5)**
+- `GET /api/files/download/:id` supports `Range` (206, `Accept-Ranges`, `Content-Range`, 416), plus `ETag` and `If-None-Match` (304). Authorization is unchanged.
+- Image thumbnails at `GET /api/files/thumb/:id?size=s|m`, with sizes ~160/~480 px, WebP or JPEG.
+  - Thumbnails are generated lazily and cached on disk, with bounded size and decode limits so they can't be used as a decompression bomb.
+  - The server checks the image's magic bytes and does not trust the MIME type.
+  - Use a pure-JS or zero-native approach, or the image library the server already has. If any dependency is needed, record and justify it under supply-chain review.
+  - Thumbnails also follow the same per-file authorization as downloads.
+- `width`/`height` and a small dominant colour (`#rrggbb`) for images in the message attachment metadata. The mobile `AttachmentTile` placeholder uses them.
+- Avatars:
+  - New endpoints `PUT /api/users/avatar` (multipart, image only, size cap, re-encoded and stripped of EXIF) and `GET /api/users/:id/avatar?size=` (cacheable, ETag).
+  - User objects gain an `avatar_url`.
+  - Profile/user payloads stop embedding data-URL avatars by default. Keep a compat path for desktop: check `desktop/` usage and either keep the field for desktop or update the desktop renderer. Integration may touch only the desktop avatar files, with a test.
+
+**Calls**
+- A `call_answer` is idempotent only for the socket that answered. An answer from another socket of the same user gets `call_end` (`answered_elsewhere`), so two devices never both stream audio.
+- Audio relay binds to the answering socket.
+- Monotonic `offerSeq` replaces matching by the `offer.at` timestamp.
+- Map the new reason to Russian text on the desktop.
+
+**Contract and tests**
+- Update `openapi.yaml`, `ws-protocol.md`, `push.md` and fixtures (`--write`).
+- TDD throughout. Server and desktop suites green.
+
 ### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
 
 Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
@@ -417,5 +444,5 @@ Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/deliver
 
 Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19; QA 10 after Wave 1.
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19 → 20; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
