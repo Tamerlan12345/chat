@@ -158,17 +158,21 @@ class PushService {
     }
   }
 
-  /** Входящий звонок сотруднику без сокета; offerAt — время вызова (окно звонка считается от него). */
+  /**
+   * Входящий звонок сотруднику без сокета; offerAt — время вызова (окно звонка
+   * считается от него), offerSeq — номер вызова: по нему, а не по времени,
+   * доставка узнаёт «свой» вызов (задача 20).
+   */
   // Группа доставки заводится сразу: если очередь переполнена и задание
   // отброшено уже здесь, вызывающему всё равно приходит call_unavailable.
-  notifyCall({ calleeId, callerId, offerAt = Date.now(), callId = null }) {
+  notifyCall({ calleeId, callerId, offerAt = Date.now(), offerSeq, callId = null }) {
     if (!this.enabled) return;
     this.enqueue({
       type: 'user',
       kind: 'call',
       userId: Number(calleeId),
       payload: callPayload({ callerId, callId }),
-      call: { callerId: Number(callerId), calleeId: Number(calleeId), offerAt, expiresAt: offerAt + CALL_RING_MS },
+      call: { callerId: Number(callerId), calleeId: Number(calleeId), offerAt, offerSeq, expiresAt: offerAt + CALL_RING_MS },
       group: { pending: 0, done: false }
     });
   }
@@ -223,10 +227,10 @@ class PushService {
   settle(job, outcome) {
     const group = job.group;
     if (!group || group.done) return;
-    // offerAt — какой именно вызов не дозвонился: у той же пары мог появиться новый.
+    // offerSeq — какой именно вызов не дозвонился: у той же пары мог появиться новый.
     if (outcome === 'lost' && job.type === 'user') {
       group.done = true;
-      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerAt);
+      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerSeq);
       return;
     }
     if (outcome !== 'lost') {
@@ -236,7 +240,7 @@ class PushService {
     group.pending -= 1;
     if (group.pending <= 0) {
       group.done = true;
-      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerAt);
+      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerSeq);
     }
   }
 
@@ -247,7 +251,9 @@ class PushService {
     if (this.presence.isDnd(job.userId)) return false;
     if (job.call) {
       const offer = this.presence.callOffer(job.call.callerId, job.call.calleeId);
-      if (!offer || offer.at !== job.call.offerAt) return false;
+      if (!offer) return false;
+      const sameOffer = job.call.offerSeq !== undefined ? offer.seq === job.call.offerSeq : offer.at === job.call.offerAt;
+      if (!sameOffer) return false;
       if (Date.now() >= job.call.expiresAt) return false;
     }
     return true;
