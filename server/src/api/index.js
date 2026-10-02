@@ -28,6 +28,8 @@ const config = require('../config');
 const router = express.Router();
 const SecurityMonitor = require('../services/security-monitor.service');
 const BackupService = require('../services/backup.service');
+const PushService = require('../push/push.service');
+const PushTokens = require('../push/token-store');
 
 // Публичный STUN Google — прежнее поведение, пока администратор не задал свой
 // список. Пустой список в настройке — только локальная сеть.
@@ -403,6 +405,8 @@ router.post('/auth/device/unbind', requireAuth, route(async (req, res) => {
   if (result.unbound) {
     AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
   }
+  // Устройство отвязано — его push-уведомления этому сотруднику тоже.
+  if (typeof device_id === 'string' && device_id) PushTokens.removeForDevice({ deviceId: device_id, userId: req.user.id });
   res.json({ ok: true });
 }));
 
@@ -420,6 +424,77 @@ router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
     AuditService.log({ userId: req.user.id, action: 'device_secret_claimed', ip: getClientIp(req), details: { deviceId: String(device_id) } });
   }
   res.json(result);
+}));
+
+// ── Push-уведомления мобильных устройств (задача 18) ──
+// Устройство сообщает свой токен FCM/APNs; сервер шлёт через Google/Apple
+// только идентификаторы (mobile/contracts/push.md). Токен привязан к
+// сотруднику, сеансу (jti, поколение, время входа) и, если назван, устройству.
+const PUSH_TOKEN_LIMIT = { maxAttempts: 30, windowMs: 60000 };
+const FCM_TOKEN_RE = /^[A-Za-z0-9_:.-]{20,4096}$/;
+const APNS_TOKEN_RE = /^[0-9a-fA-F]{64,200}$/;
+const APP_VERSION_RE = /^[0-9A-Za-z._+-]{1,32}$/;
+const DEVICE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function pushTokenError(res, code, error) {
+  return res.status(400).json({ error, code });
+}
+
+function pushTokenRateLimited(req, res) {
+  if (checkRateLimit(`push-token:${req.user.id}`, PUSH_TOKEN_LIMIT)) return false;
+  res.set('Retry-After', '60');
+  res.status(429).json({ error: 'Слишком много запросов. Повторите через минуту.', code: 'RATE_LIMITED' });
+  return true;
+}
+
+router.post('/devices/push-token', requireAuth, route(async (req, res) => {
+  if (pushTokenRateLimited(req, res)) return;
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const platform = body.platform;
+  if (platform !== 'ios' && platform !== 'android') return pushTokenError(res, 'INVALID_PLATFORM', 'platform — "ios" или "android"');
+  const kind = body.kind === undefined ? 'alert' : body.kind;
+  if (!PushTokens.KINDS.has(kind) || (platform === 'android' && kind !== 'alert')) {
+    return pushTokenError(res, 'INVALID_KIND', 'kind — "alert" (или "voip" для PushKit на iOS)');
+  }
+  const token = body.token;
+  const tokenRe = platform === 'ios' ? APNS_TOKEN_RE : FCM_TOKEN_RE;
+  if (typeof token !== 'string' || !tokenRe.test(token)) return pushTokenError(res, 'INVALID_TOKEN', 'Недопустимый токен устройства');
+  const environment = body.environment === undefined && platform === 'android' ? 'production' : body.environment;
+  if (!PushTokens.ENVIRONMENTS.has(environment)) return pushTokenError(res, 'INVALID_ENVIRONMENT', 'environment — "sandbox" или "production"');
+  const appVersion = body.app_version === undefined || body.app_version === null ? null : body.app_version;
+  if (appVersion !== null && (typeof appVersion !== 'string' || !APP_VERSION_RE.test(appVersion))) {
+    return pushTokenError(res, 'INVALID_APP_VERSION', 'Недопустимая версия приложения');
+  }
+  const deviceId = body.device_id === undefined || body.device_id === null ? null : body.device_id;
+  if (deviceId !== null && (typeof deviceId !== 'string' || !DEVICE_ID_RE.test(deviceId))) {
+    return pushTokenError(res, 'INVALID_DEVICE_ID', 'Недопустимый device_id');
+  }
+
+  const payload = req.tokenPayload || {};
+  const { previousUserId } = PushTokens.register({
+    userId: req.user.id,
+    token,
+    platform,
+    kind,
+    environment,
+    deviceId,
+    appVersion,
+    session: { jti: payload.jti || null, tokenVersion: Number(payload.tv || 1), authTime: payload.auth_time }
+  });
+  // Токен перешёл от другого сотрудника (тот же телефон, другой вход) — след
+  // в журнале; сам токен в журнал не пишется.
+  if (previousUserId !== null) {
+    AuditService.log({ userId: req.user.id, action: 'push_token_rebound', ip: getClientIp(req), details: { previousUserId, platform, kind } });
+  }
+  res.json({ registered: true, push_enabled: PushService.enabled });
+}));
+
+router.delete('/devices/push-token', requireAuth, route(async (req, res) => {
+  if (pushTokenRateLimited(req, res)) return;
+  const token = req.body?.token;
+  if (typeof token !== 'string' || token.length < 1 || token.length > 4096) return pushTokenError(res, 'INVALID_TOKEN', 'Укажите token');
+  // Чужой и несуществующий токен неразличимы: ответ один и тот же.
+  res.json({ removed: PushTokens.remove(req.user.id, token) });
 }));
 
 // ── 1. AUTH ──
@@ -562,6 +637,9 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
   }
   const token = await AuthService.refreshToken(req.user, req.tokenPayload);
   wsServer.replaceSocketToken(req.rawToken, token);
+  // Токены push, зарегистрированные этим сеансом, переходят на новый токен
+  // сеанса — иначе выход после продления их бы не нашёл.
+  PushTokens.rebindSession(req.user.id, req.tokenPayload.jti, AuthService.verifyToken(token)?.jti);
   // Продление лишь ОБНОВЛЯЕТ уже знакомый адрес, но не заводит новый: иначе
   // украденный живой токен посадил бы в «знакомые» адрес атакующего (I-2).
   require('../services/trusted-sources.service').recordAsync(req.user.id, rateLimitIpKey(getClientIp(req)), { allowCreate: false });
@@ -588,6 +666,14 @@ router.post('/auth/logout', requireAuth, route(async (req, res) => {
       AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
     }
   }
+
+  // Push-уведомления этого сеанса (и названного устройства) больше не нужны:
+  // вышедший сотрудник не должен получать их на этот телефон.
+  PushTokens.removeForLogout({
+    userId: req.user.id,
+    jti: req.tokenPayload.jti || null,
+    deviceId: typeof device_id === 'string' && device_id ? device_id : null
+  });
 
   AuditService.log({ userId: req.user.id, action: 'logout', ip: getClientIp(req) });
   wsServer.disconnectSocketsWithToken(req.rawToken, 'Выход из системы');
@@ -2053,7 +2139,9 @@ router.post('/admin/devices/unbind', requireAuth, requireAdminOrScopedAdmin, rou
     if (owner) await assertWithinAdminScope(req.user, { targetUserId: Number(owner.user_id) });
     else if (!isSuperAdmin(req.user)) throw new Error('Устройство не найдено');
     AuditService.log({ userId: req.user.id, action: 'device_unbound', ip: getClientIp(req), details: { deviceId: String(req.body?.device_id), targetUserId: owner?.user_id ?? null } });
-    res.json(await DeviceService.unbindDevice(req.body?.device_id));
+    const result = await DeviceService.unbindDevice(req.body?.device_id);
+    if (req.body?.device_id) PushTokens.removeForDevice({ deviceId: String(req.body.device_id) });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

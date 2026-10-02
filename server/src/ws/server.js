@@ -7,6 +7,7 @@ const AuditService = require('../services/audit.service');
 const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
+const PushService = require('../push/push.service');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -287,6 +288,13 @@ class WsServer {
     this.lastWake = new Map();
     this.wakeInFlight = new Set();
     this.socketsPerIp = new Map(); // ip -> число соединений
+    // Push-уведомления (задача 18) идут только тем, у кого нет ни одного
+    // сокета и не включено «Не беспокоить»: очередь перепроверяет это перед
+    // доставкой — получатель мог подключиться, пока задание ждало.
+    PushService.attachPresence({
+      isOnline: (userId) => this.isUserOnline(userId),
+      isDnd: (userId) => this.dndUsers.has(Number(userId))
+    });
   }
 
   effectiveStatus(userId) {
@@ -696,6 +704,10 @@ class WsServer {
       ws.send(JSON.stringify({ type: 'auth_success', user }));
       ws.send(JSON.stringify(this.wakeStateFor(user.id)));
 
+      // Телефон, разбуженный push-уведомлением о звонке, получает ждущий вызов
+      // по сокету — тем же кадром call_offer, что и при звонке онлайн.
+      this.replayPushedOffers(ws, user.id);
+
       // Получатель снова на связи: всё, что пришло ему, пока его не было,
       // теперь доставлено — и авторы, кто в сети, узнают об этом сразу.
       this.announcePendingDeliveries(user.id);
@@ -938,7 +950,10 @@ class WsServer {
           return;
         }
         // Nobody is at the other end — tell the caller instead of ringing out.
+        // Unless the callee has a phone that a push can wake (задача 18):
+        // then the offer waits, and the phone receives it on connecting.
         if (!this.userSockets.get(targetUserId)?.size) {
+          if (this.ringByPush(currentUser, targetUserId, msg)) return;
           ws.send(JSON.stringify({
             type: 'call_unavailable',
             targetUserId,
@@ -1365,6 +1380,43 @@ class WsServer {
     }
 
     if (!duplicate && message.conversation_type === 'direct') this.markDeliveredIfOnline(message);
+    if (!duplicate) this.pushToOffline(message, recipients, senderId);
+  }
+
+  // Push-уведомление (только id) участникам без сокета и без «Не беспокоить».
+  // Доставка — в очереди PushService: рассылка её не ждёт и не падает из-за неё.
+  pushToOffline(message, recipients, senderId) {
+    try {
+      const offline = [...new Set(recipients.map(Number))]
+        .filter((id) => id !== senderId && !this.isUserOnline(id) && !this.dndUsers.has(id));
+      if (offline.length) PushService.notifyMessage(message, offline);
+    } catch (err) {
+      console.warn('[Push] постановка уведомлений не удалась:', err.message);
+    }
+  }
+
+  // Вызываемый не в сети: если у него есть устройство, которое будит push о
+  // звонке (FCM на Android, PushKit VoIP на iOS), вызов ждёт как обычный
+  // (pendingOffers, 2 минуты), а кадр call_offer доставится при входе
+  // (replayPushedOffers). Иначе — false, и вызывающий получает call_unavailable.
+  ringByPush(caller, targetUserId, msg) {
+    let canRing = false;
+    try {
+      canRing = PushService.canRing(targetUserId);
+    } catch (err) {
+      console.warn('[Push] проверка устройств для звонка не удалась:', err.message);
+    }
+    if (!canRing) return false;
+    const frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
+    this.pendingOffers.set(caller.id, { targetId: targetUserId, at: Date.now(), viaPush: true, frame });
+    PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id });
+    return true;
+  }
+
+  replayPushedOffers(ws, userId) {
+    for (const [callerId, offer] of this.pendingOffers) {
+      if (offer.viaPush && offer.targetId === userId && this.hasPendingOffer(callerId, userId)) safeSend(ws, offer.frame);
+    }
   }
 
   // Получатель личного сообщения на связи — «доставлено» ставится сразу.
