@@ -124,7 +124,8 @@ public enum WSServerEvent: Sendable {
     case callOffer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callAnswer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callRejected(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
-    case callEnd(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
+    /// `targetUserId` is absent when the server ends a call because a peer's connection dropped.
+    case callEnd(targetUserId: Int64?, senderId: Int64, senderName: String, reason: String?)
     case callDenied(reason: String)
     case callUnavailable(targetUserId: Int64, reason: String)
     case wakeRing(fromUserId: Int64, fromName: String, at: Int64)
@@ -281,9 +282,9 @@ public enum WSServerEvent: Sendable {
             return .callRejected(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_end":
-            guard let tId = (json["targetUserId"] as? NSNumber)?.int64Value,
-                  let sId = (json["senderId"] as? NSNumber)?.int64Value,
-                  let sName = json["senderName"] as? String else { return nil }
+            guard let sId = (json["senderId"] as? NSNumber)?.int64Value else { return nil }
+            let tId = (json["targetUserId"] as? NSNumber)?.int64Value
+            let sName = json["senderName"] as? String ?? ""
             let reason = json["reason"] as? String
             return .callEnd(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
