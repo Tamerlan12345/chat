@@ -77,7 +77,7 @@ public final class KeychainManager: @unchecked Sendable {
     // MARK: - Auth Token
 
     public var authToken: String? {
-        get(key: Keys.authToken)
+        value(forKey: Keys.authToken)
     }
 
     public func saveAuthToken(_ token: String) throws {
@@ -87,7 +87,7 @@ public final class KeychainManager: @unchecked Sendable {
     // MARK: - Device ID
 
     public func deviceID() throws -> String {
-        if let existing = get(key: Keys.deviceId) {
+        if let existing = value(forKey: Keys.deviceId) {
             return existing
         }
 
@@ -99,7 +99,7 @@ public final class KeychainManager: @unchecked Sendable {
     // MARK: - Device Secret
 
     public var deviceSecret: String? {
-        get(key: Keys.deviceSecret)
+        value(forKey: Keys.deviceSecret)
     }
 
     public func saveDeviceSecret(_ secret: String) throws {
@@ -109,7 +109,7 @@ public final class KeychainManager: @unchecked Sendable {
     // MARK: - Server URL
 
     public var serverUrl: String {
-        guard let storedURL = get(key: Keys.serverUrl),
+        guard let storedURL = value(forKey: Keys.serverUrl),
               let secureURL = ServerEndpointPolicy.configuredURL(from: storedURL) else {
             return ""
         }
@@ -127,7 +127,7 @@ public final class KeychainManager: @unchecked Sendable {
     // MARK: - Saved Username
 
     public var savedUsername: String? {
-        get(key: Keys.savedUsername)
+        value(forKey: Keys.savedUsername)
     }
 
     public func saveUsername(_ username: String) throws {
@@ -185,7 +185,7 @@ public final class KeychainManager: @unchecked Sendable {
         }
     }
 
-    private func get(key: String) -> String? {
+    private func value(forKey key: String) -> String? {
         lock.lock()
         defer { lock.unlock() }
 
