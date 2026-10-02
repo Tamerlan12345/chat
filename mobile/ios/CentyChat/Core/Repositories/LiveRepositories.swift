@@ -3,13 +3,6 @@ import Security
 
 struct LiveServerRepository: ServerRepository {
     let client: APIClient
-    let keychain: KeychainManager
-
-    var storedServerURL: String { keychain.serverUrl }
-
-    func saveServerURL(_ value: String) throws {
-        try keychain.saveServerURL(value)
-    }
 
     func checkHealth() async throws -> HealthResponse {
         try await client.checkHealth()
@@ -18,14 +11,6 @@ struct LiveServerRepository: ServerRepository {
     func fetchServerInfo() async throws -> ServerInfo {
         try await client.getServerInfo()
     }
-
-    func checkHealth(serverURL: URL) async throws -> HealthResponse {
-        try await client.checkHealth(serverURL: serverURL)
-    }
-
-    func fetchServerInfo(serverURL: URL) async throws -> ServerInfo {
-        try await client.getServerInfo(serverURL: serverURL)
-    }
 }
 
 struct LiveAuthRepository: AuthRepository {
@@ -33,11 +18,22 @@ struct LiveAuthRepository: AuthRepository {
     let keychain: KeychainManager
 
     var hasStoredToken: Bool { keychain.authToken != nil }
+    var hasDeviceSecret: Bool { keychain.deviceSecret != nil }
     var savedUsername: String? { keychain.savedUsername }
 
+    func bindStoredCredentials(to origin: String) throws -> StoredCredentialDecision {
+        try keychain.bindCredentials(toOrigin: origin)
+    }
+
     func login(username: String, password: String) async throws -> AuthSuccessResponse {
-        try keychain.saveUsername(username)
-        return try await client.login(request: LoginRequest(username: username, password: password))
+        let response = try await client.login(request: LoginRequest(username: username, password: password))
+        // Only a login name that worked is remembered; the password never is.
+        do {
+            try keychain.saveUsername(username)
+        } catch {
+            Log.session.error("Remembering the login name failed: \(error.localizedDescription, privacy: .public)")
+        }
+        return response
     }
 
     func claimDevice() async {

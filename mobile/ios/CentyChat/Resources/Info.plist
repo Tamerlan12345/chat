@@ -22,6 +22,9 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <!-- Read only by DEBUG builds (ServerEnvironment); Release compiles the production URL in. -->
+    <key>CentyChatServerURL</key>
+    <string>$(CENTYCHAT_SERVER_URL)</string>
     
     <!-- Privacy Descriptions for App Store Review -->
     <key>NSMicrophoneUsageDescription</key>

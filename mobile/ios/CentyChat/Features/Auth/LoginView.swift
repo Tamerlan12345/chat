@@ -75,32 +75,9 @@ public struct LoginView: View {
                     }
                     .padding(.horizontal)
 
-                    // Информация об устройстве
-                    VStack(spacing: 4) {
-                        Text("Устройство: \(UIDevice.current.name)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text("Сервер: \(session.serverAddress)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.top, 16)
                 }
             }
             .background(CentyColors.chatBackground)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
-                        session.returnToServerSetup()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text("Сервер")
-                        }
-                        .font(.subheadline)
-                    }
-                }
-            }
             .onAppear {
                 if let saved = session.savedUsername {
                     usernameInput = saved

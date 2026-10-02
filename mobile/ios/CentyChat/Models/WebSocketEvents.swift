@@ -128,6 +128,8 @@ public enum WSServerEvent: Sendable {
     case callEnd(targetUserId: Int64?, senderId: Int64, senderName: String, reason: String?)
     case callDenied(reason: String)
     case callUnavailable(targetUserId: Int64, reason: String)
+    /// Relayed WebRTC signalling. Calls use the server audio relay, so it is parsed and ignored.
+    case iceCandidate(targetUserId: Int64, senderId: Int64, senderName: String)
     case wakeRing(fromUserId: Int64, fromName: String, at: Int64)
     case wakeSent(targetUserId: Int64, at: Int64, retryAt: Int64)
     case wakeError(code: String, message: String?)

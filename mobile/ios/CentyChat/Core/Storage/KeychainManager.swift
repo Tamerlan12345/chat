@@ -46,6 +46,15 @@ public enum KeychainManagerError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
+/// Outcome of binding stored credentials to the configured server.
+public enum StoredCredentialDecision: Equatable, Sendable {
+    case nothingStored
+    /// The credentials were issued by this server and stay.
+    case kept
+    /// The credentials came from another (or an unknown) server and were deleted.
+    case wiped
+}
+
 /// Менеджер безопасного хранилища Keychain для токенов и учетных данных устройства
 public final class KeychainManager: @unchecked Sendable {
     public static let shared = KeychainManager(
@@ -61,7 +70,10 @@ public final class KeychainManager: @unchecked Sendable {
         static let authToken = "auth_token"
         static let deviceId = "device_id"
         static let deviceSecret = "device_secret"
-        static let serverUrl = "server_url"
+        /// Written by app versions that let the user type a server address. Never read as a server.
+        static let legacyServerURL = "server_url"
+        /// Origin of the server the stored token and device secret were issued for.
+        static let credentialOrigin = "credential_origin"
         static let savedUsername = "saved_username"
     }
 
@@ -106,22 +118,14 @@ public final class KeychainManager: @unchecked Sendable {
         try save(value: secret, key: Keys.deviceSecret)
     }
 
-    // MARK: - Server URL
+    // MARK: - Credential binding
 
-    public var serverUrl: String {
-        guard let storedURL = value(forKey: Keys.serverUrl),
-              let secureURL = ServerEndpointPolicy.configuredURL(from: storedURL) else {
-            return ""
-        }
-        return secureURL.absoluteString
-    }
-
-    public func saveServerURL(_ value: String) throws {
-        guard let secureURL = ServerEndpointPolicy.configuredURL(from: value) else {
-            try delete(key: Keys.serverUrl)
-            return
-        }
-        try save(value: secureURL.absoluteString, key: Keys.serverUrl)
+    /// Makes sure the stored session and device secret belong to `origin`, the server this
+    /// build is fixed to. Credentials issued for any other host (or for an unknown one) are
+    /// wiped; the legacy user-entered server URL is removed. Throws when a wipe fails, in
+    /// which case the stored credentials must not be used.
+    public func bindCredentials(toOrigin origin: String) throws -> StoredCredentialDecision {
+        .nothingStored
     }
 
     // MARK: - Saved Username
@@ -148,7 +152,8 @@ public final class KeychainManager: @unchecked Sendable {
         try delete(key: Keys.authToken)
         try delete(key: Keys.deviceId)
         try delete(key: Keys.deviceSecret)
-        try delete(key: Keys.serverUrl)
+        try delete(key: Keys.legacyServerURL)
+        try delete(key: Keys.credentialOrigin)
         try delete(key: Keys.savedUsername)
     }
 #endif

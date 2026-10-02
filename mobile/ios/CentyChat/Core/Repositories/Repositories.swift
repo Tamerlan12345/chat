@@ -28,19 +28,19 @@ public struct DeviceDescriptor: Sendable, Equatable {
 // Stores depend only on these protocols; views never touch the network
 // singletons. Live implementations wrap `APIClient` / `WebSocketClient`.
 
+/// The server itself is fixed at build time (`ServerEnvironment`); this only reads its status.
 public protocol ServerRepository: Sendable {
-    /// The validated, persisted server URL or an empty string.
-    var storedServerURL: String { get }
-    func saveServerURL(_ value: String) throws
     func checkHealth() async throws -> HealthResponse
     func fetchServerInfo() async throws -> ServerInfo
-    func checkHealth(serverURL: URL) async throws -> HealthResponse
-    func fetchServerInfo(serverURL: URL) async throws -> ServerInfo
 }
 
 public protocol AuthRepository: Sendable {
     var hasStoredToken: Bool { get }
+    var hasDeviceSecret: Bool { get }
     var savedUsername: String? { get }
+    /// Wipes a stored session or device secret that was not issued by `origin`.
+    /// Throws when the wipe fails; the stored credentials must then not be used.
+    func bindStoredCredentials(to origin: String) throws -> StoredCredentialDecision
     /// Persists the username and the session token; fails closed if the token cannot be stored.
     func login(username: String, password: String) async throws -> AuthSuccessResponse
     /// Best-effort binding of a fresh device secret for password-less re-entry.

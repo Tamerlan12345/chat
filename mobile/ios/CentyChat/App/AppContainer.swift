@@ -21,11 +21,18 @@ public final class AppContainer: SessionLifecycleDelegate {
         chat: any ChatRepository,
         announcements announcementsRepository: any AnnouncementsRepository,
         realtime realtimeRepository: any RealtimeRepository,
+        environment: ServerEnvironment,
         audioRelayFactory: (@MainActor (Int64) -> AudioCallRelay)? = nil,
         deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
-        let session = SessionStore(auth: auth, server: server, realtime: realtime, deviceDescriptor: deviceDescriptor)
+        let session = SessionStore(
+            auth: auth,
+            server: server,
+            realtime: realtime,
+            environment: environment,
+            deviceDescriptor: deviceDescriptor
+        )
         let conversations = ConversationsStore(repository: chat, session: session)
         let announcements = AnnouncementsStore(repository: announcementsRepository, session: session)
         let calls = CallStore(
@@ -63,16 +70,17 @@ public final class AppContainer: SessionLifecycleDelegate {
         }
     }
 
-    /// Production wiring over the shared network clients.
+    /// Production wiring over the shared network clients and the build's fixed server.
     public static func live() -> AppContainer {
         let client = APIClient.shared
         let keychain = KeychainManager.shared
         return AppContainer(
-            server: LiveServerRepository(client: client, keychain: keychain),
+            server: LiveServerRepository(client: client),
             auth: LiveAuthRepository(client: client, keychain: keychain),
             chat: LiveChatRepository(client: client),
             announcements: LiveAnnouncementsRepository(client: client),
-            realtime: LiveRealtimeRepository(client: WebSocketClient.shared)
+            realtime: LiveRealtimeRepository(client: WebSocketClient.shared),
+            environment: .current
         )
     }
 

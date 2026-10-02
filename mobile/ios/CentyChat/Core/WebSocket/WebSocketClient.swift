@@ -75,7 +75,9 @@ public actor WebSocketClient {
     private var audioContinuationID: UUID?
 
     init(
-        credentials: @escaping Credentials = { (KeychainManager.shared.serverUrl, KeychainManager.shared.authToken) },
+        credentials: @escaping Credentials = {
+            (ServerEnvironment.current.serverURL.absoluteString, KeychainManager.shared.authToken)
+        },
         makeTransport: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) },
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) },
