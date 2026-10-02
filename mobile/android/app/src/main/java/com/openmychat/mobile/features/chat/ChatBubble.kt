@@ -21,7 +21,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -129,7 +129,10 @@ internal fun ChatBubbleRow(
         )
     }
 
-    val actionLabels = MessageAction.entries.associateWith { stringResource(it.label) }
+    val replyLabel = stringResource(MessageAction.REPLY.label)
+    val copyLabel = stringResource(MessageAction.COPY.label)
+    val editLabel = stringResource(MessageAction.EDIT.label)
+    val deleteLabel = stringResource(MessageAction.DELETE.label)
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     fun perform(action: MessageAction) {
         when (action) {
@@ -183,7 +186,9 @@ internal fun ChatBubbleRow(
                         }
                     },
                     Modifier
-                        .onGloballyPositioned { coordinates[0] = it }
+                        // Kept for the long press only; onPlaced is cheap where onGloballyPositioned
+                        // would dispatch on every scroll frame.
+                        .onPlaced { coordinates[0] = it }
                         // A tap opens the same menu as a long press, so TalkBack's click is a real
                         // action; combinedClickable performs the long-press haptic itself.
                         .combinedClickable(
@@ -195,7 +200,13 @@ internal fun ChatBubbleRow(
                         .semantics(mergeDescendants = true) {
                             contentDescription = description
                             customActions = menuActions().map { action ->
-                                CustomAccessibilityAction(actionLabels.getValue(action)) { perform(action); true }
+                                val label = when (action) {
+                                    MessageAction.REPLY -> replyLabel
+                                    MessageAction.COPY -> copyLabel
+                                    MessageAction.EDIT -> editLabel
+                                    MessageAction.DELETE -> deleteLabel
+                                }
+                                CustomAccessibilityAction(label) { perform(action); true }
                             }
                         }
                 )

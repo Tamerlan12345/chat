@@ -114,9 +114,10 @@ fun DeliveryGlyph(
                 translationX = if (t in 0.001f..0.999f) 4.dp.toPx() * sin(t * 3f * PI.toFloat()) * (1f - t) else 0f
             }
             .drawWithCache {
-                val unit = size.minDimension / 16f
-                val glyphs = DeliveryMark.entries.associateWith { glyphPaths(it, unit) }
-                val lengths = glyphs.mapValues { (_, paths) -> paths.map { PathMeasure().apply { setPath(it, false) }.length } }
+                // Every glyph on screen has the same size: the geometry is built once and shared.
+                val geometry = GlyphGeometry.forUnit(size.minDimension / 16f)
+                val glyphs = geometry.paths
+                val lengths = geometry.lengths
                 val measure = PathMeasure()
                 val segment = Path()
                 val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
@@ -159,6 +160,18 @@ private class GlyphColors(val tint: Color, val read: Color, val failed: Color) {
         DeliveryMark.READ -> read
         DeliveryMark.FAILED -> failed
         else -> tint
+    }
+}
+
+/** Paths and contour lengths for one glyph size; the last size is cached (main thread only). */
+private class GlyphGeometry(val unit: Float) {
+    val paths: Map<DeliveryMark, List<Path>> = DeliveryMark.entries.associateWith { glyphPaths(it, unit) }
+    val lengths: Map<DeliveryMark, List<Float>> = paths.mapValues { (_, list) -> list.map { PathMeasure().apply { setPath(it, false) }.length } }
+
+    companion object {
+        private var last: GlyphGeometry? = null
+
+        fun forUnit(unit: Float): GlyphGeometry = last?.takeIf { it.unit == unit } ?: GlyphGeometry(unit).also { last = it }
     }
 }
 
