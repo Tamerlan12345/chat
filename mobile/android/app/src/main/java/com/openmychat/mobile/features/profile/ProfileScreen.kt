@@ -34,10 +34,11 @@ fun ProfileScreen(
     onNavigateToAnnouncements: () -> Unit,
     onLoggedOut: () -> Unit
 ) {
-    val currentUser by viewModel.currentUser.collectAsState()
-    val customStatusInput by viewModel.customStatusInput.collectAsState()
-    val wakeCooldown by viewModel.wakeCooldown.collectAsState()
-    val isSaving by viewModel.isSaving.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val currentUser = (uiState as? ProfileUiState.Content)?.user
+    val customStatusInput = uiState.customStatusInput
+    val wakeCooldown = uiState.wakeCooldownSeconds
+    val isSaving = uiState.isSaving
     val logoutError by viewModel.logoutError.collectAsState()
     val storageError by viewModel.storageError.collectAsState()
 

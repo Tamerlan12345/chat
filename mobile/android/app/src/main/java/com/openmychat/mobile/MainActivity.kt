@@ -14,47 +14,50 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
+import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
-import com.openmychat.mobile.data.model.ChangePasswordRequest
+import com.openmychat.mobile.data.realtime.RealtimeConnectionManager
 import com.openmychat.mobile.features.auth.ChangePasswordDialog
-import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
 import com.openmychat.mobile.ui.navigation.CentyNavHost
 import com.openmychat.mobile.ui.navigation.NavKey
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.rememberNavBackStack
 import com.openmychat.mobile.ui.theme.CentyChatTheme
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val app: CentyChatApp get() = application as CentyChatApp
+    @Inject lateinit var connectionManager: RealtimeConnectionManager
+    @Inject lateinit var callAudio: CallAudio
+
+    private val appViewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        connectionManager.start()
 
         setContent {
             CentyChatTheme {
                 val initialKey = when {
-                    app.sessionManager.token != null && app.sessionManager.currentUser != null -> NavKey.Conversations
-                    app.sessionManager.serverUrl.isNotBlank() -> NavKey.Login
+                    SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState()) -> NavKey.Conversations
+                    appViewModel.hasConfiguredServer -> NavKey.Login
                     else -> NavKey.ServerConnect
                 }
 
                 val backStack = rememberNavBackStack(initialKey = initialKey)
-                val mustChangePassword by app.sessionManager.mustChangePasswordFlow.collectAsState()
-                val coroutineScope = rememberCoroutineScope()
-                var changePasswordLoading by remember { mutableStateOf(false) }
-                var changePasswordError by remember { mutableStateOf<String?>(null) }
+                val passwordChange by appViewModel.passwordChange.collectAsState()
 
                 // Runtime permission request for notifications on Android 13+ (API 33+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -73,30 +76,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Observe global WebSocket events (Wake, Calls, Server Disconnects)
+                // Session loss returns protected destinations to sign-in.
                 LaunchedEffect(Unit) {
-                    combine(
-                        app.sessionManager.tokenFlow,
-                        app.sessionManager.currentUserFlow,
-                        app.sessionManager.storageState
-                    ) { token, user, storageState ->
-                        AuthenticatedRouteState(token, user != null, storageState)
-                    }.collectLatest { session ->
-                        if (SessionRouteGuard.hasAuthenticatedSession(session)) {
-                            app.webSocketClient.connect(lifecycleScope)
-                        } else {
-                            app.webSocketClient.disconnect()
-                            SessionRouteGuard.destinationAfterSessionLoss(
-                                currentDestination = backStack.currentKey,
-                                session = session,
-                                hasConfiguredServer = app.sessionManager.serverUrl.isNotBlank()
-                            )?.let(backStack::clearAndSet)
-                        }
+                    appViewModel.routeStates.collect { session ->
+                        SessionRouteGuard.destinationAfterSessionLoss(
+                            currentDestination = backStack.currentKey,
+                            session = session,
+                            hasConfiguredServer = appViewModel.hasConfiguredServer
+                        )?.let(backStack::clearAndSet)
                     }
                 }
 
                 LaunchedEffect(Unit) {
-                    app.webSocketClient.events.collect { event ->
+                    appViewModel.globalEvents.collect { event ->
                         when (event) {
                             is WsEvent.WakeRing -> {
                                 triggerWakeVibration()
@@ -107,12 +99,7 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                             is WsEvent.CallOffer -> {
-                                val session = AuthenticatedRouteState(
-                                    token = app.sessionManager.token,
-                                    hasCurrentUser = app.sessionManager.currentUser != null,
-                                    storageState = app.sessionManager.storageState.value
-                                )
-                                if (SessionRouteGuard.acceptsIncomingCall(session)) {
+                                if (appViewModel.acceptsIncomingCall()) {
                                     backStack.navigate(
                                         NavKey.Call(
                                             peerId = event.senderId,
@@ -141,36 +128,19 @@ class MainActivity : ComponentActivity() {
                 ) {
                     CentyNavHost(
                         backStack = backStack,
-                        apiClient = app.apiClient,
-                        webSocketClient = app.webSocketClient,
-                        sessionManager = app.sessionManager,
-                        audioEngine = app.audioEngine
+                        routeStates = appViewModel.routeStates,
+                        currentRouteState = appViewModel::routeState,
+                        hasConfiguredServer = { appViewModel.hasConfiguredServer }
                     )
 
                     // Global mandatory blocking password change dialog
-                    if (mustChangePassword && app.sessionManager.token != null) {
+                    val dialog = passwordChange
+                    if (dialog is PasswordChangeUiState.Visible) {
                         ChangePasswordDialog(
-                            isLoading = changePasswordLoading,
-                            errorMessage = changePasswordError,
+                            isLoading = dialog.isLoading,
+                            errorMessage = dialog.error,
                             onDismiss = null, // Undismissable until successfully changed
-                            onSubmit = { oldPass, newPass ->
-                                coroutineScope.launch {
-                                    changePasswordLoading = true
-                                    changePasswordError = null
-                                    try {
-                                        val resp = app.apiClient.changePassword(
-                                            ChangePasswordRequest(oldPassword = oldPass, newPassword = newPass)
-                                        )
-                                        if (!resp.success) {
-                                            changePasswordError = resp.message.ifBlank { "Ошибка смены пароля" }
-                                        }
-                                    } catch (e: Exception) {
-                                        changePasswordError = e.message ?: "Ошибка смены пароля"
-                                    } finally {
-                                        changePasswordLoading = false
-                                    }
-                                }
-                            }
+                            onSubmit = appViewModel::changePassword
                         )
                     }
                 }
@@ -189,22 +159,19 @@ class MainActivity : ComponentActivity() {
             }
 
             if (vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val timings = longArrayOf(0, 250, 150, 250, 150, 400)
-                    val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
-                    val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
-                    vibrator.vibrate(effect)
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 250, 150, 250, 150, 400), -1)
-                }
+                val timings = longArrayOf(0, 250, 150, 250, 150, 400)
+                val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
             }
         } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        app.webSocketClient.disconnect()
-        app.audioEngine.stop()
+        // Recreation (theme, locale) keeps the socket; leaving the app tears it down.
+        if (isFinishing) {
+            connectionManager.stop()
+            callAudio.stop()
+        }
     }
 }

@@ -4,6 +4,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 // The JVM test worker cannot load classes from a build directory whose path
@@ -94,6 +96,10 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
+
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

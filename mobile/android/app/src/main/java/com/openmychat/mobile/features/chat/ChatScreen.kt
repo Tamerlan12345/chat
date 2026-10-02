@@ -47,7 +47,8 @@ fun ChatScreen(
     onNavigateBack: () -> Unit,
     onStartCall: (peerId: Long, peerName: String) -> Unit
 ) {
-    val messages by viewModel.messages.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val typingUser by viewModel.typingUser.collectAsState()
     val wakeCooldown by viewModel.wakeCooldownSeconds.collectAsState()
     val editingMessage by viewModel.editingMessage.collectAsState()
@@ -154,24 +155,47 @@ fun ChatScreen(
                 .consumeWindowInsets(innerPadding)
         ) {
             // Message List
-            LazyColumn(
-                state = listState,
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(messages, key = { it.id }) { message ->
-                    val isOwn = message.senderId == viewModel.currentUserId
-                    MessageBubble(
-                        message = message,
-                        isOwn = isOwn,
-                        canEdit = viewModel.canEditMessage(message),
-                        canDelete = viewModel.canDeleteMessage(message),
-                        onEdit = { viewModel.startEditing(message) },
-                        onDelete = { viewModel.deleteMessage(message) }
-                    )
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        val isOwn = message.senderId == viewModel.currentUserId
+                        MessageBubble(
+                            message = message,
+                            isOwn = isOwn,
+                            canEdit = viewModel.canEditMessage(message),
+                            canDelete = viewModel.canDeleteMessage(message),
+                            onEdit = { viewModel.startEditing(message) },
+                            onDelete = { viewModel.deleteMessage(message) }
+                        )
+                    }
+                }
+                when (val state = uiState) {
+                    is ChatUiState.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    is ChatUiState.Error -> Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(onClick = { viewModel.loadMessages() }) { Text("Повторить") }
+                    }
+                    is ChatUiState.Content -> Unit
                 }
             }
 

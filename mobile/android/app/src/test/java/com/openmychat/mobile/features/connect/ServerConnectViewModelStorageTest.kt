@@ -2,6 +2,7 @@ package com.openmychat.mobile.features.connect
 
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.repository.DefaultAuthRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.resetMain
@@ -24,7 +25,9 @@ class ServerConnectViewModelStorageTest {
         try {
             val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false)
             val verificationClient = connectedServerClient()
-            val viewModel = ServerConnectViewModel(ApiClient(sessionManager, verificationHttpClient = verificationClient), sessionManager)
+            val viewModel = ServerConnectViewModel(
+                DefaultAuthRepository(ApiClient(sessionManager, verificationHttpClient = verificationClient), sessionManager)
+            )
             var navigationRequested = false
 
             viewModel.updateServerUrl("https://chat.example")

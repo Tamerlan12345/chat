@@ -2,15 +2,16 @@ package com.openmychat.mobile.features.connect
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SecureStorageUnavailableException
-import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.HealthStatus
-import com.openmychat.mobile.data.model.KnockRequest
+import com.openmychat.mobile.data.repository.AuthRepository
+import com.openmychat.mobile.data.repository.ServerConnectResult
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 sealed interface ServerConnectUiState {
     data object Idle : ServerConnectUiState
@@ -19,12 +20,12 @@ sealed interface ServerConnectUiState {
     data class Error(val message: String) : ServerConnectUiState
 }
 
-class ServerConnectViewModel(
-    private val apiClient: ApiClient,
-    private val sessionManager: SessionManager
+@HiltViewModel
+class ServerConnectViewModel @Inject constructor(
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
-    private val _serverUrl = MutableStateFlow(sessionManager.serverUrl)
+    private val _serverUrl = MutableStateFlow(authRepository.serverUrl)
     val serverUrl: StateFlow<String> = _serverUrl.asStateFlow()
 
     private val _uiState = MutableStateFlow<ServerConnectUiState>(ServerConnectUiState.Idle)
@@ -38,43 +39,17 @@ class ServerConnectViewModel(
         viewModelScope.launch {
             _uiState.value = ServerConnectUiState.Checking
             try {
-                val endpoint = sessionManager.validateServerEndpoint(_serverUrl.value)
-                    .getOrElse { throw it }
-                val health = apiClient.checkHealthAt(endpoint)
-
-                // Try device knock
-                val knockResp = try {
-                    apiClient.knockAt(
-                        endpoint,
-                        KnockRequest(
-                            deviceId = sessionManager.deviceId,
-                            deviceSecret = null,
-                            deviceName = "Android Device"
-                        )
-                    )
-                } catch (_: Exception) {
-                    null
-                }
-
-                sessionManager.commitVerifiedServerEndpoint(endpoint)
+                val result = authRepository.connect(_serverUrl.value)
                 _uiState.value = ServerConnectUiState.Success(
-                    health = health,
-                    knockStatus = knockResp?.status
+                    health = result.health,
+                    knockStatus = result.knockStatus
                 )
-
-                if (knockResp?.status == "paired" && knockResp.token != null && knockResp.user != null) {
-                    sessionManager.saveAuthSuccess(knockResp.user, knockResp.token)
-                    onSuccess(true)
-                } else {
-                    onSuccess(false)
-                }
+                onSuccess(result is ServerConnectResult.Paired)
             } catch (e: SecureStorageUnavailableException) {
-                sessionManager.restorePersistedServerEndpoint()
                 _uiState.value = ServerConnectUiState.Error(
                     e.message ?: "Secure storage is unavailable"
                 )
             } catch (e: Exception) {
-                sessionManager.restorePersistedServerEndpoint()
                 _uiState.value = ServerConnectUiState.Error(
                     e.message ?: "Не удалось подключиться к серверу"
                 )

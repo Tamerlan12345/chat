@@ -7,11 +7,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.openmychat.mobile.core.audio.AudioEngine
-import com.openmychat.mobile.core.network.ApiClient
-import com.openmychat.mobile.core.network.WebSocketClient
-import com.openmychat.mobile.core.session.SessionManager
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import kotlinx.coroutines.flow.Flow
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.features.announcements.AnnouncementsScreen
 import com.openmychat.mobile.features.announcements.AnnouncementsViewModel
@@ -31,25 +28,17 @@ import com.openmychat.mobile.features.profile.ProfileViewModel
 @Composable
 fun CentyNavHost(
     backStack: NavBackStack,
-    apiClient: ApiClient,
-    webSocketClient: WebSocketClient,
-    sessionManager: SessionManager,
-    audioEngine: AudioEngine,
+    routeStates: Flow<AuthenticatedRouteState>,
+    currentRouteState: () -> AuthenticatedRouteState,
+    hasConfiguredServer: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
-    val token by sessionManager.tokenFlow.collectAsState()
-    val currentUser by sessionManager.currentUserFlow.collectAsState()
-    val storageState by sessionManager.storageState.collectAsState()
-    val session = AuthenticatedRouteState(
-        token = token,
-        hasCurrentUser = currentUser != null,
-        storageState = storageState
-    )
+    val session by routeStates.collectAsState(initial = currentRouteState())
     val requestedDestination = backStack.currentKey
     val destination = SessionRouteGuard.destinationForNavigation(
         requestedDestination = requestedDestination,
         session = session,
-        hasConfiguredServer = sessionManager.serverUrl.isNotBlank()
+        hasConfiguredServer = hasConfiguredServer()
     )
 
     // Do not render a protected destination from a restored/saved stack even for one frame.
@@ -60,15 +49,10 @@ fun CentyNavHost(
     }
 
     fun navigate(destination: NavKey) {
-        val freshSession = AuthenticatedRouteState(
-            token = sessionManager.token,
-            hasCurrentUser = sessionManager.currentUser != null,
-            storageState = sessionManager.storageState.value
-        )
         val allowedDestination = SessionRouteGuard.destinationForNavigation(
             requestedDestination = destination,
-            session = freshSession,
-            hasConfiguredServer = sessionManager.serverUrl.isNotBlank()
+            session = currentRouteState(),
+            hasConfiguredServer = hasConfiguredServer()
         )
         if (allowedDestination == destination) backStack.navigate(destination)
         else backStack.clearAndSet(allowedDestination)
@@ -88,7 +72,7 @@ fun CentyNavHost(
     ) { currentDestination ->
         when (currentDestination) {
             is NavKey.ServerConnect -> {
-                val vm = viewModel { ServerConnectViewModel(apiClient, sessionManager) }
+                val vm = hiltViewModel<ServerConnectViewModel>()
                 ServerConnectScreen(
                     viewModel = vm,
                     onNavigateToLogin = { navigate(NavKey.Login) },
@@ -96,7 +80,7 @@ fun CentyNavHost(
                 )
             }
             is NavKey.Login -> {
-                val vm = viewModel { LoginViewModel(apiClient, sessionManager) }
+                val vm = hiltViewModel<LoginViewModel>()
                 ServerConnectScreenNavigationWrapper(
                     viewModel = vm,
                     onLoginSuccess = { navigate(NavKey.Conversations) },
@@ -104,7 +88,7 @@ fun CentyNavHost(
                 )
             }
             is NavKey.Conversations -> {
-                val vm = viewModel { ConversationsViewModel(apiClient, webSocketClient, sessionManager) }
+                val vm = hiltViewModel<ConversationsViewModel>()
                 ConversationsScreen(
                     viewModel = vm,
                     onOpenDirectChat = { userId, name, avatar, status ->
@@ -133,15 +117,9 @@ fun CentyNavHost(
             }
             is NavKey.Chat -> {
                 val convType = if (currentDestination.conversationType == "channel") ConversationType.CHANNEL else ConversationType.DIRECT
-                val vm = viewModel(key = "chat_${currentDestination.conversationType}_${currentDestination.targetId}") {
-                    ChatViewModel(
-                        conversationType = convType,
-                        targetId = currentDestination.targetId,
-                        apiClient = apiClient,
-                        webSocketClient = webSocketClient,
-                        sessionManager = sessionManager
-                    )
-                }
+                val vm = hiltViewModel<ChatViewModel, ChatViewModel.Factory>(
+                    key = "chat_${currentDestination.conversationType}_${currentDestination.targetId}"
+                ) { factory -> factory.create(convType, currentDestination.targetId) }
                 ChatScreen(
                     viewModel = vm,
                     title = currentDestination.title,
@@ -160,7 +138,7 @@ fun CentyNavHost(
                 )
             }
             is NavKey.Announcements -> {
-                val vm = viewModel { AnnouncementsViewModel(apiClient, webSocketClient) }
+                val vm = hiltViewModel<AnnouncementsViewModel>()
                 AnnouncementsScreen(
                     viewModel = vm,
                     onNavigateToConversations = { navigate(NavKey.Conversations) },
@@ -168,14 +146,10 @@ fun CentyNavHost(
                 )
             }
             is NavKey.Call -> {
-                val vm = viewModel(key = "call_${currentDestination.peerId}") {
-                    CallViewModel(
-                        peerId = currentDestination.peerId,
-                        peerName = currentDestination.peerName,
-                        isIncoming = currentDestination.isIncoming,
-                        webSocketClient = webSocketClient,
-                        audioEngine = audioEngine
-                    )
+                val vm = hiltViewModel<CallViewModel, CallViewModel.Factory>(
+                    key = "call_${currentDestination.peerId}"
+                ) { factory ->
+                    factory.create(currentDestination.peerId, currentDestination.peerName, currentDestination.isIncoming)
                 }
                 CallScreen(
                     viewModel = vm,
@@ -183,7 +157,7 @@ fun CentyNavHost(
                 )
             }
             is NavKey.Profile -> {
-                val vm = viewModel { ProfileViewModel(apiClient, webSocketClient, sessionManager) }
+                val vm = hiltViewModel<ProfileViewModel>()
                 ProfileScreen(
                     viewModel = vm,
                     onNavigateToConversations = { navigate(NavKey.Conversations) },

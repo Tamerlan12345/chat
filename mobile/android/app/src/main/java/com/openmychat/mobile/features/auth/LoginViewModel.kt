@@ -2,18 +2,15 @@ package com.openmychat.mobile.features.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.openmychat.mobile.core.network.ApiClient
-import com.openmychat.mobile.core.network.MustChangePasswordException
 import com.openmychat.mobile.core.session.SecureStorageUnavailableException
-import com.openmychat.mobile.core.session.SessionManager
-import com.openmychat.mobile.data.model.ChangePasswordRequest
-import com.openmychat.mobile.data.model.DeviceClaimRequest
-import com.openmychat.mobile.data.model.LoginRequest
+import com.openmychat.mobile.data.repository.AuthRepository
+import com.openmychat.mobile.data.repository.LoginResult
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.security.SecureRandom
+import javax.inject.Inject
 
 sealed interface LoginUiState {
     data object Idle : LoginUiState
@@ -22,9 +19,9 @@ sealed interface LoginUiState {
     data class Error(val message: String) : LoginUiState
 }
 
-class LoginViewModel(
-    private val apiClient: ApiClient,
-    private val sessionManager: SessionManager
+@HiltViewModel
+class LoginViewModel @Inject constructor(
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
@@ -43,10 +40,9 @@ class LoginViewModel(
         private set
 
     init {
-        // Observe SessionManager's mustChangePassword flow
         viewModelScope.launch {
-            sessionManager.mustChangePasswordFlow.collect { mustChange ->
-                if (mustChange && sessionManager.token != null) {
+            authRepository.mustChangePassword.collect { mustChange ->
+                if (mustChange && authRepository.hasSessionToken) {
                     _mustChangePasswordDialogVisible.value = true
                 }
             }
@@ -63,44 +59,12 @@ class LoginViewModel(
         viewModelScope.launch {
             _uiState.value = LoginUiState.Loading
             try {
-                val resp = apiClient.login(LoginRequest(username = username.trim(), password = password))
-
-                // Attempt device claim with a random 256-bit secret (base64url)
-                try {
-                    val secretBytes = ByteArray(32)
-                    SecureRandom().nextBytes(secretBytes)
-                    val secretString = java.util.Base64.getUrlEncoder()
-                        .withoutPadding()
-                        .encodeToString(secretBytes)
-                    val claimResp = apiClient.claimDevice(
-                        DeviceClaimRequest(
-                            deviceId = sessionManager.deviceId,
-                            deviceSecret = secretString
-                        )
-                    )
-                    if (claimResp.claimed) {
-                        sessionManager.deviceSecret = secretString
+                when (authRepository.login(username, password)) {
+                    LoginResult.SUCCESS -> _uiState.value = LoginUiState.Success
+                    LoginResult.MUST_CHANGE_PASSWORD -> {
+                        _mustChangePasswordDialogVisible.value = true
+                        _uiState.value = LoginUiState.Idle
                     }
-                } catch (error: SecureStorageUnavailableException) {
-                    throw error
-                } catch (_: Exception) {}
-
-                if (resp.user.mustChangePassword) {
-                    sessionManager.mustChangePassword = true
-                    _mustChangePasswordDialogVisible.value = true
-                    _uiState.value = LoginUiState.Idle
-                } else {
-                    _uiState.value = LoginUiState.Success
-                }
-            } catch (e: MustChangePasswordException) {
-                try {
-                    sessionManager.mustChangePassword = true
-                    _mustChangePasswordDialogVisible.value = true
-                    _uiState.value = LoginUiState.Idle
-                } catch (storageError: SecureStorageUnavailableException) {
-                    _uiState.value = LoginUiState.Error(
-                        storageError.message ?: "Secure storage is unavailable"
-                    )
                 }
             } catch (e: SecureStorageUnavailableException) {
                 _uiState.value = LoginUiState.Error(e.message ?: "Secure storage is unavailable")
@@ -115,12 +79,7 @@ class LoginViewModel(
             _changePasswordLoading.value = true
             _changePasswordError.value = null
             try {
-                val resp = apiClient.changePassword(
-                    ChangePasswordRequest(
-                        oldPassword = oldPass,
-                        newPassword = newPass
-                    )
-                )
+                val resp = authRepository.changePassword(oldPass, newPass)
                 if (resp.success) {
                     _mustChangePasswordDialogVisible.value = false
                     _uiState.value = LoginUiState.Success
@@ -137,7 +96,7 @@ class LoginViewModel(
 
     fun dismissChangePasswordDialog() {
         // If not forced by server, allow dismissing
-        if (!sessionManager.mustChangePassword) {
+        if (!authRepository.isPasswordChangeForced) {
             _mustChangePasswordDialogVisible.value = false
         }
     }

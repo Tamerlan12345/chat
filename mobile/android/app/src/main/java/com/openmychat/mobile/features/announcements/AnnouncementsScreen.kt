@@ -24,10 +24,11 @@ fun AnnouncementsScreen(
     onNavigateToConversations: () -> Unit,
     onNavigateToProfile: () -> Unit
 ) {
-    val announcements by viewModel.announcements.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val selectedAnnouncement by viewModel.selectedAnnouncement.collectAsState()
-    val isAcknowledging by viewModel.isAcknowledging.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val content = uiState as? AnnouncementsUiState.Content
+    val announcements = content?.announcements.orEmpty()
+    val selectedAnnouncement = content?.selected
+    val isAcknowledging = content?.isAcknowledging == true
 
     Scaffold(
         topBar = {
@@ -72,8 +73,20 @@ fun AnnouncementsScreen(
                 .padding(innerPadding)
                 .consumeWindowInsets(innerPadding)
         ) {
-            if (isLoading && announcements.isEmpty()) {
+            if (uiState is AnnouncementsUiState.Loading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (uiState is AnnouncementsUiState.Error) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = (uiState as AnnouncementsUiState.Error).message,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = { viewModel.loadAnnouncements() }) { Text("Повторить") }
+                }
             } else if (announcements.isEmpty()) {
                 Text(
                     text = "Нет активных объявлений",

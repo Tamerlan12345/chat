@@ -2,32 +2,50 @@ package com.openmychat.mobile.features.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.openmychat.mobile.core.network.ApiClient
-import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.network.WsEvent
-import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.core.util.MessageWindowValidator
-import com.openmychat.mobile.data.model.*
+import com.openmychat.mobile.data.model.ConversationType
+import com.openmychat.mobile.data.model.DeliveryStatus
+import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.MessageType
+import com.openmychat.mobile.data.repository.ChatRepository
+import com.openmychat.mobile.data.repository.RealtimeRepository
+import com.openmychat.mobile.data.repository.SessionRepository
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class ChatViewModel(
-    val conversationType: ConversationType,
-    val targetId: Long,
-    private val apiClient: ApiClient,
-    private val webSocketClient: WebSocketClient,
-    val sessionManager: SessionManager
+/** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
+sealed interface ChatUiState {
+    data object Loading : ChatUiState
+    data class Error(val message: String) : ChatUiState
+    data class Content(val messages: List<Message>) : ChatUiState
+}
+
+@HiltViewModel(assistedFactory = ChatViewModel.Factory::class)
+class ChatViewModel @AssistedInject constructor(
+    @Assisted val conversationType: ConversationType,
+    @Assisted val targetId: Long,
+    private val chatRepository: ChatRepository,
+    private val realtimeRepository: RealtimeRepository,
+    private val sessionRepository: SessionRepository
 ) : ViewModel() {
 
-    private val _messages = MutableStateFlow<List<Message>>(emptyList())
-    val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+    @AssistedFactory
+    interface Factory {
+        fun create(conversationType: ConversationType, targetId: Long): ChatViewModel
+    }
 
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    private val _uiState = MutableStateFlow<ChatUiState>(ChatUiState.Loading)
+    val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private val _typingUser = MutableStateFlow<String?>(null)
     val typingUser: StateFlow<String?> = _typingUser.asStateFlow()
@@ -41,7 +59,10 @@ class ChatViewModel(
     private var typingResetJob: Job? = null
     private var wakeTimerJob: Job? = null
 
-    val currentUserId: Long get() = sessionManager.currentUser?.id ?: 0L
+    val currentUserId: Long get() = sessionRepository.currentUserId ?: 0L
+
+    private val messages: List<Message>
+        get() = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty()
 
     init {
         loadMessages()
@@ -51,47 +72,62 @@ class ChatViewModel(
 
     fun loadMessages() {
         viewModelScope.launch {
-            _isLoading.value = true
+            if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
             try {
-                val list = if (conversationType == ConversationType.DIRECT) {
-                    apiClient.getDirectMessages(targetId)
-                } else {
-                    apiClient.getChannelMessages(targetId)
+                val history = chatRepository.messages(conversationType, targetId)
+                _uiState.update { state ->
+                    // Keep realtime messages that arrived while the history request was in flight.
+                    val live = (state as? ChatUiState.Content)?.messages.orEmpty()
+                    val historyIds = history.mapTo(HashSet()) { it.id }
+                    ChatUiState.Content(history + live.filter { it.id !in historyIds })
                 }
-                _messages.value = list
-            } catch (_: Exception) {} finally {
-                _isLoading.value = false
+            } catch (e: Exception) {
+                if (_uiState.value !is ChatUiState.Content) {
+                    _uiState.value = ChatUiState.Error(e.message ?: "Не удалось загрузить сообщения")
+                }
+            }
+        }
+    }
+
+    private fun updateMessages(transform: (List<Message>) -> List<Message>) {
+        _uiState.update { state ->
+            when (state) {
+                is ChatUiState.Content -> state.copy(messages = transform(state.messages))
+                else -> state
             }
         }
     }
 
     private fun markAsRead() {
-        webSocketClient.markRead(conversationType, targetId)
+        realtimeRepository.markRead(conversationType, targetId)
     }
 
     private fun observeWebSocketEvents() {
         viewModelScope.launch {
-            webSocketClient.events.collect { event ->
+            realtimeRepository.events.collect { event ->
                 when (event) {
                     is WsEvent.NewMessage -> {
                         val msg = event.message
                         val matches = if (conversationType == ConversationType.DIRECT) {
                             (msg.conversationType == ConversationType.DIRECT) &&
-                            ((msg.senderId == targetId && msg.targetId == currentUserId) ||
-                             (msg.senderId == currentUserId && msg.targetId == targetId))
+                                ((msg.senderId == targetId && msg.targetId == currentUserId) ||
+                                    (msg.senderId == currentUserId && msg.targetId == targetId))
                         } else {
                             (msg.conversationType == ConversationType.CHANNEL) && (msg.targetId == targetId)
                         }
 
-                        if (matches) {
-                            if (_messages.value.none { it.id == msg.id }) {
-                                _messages.value = _messages.value + msg
-                                markAsRead()
+                        if (matches && messages.none { it.id == msg.id }) {
+                            _uiState.update { state ->
+                                when (state) {
+                                    is ChatUiState.Content -> state.copy(messages = state.messages + msg)
+                                    else -> ChatUiState.Content(listOf(msg))
+                                }
                             }
+                            markAsRead()
                         }
                     }
-                    is WsEvent.MessageStatusUpdated -> {
-                        _messages.value = _messages.value.map { msg ->
+                    is WsEvent.MessageStatusUpdated -> updateMessages { list ->
+                        list.map { msg ->
                             if (msg.id == event.messageId) {
                                 msg.copy(deliveryStatus = DeliveryStatus.fromValue(event.status))
                             } else msg
@@ -100,18 +136,16 @@ class ChatViewModel(
                     is WsEvent.MessagesRead -> {
                         if (conversationType == ConversationType.DIRECT && event.byUserId == targetId) {
                             val idSet = event.messageIds.toSet()
-                            _messages.value = _messages.value.map { msg ->
-                                if (idSet.contains(msg.id)) {
-                                    msg.copy(deliveryStatus = DeliveryStatus.READ)
-                                } else msg
+                            updateMessages { list ->
+                                list.map { msg ->
+                                    if (idSet.contains(msg.id)) msg.copy(deliveryStatus = DeliveryStatus.READ) else msg
+                                }
                             }
                         }
                     }
-                    is WsEvent.MessageUpdated -> {
-                        _messages.value = _messages.value.map { msg ->
-                            if (msg.id == event.messageId) {
-                                msg.copy(text = event.text, updatedAt = event.updatedAt)
-                            } else msg
+                    is WsEvent.MessageUpdated -> updateMessages { list ->
+                        list.map { msg ->
+                            if (msg.id == event.messageId) msg.copy(text = event.text, updatedAt = event.updatedAt) else msg
                         }
                     }
                     is WsEvent.MessageDeleted -> {
@@ -121,7 +155,7 @@ class ChatViewModel(
                             event.conversationType == "channel" && event.targetId == targetId
                         }
                         if (matches) {
-                            _messages.value = _messages.value.filter { it.id != event.messageId }
+                            updateMessages { list -> list.filter { it.id != event.messageId } }
                         }
                     }
                     is WsEvent.UserTyping -> {
@@ -160,16 +194,10 @@ class ChatViewModel(
         if (text.isBlank()) return
         val editing = _editingMessage.value
         if (editing != null) {
-            // Edit mode
-            webSocketClient.editMessage(editing.id, text.trim())
+            realtimeRepository.editMessage(editing.id, text.trim())
             _editingMessage.value = null
         } else {
-            // New message
-            webSocketClient.sendTextMessage(
-                conversationType = conversationType,
-                targetId = targetId,
-                text = text.trim()
-            )
+            realtimeRepository.sendMessage(conversationType, targetId, text.trim())
         }
     }
 
@@ -182,16 +210,16 @@ class ChatViewModel(
     }
 
     fun deleteMessage(message: Message) {
-        webSocketClient.deleteMessage(message.id)
+        realtimeRepository.deleteMessage(message.id)
     }
 
     fun onTyping(isTyping: Boolean) {
-        webSocketClient.sendTyping(conversationType, targetId, isTyping)
+        realtimeRepository.sendTyping(conversationType, targetId, isTyping)
     }
 
     fun sendWake() {
         if (_wakeCooldownSeconds.value > 0) return
-        webSocketClient.sendWake(targetId)
+        realtimeRepository.sendWake(targetId)
         startWakeCooldown(60)
     }
 
@@ -210,10 +238,9 @@ class ChatViewModel(
         if (message.senderId != currentUserId) return false
         if (message.isDeleted) return false
         if (message.type != MessageType.TEXT) return false
-        val window = sessionManager.messageEditWindowMinutes
         return MessageWindowValidator.canEditOrDelete(
             createdAtIso = message.createdAt,
-            windowMinutesStr = window,
+            windowMinutesStr = sessionRepository.messageEditWindowMinutes,
             isSuperAdmin = false,
             isDelete = false
         )
@@ -221,13 +248,12 @@ class ChatViewModel(
 
     fun canDeleteMessage(message: Message): Boolean {
         val isAuthor = message.senderId == currentUserId
-        val isAdmin = sessionManager.currentUser?.permissions?.isAdmin == true
+        val isAdmin = sessionRepository.isAdmin
         if (!isAuthor && !isAdmin) return false
 
-        val window = sessionManager.messageDeleteWindowMinutes
         return MessageWindowValidator.canEditOrDelete(
             createdAtIso = message.createdAt,
-            windowMinutesStr = window,
+            windowMinutesStr = sessionRepository.messageDeleteWindowMinutes,
             isSuperAdmin = isAdmin,
             isDelete = true
         )

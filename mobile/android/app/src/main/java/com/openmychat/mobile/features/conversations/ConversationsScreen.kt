@@ -77,10 +77,10 @@ fun ConversationsScreen(
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
-    val directConversations by viewModel.directConversations.collectAsState()
-    val channels by viewModel.channels.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val content = uiState as? ConversationsUiState.Content
+    val directConversations = content?.directConversations.orEmpty()
+    val channels = content?.channels.orEmpty()
     var isSearchActive by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
@@ -182,9 +182,9 @@ fun ConversationsScreen(
             )
 
             when {
-                isLoading -> ConversationLoadingState()
-                error != null -> ConversationErrorState(
-                    message = error.orEmpty(),
+                uiState is ConversationsUiState.Loading -> ConversationLoadingState()
+                uiState is ConversationsUiState.Error -> ConversationErrorState(
+                    message = (uiState as ConversationsUiState.Error).message,
                     onRetry = viewModel::loadData
                 )
                 selectedTab == ConversationsTab.CHATS -> {

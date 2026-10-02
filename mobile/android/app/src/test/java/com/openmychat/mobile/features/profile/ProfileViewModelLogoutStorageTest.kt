@@ -6,6 +6,9 @@ import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.core.session.SessionStorageState
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.data.repository.DefaultAuthRepository
+import com.openmychat.mobile.data.repository.DefaultProfileRepository
+import com.openmychat.mobile.data.repository.DefaultRealtimeRepository
 import com.openmychat.mobile.data.model.UserStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -25,11 +28,7 @@ class ProfileViewModelLogoutStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false)
-            val viewModel = ProfileViewModel(
-                apiClient = ApiClient(sessionManager),
-                webSocketClient = WebSocketClient(sessionManager),
-                sessionManager = sessionManager
-            )
+            val viewModel = profileViewModel(sessionManager)
             var navigationRequested = false
 
             viewModel.logout { navigationRequested = true }
@@ -54,11 +53,7 @@ class ProfileViewModelLogoutStorageTest {
                 User(id = 1, username = "alice", fullName = "Alice"),
                 "trusted-token"
             )
-            val viewModel = ProfileViewModel(
-                apiClient = ApiClient(sessionManager),
-                webSocketClient = WebSocketClient(sessionManager),
-                sessionManager = sessionManager
-            )
+            val viewModel = profileViewModel(sessionManager)
 
             viewModel.setStatus(UserStatus.AWAY)
 
@@ -70,6 +65,15 @@ class ProfileViewModelLogoutStorageTest {
         } finally {
             Dispatchers.resetMain()
         }
+    }
+
+    private fun profileViewModel(sessionManager: SessionManager): ProfileViewModel {
+        val apiClient = ApiClient(sessionManager)
+        return ProfileViewModel(
+            profileRepository = DefaultProfileRepository(apiClient, sessionManager),
+            authRepository = DefaultAuthRepository(apiClient, sessionManager),
+            realtimeRepository = DefaultRealtimeRepository(WebSocketClient(sessionManager))
+        )
     }
 
     private class FailingAfterFirstCommitSharedPreferences : SharedPreferences {
