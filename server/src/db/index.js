@@ -123,6 +123,17 @@ const TABLES = {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       last_seq INTEGER NOT NULL,
       epoch TEXT NOT NULL
+    )`,
+  // Отозванные автором ключи отправки (cancel_message): отправка с таким
+  // ключом отклоняется (CANCELLED). Живут сутки и не больше тысячи на
+  // отправителя (MessageService.recordCancelled) — в базе, а не в памяти,
+  // чтобы отзыв пережил перезапуск сервера.
+  cancelled_client_msgs: `
+    CREATE TABLE IF NOT EXISTS cancelled_client_msgs (
+      sender_id INTEGER NOT NULL,
+      client_msg_id TEXT NOT NULL,
+      cancelled_at INTEGER NOT NULL, -- epoch мс
+      PRIMARY KEY (sender_id, client_msg_id)
     )`
 };
 
@@ -135,7 +146,8 @@ const INDEXES = [
   // в пределах отправителя. Чужой id не совпадёт с вашим ни при каком угадывании.
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg ON messages(sender_id, client_msg_id) WHERE client_msg_id IS NOT NULL`,
   // Курсор синхронизации: каждое изменение строки получает следующий номер.
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`,
+  `CREATE INDEX IF NOT EXISTS idx_cancelled_client_msgs_at ON cancelled_client_msgs(cancelled_at)`
 ];
 
 // Колонки, добавленные к messages уже после первых установок. CREATE TABLE IF
