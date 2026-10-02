@@ -147,7 +147,7 @@ class LoginViewModel @Inject constructor(
         // One request at a time, and none while the server has asked us to wait.
         if (_uiState.value is LoginUiState.Loading || _uiState.value is LoginUiState.Success) return
         if (_retryAfterSeconds.value > 0) return
-        if (username.isBlank() || password.isBlank()) {
+        if (!hasCredentials(username, password)) {
             _uiState.value = LoginUiState.Error(LoginError.EmptyFields)
             return
         }
@@ -203,8 +203,11 @@ class LoginViewModel @Inject constructor(
                 } else {
                     _changePasswordError.value = resp.message.ifBlank { "Ошибка смены пароля" }
                 }
-            } catch (e: Exception) {
-                _changePasswordError.value = e.message ?: "Ошибка смены пароля"
+            } catch (e: SecureStorageUnavailableException) {
+                _changePasswordError.value = e.message ?: PASSWORD_CHANGE_GENERIC_ERROR
+            } catch (_: Exception) {
+                // Raw exception text (often English, technical) never reaches the dialog.
+                _changePasswordError.value = PASSWORD_CHANGE_GENERIC_ERROR
             } finally {
                 _changePasswordLoading.value = false
             }
@@ -226,8 +229,12 @@ class LoginViewModel @Inject constructor(
         /** Server ceiling for Retry-After on login (LoginThrottle RETRY_AFTER_CAP_MS). */
         private const val MAX_WAIT_SECONDS = 3_600L
 
+        /** The one rule for "both fields are filled", shared by the button and the submit guard. */
+        internal fun hasCredentials(username: String, password: String) =
+            username.isNotBlank() && password.isNotBlank()
+
         internal fun isSubmittable(username: String, password: String, state: LoginUiState, waitSeconds: Long) =
-            username.isNotBlank() && password.isNotEmpty() && waitSeconds == 0L &&
+            hasCredentials(username, password) && waitSeconds == 0L &&
                 state !is LoginUiState.Loading && state !is LoginUiState.Success
 
         /**

@@ -29,6 +29,12 @@ class ApiClient(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val refreshCoordinator = RefreshCoordinator()
 
+    /**
+     * The same client for avatar images (Coil): bearer credentials go only to the fixed HTTPS
+     * server ([BearerCredentialsInterceptor]); any other host is fetched without them.
+     */
+    val imageHttpClient: OkHttpClient get() = client
+
     private val client: OkHttpClient by lazy {
         okHttpClient ?: OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

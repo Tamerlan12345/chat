@@ -175,8 +175,20 @@ class LoginScreenTest {
 
         gate.complete(Unit)
         composeRule.waitUntil(5_000) {
-            composeRule.onAllNodes(hasText("Сообщения") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodes(hasText("Чаты") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    @Test
+    fun aForcedPasswordChangeClearsThePasswordFieldOnScreen() {
+        scripted.onLogin = { _, _ -> LoginResult.MUST_CHANGE_PASSWORD }
+        launch()
+
+        signIn(password = "Temp-Pass-1")
+        waitForText("Обязательная смена пароля")
+
+        // The ViewModel forgot the password; the field must not keep showing (or resubmitting) it.
+        composeRule.waitUntil(5_000) { renderedText(field("Пароль")).isEmpty() }
     }
 
     @Test

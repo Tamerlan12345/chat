@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The brand mark inside the splash icon's safe circle (the system masks a 288dp icon to a 192dp
+     circle; the rounded-square mark must fit inside it). -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_brand_mark"
+    android:inset="30%" />

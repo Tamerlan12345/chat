@@ -23,6 +23,19 @@ class LoginTextTest {
     }
 
     @Test
+    fun asciiQuotesInTheCompanyNameBecomeRussianQuotes() {
+        assertEquals("АО «Ромашка»", CompanyName.sanitize("АО \"Ромашка\""))
+        assertEquals("«Ромашка» ООО", CompanyName.sanitize("\"Ромашка\" ООО"))
+        // The stand's real value: nested and unbalanced; the inner name is closed as well.
+        assertEquals(
+            "АО «Страховая компания «Сентрас Иншуранс»»",
+            CompanyName.sanitize("АО \"Страховая компания \"Сентрас Иншуранс\"")
+        )
+        assertEquals("АО «Ромашка»", CompanyName.sanitize("АО «Ромашка»"))
+        assertEquals("Ромашка", CompanyName.sanitize("Ромашка"))
+    }
+
+    @Test
     fun countdownReadsNaturally() {
         assertEquals("5 с", formatCountdown(5))
         assertEquals("59 с", formatCountdown(59))

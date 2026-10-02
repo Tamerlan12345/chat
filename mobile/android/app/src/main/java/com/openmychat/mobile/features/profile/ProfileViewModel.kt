@@ -11,7 +11,10 @@ import com.openmychat.mobile.data.repository.RealtimeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -38,6 +41,9 @@ sealed interface ProfileUiState {
     ) : ProfileUiState
 }
 
+/** One-off outcomes for the snackbar. */
+enum class ProfileEvent { StatusSaved, StatusSaveFailed }
+
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
@@ -53,6 +59,9 @@ class ProfileViewModel @Inject constructor(
 
     private val _storageError = MutableStateFlow<String?>(null)
     val storageError: StateFlow<String?> = _storageError.asStateFlow()
+
+    private val _events = MutableSharedFlow<ProfileEvent>(extraBufferCapacity = 4)
+    val events: SharedFlow<ProfileEvent> = _events.asSharedFlow()
 
     private var cooldownJob: Job? = null
 
@@ -150,10 +159,12 @@ class ProfileViewModel @Inject constructor(
                 } else {
                     realtimeRepository.sendPresence(currentStatus.value, updatedText.ifBlank { null })
                 }
+                _events.tryEmit(ProfileEvent.StatusSaved)
             } catch (error: SecureStorageUnavailableException) {
                 showCachedUser()
                 _storageError.value = error.message ?: "Secure storage is unavailable"
             } catch (_: Exception) {
+                _events.tryEmit(ProfileEvent.StatusSaveFailed)
             } finally {
                 setSaving(false)
             }

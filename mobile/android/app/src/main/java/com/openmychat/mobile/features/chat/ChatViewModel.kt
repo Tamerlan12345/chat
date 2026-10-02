@@ -2,12 +2,14 @@ package com.openmychat.mobile.features.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.core.util.MessageWindowValidator
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.MessageType
+import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.data.repository.ChatRepository
@@ -49,6 +51,13 @@ class ChatViewModel @AssistedInject constructor(
 
     private val _uiState = MutableStateFlow<ChatUiState>(ChatUiState.Loading)
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+
+    /** Realtime link status for the connection banner. */
+    val connectionState: StateFlow<ConnectionState> = realtimeRepository.connectionState
+
+    /** Live presence of the peer in a direct chat; null until the server reports a change. */
+    private val _peerStatus = MutableStateFlow<UserStatus?>(null)
+    val peerStatus: StateFlow<UserStatus?> = _peerStatus.asStateFlow()
 
     private val _typingUser = MutableStateFlow<String?>(null)
     val typingUser: StateFlow<String?> = _typingUser.asStateFlow()
@@ -202,6 +211,11 @@ class ChatViewModel @AssistedInject constructor(
                             } else {
                                 _typingUser.value = null
                             }
+                        }
+                    }
+                    is WsEvent.UserStatusChanged -> {
+                        if (conversationType == ConversationType.DIRECT && event.userId == targetId) {
+                            _peerStatus.value = event.status
                         }
                     }
                     is WsEvent.WakeSent -> {

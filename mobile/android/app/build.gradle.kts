@@ -91,6 +91,9 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // XML window theme (DayNight, no white flash before Compose draws) and the SplashScreen API.
+    implementation(libs.google.material)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -111,6 +114,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.okhttp)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
 

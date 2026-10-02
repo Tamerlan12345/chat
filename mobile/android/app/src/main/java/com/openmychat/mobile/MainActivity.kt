@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -16,14 +15,17 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.realtime.RealtimeConnectionManager
@@ -34,7 +36,12 @@ import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
+import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
+import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.components.SnackbarAnchor
 import com.openmychat.mobile.ui.theme.CentyChatTheme
+import com.openmychat.mobile.ui.theme.CentyTheme
+import kotlinx.coroutines.launch
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -47,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private val appViewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         connectionManager.start()
@@ -68,6 +76,8 @@ class MainActivity : ComponentActivity() {
                 }
                 val session by appViewModel.routeStates.collectAsState(initial = appViewModel.routeState())
                 val passwordChange by appViewModel.passwordChange.collectAsState()
+                // Transient feedback is a Material snackbar, never a Toast.
+                val snackbarHostState = remember { SnackbarHostState() }
 
                 // Runtime permission request for notifications on Android 13+ (API 33+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -102,11 +112,10 @@ class MainActivity : ComponentActivity() {
                         when (event) {
                             is WsEvent.WakeRing -> {
                                 triggerWakeVibration()
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Вас вызывает: ${event.fromName}",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                val text = event.fromName.takeIf { it.isNotBlank() }
+                                    ?.let { getString(R.string.wake_received, it) }
+                                    ?: getString(R.string.wake_received_unknown)
+                                launch { snackbarHostState.showSnackbar(text, duration = SnackbarDuration.Long) }
                             }
                             is WsEvent.CallOffer -> {
                                 if (appViewModel.acceptsIncomingCall()) {
@@ -124,20 +133,23 @@ class MainActivity : ComponentActivity() {
                                 // The socket reconnects; a revoked token comes back as auth_error and
                                 // is verified over HTTP, which signs out on 401. A still-valid session
                                 // (e.g. a role change) simply continues.
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    event.reason,
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                if (event.reason.isNotBlank()) {
+                                    launch { snackbarHostState.showSnackbar(event.reason, duration = SnackbarDuration.Long) }
+                                }
                             }
                             else -> Unit
                         }
                     }
                 }
 
+                val snackbarAnchor = remember { SnackbarAnchor() }
+                CompositionLocalProvider(
+                    LocalSnackbarHostState provides snackbarHostState,
+                    LocalSnackbarAnchor provides snackbarAnchor
+                ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = CentyTheme.tokens.canvas
                 ) {
                     CentyNavigation(
                         navigator = navigator,
@@ -155,6 +167,7 @@ class MainActivity : ComponentActivity() {
                             onSubmit = appViewModel::changePassword
                         )
                     }
+                }
                 }
             }
         }

@@ -116,9 +116,11 @@ class ContractFixturesTest {
 
     @Test
     fun everyFixtureFileIsListedInTheManifest() {
-        val onDisk = listOf("http", "ws").flatMap { dir ->
-            File(fixturesDir, dir).listFiles { file -> file.extension == "json" }.orEmpty().map { "$dir/${it.name}" }
-        }.toSet()
+        val onDisk = fixturesDir.walkTopDown()
+            .filter { it.isFile && it.extension == "json" && it.name != "manifest.json" }
+            .map { it.relativeTo(fixturesDir).invariantSeparatorsPath }
+            .filterNot { it.startsWith("reducers/") } // client reducer vectors, not server responses (fixtures/README.md)
+            .toSet()
         assertTrue("no fixtures found in $fixturesDir", onDisk.isNotEmpty())
         assertEquals("fixtures missing from manifest.json", emptySet<String>(), onDisk - manifest.keys)
         assertEquals("manifest.json lists files that do not exist", emptySet<String>(), manifest.keys - onDisk)

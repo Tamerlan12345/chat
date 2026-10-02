@@ -10,6 +10,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -74,26 +75,26 @@ class MainNavigationTest {
 
     @Test
     fun tabsBackAndLogout() {
-        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
+        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
         composeRule.waitForIdle()
         saveScreenshot("main-conversations")
 
         tab("Профиль").performClick()
-        composeRule.onNodeWithText("Статус присутствия").assertIsDisplayed()
+        composeRule.onNodeWithText("Учётная запись").assertIsDisplayed()
         tab("Профиль").assertIsSelected()
         saveScreenshot("main-profile")
 
         tab("Объявления").performClick()
-        composeRule.onNodeWithText("Объявления компании").assertIsDisplayed()
+        composeRule.onNode(hasText("Объявления") and !hasClickAction()).assertIsDisplayed()
 
         // Back from a secondary tab returns to the start tab instead of leaving the app.
         Espresso.pressBack()
-        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
-        tab("Сообщения").assertIsSelected()
+        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
+        tab("Чаты").assertIsSelected()
 
         tab("Профиль").performClick()
-        composeRule.onNodeWithText("Выйти из учетной записи").performScrollTo().performClick()
-        composeRule.onNode(hasText("Выйти") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Выйти") and hasClickAction()).performScrollTo().performClick()
+        composeRule.onNodeWithTag("confirm").performClick()
 
         composeRule.waitUntil(5_000) {
             composeRule.onAllNodes(hasText("Войти") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
