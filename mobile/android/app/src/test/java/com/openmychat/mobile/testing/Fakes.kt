@@ -65,12 +65,19 @@ class FakeChatRepository(
 ) : ChatRepository {
     var directConversationRequests = 0
 
+    /** When set, every list request fails with it. */
+    var failWith: Exception? = null
+
     override suspend fun directConversations(): List<DirectConversation> {
         directConversationRequests++
+        failWith?.let { throw it }
         return direct
     }
 
-    override suspend fun channels(): List<Channel> = channels
+    override suspend fun channels(): List<Channel> {
+        failWith?.let { throw it }
+        return channels
+    }
     override suspend fun refreshServerInfo() = Unit
     override suspend fun messages(conversationType: ConversationType, targetId: Long): List<Message> = history
 }

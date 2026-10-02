@@ -15,7 +15,12 @@ import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -36,6 +41,22 @@ sealed interface ConversationsUiState {
     ) : ConversationsUiState
 }
 
+/** One-off messages for the snackbar. */
+enum class ConversationsEvent { RefreshFailed }
+
+/** Inbox search is by name only (brief: «Поиск по имени»): full name or login, trimmed, any case. */
+fun filterByName(list: List<DirectConversation>, query: String): List<DirectConversation> {
+    val q = query.trim()
+    if (q.isEmpty()) return list
+    return list.filter { it.fullName.contains(q, ignoreCase = true) || it.username?.contains(q, ignoreCase = true) == true }
+}
+
+fun filterChannelsByName(list: List<Channel>, query: String): List<Channel> {
+    val q = query.trim().removePrefix("#")
+    if (q.isEmpty()) return list
+    return list.filter { it.name.contains(q, ignoreCase = true) }
+}
+
 @HiltViewModel
 class ConversationsViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
@@ -43,6 +64,8 @@ class ConversationsViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
     private val activeConversations: ActiveConversationRegistry
 ) : ViewModel() {
+
+    val currentUserId: Long? get() = sessionRepository.currentUserId
 
     /** Realtime link status, for a "connecting" hint in the list header. */
     val connectionState: StateFlow<ConnectionState> = realtimeRepository.connectionState
@@ -55,6 +78,28 @@ class ConversationsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<ConversationsUiState>(ConversationsUiState.Loading)
     val uiState: StateFlow<ConversationsUiState> = _uiState.asStateFlow()
+
+    /** Pull-to-refresh in progress (the list stays on screen). */
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private val _events = MutableSharedFlow<ConversationsEvent>(extraBufferCapacity = 4)
+    val events: SharedFlow<ConversationsEvent> = _events.asSharedFlow()
+
+    /** Conversations where someone is typing right now; each entry expires after 3 s of silence. */
+    private val _typing = MutableStateFlow<Set<ConversationRef>>(emptySet())
+    val typing: StateFlow<Set<ConversationRef>> = _typing.asStateFlow()
+    private val typingTimeouts = mutableMapOf<ConversationRef, Job>()
+
+    /** The conversation open next to the list (wide windows), highlighted in the list. */
+    val openConversation: StateFlow<ConversationRef?> = activeConversations.active
+
+    /** Pull-to-refresh: reloads without replacing the list; a failure keeps the list and reports it. */
+    fun refresh() {
+        if (_isRefreshing.value) return
+        _isRefreshing.value = true
+        loadData(showLoading = false)
+    }
 
     init {
         loadData()
@@ -93,7 +138,13 @@ class ConversationsViewModel @Inject constructor(
                 _uiState.value = storageError?.let(ConversationsUiState::Error)
                     ?: ConversationsUiState.Content(chats, channels).withoutUnreadFor(activeConversations.active.value)
             } catch (e: Exception) {
-                _uiState.value = ConversationsUiState.Error(e.message ?: "Ошибка загрузки списка чатов")
+                if (!showLoading && _uiState.value is ConversationsUiState.Content) {
+                    _events.tryEmit(ConversationsEvent.RefreshFailed)
+                } else {
+                    _uiState.value = ConversationsUiState.Error(e.message ?: "Ошибка загрузки списка чатов")
+                }
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
@@ -162,11 +213,39 @@ class ConversationsViewModel @Inject constructor(
         }
     }
 
+    private fun typingRefOf(type: ConversationType, userId: Long, targetId: Long): ConversationRef? {
+        if (userId == sessionRepository.currentUserId) return null
+        return if (type == ConversationType.DIRECT) ConversationRef(ConversationType.DIRECT, userId)
+        else ConversationRef(ConversationType.CHANNEL, targetId)
+    }
+
+    private fun onTyping(event: WsEvent.UserTyping) {
+        val ref = typingRefOf(ConversationType.fromValue(event.conversationType), event.userId, event.targetId) ?: return
+        if (!event.isTyping) return stopTyping(ref)
+        _typing.update { it + ref }
+        typingTimeouts.remove(ref)?.cancel()
+        typingTimeouts[ref] = viewModelScope.launch {
+            delay(TYPING_TIMEOUT_MILLIS)
+            stopTyping(ref)
+        }
+    }
+
+    private fun stopTyping(ref: ConversationRef) {
+        typingTimeouts.remove(ref)?.cancel()
+        _typing.update { it - ref }
+    }
+
     private fun observeWebSocketEvents() {
         viewModelScope.launch {
             realtimeRepository.events.collect { event ->
                 when (event) {
-                    is WsEvent.NewMessage -> onNewMessage(event.message)
+                    is WsEvent.NewMessage -> {
+                        onNewMessage(event.message)
+                        // A message ends the sender's typing in that row.
+                        typingRefOf(event.message.conversationType, event.message.senderId, event.message.targetId)
+                            ?.let { stopTyping(it) }
+                    }
+                    is WsEvent.UserTyping -> onTyping(event)
                     is WsEvent.UserStatusChanged -> updateContent { content ->
                         content.copy(directConversations = content.directConversations.map { conv ->
                             if (conv.userId == event.userId) {
@@ -188,5 +267,10 @@ class ConversationsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private companion object {
+        /** Same as the chat header: typing without a fresh signal ends after 3 s. */
+        const val TYPING_TIMEOUT_MILLIS = 3_000L
     }
 }
