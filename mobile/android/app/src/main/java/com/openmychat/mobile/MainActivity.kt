@@ -21,16 +21,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.realtime.RealtimeConnectionManager
 import com.openmychat.mobile.features.auth.ChangePasswordDialog
-import com.openmychat.mobile.ui.navigation.CentyNavHost
+import com.openmychat.mobile.ui.navigation.AppNavigationState
+import com.openmychat.mobile.ui.navigation.AppNavigator
+import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
-import com.openmychat.mobile.ui.navigation.rememberNavBackStack
+import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -50,13 +53,20 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             CentyChatTheme {
-                val initialKey = when {
-                    SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState()) -> NavKey.Conversations
-                    appViewModel.hasConfiguredServer -> NavKey.Login
-                    else -> NavKey.ServerConnect
+                val navigationState = rememberAppNavigationState {
+                    if (SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
+                        AppNavigationState.authenticated()
+                    } else {
+                        AppNavigationState.unauthenticated(appViewModel.hasConfiguredServer)
+                    }
                 }
-
-                val backStack = rememberNavBackStack(initialKey = initialKey)
+                // A restored stack is re-checked against the session before it is ever rendered.
+                val navigator = remember(navigationState) {
+                    AppNavigator(navigationState).also {
+                        it.syncWithSession(appViewModel.routeState(), appViewModel.hasConfiguredServer)
+                    }
+                }
+                val session by appViewModel.routeStates.collectAsState(initial = appViewModel.routeState())
                 val passwordChange by appViewModel.passwordChange.collectAsState()
 
                 // Runtime permission request for notifications on Android 13+ (API 33+)
@@ -76,14 +86,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Session loss returns protected destinations to sign-in.
-                LaunchedEffect(Unit) {
-                    appViewModel.routeStates.collect { session ->
-                        SessionRouteGuard.destinationAfterSessionLoss(
-                            currentDestination = backStack.currentKey,
-                            session = session,
-                            hasConfiguredServer = appViewModel.hasConfiguredServer
-                        )?.let(backStack::clearAndSet)
+                // Session loss (logout elsewhere, revoked token, unavailable storage) clears all stacks.
+                LaunchedEffect(navigator) {
+                    appViewModel.routeStates.collect {
+                        // Re-read the live session: combined emissions can be intermediate states.
+                        val current = appViewModel.routeState()
+                        if (!SessionRouteGuard.hasAuthenticatedSession(current) && !navigator.state.isAuthFlow) {
+                            navigator.onLoggedOut(appViewModel.hasConfiguredServer)
+                        }
                     }
                 }
 
@@ -100,13 +110,14 @@ class MainActivity : ComponentActivity() {
                             }
                             is WsEvent.CallOffer -> {
                                 if (appViewModel.acceptsIncomingCall()) {
-                                    backStack.navigate(
-                                        NavKey.Call(
-                                            peerId = event.senderId,
-                                            peerName = event.senderName,
-                                            isIncoming = true
-                                        )
+                                    val call = NavKey.Call(
+                                        peerId = event.senderId,
+                                        peerName = event.senderName,
+                                        isIncoming = true
                                     )
+                                    if (!navigator.showIncomingCall(call)) {
+                                        appViewModel.rejectBusy(event.senderId)
+                                    }
                                 }
                             }
                             is WsEvent.ServerDisconnect -> {
@@ -115,7 +126,7 @@ class MainActivity : ComponentActivity() {
                                     event.reason,
                                     Toast.LENGTH_LONG
                                 ).show()
-                                backStack.clearAndSet(NavKey.Login)
+                                navigator.onLoggedOut(appViewModel.hasConfiguredServer)
                             }
                             else -> Unit
                         }
@@ -126,10 +137,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    CentyNavHost(
-                        backStack = backStack,
-                        routeStates = appViewModel.routeStates,
-                        currentRouteState = appViewModel::routeState,
+                    CentyNavigation(
+                        navigator = navigator,
+                        session = session,
+                        currentSession = appViewModel::routeState,
                         hasConfiguredServer = { appViewModel.hasConfiguredServer }
                     )
 

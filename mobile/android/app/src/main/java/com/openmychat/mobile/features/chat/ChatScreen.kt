@@ -44,6 +44,7 @@ fun ChatScreen(
     title: String,
     avatarUrl: String? = null,
     status: String? = null,
+    showBackButton: Boolean = true,
     onNavigateBack: () -> Unit,
     onStartCall: (peerId: Long, peerName: String) -> Unit
 ) {
@@ -100,11 +101,13 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад"
-                        )
+                    if (showBackButton) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Назад"
+                            )
+                        }
                     }
                 },
                 actions = {

@@ -30,7 +30,7 @@ sealed interface PasswordChangeUiState {
 class AppViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
     private val authRepository: AuthRepository,
-    realtimeRepository: RealtimeRepository
+    private val realtimeRepository: RealtimeRepository
 ) : ViewModel() {
 
     val routeStates: Flow<AuthenticatedRouteState> get() = sessionRepository.routeStates
@@ -41,6 +41,11 @@ class AppViewModel @Inject constructor(
     /** Events handled above any single screen: wake buzz, incoming calls, forced disconnects. */
     val globalEvents: Flow<WsEvent> = realtimeRepository.events.filter { event ->
         event is WsEvent.WakeRing || event is WsEvent.CallOffer || event is WsEvent.ServerDisconnect
+    }
+
+    /** Another call is already open: tell the caller instead of silently ignoring the offer. */
+    fun rejectBusy(callerId: Long) {
+        realtimeRepository.sendCallRejected(callerId, "Абонент занят другим звонком")
     }
 
     private val changeInFlight = MutableStateFlow(PasswordChangeUiState.Visible())

@@ -30,8 +30,6 @@ import com.openmychat.mobile.ui.theme.StatusOnline
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
-    onNavigateToConversations: () -> Unit,
-    onNavigateToAnnouncements: () -> Unit,
     onLoggedOut: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -55,28 +53,6 @@ fun ProfileScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToConversations,
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Сообщения") },
-                    label = { Text("Сообщения") }
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToAnnouncements,
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") }
-                )
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* already here */ },
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") }
-                )
-            }
         }
     ) { innerPadding ->
         Column(

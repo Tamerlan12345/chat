@@ -20,9 +20,7 @@ import com.openmychat.mobile.ui.components.PriorityBadge
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnnouncementsScreen(
-    viewModel: AnnouncementsViewModel,
-    onNavigateToConversations: () -> Unit,
-    onNavigateToProfile: () -> Unit
+    viewModel: AnnouncementsViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val content = uiState as? AnnouncementsUiState.Content
@@ -43,28 +41,6 @@ fun AnnouncementsScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToConversations,
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Сообщения") },
-                    label = { Text("Сообщения") }
-                )
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* already here */ },
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") }
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToProfile,
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") }
-                )
-            }
         }
     ) { innerPadding ->
         Box(
