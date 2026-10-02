@@ -23,9 +23,10 @@
 mobile/ios/
 ├── Package.swift                               # Манифест Swift Package Manager
 ├── README.md                                    # Документация архитектуры
+├── CentyChatMobileApp/
+│   └── CentyChatMobileApp.swift                 # Точка входа @main
 ├── CentyChat/
 │   ├── App/
-│   │   ├── CentyChatApp.swift                   # Точка входа @main
 │   │   ├── AppState.swift                       # Глобальный @Observable реактивный стейт
 │   │   └── MainTabView.swift                    # Основной экран с вкладками (Чаты / Распоряжения / Профиль)
 │   ├── Models/
