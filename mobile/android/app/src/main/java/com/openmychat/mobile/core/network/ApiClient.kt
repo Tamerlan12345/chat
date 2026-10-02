@@ -118,8 +118,7 @@ class ApiClient(
                     }
                     return null
                 }
-                val authSuccess = json.decodeFromString<AuthSuccessResponse>(response.body?.string().orEmpty())
-                authSuccess.token
+                json.decodeFromString<RefreshResponse>(response.body?.string().orEmpty()).token
             }
         } catch (_: Exception) {
             null
@@ -219,14 +218,14 @@ class ApiClient(
         response
     }
 
-    suspend fun refreshToken(): AuthSuccessResponse = withContext(Dispatchers.IO) {
+    suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
         try {
             val httpRequest = Request.Builder()
                 .url("${getBaseUrl()}/auth/refresh")
                 .post("{}".toRequestBody(jsonMediaType))
                 .build()
 
-            val response: AuthSuccessResponse = executeRequest(httpRequest)
+            val response: RefreshResponse = executeRequest(httpRequest)
             sessionManager.token = response.token
             response
         } catch (error: ApiException) {
@@ -261,7 +260,7 @@ class ApiClient(
             .get()
             .build()
 
-        val user: User = executeRequest(httpRequest)
+        val user = executeRequest<MeResponse>(httpRequest).user
         sessionManager.currentUser = user
         user
     }

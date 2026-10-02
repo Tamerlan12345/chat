@@ -131,3 +131,34 @@ data class UpdateProfileRequest(
     @SerialName("avatar_url")
     val avatarUrl: String? = null
 )
+
+/** `GET /api/auth/me` wraps the profile: `{ user }`. */
+@Serializable
+data class MeResponse(
+    @SerialName("user")
+    val user: User
+)
+
+/** `POST /api/auth/refresh` returns only the replacement token: `{ token }`. */
+@Serializable
+data class RefreshResponse(
+    @SerialName("token")
+    val token: String
+)
+
+/** `POST /api/auth/logout`: `{ success }`. */
+@Serializable
+data class LogoutResponse(
+    @SerialName("success")
+    val success: Boolean = true
+)
+
+/** Body of every non-2xx JSON response: `{ error, code? }`. */
+@Serializable
+data class ApiErrorBody(
+    @SerialName("error")
+    val error: String,
+
+    @SerialName("code")
+    val code: String? = null
+)

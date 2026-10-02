@@ -117,3 +117,10 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+// ContractFixturesTest reads mobile/contracts/fixtures at test time; rerun the tests when they change.
+tasks.withType<Test>().configureEach {
+    inputs.dir(rootDir.resolve("../contracts/fixtures"))
+        .withPropertyName("contractFixtures")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
