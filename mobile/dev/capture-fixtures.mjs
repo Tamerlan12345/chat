@@ -467,6 +467,9 @@ export async function captureFixtures({ dataDir } = {}) {
     await B.takeType('call_offer');
     B.send({ type: 'call_rejected', targetUserId: alice.id, reason: 'Занят на совещании' });
     ws('ws/call_rejected.json', 'call_rejected', 'Вызов отклонён адресатом (reason — строка клиента).', await A.takeType('call_rejected'), 'call_rejected bob → alice');
+    // Ответ на вызов, которого уже нет (сброшен, истёк, разбуженный push телефон опоздал): отвечающему — call_end.
+    B.send({ type: 'call_answer', targetUserId: alice.id });
+    ws('ws/call_end.no_call.json', 'call_end', 'Ответ на вызов, которого нет: отвечающему call_end (senderId — тот, кому отвечали; reason "no_call"). Тот же кадр с reason "cancelled" | "connection_lost" | "timeout" | "unavailable" приходит телефону, разбуженному push о звонке, если вызов закончился до его подключения (push.md §3).', await B.takeType('call_end'), 'call_answer без ждущего вызова');
 
     // admin-driven broadcasts
     A.clear(); B.clear();

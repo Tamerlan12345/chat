@@ -329,6 +329,13 @@
     "direction": "server->client",
     "trigger": "call_end alice → bob"
   },
+  "ws/call_end.no_call.json": {
+    "kind": "ws",
+    "description": "Ответ на вызов, которого нет: отвечающему call_end (senderId — тот, кому отвечали; reason \"no_call\"). Тот же кадр с reason \"cancelled\" | \"connection_lost\" | \"timeout\" | \"unavailable\" приходит телефону, разбуженному push о звонке, если вызов закончился до его подключения (push.md §3).",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "call_answer без ждущего вызова"
+  },
   "ws/call_offer.json": {
     "kind": "ws",
     "description": "Входящий звонок: targetUserId — адресат (вы), senderId/senderName — звонящий.",

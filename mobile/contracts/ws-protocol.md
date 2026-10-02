@@ -341,7 +341,7 @@
   "targetUserId": 12
 }
 ```
-*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`.*
+*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с живым устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`. Не удалось разбудить ни одно устройство — вызывающему `call_unavailable` «Сотрудник сейчас не в сети». Вызов закончился до подключения — вызываемому при входе `call_end` (`reason`: `cancelled`, `connection_lost`, `timeout`, `unavailable`).*
 
 #### `call_answer` — Принятие вызова
 ```json
@@ -350,7 +350,7 @@
   "targetUserId": 7
 }
 ```
-*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`.*
+*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`. Ответ на вызов, которого нет (сброшен, истёк), разговор не начинает: отвечающему приходит `call_end {senderId: targetUserId, senderName, reason}` (`ws/call_end.no_call.json`, `reason: "no_call"` или причина конца вызова через push).*
 
 #### `call_rejected` — Отклонение вызова
 ```json
@@ -1307,7 +1307,7 @@ sequenceDiagram
 | `channel_created` / `channel_deleted` | `ws/channel_created.json`, `ws/channel_deleted.json` |
 | `new_announcement` / `announcement_acknowledged` | `ws/new_announcement.json`, `ws/announcement_acknowledged.json` |
 | `call_offer` / `call_answer` / `call_rejected` / `ice_candidate` | `ws/call_offer.json`, `ws/call_answer.json`, `ws/call_rejected.json`, `ws/ice_candidate.json` |
-| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json` |
+| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json`, `ws/call_end.no_call.json` (ответ на вызов, которого нет; та же форма — вызов через push закончился до входа) |
 | `call_denied` / `call_unavailable` | `ws/call_denied.json`, `ws/call_unavailable.dnd.json`, `.offline.json` |
 | `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
 | `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
