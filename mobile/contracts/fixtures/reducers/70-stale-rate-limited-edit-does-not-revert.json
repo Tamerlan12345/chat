@@ -1,0 +1,260 @@
+{
+  "name": "70-stale-rate-limited-edit-does-not-revert",
+  "description": "Задача 18: отправленная правка остаётся в ops (state \"sending\") до подтверждения — одна на сообщение, последняя отправленная. RATE_LIMITED устаревшей правки (после неё уже ушла более новая) ничего не ставит в очередь — иначе её повтор откатил бы новую правку. RATE_LIMITED последней — повтор с паузой. message_updated с тем же текстом снимает её; обрыв сокета снимает без повтора (правка по-прежнему не повторяется по таймауту).",
+  "covers": [
+    "T50",
+    "T54"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [
+      {
+        "op": "edit",
+        "message_id": 350,
+        "client_msg_id": null,
+        "text": "А",
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 350,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Было",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 1000
+    },
+    {
+      "type": "edit",
+      "now": 1050,
+      "message_id": 350,
+      "text": "Б"
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "text": "А",
+        "messageId": 350,
+        "retry_after_ms": 200
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1300
+    },
+    {
+      "type": "ws",
+      "now": 1310,
+      "frame": {
+        "type": "error",
+        "context": "edit_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "text": "Б",
+        "messageId": 350,
+        "retry_after_ms": 300
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1610
+    },
+    {
+      "type": "ws",
+      "now": 1700,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 350,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Б",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:02.000Z",
+          "is_deleted": 0,
+          "client_msg_id": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "edit",
+      "now": 2900,
+      "message_id": 350,
+      "text": "В"
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 3000
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "А"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "Б"
+        }
+      }
+    ],
+    [],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 1610,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "Б"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 350,
+          "text": "В"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 350,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Б",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:02.000Z",
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "opsLog": []
+  }
+}

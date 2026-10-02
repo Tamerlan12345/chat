@@ -1,10 +1,11 @@
 {
   "name": "66-edit-errors-with-message-id",
-  "description": "G4: ошибки edit_message несут messageId, code и присланный text. RATE_LIMITED — правка не обработана: она снова ставится в ops с паузой retry_after_ms и уходит тем же текстом (если для сообщения уже не ждёт более новая правка или удаление). Окончательный отказ (EDIT_WINDOW_EXPIRED) — user_error EDIT_REJECTED. error edit_message без messageId (старый сервер) модель не меняет.",
+  "description": "G4: ошибки edit_message несут messageId, code и присланный text. RATE_LIMITED — правка не обработана: она снова ставится в ops с паузой retry_after_ms и уходит тем же текстом (если для сообщения уже не ждёт более новая правка или удаление). Окончательный отказ (EDIT_WINDOW_EXPIRED) — user_error EDIT_REJECTED. error edit_message без messageId (старый сервер) модель не меняет. Задача 18: RATE_LIMITED сопоставляется с последней отправленной правкой сообщения (тот же текст) и возвращает её же в queued с паузой; окончательный отказ снимает отправленную правку из ops.",
   "covers": [
     "T50",
     "T39",
-    "T38"
+    "T38",
+    "T54"
   ],
   "initialState": {
     "me": 2,
@@ -166,6 +167,12 @@
     ],
     [
       {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
         "type": "user_error",
         "code": "EDIT_REJECTED"
       }
@@ -189,7 +196,19 @@
     ]
   ],
   "expectedState": {
-    "ops": [],
+    "ops": [
+      {
+        "op": "edit",
+        "message_id": 350,
+        "client_msg_id": null,
+        "text": "Стало",
+        "state": "sending",
+        "attempts": 2,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
     "opsLog": [
       1000,
       1000,

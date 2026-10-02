@@ -1,12 +1,13 @@
 {
   "name": "25-edit-while-sending-applied-after-echo",
-  "description": "Правка записи в полёте запоминается в pending_edit (повтор с тем же ключом вернул бы старый текст); после эха редьюсер шлёт edit_message с серверным id (правка уходит один раз), message_updated обновляет текст.",
+  "description": "Правка записи в полёте запоминается в pending_edit (повтор с тем же ключом вернул бы старый текст); после эха редьюсер шлёт edit_message с серверным id (правка уходит один раз), message_updated обновляет текст. Задача 18: отправленная правка остаётся в ops (state \"sending\") до подтверждения — persist ops при отправке, message_updated с тем же текстом её снимает.",
   "covers": [
     "T25",
     "T26",
     "T31",
     "T07",
-    "T39"
+    "T39",
+    "T54"
   ],
   "initialState": {
     "me": 2,
@@ -123,6 +124,7 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
       },
@@ -135,7 +137,14 @@
         }
       }
     ],
-    []
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
   ],
   "expectedState": {
     "outbox": [],

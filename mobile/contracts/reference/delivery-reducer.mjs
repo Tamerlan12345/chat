@@ -22,6 +22,8 @@ export const SYNC_RETRY_MS = 5000;
 export const KEY_ERRORS = ['CLIENT_MSG_ID_CONFLICT', 'INVALID_CLIENT_MSG_ID', 'CANCELLED'];
 export const CANCELLED_MAX = 100;
 export const RATE_LIMITED_RETRY_MS = 1000;
+// Upper bound of a server-supplied retry_after_ms (§6.1): the server promises 1…1000.
+export const RATE_LIMITED_MAX_RETRY_MS = 30000;
 // ECMAScript WhiteSpace + LineTerminator — exactly what the server's trim() removes (§6.1).
 export const WHITESPACE = '\\u0009\\u000A\\u000B\\u000C\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF';
 const BLANK_RE = new RegExp(`^[${WHITESPACE}]*$`);
@@ -156,6 +158,8 @@ const removeEntry = (state, cmid) => { state.outbox = state.outbox.filter((e) =>
 const deleteOpOf = (state, id) => state.ops.find((o) => o.op === 'delete' && o.message_id === id) || null;
 const cancelOpOf = (state, cmid) => state.ops.find((o) => o.op === 'cancel' && o.client_msg_id === cmid) || null;
 const removeOp = (state, op) => { state.ops = state.ops.filter((o) => o !== op); };
+// The edit of message id that was sent last and is not confirmed yet (§3.2): at most one per message.
+const sentEditOf = (state, id) => state.ops.find((o) => o.op === 'edit' && o.state === 'sending' && o.message_id === id) || null;
 
 function newOp(op, messageId, text, cmid = null) {
   return { op, message_id: messageId, client_msg_id: cmid, text, state: 'queued', attempts: 0, failures: 0, ack_deadline: null, next_attempt_at: null };
@@ -300,6 +304,10 @@ function ingest(state, rec, source, effects) {
   }
 
   if (rec.is_deleted) confirmDeleted(state, rec.id);
+  else {
+    const sent = sentEditOf(state, rec.id);
+    if (sent && sent.text === rec.text) removeOp(state, sent); // the sent edit is applied (§7.10)
+  }
 
   if (source === 'live' && inserted && !rec.is_deleted) {
     if (own) {
@@ -338,7 +346,7 @@ function pump(state, now, effects) {
   let wakeAt = null;
   const wake = (t) => { wakeAt = wakeAt === null ? t : Math.min(wakeAt, t); };
 
-  const sentEdits = new Set();
+  const sentEdits = new Map(); // message_id -> edit op sent by this pump
   for (const op of state.ops) {
     if (op.state !== 'queued') continue;
     if (op.next_attempt_at !== null && op.next_attempt_at > now) { wake(op.next_attempt_at); continue; }
@@ -347,7 +355,11 @@ function pump(state, now, effects) {
     op.attempts += 1;
     effects.push({ type: 'send_ws', frame: opFrame(op) });
     if (op.op === 'edit') {
-      sentEdits.add(op);
+      // No ack timeout: an edit is not resent on silence (§7.10); it waits for confirmation.
+      op.state = 'sending';
+      op.ack_deadline = null;
+      op.next_attempt_at = null;
+      sentEdits.set(op.message_id, op);
     } else {
       op.state = 'sending';
       op.ack_deadline = now + ACK_TIMEOUT_MS;
@@ -355,7 +367,8 @@ function pump(state, now, effects) {
       effects.push({ type: 'schedule', at: op.ack_deadline, event: opTimeoutEvent(op) });
     }
   }
-  state.ops = state.ops.filter((op) => !sentEdits.has(op));
+  // A newer sent edit supersedes the older unconfirmed one of the same message.
+  state.ops = state.ops.filter((op) => !(op.op === 'edit' && op.state === 'sending' && sentEdits.has(op.message_id) && sentEdits.get(op.message_id) !== op));
 
   for (const e of eligibleHeads(state, now, wake)) {
     if (state.sendLog.length >= SEND_RATE_MAX) { wake(state.sendLog[0] + SEND_RATE_WINDOW_MS); continue; }
@@ -546,7 +559,9 @@ function onRetry(state, ev, effects) {
 // server (no retryable, no messageId) take the old paths.
 function onError(state, frame, now, effects) {
   const rateLimited = frame.code === 'RATE_LIMITED';
-  const retryAfter = Number.isInteger(frame.retry_after_ms) && frame.retry_after_ms > 0 ? frame.retry_after_ms : RATE_LIMITED_RETRY_MS;
+  const retryAfter = Number.isInteger(frame.retry_after_ms) && frame.retry_after_ms > 0
+    ? Math.min(frame.retry_after_ms, RATE_LIMITED_MAX_RETRY_MS)
+    : RATE_LIMITED_RETRY_MS;
   switch (frame.context) {
     case 'send_message': {
       if (frame.client_msg_id == null) return;
@@ -580,16 +595,20 @@ function onError(state, frame, now, effects) {
     }
     case 'edit_message': {
       if (!Number.isInteger(frame.messageId)) return;
+      // Only the last sent edit of the message is matched; an older one was already superseded.
+      const sent = sentEditOf(state, frame.messageId);
+      const own = sent && sent.text === frame.text ? sent : null;
       if (rateLimited) {
-        // The edit was dropped unprocessed: queue it again unless a newer edit or a delete is pending.
-        const busy = state.ops.some((o) => o.message_id === frame.messageId && (o.op === 'delete' || (o.op === 'edit' && o.state === 'queued')));
-        if (!busy && typeof frame.text === 'string') {
-          const op = newOp('edit', frame.messageId, frame.text);
-          op.next_attempt_at = now + retryAfter;
-          state.ops.push(op);
-        }
+        // Dropped unprocessed: send it again after the pause, unless a newer edit or a delete is
+        // pending. A stale edit (no match) is never re-queued — it would revert the newer one.
+        if (!own) return;
+        const newer = state.ops.some((o) => o.message_id === frame.messageId && (o.op === 'delete' || (o.op === 'edit' && o.state === 'queued')));
+        if (newer) { removeOp(state, own); return; }
+        own.state = 'queued';
+        own.next_attempt_at = now + retryAfter;
         return;
       }
+      if (own) removeOp(state, own);
       effects.push({ type: 'user_error', code: 'EDIT_REJECTED' });
       return;
     }
@@ -734,7 +753,8 @@ function snapshotTotals(state, ev) {
       const ownNewer = list.filter((m) => m.sender_id === state.me && m.id > from);
       if (ownNewer.length) { base = 0; from = Math.max(...ownNewer.map((m) => m.id)); }
     }
-    totals[k] = base + list.filter((m) => m.sender_id !== state.me && m.id > from).length;
+    // A tombstone has nothing to read: deleted foreign messages newer than the snapshot are not added.
+    totals[k] = base + list.filter((m) => m.sender_id !== state.me && m.id > from && !m.is_deleted).length;
   }
   return totals;
 }
@@ -743,6 +763,8 @@ function resetInFlight(state, { http }) {
   for (const e of state.outbox) {
     if (e.state === 'sending' && (http || e.transport === 'ws')) attemptInterrupted(e);
   }
+  // An unconfirmed sent edit is not resent after a disconnect or restart (§7.10): dropped.
+  state.ops = state.ops.filter((op) => !(op.op === 'edit' && op.state === 'sending'));
   for (const op of state.ops) {
     if (op.state === 'sending') {
       op.state = 'queued';

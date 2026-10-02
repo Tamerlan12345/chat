@@ -88,13 +88,13 @@
 | `message_id` | int\|null | серверный id (`edit`, `delete`); у `cancel` — `null` |
 | `client_msg_id` | string\|null | ключ отменённой записи (`cancel`); иначе `null` |
 | `text` | string\|null | новый текст (`edit`), иначе `null` |
-| `state` | `"queued"`\|`"sending"` | `sending` — только у `delete`/`cancel`, ждущих ответа |
+| `state` | `"queued"`\|`"sending"` | `sending` — кадр ушёл и ждёт ответа: у `delete`/`cancel` — с таймером `ack_deadline`; у `edit` — без таймера, до подтверждения (§7.10) |
 | `attempts` | int | сколько кадров ушло |
 | `failures` | int | неудачных попыток (`op_timeout`, временная ошибка) подряд |
 | `ack_deadline` | int\|null | до какого `now` ждать ответа (`sending`) |
 | `next_attempt_at` | int\|null | пауза после неудачи или `RATE_LIMITED` |
 
-Кадры: `edit` → `{"type":"edit_message","messageId":…,"text":…}`, `delete` → `{"type":"delete_message","messageId":…}`, `cancel` → `{"type":"cancel_message","client_msg_id":…}`. Операция ищется: `delete` — по `message_id`, `cancel` — по `client_msg_id` (каждого не больше одной).
+Кадры: `edit` → `{"type":"edit_message","messageId":…,"text":…}`, `delete` → `{"type":"delete_message","messageId":…}`, `cancel` → `{"type":"cancel_message","client_msg_id":…}`. Операция ищется: `delete` — по `message_id`, `cancel` — по `client_msg_id` (каждого не больше одной). **Отправленная правка** — `edit` в `sending` — у сообщения не больше одной: это последняя ушедшая правка, ещё не подтверждённая. Новая отправленная правка того же сообщения вытесняет прежнюю из `ops`.
 
 ### 3.3. Сообщение в `messages`
 
@@ -232,6 +232,7 @@ stateDiagram-v2
 | `SEND_RATE_MAX` / `SEND_RATE_WINDOW_MS` | `8` за `1000` мс для `send_message` (`sendLog`) | сервер режет 10/с на сокет (ws-protocol §2.3; с G2 — с ответом `RATE_LIMITED`, раньше молча); запас 2 |
 | `OPS_RATE_MAX` / `OPS_RATE_WINDOW_MS` | `8` за `1000` мс на все `edit_message`, `delete_message` и `cancel_message` вместе (`opsLog`) | у сервера по 10/с на каждый тип |
 | `RATE_LIMITED_RETRY_MS` | `1000` — пауза после `RATE_LIMITED` без `retry_after_ms` | окно сервера |
+| `RATE_LIMITED_MAX_RETRY_MS` | `30000` — потолок `retry_after_ms`: больше — считается `30000` | сервер обещает 1…1000; пауза в час от испорченного кадра не должна замораживать очередь |
 | `CANCELLED_MAX` | `100` — предел `cancelled` (лишние — самые старые — вытесняются) | — |
 | `SYNC_PAGE_LIMIT` | `200` | максимум `/api/sync` |
 | `SYNC_RETRY_MS` | `5000` (если нет `retry_after_ms`) | — |
@@ -254,10 +255,12 @@ pump(state, now):
     если op.next_attempt_at != null и > now: wakeAt = min(wakeAt, op.next_attempt_at); пропустить
     если |opsLog| >= OPS_RATE_MAX: wakeAt = min(wakeAt, opsLog[0] + OPS_RATE_WINDOW_MS); пропустить
     opsLog += now; op.attempts += 1; эффект send_ws{frame(op)}
-    если op.op == "edit": удалить op из ops                    // правка уходит один раз
+    если op.op == "edit": op.state = "sending"; op.ack_deadline = null; op.next_attempt_at = null
+                          // без таймера: молчание не повторяет правку (§7.10); ждёт подтверждения
     иначе: op.state = "sending"; op.ack_deadline = now + ACK_TIMEOUT_MS; op.next_attempt_at = null
            эффект schedule{at: op.ack_deadline, event: {type:"op_timeout", message_id, attempt: op.attempts}}
                                          // у cancel: {type:"op_timeout", client_msg_id, attempt}
+  из ops удалить каждую edit в sending, если этим проходом ушла более новая edit того же message_id
   // 2. outbox
   занятые = ∅
   вПолёте = { e.conversation | e ∈ outbox, e.state == "sending", !e.pending_delete }
@@ -292,7 +295,7 @@ pump(state, now):
 
 **`ws` + `auth_success`**: `me = frame.user.id`; `connection = "online"`; `sendLog = []`, `opsLog = []` (новый сокет); если `!sync.running` — начало цепочки.
 
-**`ws_disconnected`**: `connection = "offline"`; `sync.running = false`; `sendLog = []`, `opsLog = []`; каждая запись outbox `sending` с `transport == "ws"` → `queued`, `transport/ack_deadline/next_attempt_at = null` (`attempts`, `failures`, `maybe_stored` сохраняются); каждая `op` в `sending` → `queued`, `ack_deadline/next_attempt_at = null`. HTTP-запросы в полёте не трогаются.
+**`ws_disconnected`**: `connection = "offline"`; `sync.running = false`; `sendLog = []`, `opsLog = []`; каждая запись outbox `sending` с `transport == "ws"` → `queued`, `transport/ack_deadline/next_attempt_at = null` (`attempts`, `failures`, `maybe_stored` сохраняются); каждая отправленная правка (`edit` в `sending`) **снимается** (правка не повторяется после обрыва, §7.10); каждая другая `op` в `sending` → `queued`, `ack_deadline/next_attempt_at = null`. HTTP-запросы в полёте не трогаются.
 
 **`enqueue`** — проверки по порядку, первая сработавшая даёт `user_error` без изменений:
 1. `client_msg_id` не подходит под `CLIENT_MSG_ID_RE` → `INVALID_CLIENT_MSG_ID`;
@@ -319,6 +322,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 если в messages[conv] есть сообщение с rec.id: слить (§7.9)
 иначе если source != "update" или reconciled: вставить проекцию по возрастанию id; inserted = true
 если rec.is_deleted == 1: подтвердить удаление rec.id
+иначе если есть отправленная правка rec.id и её text == rec.text: снять её      // §7.10, правка применена
 если source == "live" и inserted и rec.is_deleted == 0:                         // §7.8
   если own: если conv — канал: unread[conv] удалить
   иначе если conv == visible: если connection == "online": эффект send_ws{mark_read(conv)}
@@ -335,12 +339,12 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 - `message_cancelled` (G9) → снять op `cancel` с `frame.client_msg_id`; убрать ключ из `cancelled`; запись outbox с этим ключом и `pending_delete` — удалить (доказано: сервер её не хранит и не сохранит, или удалил сам); если `frame.messageId` — число, подтвердить удаление `messageId`.
 - `message_status_updated` → своё сообщение **личной** переписки с `id == messageId`: `status = max(status, frame.status)` для `delivered`/`read`. Каналы и неизвестные id — ничего.
 - `messages_read` → для каждого id из `messageIds`: своё сообщение в `messages["direct:" + byUserId]` получает `status = "read"`. Остальные id (чужие, другой переписки, неизвестные) игнорируются.
-- `error` — по `context` (`R` — `frame.code == "RATE_LIMITED"`; `pause` — `frame.retry_after_ms`, если это целое > 0, иначе `RATE_LIMITED_RETRY_MS`):
+- `error` — по `context` (`R` — `frame.code == "RATE_LIMITED"`; `pause` — `min(frame.retry_after_ms, RATE_LIMITED_MAX_RETRY_MS)`, если это целое > 0, иначе `RATE_LIMITED_RETRY_MS`):
   - `send_message` с `client_msg_id`, для которого в outbox есть запись `e` не в `failed`:
-    - `R` или `frame.retryable == true` — это **не отказ** (кадр не обработан / сбой до записи), и действует только на живую WS-попытку: если `e.state != "sending"` или `e.transport != "ws"` — ничего (устарело). Иначе `R` → **пауза частоты**: при `e.pending_delete` — как неудачная попытка (ниже); иначе `state = "queued"`, `transport/ack_deadline = null`, `next_attempt_at = now + pause`, `failures` и `maybe_stored` не меняются. Не `R` (`retryable`) → **неудачная попытка**;
+    - `R` или `frame.retryable == true` — это **не окончательный отказ** (кадр не обработан / сбой до записи), и действует только на живую WS-попытку: если `e.state != "sending"` или `e.transport != "ws"` — ничего (устарело). Иначе `R` → **пауза частоты**: при `e.pending_delete` — как неудачная попытка (ниже); иначе `state = "queued"`, `transport/ack_deadline = null`, `next_attempt_at = now + pause`, `failures` и `maybe_stored` не меняются. Не `R` (`retryable`) → **неудачная попытка**;
     - иначе (`retryable == false` или поля нет — старый сервер) → **отказ** (§7.5);
   - `delete_message` с целым `messageId`, для которого есть `delete` в `sending`: `R` → `state = "queued"`, `ack_deadline = null`, `next_attempt_at = now + pause` (без неудачи); `retryable == true` → **неудача операции**; иначе — операция снимается, эффект `user_error{DELETE_REJECTED}`;
-  - `edit_message` с целым `messageId`: `R` → если для этого `messageId` нет `delete` и нет `edit` в `queued`, а `frame.text` — строка, в `ops` добавляется `edit(messageId, frame.text)` с `next_attempt_at = now + pause`; иначе (любой другой код) — эффект `user_error{EDIT_REJECTED}`;
+  - `edit_message` с целым `messageId`: `own` — отправленная правка этого `messageId` (`edit` в `sending`), если её `text == frame.text`, иначе нет. `R` → если `own` нет — **ничего** (кадр относится к правке, которую уже вытеснила более новая отправленная: её повтор откатил бы новую); если для `messageId` есть `delete` или `edit` в `queued` — `own` снимается; иначе `own.state = "queued"`, `own.next_attempt_at = now + pause` (уйдёт снова тем же текстом). Любой другой код → `own` (если есть) снимается, эффект `user_error{EDIT_REJECTED}`;
   - `cancel_message` с `client_msg_id`, для которого есть `cancel` в `sending`: `R` → пауза, как у `delete`; `retryable == true` → **неудача операции**; иначе операция снимается, и если в кадре есть целый `messageId` (сообщение сохранено, удалить нельзя): ключ убирается из `cancelled`, снимается `delete` этого `messageId`, запись outbox с ключом и `pending_delete` удаляется с эффектом `load_history{её conversation}` (сообщение вернётся в ленту как обычное), эффект `user_error{DELETE_REJECTED}`;
   - прочие `error` (без `context` — внутренняя ошибка; без поля корреляции — старый сервер, например `INVALID_CLIENT_MSG_ID` или `edit_message`/`delete_message` без `messageId`) модель не меняют: внутренняя ошибка лечится таймаутом и повтором.
 
@@ -380,7 +384,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 
 **`history_page`**: `ingest` каждой записи с `source = "history"`. Непрочитанное не меняется.
 
-**`unread_snapshot`**: для каждой `k` из `counts` итог `N(k)`: если `last_message_ids` нет или в нём нет ключа `k` — `N = counts[k]` (как раньше); иначе `L = last_message_ids[k] ?? 0`, и `N = counts[k] + |{ m ∈ messages[k] : m.sender_id != me, m.id > L }|`, а для канала, где есть своё сообщение с `id > L`, — `N = |{ чужие m : m.id > max(id своих m с id > L) }|` (своё сообщение в канале — прочитано до него, §7.8). Затем `unread = { k: N | N > 0 и k != visible }`; если у `visible` `N > 0` и `connection == "online"` — эффект `send_ws{mark_read(visible)}`.
+**`unread_snapshot`**: для каждой `k` из `counts` итог `N(k)`: если `last_message_ids` нет или в нём нет ключа `k` — `N = counts[k]` (как раньше); иначе `L = last_message_ids[k] ?? 0`, и `N = counts[k] + |{ m ∈ messages[k] : m.sender_id != me, m.id > L, m.is_deleted == 0 }|`, а для канала, где есть своё сообщение с `id > L`, — `N = |{ чужие m, не надгробия : m.id > max(id своих m с id > L) }|` (надгробие досчёт не увеличивает: читать нечего; своё удалённое сообщение в канале обнуление всё равно даёт — отправка была) (своё сообщение в канале — прочитано до него, §7.8). Затем `unread = { k: N | N > 0 и k != visible }`; если у `visible` `N > 0` и `connection == "online"` — эффект `send_ws{mark_read(visible)}`.
 
 **`conversation_opened`**: `visible = conversation`; `unread[conversation]` удалить; при `online` — `send_ws{mark_read(conversation)}`. **`conversation_closed`**: `visible = null`.
 
@@ -423,12 +427,12 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 
 ### 7.3. Повторы, пауза, предел попыток, частота
 
-- Подтверждение ждём `ACK_TIMEOUT_MS` (WS) / `HTTP_ACK_TIMEOUT_MS` (HTTP). Сервер с G2 отвечает на отброшенный пределом частоты кадр `error` `RATE_LIMITED` с `retry_after_ms`: запись возвращается в `queued` с паузой ровно `retry_after_ms` (не неудача — кадр не обработан) и уходит снова **с тем же `client_msg_id`**; так же — `delete`/`cancel` (тем же кадром) и `edit` (новой операцией с тем же текстом). Ответ `RATE_LIMITED` не гарантирован (сервер ограничивает и их), а сервер без G2 отбрасывает **молча** — тогда сигнал по-прежнему только таймаут: пауза `backoff(failures)` и повтор тем же ключом.
+- Подтверждение ждём `ACK_TIMEOUT_MS` (WS) / `HTTP_ACK_TIMEOUT_MS` (HTTP). Сервер с G2 отвечает на отброшенный пределом частоты кадр `error` `RATE_LIMITED` с `retry_after_ms`: запись возвращается в `queued` с паузой `retry_after_ms` (не больше `RATE_LIMITED_MAX_RETRY_MS`; не неудача — кадр не обработан) и уходит снова **с тем же `client_msg_id`**; так же — `delete`/`cancel` (тем же кадром) и последняя отправленная правка сообщения (тем же текстом, §7.10). Ответ `RATE_LIMITED` не гарантирован (сервер ограничивает и их), а сервер без G2 отбрасывает **молча** — тогда сигнал по-прежнему только таймаут: пауза `backoff(failures)` и повтор тем же ключом.
 - `error` с `retryable: true` (G3, `INTERNAL_ERROR`) — неудачная попытка, как таймаут: пауза `backoff`, повтор тем же ключом/кадром.
 - Бюджет — `MAX_ATTEMPTS = 5` **неудач** (`failures`): таймаут без ответа или временная ошибка HTTP (0/408/429/5xx). После пятой — `failed (max_attempts)`. Попытки, оборванные **не по вине сервера** — обрыв сокета, перезапуск приложения, HTTP 401, — бюджет не тратят: запись возвращается в `queued` без паузы, `failures` не растёт (`attempts` растёт — это номер кадра). Так мигающая сеть не переводит сообщение в `failed` (вектор 54).
 - Повтор пользователем (`retry`) даёт новый бюджет (`failures = 0`).
-- **Частота.** У сервера отдельные окна по 10 кадров/с на сокет для `send_message` и для каждого из `edit_message`, `delete_message`; сверх — молча отбрасывается. Клиент держит два окна по 8 кадров/с: `sendLog` — для `send_message`, `opsLog` — **общее** для `edit_message` и `delete_message` (проще и строже серверного: 8 на оба типа вместе, а не 10 на каждый). `mark_read` не ограничивается редьюсером (§5).
-- **Удаление подтверждается.** `delete_message` ждёт надгробия (`message_deleted` или запись с `is_deleted = 1` из `/api/sync`, истории, эха) `ACK_TIMEOUT_MS`; без него — `op_timeout`, пауза `backoff(failures)` и повтор того же кадра. Повтор безопасен: удаление идемпотентно — сервер с G4 на удаление уже удалённого отвечает тем же надгробием `message_deleted` (без записи, рассылки и сдвига `change_seq`), сервер без G4 — `error` «Сообщение уже удалено» (тоже без записи). Обрыв сокета возвращает `delete` в `queued` без неудачи. Окончательный отказ с `messageId` (G4: окно удаления истекло, чужое, нет сообщения) снимает `delete` сразу — `DELETE_REJECTED`; у сервера без G4 отказ без `messageId` неотличим от потери кадра — после пяти неудач `delete` снимается с `DELETE_NOT_CONFIRMED`. Правка (`edit_message`) уходит один раз — потерянная правка видна пользователю (текст не изменился) и повторяется им; отказ с `messageId` — `EDIT_REJECTED` сразу, `RATE_LIMITED` — правка ставится снова.
+- **Частота.** У сервера отдельные окна по 10 кадров/с на сокет для `send_message` и для каждого из `edit_message`, `delete_message`, `cancel_message`; сверх — кадр не обрабатывается (сервер с G2 отвечает `RATE_LIMITED`, без G2 — молча). Клиент держит два окна по 8 кадров/с: `sendLog` — для `send_message`, `opsLog` — **общее** для `edit_message` и `delete_message` (проще и строже серверного: 8 на оба типа вместе, а не 10 на каждый). `mark_read` не ограничивается редьюсером (§5).
+- **Удаление подтверждается.** `delete_message` ждёт надгробия (`message_deleted` или запись с `is_deleted = 1` из `/api/sync`, истории, эха) `ACK_TIMEOUT_MS`; без него — `op_timeout`, пауза `backoff(failures)` и повтор того же кадра. Повтор безопасен: удаление идемпотентно — сервер с G4 на удаление уже удалённого отвечает тем же надгробием `message_deleted` (без записи, рассылки и сдвига `change_seq`), сервер без G4 — `error` «Сообщение уже удалено» (тоже без записи). Обрыв сокета возвращает `delete` в `queued` без неудачи. Окончательный отказ с `messageId` (G4: окно удаления истекло, чужое, нет сообщения) снимает `delete` сразу — `DELETE_REJECTED`; у сервера без G4 отказ без `messageId` неотличим от потери кадра — после пяти неудач `delete` снимается с `DELETE_NOT_CONFIRMED`. Правка (`edit_message`) по таймауту и после обрыва не повторяется — потерянная правка видна пользователю (текст не изменился) и повторяется им; отказ с `messageId` — `EDIT_REJECTED` сразу, `RATE_LIMITED` — правка ставится снова, **только если она последняя отправленная** для этого сообщения (§7.10).
 
 ### 7.4. Композер
 
@@ -452,7 +456,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 - В открытой переписке счётчик не растёт; вместо этого — `mark_read` (если сокет на связи).
 - Свои сообщения никогда не увеличивают счётчик. Своё сообщение в **канале** (в том числе отправленное с другого устройства) обнуляет счётчик канала — так делает сервер (`last_read_message_id` автора = его сообщение). В личной переписке своё сообщение счётчик не меняет (сервер так же).
 - `conversation_opened` обнуляет счётчик и шлёт `mark_read`; `conversation_closed` (и уход в фон) снимает `visible`.
-- `/api/sync` и страницы истории счётчики не меняют: после синхронизации редьюсер запрашивает `refresh_conversation_lists`, и `unread_snapshot` с серверными `unread_count` заменяет счётчики целиком (у открытой переписки — 0 и `mark_read`). Удаление сообщения счётчик не уменьшает (сервер тоже считает удалённые).
+- `/api/sync` и страницы истории счётчики не меняют: после синхронизации редьюсер запрашивает `refresh_conversation_lists`, и `unread_snapshot` с серверными `unread_count` заменяет счётчики целиком (у открытой переписки — 0 и `mark_read`). Удаление сообщения счётчик не уменьшает (сервер тоже считает удалённые). Исключение — досчёт снимка по `last_message_ids` (§6.3): чужое надгробие новее снимка к счётчику **не добавляется** (сообщение удалено раньше, чем его могли прочитать, — показывать бейдж не на что); следующий снимок снова берёт серверный счёт как есть.
 - Снимок считается сервером раньше, чем применяется: живое сообщение между ними иначе терялось бы до следующего снимка (G7). Поэтому платформа передаёт в `unread_snapshot` и `last_message_id` каждой переписки из тех же ответов (`last_message_ids`), а редьюсер досчитывает чужие сообщения новее него (§6.3). Нет поля в ответе (канал у сервера без G7) — счётчик берётся как есть.
 
 ### 7.9. Слияние записей (upsert по `id`)
@@ -484,6 +488,8 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 - Окончательный отказ отзыва с `messageId` (сообщение сохранено, а окно удаления истекло, G9) — запись больше не скрывается: она удаляется из outbox, ключ забывается, `load_history` возвращает сообщение в ленту как обычное своё, пользователю — `DELETE_REJECTED`.
 
 **Правка и удаление подтверждённых сообщений** идут через `ops` и уходят, как только сокет на связи и цепочка синхронизации завершена, в пределах `OPS_RATE_MAX` (§7.3).
+
+**Отправленная правка ждёт подтверждения** (задача 18). Ушедший `edit` не удаляется из `ops`, а остаётся в `sending` (без таймера) — одна на сообщение: новая отправленная правка того же сообщения вытесняет прежнюю. Снимается она подтверждением (своя запись с этим `id` и **тем же текстом**: `message_updated`, `/api/sync`, история), окончательным отказом с `messageId` (`EDIT_REJECTED`), обрывом сокета и перезапуском (правка не повторяется), надгробием. Так `RATE_LIMITED` можно отнести к правке: если кадр относится к отправленной правке с тем же текстом и для сообщения не ждёт более новая правка или удаление — она уходит снова после паузы; если её уже вытеснила более новая — ничего (раньше такой кадр ставил старый текст снова и мог откатить новую правку, вектор 70). Остаток: если более новая правка потерялась **молча** (без ответа), а старая получила `RATE_LIMITED` раньше, чем ушла новая, — уйдёт старая; результат виден пользователю, как любая потерянная правка.
 
 ### 7.11. Синхронизация
 
@@ -554,7 +560,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 | T36 | `history_page` | — | слияние | непрочитанное не меняется |
 | T37 | `background_flush` без сокета | Q | S (http) | `send_http`, `schedule ack_timeout` |
 | T38 | посторонние кадры, `error` без `client_msg_id`, страница вне синхронизации | — | без изменений | — |
-| T39 | насос: `ops` в пределах 8 кадров/с | `op` queued | отправлена (`edit` — снята; `delete` — `sending`) | `send_ws`, для `delete` — `schedule op_timeout`; сверх окна — `schedule tick` |
+| T39 | насос: `ops` в пределах 8 кадров/с | `op` queued | отправлена (`sending`; `edit` — без таймера, вытесняет прежнюю отправленную правку сообщения) | `send_ws`, для `delete` — `schedule op_timeout`; сверх окна — `schedule tick` |
 | T40 | `op_timeout` (актуальный) | `delete` sending | queued с паузой / снята | `failures+1`; на пятой — `user_error DELETE_NOT_CONFIRMED` |
 | T41 | надгробие (`message_deleted`, `is_deleted = 1` в любой записи) | `ops` с этим id | сняты | `persist ops` |
 | T42 | завершение цепочки при отменённых записях | `pending_delete` (не S) | удалена / ждёт (`load_history`) | обычная цепочка — удалить, ключ в `cancelled`; bootstrap — история переписок |
@@ -565,10 +571,11 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 | T47 | `message_cancelled` (G9) | `cancel`, `pending_delete` | сняты | ключ убран из `cancelled`; `messageId` — подтвердить удаление |
 | T48 | `cancel`: `op_timeout` / `error cancel_message` | `cancel` sending | queued (пауза) / снята | пятая неудача — снять без ошибки; `RATE_LIMITED` — пауза; окончательный с `messageId` — запись снята, `load_history`, `DELETE_REJECTED` |
 | T49 | `error` `delete_message` с `messageId` (G4) | `delete` sending | queued (пауза) / снята | `RATE_LIMITED` — пауза без неудачи; `retryable` — как T40; иначе `DELETE_REJECTED` |
-| T50 | `error` `edit_message` с `messageId` (G4) | — | `edit` снова в `ops` / — | `RATE_LIMITED` — правка с паузой; иначе `EDIT_REJECTED` |
+| T50 | `error` `edit_message` с `messageId` (G4) | `edit` sending (тот же текст) | queued (пауза) / снята / без изменений | `RATE_LIMITED` — пауза, если правка последняя отправленная и нет более новой правки/удаления (иначе снята); устаревшая (вытеснена) — ничего; иначе снята и `EDIT_REJECTED` |
 | T51 | своя запись сервера с ключом из `cancelled` | `cancelled` | `delete` в `ops` | ключ убран; сообщение скрыто до надгробия (§3.4); `enqueue` с таким ключом — ничего |
 | T52 | `message_deleted` с `updated_at` (G8) | сообщение | надгробие с `updated_at` | — |
-| T53 | `unread_snapshot` с `last_message_ids` (G7) | — | счётчики досчитаны | чужие новее `last_message_id`; своё в канале — обнуление до него |
+| T53 | `unread_snapshot` с `last_message_ids` (G7) | — | счётчики досчитаны | чужие новее `last_message_id`, кроме надгробий; своё в канале — обнуление до него |
+| T54 | подтверждение отправленной правки / обрыв | `edit` sending | снята | своя запись с тем же `id` и текстом; `ws_disconnected`/`app_restart` — снять без повтора; `persist ops` |
 
 ## 9. Соответствие требованиям
 
@@ -585,7 +592,7 @@ conv = ключ(rec); own = rec.sender_id == me; reconciled = false
 | непрочитанное | §7.8 |
 | слияние синхронизации, надгробия, курсор, 410 | §7.9, §7.11 |
 | правка/удаление в очереди; отменённое не доставляется | §7.10 |
-| новые сигналы сервера и совместимость со старым | §7.12, T44–T53 |
+| новые сигналы сервера и совместимость со старым | §7.12, T44–T54 |
 
 ## 10. Открытые вопросы к серверу (Open server gaps)
 
