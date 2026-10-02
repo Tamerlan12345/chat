@@ -8,7 +8,6 @@ public struct LoginView: View {
     @State private var passwordInput: String = ""
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
-    @State private var showChangePasswordModal: Bool = false
 
     public init() {}
 
@@ -107,9 +106,6 @@ public struct LoginView: View {
                     usernameInput = saved
                 }
             }
-            .sheet(isPresented: $showChangePasswordModal) {
-                ChangePasswordModalView(isMandatory: true)
-            }
         }
     }
 
@@ -120,9 +116,9 @@ public struct LoginView: View {
 
         do {
             // Device Claim для беспарольного входа (Parity Matrix Section 2) выполняет SessionStore
+            // The root view switches to the mandatory password change when required.
             let outcome = try await session.login(username: usernameInput, password: passwordInput)
             if outcome == .passwordChangeRequired {
-                showChangePasswordModal = true
                 CentyHaptics.warning()
             } else {
                 CentyHaptics.success()

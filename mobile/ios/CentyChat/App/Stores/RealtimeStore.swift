@@ -1,18 +1,20 @@
 import Foundation
 import Observation
 
-/// The single realtime event pump: owns the WebSocket subscription and
-/// fans server events out to the feature stores.
+/// The single realtime event pump: owns the WebSocket subscription for the
+/// authenticated session and fans server events out to the feature stores.
 @Observable
 @MainActor
 public final class RealtimeStore {
     public private(set) var connectionState: RealtimeConnectionState = .disconnected
+    public private(set) var isRunning = false
 
     @ObservationIgnored private let repository: any RealtimeRepository
     @ObservationIgnored private var handlers: [WeakRealtimeHandler] = []
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var audioTask: Task<Void, Never>?
     @ObservationIgnored private var stateTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycle = 0
     /// The server sends `new_message` together with `direct_message`/`channel_message`
     /// for the same message; each message id is delivered to the stores once.
     @ObservationIgnored private var deliveredMessageIDs = RecentIDs(capacity: 1_024)
@@ -27,57 +29,64 @@ public final class RealtimeStore {
         handlers.append(WeakRealtimeHandler(handler))
     }
 
-    // MARK: - Connection
+    // MARK: - Lifecycle
 
-    func connect() async {
-        await repository.connect()
-    }
+    /// Subscribes to events, call audio and connection state, then connects. Idempotent.
+    func start() async {
+        guard !isRunning else { return }
+        isRunning = true
+        lifecycle += 1
+        let generation = lifecycle
 
-    func disconnect() async {
-        await repository.disconnect()
-    }
-
-    func startListening() async {
         let events = await repository.events()
-        eventTask?.cancel()
+        let states = await repository.connectionStates()
+        let audio = await repository.incomingAudio()
+        guard generation == lifecycle else { return }
+
         eventTask = Task { [weak self] in
             for await event in events {
-                guard let self else { return }
-                self.dispatch(event)
+                self?.dispatch(event)
             }
         }
-
-        let states = await repository.connectionStates()
-        stateTask?.cancel()
         stateTask = Task { [weak self] in
             for await state in states {
                 self?.connectionState = state
             }
         }
-
-        let audio = await repository.incomingAudio()
-        audioTask?.cancel()
         audioTask = Task { [weak self] in
             for await frame in audio {
-                guard !Task.isCancelled else { return }
                 self?.audioSink?(frame)
             }
         }
+        await repository.connect()
     }
 
-    func stopAudioListener() {
+    /// Closes the socket and ends all subscriptions.
+    func stop() async {
+        guard isRunning else { return }
+        isRunning = false
+        lifecycle += 1
+        eventTask?.cancel()
+        stateTask?.cancel()
         audioTask?.cancel()
+        eventTask = nil
+        stateTask = nil
         audioTask = nil
+        deliveredMessageIDs.removeAll()
+        connectionState = .disconnected
+        await repository.disconnect()
+    }
+
+    /// Opens a fresh socket so it authenticates with the current token.
+    func reconnect() async {
+        await stop()
+        await start()
     }
 
     // MARK: - Outgoing
 
     func send(_ message: WSClientMessage) async {
         await repository.send(message)
-    }
-
-    func sendAudioFrame(_ frame: Data) async {
-        await repository.sendAudioFrame(frame)
     }
 
     // MARK: - Dispatch

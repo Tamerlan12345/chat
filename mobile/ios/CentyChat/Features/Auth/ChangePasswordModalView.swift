@@ -107,6 +107,15 @@ public struct ChangePasswordModalView: View {
             .background(CentyColors.chatBackground)
             .navigationBarBackButtonHidden(isMandatory)
             .interactiveDismissDisabled(isMandatory)
+            .toolbar {
+                if isMandatory {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Выйти") {
+                            Task { await session.logout() }
+                        }
+                    }
+                }
+            }
         }
     }
 

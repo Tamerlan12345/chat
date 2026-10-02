@@ -277,14 +277,14 @@ final class KeychainFailClosedTests: XCTestCase {
         let store = InMemoryKeychainItemStore(failure: .delete(account: "auth_token", status: errSecAuthFailed))
         let keychain = KeychainManager(testStore: store)
         try keychain.saveServerURL("https://chat.example.com")
-        try keychain.saveAuthToken("persisted-token")
         let client = APIClient(session: makeSession(), keychain: keychain)
         let session = await Self.makeSessionStore(client: client, keychain: keychain)
-        await MainActor.run { session.isAuthenticated = true }
+        _ = try await session.login(username: "qa", password: "password")
+        let tokenBeforeLogout = try XCTUnwrap(keychain.authToken)
 
         await session.logout()
 
-        XCTAssertEqual(keychain.authToken, "persisted-token")
+        XCTAssertEqual(keychain.authToken, tokenBeforeLogout)
         let state = await MainActor.run { (session.isAuthenticated, session.errorMessage) }
         XCTAssertTrue(state.0)
         XCTAssertEqual(state.1, KeychainManagerError.deleteFailed(status: errSecAuthFailed).localizedDescription)

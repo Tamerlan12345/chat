@@ -108,8 +108,13 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     // MARK: - SessionLifecycleDelegate
 
-    func sessionNeedsDataReload() async {
+    func sessionDidAuthenticate() async {
         await loadAllData()
+    }
+
+    func sessionDidResume() async {
+        await loadAllData()
+        await chats.reloadLoaded()
     }
 
     func sessionDidEnd() {

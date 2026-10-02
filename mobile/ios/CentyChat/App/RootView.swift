@@ -13,11 +13,19 @@ public struct RootView: View {
 
         Group {
             switch session.phase {
+            case .launching:
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(CentyColors.chatBackground)
+                    .accessibilityLabel("Загрузка")
             case .serverSetup:
                 ServerConnectView()
                     .accessibilityIdentifier("server-setup")
-            case .signedOut, .passwordChangeRequired:
+            case .signedOut:
                 LoginView()
+            case .passwordChangeRequired:
+                // The only presentation of the mandatory change: a root screen, not a sheet.
+                ChangePasswordModalView(isMandatory: true)
             case .authenticated:
                 MainTabView()
             }
@@ -30,13 +38,6 @@ public struct RootView: View {
             set: { if !$0 { calls.stopCallSession() } }
         )) {
             CallView()
-                .appEnvironment(container)
-        }
-        .sheet(isPresented: Binding(
-            get: { session.mustChangePasswordRequired },
-            set: { _ in }
-        )) {
-            ChangePasswordModalView(isMandatory: true)
                 .appEnvironment(container)
         }
         .alert(

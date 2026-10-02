@@ -236,6 +236,13 @@ public final class ChatRegistry: RealtimeEventHandling {
         stores = [:]
     }
 
+    /// Refreshes conversations that were already open, e.g. after a reconnect.
+    func reloadLoaded() async {
+        for store in stores.values where store.loadState == .loaded {
+            await store.load()
+        }
+    }
+
     func handle(_ event: WSServerEvent) {
         for store in stores.values {
             store.handle(event)
