@@ -104,6 +104,13 @@
     "path": "/api/files/upload",
     "status": 201
   },
+  "http/messages.after-page.json": {
+    "kind": "http",
+    "description": "Страница ВПЕРЁД: GET /api/messages?conversationType=direct&targetId={id}&afterId={id}&limit=… — первые limit сообщений с id > afterId, по возрастанию (с delivery_status).",
+    "method": "GET",
+    "path": "/api/messages",
+    "status": 200
+  },
   "http/messages.channel-page.json": {
     "kind": "http",
     "description": "Страница канала (массив, старые → новые), включая сообщение-вложение.",
@@ -118,12 +125,61 @@
     "path": "/api/messages/direct/{id}",
     "status": 200
   },
+  "http/messages.send-client-msg-id-conflict.json": {
+    "kind": "http",
+    "description": "client_msg_id уже использован автором в другой переписке: HTTP 409, { error, code: \"CLIENT_MSG_ID_CONFLICT\" }.",
+    "method": "POST",
+    "path": "/api/messages/channels/{id}",
+    "status": 409
+  },
+  "http/messages.send-client-msg-id-invalid.json": {
+    "kind": "http",
+    "description": "Недопустимый client_msg_id: HTTP 400, { error, code: \"INVALID_CLIENT_MSG_ID\" }.",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 400
+  },
+  "http/messages.send-direct-duplicate.json": {
+    "kind": "http",
+    "description": "Повтор той же отправки (тот же client_msg_id того же автора): HTTP 200 и УЖЕ сохранённая запись; новой строки нет, получателю повторно не рассылается.",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 200
+  },
+  "http/messages.send-direct-idempotent.json": {
+    "kind": "http",
+    "description": "REST-отправка с client_msg_id: HTTP 201, client_msg_id в ответе. Получатель онлайн — сразу «доставлено» (message_status_updated автору).",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 201
+  },
   "http/messages.send-direct.json": {
     "kind": "http",
     "description": "REST-отправка личного сообщения: HTTP 201 и сохранённое сообщение (без delivery_status).",
     "method": "POST",
     "path": "/api/messages/direct/{id}",
     "status": 201
+  },
+  "http/sync.bootstrap.json": {
+    "kind": "http",
+    "description": "Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова (непрозрачная строка «<эпоха>.<номер>»). С него клиент начинает, загрузив страницы переписок.",
+    "method": "GET",
+    "path": "/api/sync",
+    "status": 200
+  },
+  "http/sync.cursor-invalid.json": {
+    "kind": "http",
+    "description": "Курсор не этой базы (другая эпоха: база восстановлена из резервной копии, другой сервер), прежнего формата или впереди головы: HTTP 410, { error, code: \"SYNC_CURSOR_INVALID\" } — начать заново с GET /api/sync без since.",
+    "method": "GET",
+    "path": "/api/sync",
+    "status": 410
+  },
+  "http/sync.page.json": {
+    "kind": "http",
+    "description": "Дельта после курсора: GET /api/sync?since={next_cursor}&limit=… — созданные, изменённые, удалённые (надгробие: is_deleted=1, text=\"\", metadata_json=null) и сменившие статус сообщения во всех видимых переписках, по возрастанию изменения; каждое один раз в текущем состоянии. delivery_status — у личных, null у каналов.",
+    "method": "GET",
+    "path": "/api/sync",
+    "status": 200
   },
   "http/users.get.json": {
     "kind": "http",
@@ -265,12 +321,26 @@
     "direction": "server->client",
     "trigger": "send_message conversationType=direct"
   },
+  "ws/error.client_msg_id_conflict.json": {
+    "kind": "ws",
+    "description": "Этот client_msg_id автор уже использовал в ДРУГОЙ переписке: code = \"CLIENT_MSG_ID_CONFLICT\", client_msg_id отражается. Сообщение не сохранено.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message с client_msg_id, уже использованным для личного диалога"
+  },
   "ws/error.edit_message.json": {
     "kind": "ws",
     "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины.",
     "event": "error",
     "direction": "server->client",
     "trigger": "edit_message чужого сообщения"
+  },
+  "ws/error.invalid_client_msg_id.json": {
+    "kind": "ws",
+    "description": "client_msg_id недопустим (не строка 1–64 из [A-Za-z0-9_-]): code = \"INVALID_CLIENT_MSG_ID\", значение обратно не отражается. Сообщение не сохранено.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message с недопустимым client_msg_id"
   },
   "ws/error.send_message.json": {
     "kind": "ws",
@@ -306,6 +376,13 @@
     "event": "message_status_updated",
     "direction": "server->client",
     "trigger": "получатель bob онлайн в момент отправки"
+  },
+  "ws/message_status_updated.reconnect.json": {
+    "kind": "ws",
+    "description": "Отправителю: получатель был не в сети и теперь вошёл в сокет — его недоставленные личные сообщения отмечены доставленными (по кадру на сообщение).",
+    "event": "message_status_updated",
+    "direction": "server->client",
+    "trigger": "auth получателя после отправки ему, пока он был не в сети"
   },
   "ws/message_updated.json": {
     "kind": "ws",

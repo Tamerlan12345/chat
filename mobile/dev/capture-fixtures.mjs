@@ -83,7 +83,7 @@ function normalizeFixture(value) {
   const mapTime = (raw) => {
     const iso = new Date(BASE + rank.get(raw) * 1000).toISOString(); // 2026-10-02T09:00:00.000Z
     if (!raw.includes('T')) return iso.slice(0, 19).replace('T', ' ');
-    let out = /.d+/.test(raw) ? iso : iso.replace(/.d+Z$/, 'Z');
+    let out = /\.\d+/.test(raw) ? iso : iso.replace(/\.\d+Z$/, 'Z');
     if (!/Z$/.test(raw)) out = out.replace(/Z$/, '');
     return out;
   };
@@ -97,6 +97,8 @@ function normalizeFixture(value) {
     if (typeof v === 'string') {
       if (key === 'token') return FAKE_JWT;
       if (key === 'storedFilename') return '1790000000000_0123456789abcdef.txt';
+      // sync cursor "<epoch>.<seq>": the epoch is random per database.
+      if (key === 'next_cursor') return v.replace(/^[0-9a-f]{16}\./, '5e7a1c0d9b3f4a62.');
       if (ISO_RE.test(v)) return mapTime(v);
       return v;
     }
@@ -282,13 +284,19 @@ export async function captureFixtures({ dataDir } = {}) {
     auth(B, tBob);
     await B.takeType('auth_success');
 
+    // delta sync: without since = only the current head cursor (start point).
+    const syncStart = await http('http/sync.bootstrap.json', 'Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова (непрозрачная строка «<эпоха>.<номер>»). С него клиент начинает, загрузив страницы переписок.',
+      'GET', '/sync', { token: tAlice }, 200);
+
     // send_message (direct): sender and recipient both get direct_message AND new_message.
+    // Mobile clients always send client_msg_id; it is echoed in message.client_msg_id.
+    const wsClientMsgId = '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b';
     A.clear(); B.clear();
-    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Привет, Боб! Договор готов к подписанию.' });
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Привет, Боб! Договор готов к подписанию.', client_msg_id: wsClientMsgId });
     const dm = await A.takeType('direct_message');
     ws('ws/direct_message.json', 'direct_message', 'Новое личное сообщение (отправителю и получателю). Всегда сопровождается new_message с той же записью.', dm, 'send_message conversationType=direct');
     ws('ws/new_message.direct.json', 'new_message', 'Дубль того же личного сообщения под общим типом new_message. Дедуплицировать по message.id.', await A.takeType('new_message'), 'send_message conversationType=direct');
-    ws('ws/message_status_updated.json', 'message_status_updated', 'Отправителю: получатель онлайн, сообщение доставлено.', await A.takeType('message_status_updated'), 'получатель bob онлайн в момент отправки');
+    ws('ws/message_status_updated.json', 'message_status_updated', 'Отправителю: получатель онлайн, сообщение доставлено.', await A.takeType('message_status_updated', 'delivered', (f) => f.messageId === dm.message.id), 'получатель bob онлайн в момент отправки');
     await B.takeType('direct_message');
     await B.takeType('new_message');
     const dmId = dm.message.id;
@@ -305,6 +313,10 @@ export async function captureFixtures({ dataDir } = {}) {
     A.clear();
     A.send({ type: 'send_message', conversationType: 'direct', targetId: 999999, text: 'Это сообщение не будет доставлено' });
     ws('ws/error.send_message.json', 'error', 'Ошибка отправки: сервер возвращает исходный text, чтобы вернуть его в поле ввода.', await A.takeType('error'), 'send_message несуществующему получателю');
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Ключ с пробелом', client_msg_id: 'не годится' });
+    ws('ws/error.invalid_client_msg_id.json', 'error', 'client_msg_id недопустим (не строка 1–64 из [A-Za-z0-9_-]): code = "INVALID_CLIENT_MSG_ID", значение обратно не отражается. Сообщение не сохранено.', await A.takeType('error'), 'send_message с недопустимым client_msg_id');
+    A.send({ type: 'send_message', conversationType: 'channel', targetId: devChannel.id, text: 'Тот же ключ в другую переписку', client_msg_id: wsClientMsgId });
+    ws('ws/error.client_msg_id_conflict.json', 'error', 'Этот client_msg_id автор уже использовал в ДРУГОЙ переписке: code = "CLIENT_MSG_ID_CONFLICT", client_msg_id отражается. Сообщение не сохранено.', await A.takeType('error'), 'send_message с client_msg_id, уже использованным для личного диалога');
 
     // typing
     A.clear(); B.clear();
@@ -329,6 +341,25 @@ export async function captureFixtures({ dataDir } = {}) {
     ws('ws/message_deleted.direct.json', 'message_deleted', 'Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы.', await A.takeType('message_deleted'), 'delete_message (direct)');
     A.send({ type: 'delete_message', messageId: cm.message.id });
     ws('ws/message_deleted.channel.json', 'message_deleted', 'Сообщение удалено в канале.', await A.takeType('message_deleted'), 'delete_message (channel)');
+
+    // ── reliable delivery over REST: idempotent send, forward paging, delta sync
+    const restClientMsgId = '0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607';
+    const idem = await http('http/messages.send-direct-idempotent.json', 'REST-отправка с client_msg_id: HTTP 201, client_msg_id в ответе. Получатель онлайн — сразу «доставлено» (message_status_updated автору).',
+      'POST', `/messages/direct/${bob.id}`, { token: tAlice, body: { text: 'Счёт отправлен на почту.', client_msg_id: restClientMsgId } }, 201);
+    await A.takeType('message_status_updated', 'delivered via REST', (f) => f.messageId === idem.id);
+    await http('http/messages.send-direct-duplicate.json', 'Повтор той же отправки (тот же client_msg_id того же автора): HTTP 200 и УЖЕ сохранённая запись; новой строки нет, получателю повторно не рассылается.',
+      'POST', `/messages/direct/${bob.id}`, { token: tAlice, body: { text: 'Счёт отправлен на почту.', client_msg_id: restClientMsgId } }, 200);
+    await http('http/messages.send-client-msg-id-invalid.json', 'Недопустимый client_msg_id: HTTP 400, { error, code: "INVALID_CLIENT_MSG_ID" }.',
+      'POST', `/messages/direct/${bob.id}`, { token: tAlice, body: { text: 'Не сохранится', client_msg_id: 'x'.repeat(65) } }, 400);
+    await http('http/messages.send-client-msg-id-conflict.json', 'client_msg_id уже использован автором в другой переписке: HTTP 409, { error, code: "CLIENT_MSG_ID_CONFLICT" }.',
+      'POST', `/messages/channels/${devChannel.id}`, { token: tAlice, body: { text: 'Не сохранится', client_msg_id: restClientMsgId } }, 409);
+    await http('http/messages.after-page.json', 'Страница ВПЕРЁД: GET /api/messages?conversationType=direct&targetId={id}&afterId={id}&limit=… — первые limit сообщений с id > afterId, по возрастанию (с delivery_status).',
+      'GET', `/messages?conversationType=direct&targetId=${bob.id}&afterId=${directPage[directPage.length - 1].id}&limit=50`, { token: tAlice }, 200);
+    await http('http/sync.page.json', 'Дельта после курсора: GET /api/sync?since={next_cursor}&limit=… — созданные, изменённые, удалённые (надгробие: is_deleted=1, text="", metadata_json=null) и сменившие статус сообщения во всех видимых переписках, по возрастанию изменения; каждое один раз в текущем состоянии. delivery_status — у личных, null у каналов.',
+      'GET', `/sync?since=${syncStart.next_cursor}&limit=50`, { token: tAlice }, 200);
+    const foreignEpoch = syncStart.next_cursor.startsWith('0123456789abcdef.') ? 'fedcba9876543210' : '0123456789abcdef';
+    await http('http/sync.cursor-invalid.json', 'Курсор не этой базы (другая эпоха: база восстановлена из резервной копии, другой сервер), прежнего формата или впереди головы: HTTP 410, { error, code: "SYNC_CURSOR_INVALID" } — начать заново с GET /api/sync без since.',
+      'GET', `/sync?since=${foreignEpoch}.1`, { token: tAlice }, 410);
 
     // presence
     A.clear(); B.clear();
@@ -420,6 +451,16 @@ export async function captureFixtures({ dataDir } = {}) {
     await A.takeType('call_answer');
     B.close();
     ws('ws/call_end.connection_lost.json', 'call_end', 'Собеседник пропал: кадр БЕЗ targetUserId, reason = "connection_lost".', await A.takeType('call_end'), 'сокет собеседника закрыт посреди разговора');
+
+    // delivered after reconnect: bob is offline now; alice writes, bob comes back.
+    A.clear();
+    A.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Боб, перезвони, как будешь на связи.', client_msg_id: '9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a' });
+    const offlineDm = await A.takeType('direct_message');
+    const B2 = await open();
+    auth(B2, tBob);
+    await B2.takeType('auth_success');
+    ws('ws/message_status_updated.reconnect.json', 'message_status_updated', 'Отправителю: получатель был не в сети и теперь вошёл в сокет — его недоставленные личные сообщения отмечены доставленными (по кадру на сообщение).',
+      await A.takeType('message_status_updated', 'delivered on reconnect', (f) => f.messageId === offlineDm.message.id), 'auth получателя после отправки ему, пока он был не в сети');
 
     // auth errors
     const bad = await open();
