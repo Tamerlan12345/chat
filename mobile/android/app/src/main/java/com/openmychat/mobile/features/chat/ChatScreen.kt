@@ -33,10 +33,7 @@ import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyAvatar
-import com.openmychat.mobile.ui.theme.ReceivedBubbleDark
-import com.openmychat.mobile.ui.theme.ReceivedBubbleLight
-import com.openmychat.mobile.ui.theme.SentBubbleDark
-import com.openmychat.mobile.ui.theme.SentBubbleLight
+import com.openmychat.mobile.ui.theme.CentyTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -331,14 +328,9 @@ fun MessageBubble(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
-    val isDark = MaterialTheme.colorScheme.background.red < 0.5f
-
-    val bubbleColor = when {
-        isOwn && isDark -> SentBubbleDark
-        isOwn -> SentBubbleLight
-        isDark -> ReceivedBubbleDark
-        else -> ReceivedBubbleLight
-    }
+    // Bubble colours come from theme tokens, never from guessing the theme by a colour channel.
+    val tokens = CentyTheme.tokens
+    val bubbleColor = if (isOwn) tokens.primarySoft else tokens.card
 
     Box(
         modifier = Modifier

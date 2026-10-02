@@ -22,9 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyAvatar
 import com.openmychat.mobile.ui.components.CentyConfirmDialog
-import com.openmychat.mobile.ui.theme.StatusAway
-import com.openmychat.mobile.ui.theme.StatusDnd
-import com.openmychat.mobile.ui.theme.StatusOnline
+import com.openmychat.mobile.ui.theme.CentyTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,21 +114,21 @@ fun ProfileScreen(
             ) {
                 StatusChip(
                     label = "В сети",
-                    color = StatusOnline,
+                    color = CentyTheme.tokens.online,
                     isSelected = user?.status == UserStatus.ONLINE,
                     onClick = { viewModel.setStatus(UserStatus.ONLINE) },
                     modifier = Modifier.weight(1f)
                 )
                 StatusChip(
                     label = "Отошел",
-                    color = StatusAway,
+                    color = CentyTheme.tokens.away,
                     isSelected = user?.status == UserStatus.AWAY,
                     onClick = { viewModel.setStatus(UserStatus.AWAY) },
                     modifier = Modifier.weight(1f)
                 )
                 StatusChip(
                     label = "Не беспокоить",
-                    color = StatusDnd,
+                    color = CentyTheme.tokens.dnd,
                     isSelected = user?.status == UserStatus.DND,
                     onClick = { viewModel.setStatus(UserStatus.DND) },
                     modifier = Modifier.weight(1f)

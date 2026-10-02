@@ -12,10 +12,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.data.model.UserStatus
-import com.openmychat.mobile.ui.theme.StatusAway
-import com.openmychat.mobile.ui.theme.StatusDnd
-import com.openmychat.mobile.ui.theme.StatusOffline
-import com.openmychat.mobile.ui.theme.StatusOnline
+import com.openmychat.mobile.ui.theme.CentyTheme
 
 @Composable
 fun StatusBadge(
@@ -24,11 +21,12 @@ fun StatusBadge(
     size: Dp = 10.dp,
     borderWidth: Dp = 1.5.dp
 ) {
+    val tokens = CentyTheme.tokens
     val color = when (status) {
-        UserStatus.ONLINE -> StatusOnline
-        UserStatus.AWAY -> StatusAway
-        UserStatus.DND -> StatusDnd
-        UserStatus.OFFLINE -> StatusOffline
+        UserStatus.ONLINE -> tokens.online
+        UserStatus.AWAY -> tokens.away
+        UserStatus.DND -> tokens.dnd
+        UserStatus.OFFLINE -> tokens.offline
     }
 
     Box(
