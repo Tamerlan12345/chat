@@ -3,7 +3,9 @@ import Foundation
 /// Observable state of the realtime socket.
 public enum RealtimeConnectionState: Sendable, Equatable {
     case disconnected
+    /// Socket opening and `auth` sent; not usable until the server answers `auth_success`.
     case connecting
+    /// The server accepted the session (`auth_success`).
     case connected
     case reconnecting(attempt: Int, delay: TimeInterval)
 }
@@ -20,7 +22,7 @@ struct ReconnectBackoff: Sendable {
         attempt += 1
         let exponent = Double(min(attempt - 1, 16))
         let exponential = min(Self.maxSeconds, Self.baseSeconds * pow(2.0, exponent))
-        return max(Self.baseSeconds, exponential + jitter * exponential)
+        return min(Self.maxSeconds, max(Self.baseSeconds, exponential + jitter * exponential))
     }
 
     mutating func reset() {
@@ -49,6 +51,8 @@ public actor WebSocketClient {
     private var generation = 0
     private var isIntentionalDisconnect = false
     private var backoff = ReconnectBackoff()
+    /// The auth_error code already reported in the current failure streak.
+    private var reportedAuthErrorCode: String?
     private var receiveTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
 
@@ -163,6 +167,7 @@ public actor WebSocketClient {
         reconnectTask?.cancel()
         reconnectTask = nil
         backoff.reset()
+        reportedAuthErrorCode = nil
         connectionState = .disconnected
         finishIncomingAudioStream()
     }
@@ -212,25 +217,41 @@ public actor WebSocketClient {
 
     private func handleReceived(_ frame: WebSocketFrame, generation: Int) {
         guard generation == self.generation else { return }
-        if connectionState != .connected {
-            // The server answered: only a working connection resets the backoff,
-            // so a server that accepts and immediately drops sockets is not hammered.
-            connectionState = .connected
-            backoff.reset()
-        }
         switch frame {
         case .text(let text):
-            guard let data = text.data(using: .utf8) else { return }
-            if let event = WSServerEvent.parse(from: data) {
-                eventContinuation?.yield(event)
-            }
+            guard let data = text.data(using: .utf8),
+                  let event = WSServerEvent.parse(from: data) else { return }
+            deliver(event, generation: generation)
 
         case .binary(let data):
             if data.count == AudioRelayEngine.frameSizeBytes {
                 receiveIncomingAudioFrame(data)
             } else if let event = WSServerEvent.parse(from: data) {
+                deliver(event, generation: generation)
+            }
+        }
+    }
+
+    private func deliver(_ event: WSServerEvent, generation: Int) {
+        switch event {
+        case .authSuccess:
+            // Only an accepted session counts as a working connection and resets the backoff.
+            connectionState = .connected
+            backoff.reset()
+            reportedAuthErrorCode = nil
+            eventContinuation?.yield(event)
+
+        case .authError(let code, _):
+            // The server keeps a rejected socket open until its auth timeout; close it now
+            // and keep backing off. Report each code once per failure streak, not per retry.
+            if reportedAuthErrorCode != code {
+                reportedAuthErrorCode = code
                 eventContinuation?.yield(event)
             }
+            handleTransportFailure(reason: "auth_error \(code)", generation: generation)
+
+        default:
+            eventContinuation?.yield(event)
         }
     }
 
