@@ -175,7 +175,7 @@ class LoginScreenTest {
 
         gate.complete(Unit)
         composeRule.waitUntil(5_000) {
-            composeRule.onAllNodes(hasText("Сообщения") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodes(hasText("Чаты") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
     }
 

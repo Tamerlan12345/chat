@@ -1,11 +1,33 @@
 package com.openmychat.mobile.ui.navigation
 
+import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -19,11 +41,15 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.scene.Scene
 import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass
 import com.openmychat.mobile.data.model.ConversationType
@@ -35,14 +61,34 @@ import com.openmychat.mobile.features.chat.ChatScreen
 import com.openmychat.mobile.features.chat.ChatViewModel
 import com.openmychat.mobile.features.conversations.ConversationsScreen
 import com.openmychat.mobile.features.profile.ProfileScreen
+import com.openmychat.mobile.R
+import com.openmychat.mobile.ui.components.CentySnackbarHost
+import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.theme.CentyMotion
+import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.theme.LocalReduceMotion
 
-private data class TopLevelItem(val icon: ImageVector, val label: String)
+private data class TopLevelItem(val icon: ImageVector, val selectedIcon: ImageVector, @StringRes val label: Int)
 
 private val TopLevelItems: Map<NavKey, TopLevelItem> = mapOf(
-    NavKey.Conversations to TopLevelItem(Icons.AutoMirrored.Filled.Chat, "Сообщения"),
-    NavKey.Announcements to TopLevelItem(Icons.Default.Campaign, "Объявления"),
-    NavKey.Profile to TopLevelItem(Icons.Default.AccountCircle, "Профиль")
+    NavKey.Conversations to TopLevelItem(Icons.AutoMirrored.Outlined.Chat, Icons.AutoMirrored.Filled.Chat, R.string.tab_chats),
+    NavKey.Announcements to TopLevelItem(Icons.Outlined.Campaign, Icons.Filled.Campaign, R.string.tab_announcements),
+    NavKey.Profile to TopLevelItem(Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle, R.string.tab_profile)
 )
+
+/** Material shared-axis X for forward/back (system grammar); a short crossfade with reduced motion. */
+private fun <T : Any> sharedAxis(reduce: Boolean, forward: Boolean): AnimatedContentTransitionScope<Scene<T>>.() -> ContentTransform = {
+    if (reduce) {
+        fadeIn(tween(CentyMotion.FAST)) togetherWith fadeOut(tween(CentyMotion.FAST))
+    } else {
+        val sign = if (forward) 1 else -1
+        val enter = slideInHorizontally(tween(CentyMotion.SLOW, easing = CentyMotion.EaseOut)) { width -> sign * width / 12 } +
+            fadeIn(tween(CentyMotion.BASE, delayMillis = 60))
+        val exit = slideOutHorizontally(tween(CentyMotion.SLOW, easing = CentyMotion.EaseOut)) { width -> -sign * width / 12 } +
+            fadeOut(tween(CentyMotion.FAST))
+        enter togetherWith exit
+    }
+}
 
 /**
  * Root of the UI: the sign-in flow, or the tabs inside a [NavigationSuiteScaffold] (bottom bar on
@@ -75,16 +121,24 @@ fun CentyNavigation(
     val isCompact = !adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
     val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>(isListDetail)
 
+    val reduce = LocalReduceMotion.current
     val display: @Composable () -> Unit = {
         NavDisplay(
             entries = entries,
             onBack = { navigator.goBack() },
-            sceneStrategies = listOf(listDetailStrategy)
+            sceneStrategies = listOf(listDetailStrategy),
+            transitionSpec = sharedAxis(reduce, forward = true),
+            popTransitionSpec = sharedAxis(reduce, forward = false),
+            predictivePopTransitionSpec = { _ -> sharedAxis<NavKey>(reduce, forward = false)(this) }
         )
     }
 
+    val snackbarHost = LocalSnackbarHostState.current
     if (state.isAuthFlow) {
-        Box(modifier = modifier.fillMaxSize()) { display() }
+        Box(modifier = modifier.fillMaxSize()) {
+            display()
+            CentySnackbarHost(snackbarHost, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding())
+        }
         return
     }
 
@@ -95,21 +149,21 @@ fun CentyNavigation(
         currentKey is NavKey.Chat && isCompact -> NavigationSuiteType.None
         else -> NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(adaptiveInfo)
     }
-    val colors = MaterialTheme.colorScheme
+    val tokens = CentyTheme.tokens
     val itemColors = NavigationSuiteDefaults.itemColors(
         navigationBarItemColors = NavigationBarItemDefaults.colors(
-            selectedIconColor = colors.onPrimaryContainer,
-            selectedTextColor = colors.primary,
-            indicatorColor = colors.primaryContainer,
-            unselectedIconColor = colors.onSurfaceVariant,
-            unselectedTextColor = colors.onSurfaceVariant
+            selectedIconColor = tokens.accentText,
+            selectedTextColor = tokens.accentText,
+            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            unselectedIconColor = tokens.textSecondary,
+            unselectedTextColor = tokens.textSecondary
         ),
         navigationRailItemColors = NavigationRailItemDefaults.colors(
-            selectedIconColor = colors.onPrimaryContainer,
-            selectedTextColor = colors.primary,
-            indicatorColor = colors.primaryContainer,
-            unselectedIconColor = colors.onSurfaceVariant,
-            unselectedTextColor = colors.onSurfaceVariant
+            selectedIconColor = tokens.accentText,
+            selectedTextColor = tokens.accentText,
+            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            unselectedIconColor = tokens.textSecondary,
+            unselectedTextColor = tokens.textSecondary
         )
     )
 
@@ -117,22 +171,36 @@ fun CentyNavigation(
         modifier = modifier,
         layoutType = layoutType,
         navigationSuiteColors = NavigationSuiteDefaults.colors(
-            navigationBarContainerColor = colors.surfaceVariant.copy(alpha = 0.7f)
+            navigationBarContainerColor = tokens.frame,
+            navigationRailContainerColor = tokens.frame
         ),
+        containerColor = tokens.list,
         navigationSuiteItems = {
             TopLevelRoutes.forEach { route ->
                 val item = TopLevelItems.getValue(route)
+                val selected = route == state.topLevelRoute
                 item(
-                    selected = route == state.topLevelRoute,
+                    selected = selected,
                     onClick = { navigator.navigate(route) },
-                    icon = { Icon(item.icon, contentDescription = null) },
-                    label = { Text(item.label) },
+                    icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
+                    label = { Text(stringResource(item.label), maxLines = 1) },
                     colors = itemColors
                 )
             }
         }
     ) {
-        display()
+        // The bottom bar already pads for the gesture area; screens above it must not pad again.
+        val barInsets = if (layoutType == NavigationSuiteType.NavigationBar) WindowInsets.navigationBars else WindowInsets(0, 0, 0, 0)
+        Box(Modifier.fillMaxSize().consumeWindowInsets(barInsets)) {
+            display()
+            CentySnackbarHost(
+                snackbarHost,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime).exclude(barInsets))
+                    .padding(bottom = if (currentKey is NavKey.Chat) 72.dp else 0.dp)
+            )
+        }
     }
 }
 
