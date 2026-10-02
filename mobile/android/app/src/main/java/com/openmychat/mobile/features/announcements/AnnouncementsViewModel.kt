@@ -2,12 +2,16 @@ package com.openmychat.mobile.features.announcements
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.Announcement
 import com.openmychat.mobile.data.repository.AnnouncementsRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -25,6 +29,9 @@ sealed interface AnnouncementsUiState {
     ) : AnnouncementsUiState
 }
 
+/** One-off outcomes for the snackbar and haptics. */
+enum class AnnouncementsEvent { RefreshFailed, Acknowledged, AcknowledgeFailed }
+
 @HiltViewModel
 class AnnouncementsViewModel @Inject constructor(
     private val announcementsRepository: AnnouncementsRepository,
@@ -33,6 +40,12 @@ class AnnouncementsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<AnnouncementsUiState>(AnnouncementsUiState.Loading)
     val uiState: StateFlow<AnnouncementsUiState> = _uiState.asStateFlow()
+
+    /** Realtime link status for the connection banner. */
+    val connectionState: StateFlow<ConnectionState> = realtimeRepository.connectionState
+
+    private val _events = MutableSharedFlow<AnnouncementsEvent>(extraBufferCapacity = 4)
+    val events: SharedFlow<AnnouncementsEvent> = _events.asSharedFlow()
 
     init {
         loadAnnouncements()
@@ -62,6 +75,7 @@ class AnnouncementsViewModel @Inject constructor(
                     _uiState.value = AnnouncementsUiState.Error(e.message ?: "Не удалось загрузить объявления")
                 } else {
                     updateContent { it.copy(isRefreshing = false) }
+                    _events.tryEmit(AnnouncementsEvent.RefreshFailed)
                 }
             }
         }
@@ -104,10 +118,14 @@ class AnnouncementsViewModel @Inject constructor(
                         announcements = content.announcements.map { ann ->
                             if (ann.id == selected.id) ann.copy(isConfirmed = true) else ann
                         },
-                        selected = null
+                        // The open sheet turns into its success state; the user closes it.
+                        selected = content.selected?.takeIf { it.id == selected.id }?.copy(isConfirmed = true) ?: content.selected
                     )
                 }
+                _events.tryEmit(AnnouncementsEvent.Acknowledged)
             } catch (_: Exception) {
+                // The sheet stays open with the button enabled, so the user can try again.
+                _events.tryEmit(AnnouncementsEvent.AcknowledgeFailed)
             } finally {
                 updateContent { it.copy(isAcknowledging = false) }
             }
