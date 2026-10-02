@@ -20,7 +20,6 @@ interface SessionRepository {
     /** Emits whenever any part of the session that gates protected routes changes. */
     val routeStates: Flow<AuthenticatedRouteState>
 
-    val hasConfiguredServer: Boolean
     val currentUserId: Long?
     val isAdmin: Boolean
     val messageEditWindowMinutes: String
@@ -47,7 +46,6 @@ class DefaultSessionRepository @Inject constructor(
         AuthenticatedRouteState(token, user != null, storageState)
     }
 
-    override val hasConfiguredServer: Boolean get() = sessionManager.serverUrl.isNotBlank()
     override val currentUserId: Long? get() = sessionManager.currentUser?.id
     override val isAdmin: Boolean get() = sessionManager.currentUser?.permissions?.isAdmin == true
     override val messageEditWindowMinutes: String get() = sessionManager.messageEditWindowMinutes

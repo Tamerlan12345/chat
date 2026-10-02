@@ -34,7 +34,7 @@ import java.io.File
 import javax.inject.Inject
 
 /**
- * Signed-in navigation on a device. The server endpoint is unreachable on purpose: screens show
+ * Signed-in navigation on a device. The test server endpoint is unreachable on purpose: screens show
  * their error states, while tabs, back handling and logout must still work.
  */
 @HiltAndroidTest
@@ -61,9 +61,6 @@ class MainNavigationTest {
     @Before
     fun signInAndLaunch() {
         hiltRule.inject()
-        sessionManager.commitVerifiedServerEndpoint(
-            sessionManager.validateServerEndpoint("https://127.0.0.1:9").getOrThrow()
-        )
         sessionManager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Алиса Тестова"), "token")
         scenario = ActivityScenario.launch(MainActivity::class.java)
     }
@@ -99,7 +96,7 @@ class MainNavigationTest {
         composeRule.onNode(hasText("Выйти") and hasClickAction()).performClick()
 
         composeRule.waitUntil(5_000) {
-            composeRule.onAllNodes(hasText("Вход в CentyChat")).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodes(hasText("Войти") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
         assertNull(sessionManager.token)
         saveScreenshot("after-logout")

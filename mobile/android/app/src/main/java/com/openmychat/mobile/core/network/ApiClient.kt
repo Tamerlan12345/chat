@@ -17,8 +17,7 @@ import java.util.concurrent.TimeUnit
 
 class ApiClient(
     private val sessionManager: SessionManager,
-    private val okHttpClient: OkHttpClient? = null,
-    private val verificationHttpClient: OkHttpClient? = null
+    private val okHttpClient: OkHttpClient? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -70,16 +69,7 @@ class ApiClient(
             .build()
     }
 
-    private val verificationClient: OkHttpClient by lazy {
-        verificationHttpClient ?: OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .build()
-    }
-
-    private fun trustedApiBaseUrl(): HttpUrl? = sessionManager.validateServerEndpoint(sessionManager.serverUrl)
-        .getOrNull()?.apiBaseUrl?.toHttpUrlOrNull()
+    private fun trustedApiBaseUrl(): HttpUrl? = sessionManager.serverEndpoint.apiBaseUrl.toHttpUrlOrNull()
 
     private fun canSendCurrentSessionCredentials(url: HttpUrl): Boolean =
         ServerEndpointPolicy.canSendBearerCredentials(url, trustedApiBaseUrl())
@@ -157,15 +147,6 @@ class ApiClient(
         executeRequest(request)
     }
 
-    suspend fun checkHealthAt(endpoint: ValidatedEndpoint): HealthStatus = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("${endpoint.apiBaseUrl}/health")
-            .get()
-            .build()
-
-        executeRequest(request, verificationClient)
-    }
-
     suspend fun knock(request: KnockRequest): KnockResponse = withContext(Dispatchers.IO) {
         val body = json.encodeToString(request).toRequestBody(jsonMediaType)
         val httpRequest = Request.Builder()
@@ -174,16 +155,6 @@ class ApiClient(
             .build()
 
         executeRequest(httpRequest)
-    }
-
-    suspend fun knockAt(endpoint: ValidatedEndpoint, request: KnockRequest): KnockResponse = withContext(Dispatchers.IO) {
-        val body = json.encodeToString(request).toRequestBody(jsonMediaType)
-        val httpRequest = Request.Builder()
-            .url("${endpoint.apiBaseUrl}/auth/knock")
-            .post(body)
-            .build()
-
-        executeRequest(httpRequest, verificationClient)
     }
 
     suspend fun claimDevice(request: DeviceClaimRequest): DeviceClaimResponse = withContext(Dispatchers.IO) {

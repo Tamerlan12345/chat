@@ -18,7 +18,7 @@ import androidx.savedstate.compose.serialization.serializers.MutableStateSeriali
 /**
  * Navigation state of the whole app.
  *
- * - [authBackStack] holds the sign-in flow (server setup, login). It is non-empty exactly while the
+ * - [authBackStack] holds the sign-in flow (login; the server is fixed at build time). It is non-empty exactly while the
  *   user is signed out, and is the only stack shown then.
  * - [topLevelBackStacks] hold one independent stack per navigation-bar destination. The start tab
  *   (Conversations) is always shown below the selected tab, so the app is exited through it. They
@@ -57,8 +57,9 @@ class AppNavigationState(
             topLevelRoute = mutableStateOf(NavKey.Conversations)
         )
 
-        fun unauthenticated(hasConfiguredServer: Boolean): AppNavigationState = AppNavigationState(
-            authBackStack = NavBackStack(if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect),
+        /** First launch and every signed-out start: straight to login. */
+        fun signedOut(): AppNavigationState = AppNavigationState(
+            authBackStack = NavBackStack(NavKey.Login),
             topLevelBackStacks = TopLevelRoutes.associateWith { NavBackStack() },
             topLevelRoute = mutableStateOf(NavKey.Conversations)
         )

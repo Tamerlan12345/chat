@@ -20,6 +20,18 @@ if (!projectDir.absolutePath.all { it.code < 128 }) {
     )
 }
 
+// The production server. Release builds always use it: there is no server field, no runtime
+// override and no build property that reaches the release build type.
+val productionServerUrl = "https://centychat-production.up.railway.app"
+
+// Debug builds only: `-Pcentychat.serverUrl=https://10.0.2.2:8443` points the app at the local dev
+// stand (mobile/dev/README.md). Defaults to production. Only a bare scheme://host[:port] is accepted.
+val debugServerUrl: String = providers.gradleProperty("centychat.serverUrl").orNull
+    ?.trim()?.removeSuffix("/")?.takeIf { it.isNotEmpty() } ?: productionServerUrl
+require(Regex("""https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?""").matches(debugServerUrl)) {
+    "centychat.serverUrl must look like https://host[:port], got '$debugServerUrl'"
+}
+
 android {
     namespace = "com.openmychat.mobile"
     compileSdk = 36
@@ -40,10 +52,12 @@ android {
     buildTypes {
         debug {
             isDebuggable = true
+            buildConfigField("String", "SERVER_URL", "\"$debugServerUrl\"")
         }
 
         release {
             isMinifyEnabled = true
+            buildConfigField("String", "SERVER_URL", "\"$productionServerUrl\"")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -56,6 +70,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

@@ -8,6 +8,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import com.openmychat.mobile.core.network.ValidatedEndpoint
+import com.openmychat.mobile.testing.TestSessions
 import java.io.File
 
 class SessionManagerStorageTest {
@@ -33,12 +35,12 @@ class SessionManagerStorageTest {
             .singleOrNull { constructor ->
                 constructor.parameterTypes.size == 2 &&
                     constructor.parameterTypes[0] == SharedPreferences::class.java &&
-                    constructor.parameterTypes[1] == Boolean::class.javaPrimitiveType
+                    constructor.parameterTypes[1] == ValidatedEndpoint::class.java
             }
             ?: throw AssertionError("SessionManager must provide an internal storage constructor for deterministic tests")
         storageConstructor.isAccessible = true
         val storage = FailingSharedPreferences()
-        val manager = storageConstructor.newInstance(storage, false) as SessionManager
+        val manager = storageConstructor.newInstance(storage, TestSessions.CHAT_EXAMPLE) as SessionManager
 
         try {
             manager.saveAuthSuccess(
@@ -61,30 +63,6 @@ class SessionManagerStorageTest {
         assertNull(manager.currentUser)
         assertNull(manager.deviceSecret)
         assertTrue(storage.persistedValues.isEmpty())
-    }
-
-    @Test
-    fun switchingToAnotherVerifiedServerClearsThePreviousServerSession() {
-        val storageConstructor = SessionManager::class.java.declaredConstructors
-            .single { constructor ->
-                constructor.parameterTypes.contentEquals(
-                    arrayOf(SharedPreferences::class.java, Boolean::class.javaPrimitiveType)
-                )
-            }
-        storageConstructor.isAccessible = true
-        val manager = storageConstructor.newInstance(AvailableSharedPreferences(), false) as SessionManager
-
-        manager.commitVerifiedServerEndpoint(
-            manager.validateServerEndpoint("https://trusted.example").getOrThrow()
-        )
-        manager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "trusted-token")
-
-        manager.commitVerifiedServerEndpoint(
-            manager.validateServerEndpoint("https://new-server.example").getOrThrow()
-        )
-
-        assertNull(manager.token)
-        assertNull(manager.currentUser)
     }
 
     @Test

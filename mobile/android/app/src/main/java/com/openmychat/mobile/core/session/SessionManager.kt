@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import android.content.pm.ApplicationInfo
+import com.openmychat.mobile.core.config.ServerConfig
 import com.openmychat.mobile.core.network.ServerEndpointPolicy
 import com.openmychat.mobile.core.network.ValidatedEndpoint
 import com.openmychat.mobile.data.model.User
@@ -24,27 +24,35 @@ class SecureStorageUnavailableException : IllegalStateException(
     "Secure device storage is unavailable. Unlock the device or restore screen lock, then try again."
 )
 
+/**
+ * Fail-closed encrypted store for the session (token, user, device secret).
+ *
+ * The server is fixed at build time ([ServerConfig]); [serverEndpoint] is never read from storage.
+ * The stored `server_url` only records which server issued the stored credentials: anything issued
+ * by another server (an older install's custom address, or a debug build pointed elsewhere) is
+ * wiped on start, so the user signs in again instead of sending a token to the wrong host.
+ */
 class SessionManager private constructor(
     private val prefs: SharedPreferences?,
-    private val isDebuggableBuild: Boolean,
+    val serverEndpoint: ValidatedEndpoint,
     private val invalidationStore: SessionInvalidationStore,
     @Suppress("UNUSED_PARAMETER") private val constructorMarker: Unit
 ) {
 
     internal constructor(
         prefs: SharedPreferences?,
-        isDebuggableBuild: Boolean
-    ) : this(prefs, isDebuggableBuild, NoOpSessionInvalidationStore, Unit)
+        serverEndpoint: ValidatedEndpoint
+    ) : this(prefs, serverEndpoint, NoOpSessionInvalidationStore, Unit)
 
     internal constructor(
         prefs: SharedPreferences?,
-        isDebuggableBuild: Boolean,
+        serverEndpoint: ValidatedEndpoint,
         invalidationStore: SessionInvalidationStore
-    ) : this(prefs, isDebuggableBuild, invalidationStore, Unit)
+    ) : this(prefs, serverEndpoint, invalidationStore, Unit)
 
     constructor(context: Context) : this(
         prefs = createEncryptedPreferences(context),
-        isDebuggableBuild = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+        serverEndpoint = ServerConfig.endpoint,
         invalidationStore = createSessionInvalidationStore(context),
         constructorMarker = Unit
     )
@@ -72,17 +80,15 @@ class SessionManager private constructor(
     private val _mustChangePasswordFlow = MutableStateFlow(false)
     val mustChangePasswordFlow: StateFlow<Boolean> = _mustChangePasswordFlow.asStateFlow()
 
-    private val _serverUrlFlow = MutableStateFlow(DEFAULT_SERVER_URL)
-    val serverUrlFlow: StateFlow<String> = _serverUrlFlow.asStateFlow()
-
-    private var verifiedRecoveryEndpoint: ValidatedEndpoint? = null
     private var ephemeralDeviceId: String? = null
 
     init {
         if (_storageState.value == SessionStorageState.AVAILABLE) {
+            discardCredentialsIssuedByAnotherServer()
+        }
+        if (_storageState.value == SessionStorageState.AVAILABLE) {
             _tokenFlow.value = readString(KEY_TOKEN)
             _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
-            restorePersistedServerEndpoint()
 
             val userJson = readString(KEY_CURRENT_USER)
             if (!userJson.isNullOrBlank()) {
@@ -92,6 +98,32 @@ class SessionManager private constructor(
                     _currentUserFlow.value = null
                 }
             }
+        }
+    }
+
+    /**
+     * A token, user or device secret is only valid on the server that issued it. If the stored
+     * credentials were issued by a different server, or carry no record of their server (they can
+     * only come from an older install), they are removed in one commit and the user signs in again.
+     * The device id is not a credential and is kept. A failed commit fails closed.
+     */
+    private fun discardCredentialsIssuedByAnotherServer() {
+        val stored = readString(KEY_SERVER_URL)
+        val issuedBy = stored?.let {
+            ServerEndpointPolicy.validate(it, allowInsecureDebug = true).getOrNull()?.apiBaseUrl
+        }
+        if (issuedBy == serverEndpoint.apiBaseUrl) return
+        val holdsCredentials = listOf(KEY_TOKEN, KEY_CURRENT_USER, KEY_DEVICE_SECRET)
+            .any { !readString(it).isNullOrEmpty() }
+        if (stored == null && !holdsCredentials) return
+        editSecureStorage {
+            remove(KEY_TOKEN)
+            remove(KEY_CURRENT_USER)
+            remove(KEY_MUST_CHANGE_PASSWORD)
+            remove(KEY_DEVICE_SECRET)
+            remove(KEY_MSG_EDIT_WINDOW)
+            remove(KEY_MSG_DELETE_WINDOW)
+            putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
         }
     }
 
@@ -159,50 +191,12 @@ class SessionManager private constructor(
     private fun writeBoolean(key: String, value: Boolean): Boolean =
         editSecureStorage { putBoolean(key, value) }
 
-    var serverUrl: String
-        get() = _serverUrlFlow.value
-        set(value) {
-            validateServerEndpoint(value).onSuccess(::useServerEndpointForVerification)
-        }
-
-    fun validateServerEndpoint(raw: String): Result<ValidatedEndpoint> =
-        ServerEndpointPolicy.validate(raw, allowInsecureDebug = isDebuggableBuild)
-
-    fun useServerEndpointForVerification(endpoint: ValidatedEndpoint) {
-        check(_tokenFlow.value == null && _currentUserFlow.value == null) {
-            "An authenticated session cannot be moved to an unverified server"
-        }
-        _serverUrlFlow.value = endpoint.apiBaseUrl
-        verifiedRecoveryEndpoint = endpoint
-    }
-
-    fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
-        if (_storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()) {
-            // Recovery must not weaken invalidation by persisting an endpoint before fresh auth.
-            useServerEndpointForVerification(endpoint)
-            return
-        }
-        if (_serverUrlFlow.value != endpoint.apiBaseUrl && !clearSession()) {
-            throw SecureStorageUnavailableException()
-        }
-        if (!writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)) {
-            throw SecureStorageUnavailableException()
-        }
-        _serverUrlFlow.value = endpoint.apiBaseUrl
-    }
-
-    fun restorePersistedServerEndpoint() {
-        val stored = readString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
-        val endpoint = validateServerEndpoint(stored).getOrNull()
-        if (endpoint == null && stored.isNotBlank()) {
-            writeString(KEY_SERVER_URL, null)
-        }
-        _serverUrlFlow.value = endpoint?.apiBaseUrl ?: DEFAULT_SERVER_URL
-    }
+    /** API base URL of the build-time server, e.g. `https://host/api`. */
+    val serverUrl: String
+        get() = serverEndpoint.apiBaseUrl
 
     val wsUrl: String
-        get() = validateServerEndpoint(serverUrl).getOrNull()?.webSocketUrl
-            ?: error("A verified server endpoint is required before opening a WebSocket")
+        get() = serverEndpoint.webSocketUrl
 
     var token: String?
         get() = readString(KEY_TOKEN)
@@ -308,6 +302,7 @@ class SessionManager private constructor(
             return
         }
         if (!editSecureStorage {
+                putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
                 putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
@@ -323,7 +318,7 @@ class SessionManager private constructor(
     /**
      * Commits a clean replacement in one encrypted-preferences transaction before any marker is
      * cleared. A crash before [invalidationStore.clear] remains invalidated; a crash afterwards
-     * can restore only this fully verified endpoint and fresh authenticated session.
+     * can restore only this fresh authenticated session for the build-time server.
      */
     private fun commitRecoveredAuthenticatedSession(
         user: User,
@@ -331,10 +326,9 @@ class SessionManager private constructor(
         mustChangePassword: Boolean,
         encodedUser: String
     ) {
-        val endpoint = verifiedRecoveryEndpoint ?: throw SecureStorageUnavailableException()
         if (!editSecureStorage(allowRecoveryFromPersistentInvalidation = true) {
                 clear()
-                putString(KEY_SERVER_URL, endpoint.apiBaseUrl)
+                putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
                 putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
@@ -351,7 +345,6 @@ class SessionManager private constructor(
         _tokenFlow.value = token
         _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
         _mustChangePasswordFlow.value = mustChangePassword
-        _serverUrlFlow.value = endpoint.apiBaseUrl
         ephemeralDeviceId = null
     }
 
@@ -384,7 +377,7 @@ class SessionManager private constructor(
             null
         }
 
-        const val DEFAULT_SERVER_URL = ""
+        /** Records which server issued the stored credentials; never used to pick the endpoint. */
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_TOKEN = "jwt_token"
         private const val KEY_DEVICE_ID = "device_id"

@@ -6,11 +6,11 @@ import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.repository.DefaultAuthRepository
 import com.openmychat.mobile.features.auth.LoginUiState
 import com.openmychat.mobile.features.auth.LoginViewModel
-import com.openmychat.mobile.features.connect.ServerConnectUiState
-import com.openmychat.mobile.features.connect.ServerConnectViewModel
 import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.NavKey
+import com.openmychat.mobile.core.network.ValidatedEndpoint
+import com.openmychat.mobile.testing.TestSessions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -114,8 +114,6 @@ class SessionManagerPersistentInvalidationTest {
         assertFalse(keyEraser.erased)
 
         val recovering = sessionManager(securePrefs, invalidation)
-        val endpoint = recovering.validateServerEndpoint("https://chat.example").getOrThrow()
-        recovering.commitVerifiedServerEndpoint(endpoint)
         recovering.saveAuthSuccess(alice(), "fresh-token")
 
         assertFalse(marker.invalidated)
@@ -127,7 +125,7 @@ class SessionManagerPersistentInvalidationTest {
     }
 
     @Test
-    fun verifiedEndpointAndFreshLoginCompleteRecoveryBeforeMarkersAreCleared() {
+    fun freshLoginCompletesRecoveryBeforeMarkersAreCleared() {
         val securePrefs = CommitControlledSharedPreferences()
         val marker = MemorySessionInvalidationMarker(initiallyInvalidated = true)
         val sentinel = MemorySessionInvalidationSentinel(initiallyInvalidated = true)
@@ -138,8 +136,6 @@ class SessionManagerPersistentInvalidationTest {
         )
         val recovering = sessionManager(securePrefs, invalidation)
 
-        val endpoint = recovering.validateServerEndpoint("https://chat.example").getOrThrow()
-        recovering.commitVerifiedServerEndpoint(endpoint)
         assertEquals(
             NavKey.Login,
             SessionRouteGuard.destinationForNavigation(
@@ -148,8 +144,7 @@ class SessionManagerPersistentInvalidationTest {
                     token = recovering.token,
                     hasCurrentUser = recovering.currentUser != null,
                     storageState = recovering.storageState.value
-                ),
-                hasConfiguredServer = recovering.serverUrl.isNotBlank()
+                )
             )
         )
         val ephemeralDeviceId = recovering.deviceId
@@ -191,7 +186,7 @@ class SessionManagerPersistentInvalidationTest {
     }
 
     @Test
-    fun invalidatedOnboardingVerifiesEndpointThenLoginCommitsFreshSessionBeforeNavigation() = runBlocking {
+    fun invalidatedStoreRecoversThroughAFreshLoginBeforeNavigation() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val securePrefs = CommitControlledSharedPreferences()
@@ -203,19 +198,7 @@ class SessionManagerPersistentInvalidationTest {
                 sentinel = sentinel
             )
             val sessionManager = sessionManager(securePrefs, invalidation)
-            val serverConnect = ServerConnectViewModel(
-                DefaultAuthRepository(
-                    ApiClient(sessionManager, verificationHttpClient = verifiedOnboardingClient()),
-                    sessionManager
-                )
-            )
-            var paired: Boolean? = null
 
-            serverConnect.updateServerUrl("https://chat.example")
-            serverConnect.checkConnection { paired = it }
-            withTimeout(2_000) { serverConnect.uiState.first { it is ServerConnectUiState.Success } }
-
-            assertEquals(false, paired)
             assertEquals("https://chat.example/api", sessionManager.serverUrl)
             assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
 
@@ -262,13 +245,13 @@ class SessionManagerPersistentInvalidationTest {
             candidate.parameterTypes.contentEquals(
                 arrayOf(
                     SharedPreferences::class.java,
-                    Boolean::class.javaPrimitiveType,
+                    ValidatedEndpoint::class.java,
                     SessionInvalidationStore::class.java
                 )
             )
         } ?: throw AssertionError("SessionManager must support injected persistent invalidation for restart tests")
         constructor.isAccessible = true
-        return constructor.newInstance(securePrefs, false, invalidation) as SessionManager
+        return constructor.newInstance(securePrefs, TestSessions.CHAT_EXAMPLE, invalidation) as SessionManager
     }
 
     private fun assertStorageFailure(operation: () -> Unit) {
@@ -281,23 +264,6 @@ class SessionManagerPersistentInvalidationTest {
     }
 
     private fun alice() = User(id = 1, username = "alice", fullName = "Alice")
-
-    private fun verifiedOnboardingClient(): OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor { chain ->
-            val body = when (chain.request().url.encodedPath) {
-                "/api/health" -> """{"status":"ok"}"""
-                "/api/auth/knock" -> """{"status":"login_required"}"""
-                else -> error("Unexpected onboarding endpoint: ${chain.request().url}")
-            }
-            Response.Builder()
-                .request(chain.request())
-                .protocol(Protocol.HTTP_1_1)
-                .code(200)
-                .message("OK")
-                .body(body.toResponseBody())
-                .build()
-        }
-        .build()
 
     private fun loginClient(): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor { chain ->

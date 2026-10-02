@@ -20,6 +20,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 /**
  * The server answers TOO_MANY_SESSIONS / RATE_LIMITED with auth_error on an already open socket and
@@ -30,8 +31,7 @@ import org.junit.Test
 class WebSocketClientBackoffTest {
 
     private val scope = TestScope(StandardTestDispatcher())
-    private val sessionManager = SessionManager(prefs = InMemorySharedPreferences(), isDebuggableBuild = false).apply {
-        commitVerifiedServerEndpoint(validateServerEndpoint("https://chat.example").getOrThrow())
+    private val sessionManager = SessionManager(prefs = InMemorySharedPreferences(), serverEndpoint = TestSessions.CHAT_EXAMPLE).apply {
         saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token")
     }
     private val sockets = mutableListOf<Pair<WebSocket, WebSocketListener>>()

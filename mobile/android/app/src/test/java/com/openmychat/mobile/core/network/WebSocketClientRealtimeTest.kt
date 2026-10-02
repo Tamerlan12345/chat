@@ -20,12 +20,12 @@ import okio.ByteString.Companion.toByteString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WebSocketClientRealtimeTest {
 
-    private val sessionManager = SessionManager(prefs = InMemorySharedPreferences(), isDebuggableBuild = false).apply {
-        commitVerifiedServerEndpoint(validateServerEndpoint("https://chat.example").getOrThrow())
+    private val sessionManager = SessionManager(prefs = InMemorySharedPreferences(), serverEndpoint = TestSessions.CHAT_EXAMPLE).apply {
         saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token")
     }
     private val sockets = mutableListOf<FakeWebSocket>()

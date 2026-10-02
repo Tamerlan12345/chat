@@ -1,6 +1,8 @@
 package com.openmychat.mobile
 
 import android.content.SharedPreferences
+import com.openmychat.mobile.core.network.ServerEndpointPolicy
+import com.openmychat.mobile.core.network.ValidatedEndpoint
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.di.SessionModule
 import dagger.Module
@@ -10,8 +12,9 @@ import dagger.hilt.testing.TestInstallIn
 import javax.inject.Singleton
 
 /**
- * Starts every instrumented test signed out with no server configured, independent of whatever the
- * device's encrypted store holds from earlier runs.
+ * Starts every instrumented test signed out, independent of whatever the device's encrypted store
+ * holds from earlier runs. The server is an unreachable local HTTPS address so tests never talk to
+ * production (the build-time server of a debug build defaults to it).
  */
 @Module
 @TestInstallIn(components = [SingletonComponent::class], replaces = [SessionModule::class])
@@ -19,7 +22,10 @@ object TestSessionModule {
     @Provides
     @Singleton
     fun provideSessionManager(): SessionManager =
-        SessionManager(prefs = InMemorySharedPreferences(), isDebuggableBuild = true)
+        SessionManager(prefs = InMemorySharedPreferences(), serverEndpoint = UNREACHABLE_SERVER)
+
+    val UNREACHABLE_SERVER: ValidatedEndpoint =
+        ServerEndpointPolicy.validate("https://127.0.0.1:9", allowInsecureDebug = true).getOrThrow()
 }
 
 private class InMemorySharedPreferences : SharedPreferences {

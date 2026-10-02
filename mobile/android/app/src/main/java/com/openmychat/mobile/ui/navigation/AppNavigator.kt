@@ -56,10 +56,10 @@ class AppNavigator(val state: AppNavigationState) {
      * Drops every protected entry, including the tab roots, so all their ViewModels are cleared, and
      * shows the sign-in flow. Top-level stacks stay empty until the next sign-in.
      */
-    fun onLoggedOut(hasConfiguredServer: Boolean) {
+    fun onLoggedOut() {
         state.topLevelBackStacks.values.forEach { it.clear() }
         state.topLevelRoute = state.startRoute
-        state.authBackStack.resetTo(if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect)
+        state.authBackStack.resetTo(NavKey.Login)
     }
 
     /**
@@ -67,11 +67,11 @@ class AppNavigator(val state: AppNavigationState) {
      * survive a restore: their signalling state is gone, and showing the entry again would re-send
      * call_offer or show a phantom ringing screen.
      */
-    fun syncWithSession(session: AuthenticatedRouteState, hasConfiguredServer: Boolean) {
+    fun syncWithSession(session: AuthenticatedRouteState) {
         state.topLevelBackStacks.values.forEach { stack -> stack.removeAll { it is NavKey.Call } }
         val authenticated = SessionRouteGuard.hasAuthenticatedSession(session)
         when {
-            !authenticated && !state.isAuthFlow -> onLoggedOut(hasConfiguredServer)
+            !authenticated && !state.isAuthFlow -> onLoggedOut()
             authenticated && state.isAuthFlow -> onAuthenticated(selectedTab = state.startRoute)
         }
     }

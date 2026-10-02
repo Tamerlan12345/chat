@@ -24,8 +24,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun LoginScreen(
     viewModel: LoginViewModel,
-    onLoginSuccess: () -> Unit,
-    onNavigateBackToServerConnect: () -> Unit
+    onLoginSuccess: () -> Unit
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -37,6 +36,8 @@ fun LoginScreen(
     val changePasswordError by viewModel.changePasswordError.collectAsState()
 
     val focusManager = LocalFocusManager.current
+
+    LaunchedEffect(viewModel) { viewModel.announceDevice() }
 
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) {
@@ -143,11 +144,6 @@ fun LoginScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            TextButton(onClick = onNavigateBackToServerConnect) {
-                Text("Сменить адрес сервера")
-            }
 
             if (uiState is LoginUiState.Error) {
                 Spacer(modifier = Modifier.height(16.dp))

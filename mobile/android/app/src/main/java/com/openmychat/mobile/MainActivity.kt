@@ -57,13 +57,13 @@ class MainActivity : ComponentActivity() {
                     if (SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
                         AppNavigationState.authenticated()
                     } else {
-                        AppNavigationState.unauthenticated(appViewModel.hasConfiguredServer)
+                        AppNavigationState.signedOut()
                     }
                 }
                 // A restored stack is re-checked against the session before it is ever rendered.
                 val navigator = remember(navigationState) {
                     AppNavigator(navigationState).also {
-                        it.syncWithSession(appViewModel.routeState(), appViewModel.hasConfiguredServer)
+                        it.syncWithSession(appViewModel.routeState())
                     }
                 }
                 val session by appViewModel.routeStates.collectAsState(initial = appViewModel.routeState())
@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
                         // Re-read the live session: combined emissions can be intermediate states.
                         val current = appViewModel.routeState()
                         if (!SessionRouteGuard.hasAuthenticatedSession(current) && !navigator.state.isAuthFlow) {
-                            navigator.onLoggedOut(appViewModel.hasConfiguredServer)
+                            navigator.onLoggedOut()
                         }
                     }
                 }
@@ -142,8 +142,7 @@ class MainActivity : ComponentActivity() {
                     CentyNavigation(
                         navigator = navigator,
                         session = session,
-                        currentSession = appViewModel::routeState,
-                        hasConfiguredServer = { appViewModel.hasConfiguredServer }
+                        currentSession = appViewModel::routeState
                     )
 
                     // Global mandatory blocking password change dialog

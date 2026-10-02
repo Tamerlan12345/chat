@@ -11,6 +11,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 class ApiClientUnauthorizedSessionTest {
 
@@ -33,14 +34,11 @@ class ApiClientUnauthorizedSessionTest {
     private fun authenticatedSessionManager(): SessionManager {
         val constructor = SessionManager::class.java.declaredConstructors.single { candidate ->
             candidate.parameterTypes.contentEquals(
-                arrayOf(SharedPreferences::class.java, Boolean::class.javaPrimitiveType)
+                arrayOf(SharedPreferences::class.java, ValidatedEndpoint::class.java)
             )
         }
         constructor.isAccessible = true
-        val sessionManager = constructor.newInstance(InMemorySharedPreferences(), false) as SessionManager
-        sessionManager.commitVerifiedServerEndpoint(
-            sessionManager.validateServerEndpoint("https://chat.example").getOrThrow()
-        )
+        val sessionManager = constructor.newInstance(InMemorySharedPreferences(), TestSessions.CHAT_EXAMPLE) as SessionManager
         sessionManager.saveAuthSuccess(
             User(id = 1, username = "alice", fullName = "Alice"),
             "stale-token"

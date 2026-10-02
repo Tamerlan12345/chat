@@ -49,6 +49,28 @@ class LoginViewModel @Inject constructor(
         }
     }
 
+    private var deviceAnnounced = false
+
+    /**
+     * Announces the device to the server once per login screen (`/auth/knock`, formerly part of
+     * server setup). A paired device with a valid session signs in without a password; any failure
+     * simply leaves the form in place.
+     */
+    fun announceDevice() {
+        if (deviceAnnounced) return
+        deviceAnnounced = true
+        viewModelScope.launch {
+            val paired = try {
+                authRepository.knock()
+            } catch (_: Exception) {
+                false
+            }
+            if (paired && (_uiState.value is LoginUiState.Idle || _uiState.value is LoginUiState.Error)) {
+                _uiState.value = LoginUiState.Success
+            }
+        }
+    }
+
     fun login(username: String, password: String) {
         if (username.isBlank() || password.isBlank()) {
             _uiState.value = LoginUiState.Error("Введите имя пользователя и пароль")

@@ -33,7 +33,6 @@ import com.openmychat.mobile.features.call.CallScreen
 import com.openmychat.mobile.features.call.CallViewModel
 import com.openmychat.mobile.features.chat.ChatScreen
 import com.openmychat.mobile.features.chat.ChatViewModel
-import com.openmychat.mobile.features.connect.ServerConnectScreen
 import com.openmychat.mobile.features.conversations.ConversationsScreen
 import com.openmychat.mobile.features.profile.ProfileScreen
 
@@ -54,11 +53,10 @@ fun CentyNavigation(
     navigator: AppNavigator,
     session: AuthenticatedRouteState,
     currentSession: () -> AuthenticatedRouteState,
-    hasConfiguredServer: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
     val state = navigator.state
-    val entryProvider = remember(navigator) { appEntryProvider(navigator, hasConfiguredServer) }
+    val entryProvider = remember(navigator) { appEntryProvider(navigator) }
     val entries = state.toDecoratedEntries(entryProvider)
 
     // A new [session] value recomposes this function; the decision itself uses the synchronous
@@ -67,7 +65,7 @@ fun CentyNavigation(
         // Never render a protected destination without a session, not even for one frame.
         Box(modifier = modifier.fillMaxSize())
         LaunchedEffect(Unit) {
-            if (!SessionRouteGuard.hasAuthenticatedSession(currentSession())) navigator.onLoggedOut(hasConfiguredServer())
+            if (!SessionRouteGuard.hasAuthenticatedSession(currentSession())) navigator.onLoggedOut()
         }
         return
     }
@@ -143,21 +141,12 @@ internal fun usesListDetailPanes(windowSizeClass: WindowSizeClass): Boolean =
     windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
 
 private fun appEntryProvider(
-    navigator: AppNavigator,
-    hasConfiguredServer: () -> Boolean
+    navigator: AppNavigator
 ): (NavKey) -> NavEntry<NavKey> = entryProvider {
-    entry<NavKey.ServerConnect> {
-        ServerConnectScreen(
-            viewModel = hiltViewModel(),
-            onNavigateToLogin = { navigator.navigate(NavKey.Login) },
-            onNavigateToMain = { navigator.navigate(NavKey.Conversations) }
-        )
-    }
     entry<NavKey.Login> {
         LoginScreen(
             viewModel = hiltViewModel(),
-            onLoginSuccess = { navigator.navigate(NavKey.Conversations) },
-            onNavigateBackToServerConnect = { navigator.navigate(NavKey.ServerConnect) }
+            onLoginSuccess = { navigator.navigate(NavKey.Conversations) }
         )
     }
     entry<NavKey.Conversations>(
@@ -208,7 +197,7 @@ private fun appEntryProvider(
     entry<NavKey.Profile> {
         ProfileScreen(
             viewModel = hiltViewModel(),
-            onLoggedOut = { navigator.onLoggedOut(hasConfiguredServer()) }
+            onLoggedOut = { navigator.onLoggedOut() }
         )
     }
     entry<NavKey.Call> { key ->

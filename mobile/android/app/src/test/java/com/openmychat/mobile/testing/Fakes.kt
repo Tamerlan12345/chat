@@ -9,7 +9,10 @@ import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DirectConversation
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.data.model.ChangePasswordResponse
+import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.ChatRepository
+import com.openmychat.mobile.data.repository.LoginResult
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
@@ -78,7 +81,6 @@ class FakeSessionRepository(userId: Long = ME) : SessionRepository {
     override val storageState = MutableStateFlow(SessionStorageState.AVAILABLE)
     override val mustChangePassword = MutableStateFlow(false)
     override val routeStates: Flow<AuthenticatedRouteState> = token.map { routeState() }
-    override val hasConfiguredServer: Boolean = true
     override val currentUserId: Long? get() = currentUser.value?.id
     override val isAdmin: Boolean = false
     override val messageEditWindowMinutes: String = "60"
@@ -126,3 +128,30 @@ fun message(
     text = text,
     createdAt = "2026-09-30T09:40:00.000Z"
 )
+
+/** Scriptable [AuthRepository]: each call runs the matching lambda, so tests can suspend or throw. */
+class FakeAuthRepository : AuthRepository {
+    override val mustChangePassword = MutableStateFlow(false)
+    override val isPasswordChangeForced: Boolean get() = mustChangePassword.value
+    override var hasSessionToken: Boolean = false
+
+    var onKnock: suspend () -> Boolean = { false }
+    var onLogin: suspend (String, String) -> LoginResult = { _, _ -> LoginResult.SUCCESS }
+    val loginAttempts = mutableListOf<Pair<String, String>>()
+    var knocks = 0
+
+    override suspend fun knock(): Boolean {
+        knocks++
+        return onKnock()
+    }
+
+    override suspend fun login(username: String, password: String): LoginResult {
+        loginAttempts += username to password
+        return onLogin(username, password)
+    }
+
+    override suspend fun changePassword(oldPassword: String, newPassword: String) =
+        ChangePasswordResponse(success = true)
+
+    override suspend fun logout() = Unit
+}

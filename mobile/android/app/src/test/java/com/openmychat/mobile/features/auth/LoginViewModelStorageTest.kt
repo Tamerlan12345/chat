@@ -23,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 class LoginViewModelStorageTest {
 
@@ -30,9 +31,7 @@ class LoginViewModelStorageTest {
     fun loginShowsRecoverableErrorInsteadOfSuccessWhenSessionCannotBeStored() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
-            val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false).apply {
-                serverUrl = "https://chat.example"
-            }
+            val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val viewModel = LoginViewModel(DefaultAuthRepository(ApiClient(sessionManager, successfulLoginClient()), sessionManager))
 
             viewModel.login(username = "alice", password = "password")
@@ -53,14 +52,7 @@ class LoginViewModelStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val storage = FailingAfterFirstCommitSharedPreferences()
-            val sessionManager = SessionManager(
-                prefs = storage,
-                isDebuggableBuild = false
-            ).apply {
-                useServerEndpointForVerification(
-                    validateServerEndpoint("https://chat.example").getOrThrow()
-                )
-            }
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
                 DefaultAuthRepository(
@@ -109,7 +101,7 @@ class LoginViewModelStorageTest {
                 initialValues = seededPasswordChangeSession(),
                 commitToFail = 2
             )
-            val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val viewModel = LoginViewModel(
                 DefaultAuthRepository(
                     ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
@@ -120,15 +112,14 @@ class LoginViewModelStorageTest {
             viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
             withTimeout(2_000) { viewModel.changePasswordError.first { !it.isNullOrBlank() } }
 
-            val restartedManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val restartedManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val restoredRoute = SessionRouteGuard.destinationForNavigation(
                 requestedDestination = com.openmychat.mobile.ui.navigation.NavKey.Conversations,
                 session = AuthenticatedRouteState(
                     token = restartedManager.token,
                     hasCurrentUser = restartedManager.currentUser != null,
                     storageState = restartedManager.storageState.value
-                ),
-                hasConfiguredServer = restartedManager.serverUrl.isNotBlank()
+                )
             )
 
             assertNull(restartedManager.token)
@@ -148,7 +139,7 @@ class LoginViewModelStorageTest {
                 initialValues = seededPasswordChangeSession(),
                 commitToFail = commitToFail
             )
-            val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
                 DefaultAuthRepository(

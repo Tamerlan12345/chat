@@ -92,8 +92,8 @@ class WebSocketClient(
             return
         }
 
-        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull()
-        if (endpoint == null || !endpoint.isSecure) {
+        val endpoint = sessionManager.serverEndpoint
+        if (!endpoint.isSecure) {
             isConnecting.set(false)
             _connectionState.value = ConnectionState.Disconnected
             return
