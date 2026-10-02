@@ -91,6 +91,28 @@ jobs:
           if-no-files-found: ignore
           path: mobile/ios/build/screenshots/*.png
 
+  # The Release configuration must be locked to production: build it with a hostile
+  # CENTYCHAT_SERVER_URL and check the binary ignores it and has no Debug override points.
+  ios-release-server-lock:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build Release for the simulator with a server override attempt
+        run: |
+          xcodebuild \
+            -project mobile/ios/CentyChat.xcodeproj \
+            -scheme CentyChat \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/release" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CENTYCHAT_SERVER_URL=https://override.invalid
+      - name: Verify the Release binary is locked to production
+        run: bash mobile/ios/scripts/verify-release-server-lock.sh "$RUNNER_TEMP/release/Build/Products/Release-iphonesimulator/CentyChat.app" https://override.invalid
+
   # Publishes the PNGs to the orphan branch `ci/ios-screenshots` under <short-sha>/
   # so they can be read through the contents API without downloading artifacts.
   publish-ios-screenshots:
