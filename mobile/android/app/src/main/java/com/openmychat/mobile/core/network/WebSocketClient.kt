@@ -104,7 +104,8 @@ class WebSocketClient(
             _connectionState.value = ConnectionState.Connecting
         }
 
-        val wsUrl = endpoint.webSocketUrl
+        // Аватары ссылкой и в событиях WebSocket (sender_avatar, профиль в auth_success).
+        val wsUrl = AvatarOptIn.webSocketUrl(endpoint.webSocketUrl)
         val request = Request.Builder()
             .url(wsUrl)
             .header("User-Agent", "CentyChat-Android/1.0.0")

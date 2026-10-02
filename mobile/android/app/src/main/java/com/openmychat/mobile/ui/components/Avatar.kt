@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.openmychat.mobile.BuildConfig
 import com.openmychat.mobile.R
+import com.openmychat.mobile.core.network.AvatarOptIn
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
@@ -61,7 +62,9 @@ fun CentyAvatar(
     typing: Boolean = false
 ) {
     val tokens = CentyTheme.tokens
-    val source = remember(avatarUrl) { AvatarPalette.resolveUrl(avatarUrl, BuildConfig.SERVER_URL) }
+    val source = remember(avatarUrl, size) {
+        AvatarPalette.resolveUrl(avatarUrl, BuildConfig.SERVER_URL, AvatarOptIn.sizeFor(size.value))
+    }
     var failed by remember(source) { mutableStateOf(false) }
     val shape = if (isChannel) RoundedCornerShape(size * 0.3f) else CircleShape
 
@@ -190,13 +193,15 @@ object AvatarPalette {
      * Only HTTPS images, absolute or relative to the fixed server. Anything else (plain HTTP,
      * data:, file:, garbage) falls back to initials.
      */
-    fun resolveUrl(raw: String?, serverUrl: String): String? {
+    fun resolveUrl(raw: String?, serverUrl: String, size: AvatarOptIn.Size? = null): String? {
         val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val url = if (value.startsWith("/")) {
             serverUrl.toHttpUrlOrNull()?.resolve(value)
         } else {
             value.toHttpUrlOrNull()
         } ?: return null
-        return url.takeIf { it.isHttps }?.toString()
+        if (!url.isHttps) return null
+        // Аватары своего сервера — нужного размера (96 или 256 px), а не всегда крупные.
+        return (if (size != null) AvatarOptIn.sized(url, size) else url).toString()
     }
 }
