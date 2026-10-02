@@ -138,3 +138,64 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("contractFixtures")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }
+
+/**
+ * Debug builds only: trust the local dev stand's CA (mobile/dev/certs/dev-ca.crt, created by
+ * `node mobile/dev/stand.mjs` and git-ignored) for the local development hosts.
+ *
+ * When the CA file exists, this writes a generated resource overlay with the certificate as
+ * `raw/centychat_dev_ca` and a copy of src/debug/res/xml/debug_network_security_config.xml whose
+ * marker comment is replaced by trust anchors (system + dev CA). Without the file nothing is
+ * generated and the checked-in config applies. The certificate never enters the source tree and
+ * the release build type is never touched.
+ */
+abstract class DevCaResourcesTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val devCa: ConfigurableFileCollection
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val baseConfig: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val ca = devCa.files.firstOrNull { it.isFile } ?: return
+        val pem = ca.readText()
+        check("-----BEGIN CERTIFICATE-----" in pem && "PRIVATE KEY" !in pem) {
+            "$ca must be a PEM certificate without any private key"
+        }
+        val marker = "<!-- dev-ca-trust-anchors -->"
+        val base = baseConfig.get().asFile.readText()
+        check(marker in base) { "debug_network_security_config.xml lost its $marker marker" }
+        File(out, "raw").mkdirs()
+        File(out, "raw/centychat_dev_ca.pem").writeText(pem)
+        File(out, "xml").mkdirs()
+        File(out, "xml/debug_network_security_config.xml").writeText(
+            base.replace(
+                marker,
+                """<trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/centychat_dev_ca" />
+        </trust-anchors>"""
+            )
+        )
+    }
+}
+
+val generateDebugDevCaResources = tasks.register<DevCaResourcesTask>("generateDebugDevCaResources") {
+    devCa.from(rootDir.resolve("../dev/certs/dev-ca.crt"))
+    baseConfig.set(layout.projectDirectory.file("src/debug/res/xml/debug_network_security_config.xml"))
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(generateDebugDevCaResources, DevCaResourcesTask::outputDir)
+    }
+}
