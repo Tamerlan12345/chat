@@ -18,10 +18,10 @@ final class Locked<Value>: @unchecked Sendable {
         return storage
     }
 
-    func withValue<Result>(_ body: (inout Value) -> Result) -> Result {
+    func withValue<Result>(_ body: (inout Value) throws -> Result) rethrows -> Result {
         lock.lock()
         defer { lock.unlock() }
-        return body(&storage)
+        return try body(&storage)
     }
 }
 
@@ -90,6 +90,10 @@ final class FakeServerRepository: ServerRepository, @unchecked Sendable {
     }
 
     var storedServerURL: String { state.value.url }
+
+    func setHealthy(_ healthy: Bool) {
+        state.withValue { $0.healthy = healthy }
+    }
 
     func saveServerURL(_ value: String) throws {
         state.withValue { $0.url = value }
