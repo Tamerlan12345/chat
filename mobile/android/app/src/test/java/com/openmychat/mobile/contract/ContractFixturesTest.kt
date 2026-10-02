@@ -122,6 +122,7 @@ class ContractFixturesTest {
             .filter { it.isFile && it.extension == "json" && it.name != "manifest.json" }
             .map { it.relativeTo(fixturesDir).invariantSeparatorsPath }
             .filterNot { it.startsWith("reducers/") } // client reducer vectors, not server responses (fixtures/README.md)
+            .filterNot { it.startsWith("notify/") } // server notify-decision vectors, not responses (fixtures/README.md)
             .toSet()
         assertTrue("no fixtures found in $fixturesDir", onDisk.isNotEmpty())
         assertEquals("fixtures missing from manifest.json", emptySet<String>(), onDisk - manifest.keys)
