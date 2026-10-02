@@ -1,6 +1,6 @@
 {
   "name": "55-cancelled-entries-after-410",
-  "description": "Отменённые записи и 410: синхронизация без курсора ничего не доказывает, поэтому записи остаются скрытыми и запрашивается история их переписок. История содержит одну — уходит delete_message; другую удаляет локально следующая обычная синхронизация, не вернувшая её ключ.",
+  "description": "Отменённые записи и 410: синхронизация без курсора ничего не доказывает, поэтому записи остаются скрытыми и запрашивается история их переписок (по разу на переписку, открытая — уже запрошена). История содержит одну — уходит delete_message; остальные удаляет локально следующая обычная синхронизация, не вернувшая их ключи.",
   "covers": [
     "T42",
     "T34",
@@ -11,14 +11,14 @@
   "initialState": {
     "me": 2,
     "connection": "online",
-    "visible": null,
+    "visible": "direct:5",
     "sync": {
       "cursor": "0123456789abcdef.40",
       "running": true,
       "bootstrap": false,
       "chain": 1
     },
-    "seq": 2,
+    "seq": 3,
     "outbox": [
       {
         "client_msg_id": "a0000095-0000-4000-8000-000000000095",
@@ -44,6 +44,25 @@
         "conversation": "direct:5",
         "seq": 2,
         "text": "Тоже отменено",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": true
+      },
+      {
+        "client_msg_id": "a0000097-0000-4000-8000-000000000097",
+        "conversation": "direct:4",
+        "seq": 3,
+        "text": "И это отменено",
         "msgType": "text",
         "reply_to_id": null,
         "metadata": null,
@@ -164,11 +183,19 @@
       },
       {
         "type": "load_history",
-        "conversation": "direct:4"
+        "conversation": "direct:5"
       },
       {
         "type": "load_history",
-        "conversation": "direct:5"
+        "conversation": "direct:4"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "direct",
+          "targetId": 5
+        }
       }
     ],
     [
@@ -221,6 +248,14 @@
       },
       {
         "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "direct",
+          "targetId": 5
+        }
       }
     ]
   ],

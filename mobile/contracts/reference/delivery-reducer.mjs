@@ -15,13 +15,18 @@ export const HTTP_ACK_TIMEOUT_MS = 30000;
 export const MAX_ATTEMPTS = 5;
 export const SEND_RATE_MAX = 8;
 export const SEND_RATE_WINDOW_MS = 1000;
+export const OPS_RATE_MAX = 8;
+export const OPS_RATE_WINDOW_MS = 1000;
 export const SYNC_PAGE_LIMIT = 200;
 export const SYNC_RETRY_MS = 5000;
 export const KEY_ERRORS = ['CLIENT_MSG_ID_CONFLICT', 'INVALID_CLIENT_MSG_ID'];
+// ECMAScript WhiteSpace + LineTerminator — exactly what the server's trim() removes (§6.1).
+export const WHITESPACE = '\\u0009\\u000A\\u000B\\u000C\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF';
+const BLANK_RE = new RegExp(`^[${WHITESPACE}]*$`);
 const MSG_TYPES = ['text', 'file', 'image'];
 const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
 
-export const backoff = (attempts) => Math.min(1000 * 2 ** (attempts - 1), 30000);
+export const backoff = (failures) => Math.min(1000 * 2 ** (failures - 1), 30000);
 
 /** Initial state for a fresh install (§3). */
 export function initialState(me = null) {
@@ -29,13 +34,14 @@ export function initialState(me = null) {
     me,
     connection: 'offline',
     visible: null,
-    sync: { cursor: null, running: false, bootstrap: false },
+    sync: { cursor: null, running: false, bootstrap: false, chain: 0 },
     seq: 0,
     outbox: [],
     ops: [],
     messages: {},
     unread: {},
     sendLog: [],
+    opsLog: [],
     wake_at: null
   };
 }
@@ -65,12 +71,10 @@ function conversationOf(rec, me) {
   return `direct:${partner}`;
 }
 
-const isBlank = (text) => String(text).trim() === '';
-
 // Validates text the same way for enqueue and edit; returns a user_error code or null.
 function textError(text, msgType) {
   if (typeof text !== 'string') return 'EMPTY_TEXT';
-  if (msgType === 'text' && isBlank(text)) return 'EMPTY_TEXT';
+  if (msgType === 'text' && BLANK_RE.test(text)) return 'EMPTY_TEXT';
   if (text.length > MAX_TEXT_LENGTH) return 'TEXT_TOO_LONG'; // UTF-16 code units
   return null;
 }
@@ -116,6 +120,10 @@ function sendMessageFrame(e) {
   };
 }
 
+const opFrame = (op) => (op.op === 'edit'
+  ? { type: 'edit_message', messageId: op.message_id, text: op.text }
+  : { type: 'delete_message', messageId: op.message_id });
+
 const markReadFrame = (conv) => ({ type: 'mark_read', ...parseConversation(conv) });
 
 function findMessage(state, id) {
@@ -134,6 +142,35 @@ function cmidInUse(state, cmid) {
 const sortOutbox = (state) => state.outbox.sort((a, b) => a.seq - b.seq);
 const entryOf = (state, cmid) => state.outbox.find((e) => e.client_msg_id === cmid) || null;
 const removeEntry = (state, cmid) => { state.outbox = state.outbox.filter((e) => e.client_msg_id !== cmid); };
+const deleteOpOf = (state, id) => state.ops.find((o) => o.op === 'delete' && o.message_id === id) || null;
+
+function newOp(op, messageId, text) {
+  return { op, message_id: messageId, text, state: 'queued', attempts: 0, failures: 0, ack_deadline: null, next_attempt_at: null };
+}
+
+function addDeleteOp(state, id) {
+  if (!deleteOpOf(state, id)) state.ops.push(newOp('delete', id, null));
+}
+
+// A tombstone confirms the delete (and makes any pending edit pointless) — §6.3.
+function confirmDeleted(state, id) {
+  state.ops = state.ops.filter((o) => o.message_id !== id);
+}
+
+// ── sync chains (§6.3, §7.11) ───────────────────────────────────────────────
+
+function startSync(state, effects) {
+  state.sync.chain += 1;
+  state.sync.running = true;
+  state.sync.bootstrap = state.sync.cursor === null;
+  effects.push({ type: 'sync_request', cursor: state.sync.cursor, limit: SYNC_PAGE_LIMIT, chain: state.sync.chain });
+}
+
+function maybeStartSync(state, effects) {
+  if (state.connection === 'online' && !state.sync.running) startSync(state, effects);
+}
+
+const currentChain = (state, ev) => state.sync.running && ev.chain === state.sync.chain;
 
 // ── outcomes of an attempt (§6.3) ───────────────────────────────────────────
 
@@ -148,17 +185,33 @@ function reject(state, e, code, message) {
   if (e.pending_edit !== null) { e.text = e.pending_edit; e.pending_edit = null; }
 }
 
-function attemptFailed(e, now) {
+function attemptFailed(state, e, now, effects) {
   e.transport = null;
   e.ack_deadline = null;
-  if (e.attempts >= MAX_ATTEMPTS) {
+  if (e.pending_delete) {
+    // Never sent again (§7.10); find out via sync.
+    e.state = 'queued';
+    e.next_attempt_at = null;
+    maybeStartSync(state, effects);
+    return;
+  }
+  e.failures += 1;
+  if (e.failures >= MAX_ATTEMPTS) {
     e.state = 'failed';
     e.failure = { reason: 'max_attempts', code: null, message: null };
     e.next_attempt_at = null;
   } else {
     e.state = 'queued';
-    e.next_attempt_at = now + backoff(e.attempts);
+    e.next_attempt_at = now + backoff(e.failures);
   }
+}
+
+// Attempt cut off by disconnect/restart/401: back to queued, budget untouched (§7.3).
+function attemptInterrupted(e) {
+  e.state = 'queued';
+  e.transport = null;
+  e.ack_deadline = null;
+  e.next_attempt_at = null;
 }
 
 // ── ingest of a server record (§6.3, §7.6–7.9) ──────────────────────────────
@@ -174,10 +227,8 @@ function ingest(state, rec, source, effects) {
       removeEntry(state, e.client_msg_id);
       reconciled = true;
       if (!rec.is_deleted) {
-        if (e.pending_delete) state.ops.push({ type: 'delete_message', messageId: rec.id });
-        else if (e.pending_edit !== null && e.pending_edit !== rec.text) {
-          state.ops.push({ type: 'edit_message', messageId: rec.id, text: e.pending_edit });
-        }
+        if (e.pending_delete) addDeleteOp(state, rec.id);
+        else if (e.pending_edit !== null && e.pending_edit !== rec.text) state.ops.push(newOp('edit', rec.id, e.pending_edit));
       }
     }
   }
@@ -200,6 +251,8 @@ function ingest(state, rec, source, effects) {
     inserted = true;
   }
 
+  if (rec.is_deleted) confirmDeleted(state, rec.id);
+
   if (source === 'live' && inserted && !rec.is_deleted) {
     if (own) {
       if (conv.startsWith('channel:')) delete state.unread[conv];
@@ -215,11 +268,11 @@ function ingest(state, rec, source, effects) {
 
 // Heads of each conversation that may be sent now, in seq order.
 function eligibleHeads(state, now, onWait) {
-  const busy = new Set(state.outbox.filter((e) => e.state === 'sending').map((e) => e.conversation));
+  const busy = new Set(state.outbox.filter((e) => e.state === 'sending' && !e.pending_delete).map((e) => e.conversation));
   const occupied = new Set();
   const heads = [];
   for (const e of state.outbox) {
-    if (e.state === 'failed' || occupied.has(e.conversation)) continue;
+    if (e.pending_delete || e.state === 'failed' || occupied.has(e.conversation)) continue;
     occupied.add(e.conversation);
     if (e.state !== 'queued' || busy.has(e.conversation)) continue;
     if (e.next_attempt_at !== null && e.next_attempt_at > now) { onWait(e.next_attempt_at); continue; }
@@ -232,12 +285,30 @@ function pump(state, now, effects) {
   if (state.connection !== 'online' || state.sync.running) return;
   if (state.wake_at !== null && state.wake_at <= now) state.wake_at = null;
   state.sendLog = state.sendLog.filter((t) => now - t < SEND_RATE_WINDOW_MS);
-
-  for (const frame of state.ops) effects.push({ type: 'send_ws', frame });
-  state.ops = [];
+  state.opsLog = state.opsLog.filter((t) => now - t < OPS_RATE_WINDOW_MS);
 
   let wakeAt = null;
   const wake = (t) => { wakeAt = wakeAt === null ? t : Math.min(wakeAt, t); };
+
+  const sentEdits = new Set();
+  for (const op of state.ops) {
+    if (op.state !== 'queued') continue;
+    if (op.next_attempt_at !== null && op.next_attempt_at > now) { wake(op.next_attempt_at); continue; }
+    if (state.opsLog.length >= OPS_RATE_MAX) { wake(state.opsLog[0] + OPS_RATE_WINDOW_MS); continue; }
+    state.opsLog.push(now);
+    op.attempts += 1;
+    effects.push({ type: 'send_ws', frame: opFrame(op) });
+    if (op.op === 'edit') {
+      sentEdits.add(op);
+    } else {
+      op.state = 'sending';
+      op.ack_deadline = now + ACK_TIMEOUT_MS;
+      op.next_attempt_at = null;
+      effects.push({ type: 'schedule', at: op.ack_deadline, event: { type: 'op_timeout', message_id: op.message_id, attempt: op.attempts } });
+    }
+  }
+  state.ops = state.ops.filter((op) => !sentEdits.has(op));
+
   for (const e of eligibleHeads(state, now, wake)) {
     if (state.sendLog.length >= SEND_RATE_MAX) { wake(state.sendLog[0] + SEND_RATE_WINDOW_MS); continue; }
     e.state = 'sending';
@@ -276,27 +347,39 @@ function backgroundFlush(state, now, effects) {
   }
 }
 
-// ── sync (§6.3, §7.11) ──────────────────────────────────────────────────────
+// ── sync results ────────────────────────────────────────────────────────────
 
-function startSync(state, effects) {
-  state.sync.running = true;
-  state.sync.bootstrap = state.sync.cursor === null;
-  effects.push({ type: 'sync_request', cursor: state.sync.cursor, limit: SYNC_PAGE_LIMIT });
-}
-
-function onSyncPage(state, body, effects) {
-  if (!state.sync.running) return;
-  for (const rec of body.messages) ingest(state, rec, 'sync', effects);
-  state.sync.cursor = body.next_cursor;
-  if (body.has_more) {
-    effects.push({ type: 'sync_request', cursor: body.next_cursor, limit: SYNC_PAGE_LIMIT });
-    return;
-  }
+function completeChain(state, effects) {
   state.sync.running = false;
   effects.push({ type: 'refresh_conversation_lists' });
   if (state.sync.bootstrap && state.visible !== null) effects.push({ type: 'load_history', conversation: state.visible });
+
+  // Cancelled entries that are not in flight (§7.10): this chain started after their last attempt.
+  const unresolved = state.outbox.filter((e) => e.pending_delete && e.state !== 'sending');
+  if (!state.sync.bootstrap) {
+    for (const e of unresolved) removeEntry(state, e.client_msg_id);
+  } else {
+    const seen = new Set(state.visible !== null ? [state.visible] : []);
+    for (const e of unresolved) {
+      if (seen.has(e.conversation)) continue;
+      seen.add(e.conversation);
+      effects.push({ type: 'load_history', conversation: e.conversation });
+    }
+  }
   state.sync.bootstrap = false;
   if (state.visible !== null && state.connection === 'online') effects.push({ type: 'send_ws', frame: markReadFrame(state.visible) });
+}
+
+function onSyncPage(state, ev, effects) {
+  if (!currentChain(state, ev)) return;
+  const body = ev.body;
+  for (const rec of body.messages) ingest(state, rec, 'sync', effects);
+  state.sync.cursor = body.next_cursor;
+  if (body.has_more) {
+    effects.push({ type: 'sync_request', cursor: body.next_cursor, limit: SYNC_PAGE_LIMIT, chain: state.sync.chain });
+    return;
+  }
+  completeChain(state, effects);
 }
 
 // ── user actions (§6.3, §7.10) ──────────────────────────────────────────────
@@ -322,6 +405,7 @@ function onEnqueue(state, ev, effects) {
     metadata: ev.metadata ?? null,
     state: 'queued',
     attempts: 0,
+    failures: 0,
     maybe_stored: false,
     transport: null,
     ack_deadline: null,
@@ -351,10 +435,12 @@ function onEdit(state, ev, effects) {
 
   const found = findMessage(state, ev.message_id);
   const m = found && found.m;
-  if (!m || m.sender_id !== state.me || m.is_deleted || m.type !== 'text') return effects.push({ type: 'user_error', code: 'NOT_EDITABLE' });
+  if (!m || m.sender_id !== state.me || m.is_deleted || m.type !== 'text' || deleteOpOf(state, m.id)) {
+    return effects.push({ type: 'user_error', code: 'NOT_EDITABLE' });
+  }
   const err = textError(ev.text, 'text');
   if (err) return effects.push({ type: 'user_error', code: err });
-  state.ops.push({ type: 'edit_message', messageId: m.id, text: ev.text });
+  state.ops.push(newOp('edit', m.id, ev.text));
   return undefined;
 }
 
@@ -362,11 +448,11 @@ function onDelete(state, ev, effects) {
   const found = findMessage(state, ev.message_id);
   const m = found && found.m;
   if (!m || m.sender_id !== state.me || m.is_deleted) return effects.push({ type: 'user_error', code: 'NOT_DELETABLE' });
-  state.ops.push({ type: 'delete_message', messageId: m.id });
+  addDeleteOp(state, m.id);
   return undefined;
 }
 
-function onCancel(state, ev) {
+function onCancel(state, ev, effects) {
   const e = entryOf(state, ev.client_msg_id);
   if (!e) return;
   if (!e.maybe_stored) { removeEntry(state, e.client_msg_id); return; }
@@ -374,10 +460,11 @@ function onCancel(state, ev) {
   e.pending_edit = null;
   if (e.state === 'failed') {
     e.state = 'queued';
-    e.attempts = 0;
     e.failure = null;
+    e.failures = 0;
     e.next_attempt_at = null;
   }
+  if (e.state !== 'sending') maybeStartSync(state, effects);
 }
 
 function onRetry(state, ev, effects) {
@@ -392,7 +479,7 @@ function onRetry(state, ev, effects) {
     e.maybe_stored = false;
   }
   e.state = 'queued';
-  e.attempts = 0;
+  e.failures = 0;
   e.failure = null;
   e.next_attempt_at = null;
   state.seq += 1;
@@ -409,6 +496,7 @@ function onFrame(state, frame, effects) {
       state.me = Number(frame.user.id);
       state.connection = 'online';
       state.sendLog = [];
+      state.opsLog = [];
       if (!state.sync.running) startSync(state, effects);
       return;
     case 'new_message':
@@ -426,6 +514,7 @@ function onFrame(state, frame, effects) {
         found.m.text = '';
         found.m.metadata_json = null;
       }
+      confirmDeleted(state, frame.messageId);
       return;
     }
     case 'message_status_updated': {
@@ -461,15 +550,35 @@ function onHttpSendResult(state, ev, effects) {
   const e = entryOf(state, ev.client_msg_id);
   if (!e || e.state !== 'sending' || e.transport !== 'http' || e.attempts !== ev.attempt) return;
   const s = ev.status;
-  if (s === 401) {
-    e.state = 'queued';
-    e.transport = null;
-    e.ack_deadline = null;
-    e.next_attempt_at = null;
-  } else if (s >= 400 && s < 500 && s !== 408 && s !== 429) {
-    reject(state, e, ev.body && ev.body.code, ev.body && ev.body.error);
+  if (s === 401) attemptInterrupted(e);
+  else if (s >= 400 && s < 500 && s !== 408 && s !== 429) reject(state, e, ev.body && ev.body.code, ev.body && ev.body.error);
+  else attemptFailed(state, e, ev.now, effects);
+}
+
+function onOpTimeout(state, ev, effects) {
+  const op = deleteOpOf(state, ev.message_id);
+  if (!op || op.state !== 'sending' || op.attempts !== ev.attempt || ev.now < op.ack_deadline) return;
+  op.failures += 1;
+  op.ack_deadline = null;
+  if (op.failures >= MAX_ATTEMPTS) {
+    state.ops = state.ops.filter((o) => o !== op);
+    effects.push({ type: 'user_error', code: 'DELETE_NOT_CONFIRMED' });
   } else {
-    attemptFailed(e, ev.now);
+    op.state = 'queued';
+    op.next_attempt_at = ev.now + backoff(op.failures);
+  }
+}
+
+function resetInFlight(state, { http }) {
+  for (const e of state.outbox) {
+    if (e.state === 'sending' && (http || e.transport === 'ws')) attemptInterrupted(e);
+  }
+  for (const op of state.ops) {
+    if (op.state === 'sending') {
+      op.state = 'queued';
+      op.ack_deadline = null;
+      op.next_attempt_at = null;
+    }
   }
 }
 
@@ -483,39 +592,34 @@ function handle(state, ev, effects) {
       state.connection = 'offline';
       state.sync.running = false;
       state.sendLog = [];
-      for (const e of state.outbox) {
-        if (e.state === 'sending' && e.transport === 'ws') {
-          e.state = 'queued';
-          e.transport = null;
-          e.ack_deadline = null;
-          e.next_attempt_at = null;
-        }
-      }
+      state.opsLog = [];
+      resetInFlight(state, { http: false });
       return undefined;
     case 'enqueue': return onEnqueue(state, ev, effects);
     case 'edit': return onEdit(state, ev, effects);
     case 'delete': return onDelete(state, ev, effects);
-    case 'cancel': return onCancel(state, ev);
+    case 'cancel': return onCancel(state, ev, effects);
     case 'retry': return onRetry(state, ev, effects);
     case 'ack_timeout': {
       const e = entryOf(state, ev.client_msg_id);
-      if (e && e.state === 'sending' && e.attempts === ev.attempt && now >= e.ack_deadline) attemptFailed(e, now);
+      if (e && e.state === 'sending' && e.attempts === ev.attempt && now >= e.ack_deadline) attemptFailed(state, e, now, effects);
       return undefined;
     }
+    case 'op_timeout': return onOpTimeout(state, ev, effects);
     case 'tick': return undefined;
     case 'sync_start':
-      if (state.connection === 'online' && !state.sync.running) startSync(state, effects);
+      maybeStartSync(state, effects);
       return undefined;
-    case 'sync_page': return onSyncPage(state, ev.body, effects);
+    case 'sync_page': return onSyncPage(state, ev, effects);
     case 'sync_reset_410':
-      if (!state.sync.running) return undefined;
+      if (!currentChain(state, ev)) return undefined;
       state.sync.cursor = null;
       state.sync.bootstrap = true;
       state.messages = {};
-      effects.push({ type: 'sync_request', cursor: null, limit: SYNC_PAGE_LIMIT });
+      effects.push({ type: 'sync_request', cursor: null, limit: SYNC_PAGE_LIMIT, chain: state.sync.chain });
       return undefined;
     case 'sync_failed':
-      if (!state.sync.running) return undefined;
+      if (!currentChain(state, ev)) return undefined;
       state.sync.running = false;
       if (ev.status !== 401) {
         effects.push({ type: 'schedule', at: now + (ev.retry_after_ms ?? SYNC_RETRY_MS), event: { type: 'sync_start' } });
@@ -550,15 +654,9 @@ function handle(state, ev, effects) {
       state.messages = {};
       state.unread = {};
       state.sendLog = [];
+      state.opsLog = [];
       state.wake_at = null;
-      for (const e of state.outbox) {
-        if (e.state === 'sending') {
-          e.state = 'queued';
-          e.transport = null;
-          e.ack_deadline = null;
-          e.next_attempt_at = null;
-        }
-      }
+      resetInFlight(state, { http: true });
       return undefined;
     default: return undefined;
   }
