@@ -1,10 +1,24 @@
 <resources>
     <string name="app_name">CentyChat</string>
-    <string name="server_url">Адрес сервера</string>
-    <string name="connect">Подключиться</string>
     <string name="login">Войти</string>
     <string name="username">Логин</string>
     <string name="password">Пароль</string>
+
+    <!-- Login -->
+    <string name="login_company_fallback">Корпоративный мессенджер</string>
+    <string name="login_show_password">Показать пароль</string>
+    <string name="login_hide_password">Скрыть пароль</string>
+    <string name="login_in_progress">Выполняется вход…</string>
+    <string name="login_error_empty">Введите логин и пароль.</string>
+    <string name="login_error_invalid_credentials">Неверный логин или пароль</string>
+    <string name="login_error_throttled">Слишком много попыток входа. Повторите через %1$s.</string>
+    <string name="login_error_throttled_done">Слишком много попыток входа. Повторите позже.</string>
+    <string name="login_error_busy">Сервер сейчас занят. Повторите через %1$s.</string>
+    <string name="login_error_busy_done">Сервер сейчас занят. Повторите попытку.</string>
+    <string name="login_error_offline">Нет связи с сервером. Проверьте подключение к интернету.</string>
+    <string name="login_error_insecure">Не удалось установить защищённое соединение с сервером.</string>
+    <string name="login_error_storage">Защищённое хранилище устройства недоступно. Разблокируйте устройство и повторите попытку.</string>
+    <string name="login_error_unexpected">Не удалось войти. Повторите попытку позже.</string>
     <string name="must_change_password_title">Обязательная смена пароля</string>
     <string name="must_change_password_desc">Срок действия вашего временного пароля истек или администратор запросил смену пароля.</string>
     <string name="current_password">Текущий пароль</string>

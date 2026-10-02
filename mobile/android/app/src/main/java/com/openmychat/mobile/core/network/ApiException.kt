@@ -3,7 +3,9 @@ package com.openmychat.mobile.core.network
 open class ApiException(
     val statusCode: Int,
     val errorCode: String? = null,
-    message: String
+    message: String,
+    /** Seconds from the `Retry-After` header (429/503), when the server sent one. */
+    val retryAfterSeconds: Long? = null
 ) : Exception(message)
 
 class MustChangePasswordException(

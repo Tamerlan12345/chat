@@ -33,6 +33,26 @@ class ReleaseConfigurationTest {
         )
     }
 
+    @Test
+    fun releaseBuildHardCodesTheProductionServer() {
+        val script = projectBuildScript().readText()
+        val releaseBody = buildTypeBlock("release")!!.groups["body"]!!.value
+
+        assertTrue(
+            "the production server constant must be the Railway deployment",
+            script.contains("val productionServerUrl = \"https://centychat-production.up.railway.app\"")
+        )
+        assertTrue(
+            "release SERVER_URL must be the production constant",
+            releaseBody.lines().map { it.trim() }
+                .contains("buildConfigField(\"String\", \"SERVER_URL\", \"\\\"\$productionServerUrl\\\"\")")
+        )
+        assertTrue(
+            "release must not read the debug-only centychat.serverUrl override",
+            !releaseBody.contains("centychat.serverUrl") && !releaseBody.contains("debugServerUrl")
+        )
+    }
+
     private fun projectBuildScript(): File =
         generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
             .map { File(it, "app/build.gradle.kts") }

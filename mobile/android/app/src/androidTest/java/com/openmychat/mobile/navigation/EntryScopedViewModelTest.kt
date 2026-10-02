@@ -126,7 +126,7 @@ class EntryScopedViewModelTest {
         val conversations = latest("conversations")
         val profile = latest("profile")
 
-        composeRule.runOnIdle { navigator.onLoggedOut(hasConfiguredServer = true) }
+        composeRule.runOnIdle { navigator.onLoggedOut() }
         composeRule.onNodeWithText("screen login login").assertExists()
 
         composeRule.waitUntil(5_000) { conversations.cleared && profile.cleared }

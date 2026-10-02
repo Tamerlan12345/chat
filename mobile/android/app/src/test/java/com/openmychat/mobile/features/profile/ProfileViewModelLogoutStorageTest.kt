@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 class ProfileViewModelLogoutStorageTest {
 
@@ -27,7 +28,7 @@ class ProfileViewModelLogoutStorageTest {
     fun logoutKeepsUserOnProfileWhenSecureSessionCannotBeCleared() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
-            val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false)
+            val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val viewModel = profileViewModel(sessionManager)
             var navigationRequested = false
 
@@ -48,7 +49,7 @@ class ProfileViewModelLogoutStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val storage = FailingAfterFirstCommitSharedPreferences()
-            val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             sessionManager.saveAuthSuccess(
                 User(id = 1, username = "alice", fullName = "Alice"),
                 "trusted-token"

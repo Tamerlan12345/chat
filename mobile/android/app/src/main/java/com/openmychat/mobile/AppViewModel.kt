@@ -34,7 +34,6 @@ class AppViewModel @Inject constructor(
 ) : ViewModel() {
 
     val routeStates: Flow<AuthenticatedRouteState> get() = sessionRepository.routeStates
-    val hasConfiguredServer: Boolean get() = sessionRepository.hasConfiguredServer
     fun routeState(): AuthenticatedRouteState = sessionRepository.routeState()
     fun acceptsIncomingCall(): Boolean = SessionRouteGuard.acceptsIncomingCall(routeState())
 

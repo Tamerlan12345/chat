@@ -22,26 +22,23 @@ object SessionRouteGuard {
      */
     fun destinationForNavigation(
         requestedDestination: NavKey,
-        session: AuthenticatedRouteState,
-        hasConfiguredServer: Boolean
+        session: AuthenticatedRouteState
     ): NavKey = if (requestedDestination.requiresAuthenticatedSession() && !hasAuthenticatedSession(session)) {
-        if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect
+        NavKey.Login
     } else {
         requestedDestination
     }
 
     fun destinationAfterSessionLoss(
         currentDestination: NavKey,
-        session: AuthenticatedRouteState,
-        hasConfiguredServer: Boolean
+        session: AuthenticatedRouteState
     ): NavKey? {
         if (hasAuthenticatedSession(session) || !currentDestination.requiresAuthenticatedSession()) {
             return null
         }
         return destinationForNavigation(
             requestedDestination = currentDestination,
-            session = session,
-            hasConfiguredServer = hasConfiguredServer
+            session = session
         )
     }
 
@@ -54,7 +51,6 @@ object SessionRouteGuard {
         is NavKey.Announcements,
         is NavKey.Call,
         is NavKey.Profile -> true
-        is NavKey.Login,
-        is NavKey.ServerConnect -> false
+        is NavKey.Login -> false
     }
 }
