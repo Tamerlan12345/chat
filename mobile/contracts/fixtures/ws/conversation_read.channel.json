@@ -1,0 +1,8 @@
+{
+  "type": "conversation_read",
+  "conversationType": "channel",
+  "targetId": 3,
+  "byUserId": 3,
+  "at": "2026-10-02T09:00:00.000Z",
+  "lastReadId": 9
+}

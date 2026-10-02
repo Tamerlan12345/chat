@@ -354,10 +354,21 @@ export async function captureFixtures({ dataDir } = {}) {
     B.send({ type: 'typing', conversationType: 'channel', targetId: devChannel.id, isTyping: false });
     ws('ws/user_typing.channel.json', 'user_typing', 'Участник канала перестал печатать (isTyping=false).', await A.takeType('user_typing'), 'typing conversationType=channel');
 
-    // read receipts
+    // read receipts; bob also has a phone socket (device_id + platform in auth,
+    // multi-device.md §3): reading on one device clears unread on the others.
+    const BPhone = await open();
+    BPhone.send({ type: 'auth', token: tBob, device_id: 'android-dev-bob-01', platform: 'android' });
+    await BPhone.takeType('auth_success');
+    BPhone.clear();
     A.clear();
     B.send({ type: 'mark_read', conversationType: 'direct', targetId: alice.id });
     ws('ws/messages_read.json', 'messages_read', 'Собеседник прочитал личные сообщения: byUserId и messageIds.', await A.takeType('messages_read'), 'mark_read conversationType=direct');
+    ws('ws/conversation_read.direct.json', 'conversation_read', 'Вы прочитали личный диалог на ДРУГОМ своём устройстве: снять непрочитанное и показанные уведомления этой переписки. targetId — собеседник (с вашей точки зрения), messageIds — вновь прочитанные входящие, byUserId — вы, at — время (ISO). Отметившему сокету не приходит; приходит только когда что-то действительно прочитано.',
+      await BPhone.takeType('conversation_read'), 'mark_read conversationType=direct с другого сокета того же сотрудника');
+    B.send({ type: 'mark_read', conversationType: 'channel', targetId: devChannel.id });
+    ws('ws/conversation_read.channel.json', 'conversation_read', 'Вы прочитали канал на другом своём устройстве: lastReadId — новая позиция прочтения (id последнего сообщения канала), messageIds нет.',
+      await BPhone.takeType('conversation_read'), 'mark_read conversationType=channel с другого сокета того же сотрудника');
+    BPhone.close();
 
     // edit / delete
     A.clear(); B.clear();
@@ -613,12 +624,13 @@ export async function captureFixtures({ dataDir } = {}) {
 
     // Что уходит через Google/Apple: тела запросов к поставщикам, собранные
     // кодом сервера (src/push) для сообщений этого сценария. Только id.
-    const { messagePayload, callPayload, notificationFor } = serverRequire('./src/push/payload.js');
+    const { messagePayload, callPayload, readPayload, notificationFor } = serverRequire('./src/push/payload.js');
     const { fcmMessageBody } = serverRequire('./src/push/fcm.js');
     const { apnsRequest } = serverRequire('./src/push/apns.js');
     const dmNote = notificationFor(messagePayload(offlineDm.message, bob.id));
     const channelNote = notificationFor(messagePayload(cm.message, bob.id));
     const callNote = notificationFor(callPayload({ callerId: alice.id }));
+    const readNote = notificationFor(readPayload({ conversationType: 'direct', targetId: alice.id }));
     const pushFixture = (file, provider, description, value, trigger) => {
       raw[file] = value;
       manifest[file] = { kind: 'push', provider, description, trigger };
@@ -635,6 +647,10 @@ export async function captureFixtures({ dataDir } = {}) {
       apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: channelNote, nowMs: BASE }), 'сообщение в канале, у участника нет сокета');
     pushFixture('push/apns.call.json', 'apns', 'VoIP-уведомление PushKit о входящем звонке: topic <bundle>.voip, push-type voip, срок 30 с; payload { type: "call", callerId }.',
       apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: callNote, nowMs: BASE }), 'call_offer сотруднику без сокета');
+    pushFixture('push/fcm.read.json', 'fcm', 'Тихий data-push «read» (multi-device.md §6): переписку прочитали на другом устройстве — снять показанные уведомления. data { type: "read", conversationType, targetId } (targetId — как у сообщения), android.priority NORMAL, collapse_key r-<conversationType>-<targetId>. Уведомление не показывать.',
+      fcmMessageBody(PUSH_FCM_TOKEN, readNote), 'mark_read на компьютере; телефону без сокета на переднем плане раньше уходил push о сообщении этой переписки');
+    pushFixture('push/apns.read.json', 'apns', 'Тихий background-push «read»: apns-push-type background, apns-priority 5, aps { content-available: 1 } без alert, apns-collapse-id r-<conversationType>-<targetId>; id — числа. Apple доставку не гарантирует — снятие «как получится».',
+      apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: readNote, nowMs: BASE }), 'mark_read на компьютере; iPhone без сокета на переднем плане раньше получил push о сообщении этой переписки');
   } finally {
     for (const s of sockets) s.close();
     await server.close();
@@ -650,13 +666,15 @@ export async function captureFixtures({ dataDir } = {}) {
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 function writeFixtures({ files, manifest }) {
-  // Drop stale fixtures (events that no longer exist) but keep README.md and
-  // reducers/ (hand-written delivery reducer vectors, not captured from the server).
+  // Drop stale fixtures (events that no longer exist) but keep README.md,
+  // reducers/ (hand-written delivery reducer vectors) and notify/ (hand-written
+  // notification decision vectors) — neither is captured from the server.
+  const handWritten = new Set(['reducers', 'notify'].map((d) => path.join(FIXTURES_DIR, d)));
   const stale = (dir) => {
     if (!fs.existsSync(dir)) return;
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory() && full === path.join(FIXTURES_DIR, 'reducers')) continue;
+      if (e.isDirectory() && handWritten.has(full)) continue;
       if (e.isDirectory()) stale(full);
       else if (e.name.endsWith('.json')) fs.rmSync(full);
     }

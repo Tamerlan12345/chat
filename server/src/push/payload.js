@@ -35,14 +35,33 @@ function callPayload({ callerId, callId = null }) {
 }
 
 /**
+ * Тихое уведомление «прочитано на другом устройстве» (multi-device.md §6):
+ * приложение снимает показанные уведомления этой переписки. targetId — как у
+ * сообщения: с точки зрения получателя (того же сотрудника, что прочитал).
+ */
+function readPayload({ conversationType, targetId }) {
+  return { type: 'read', conversationType: conversationType === 'channel' ? 'channel' : 'direct', targetId: Number(targetId) };
+}
+
+/**
  * Описание уведомления, общее для поставщиков: вид, данные (только id), срок
  * жизни и ключ схлопывания. Сообщения одной переписки схлопываются у
- * поставщика (пока устройство недоступно — до последнего); звонки — нет.
+ * поставщика (пока устройство недоступно — до последнего); звонки — нет;
+ * «read» — свой ключ на переписку (последнее «прочитано» заменяет прежние).
  */
 function notificationFor(payload) {
   if (payload.type === 'call') {
     if (!positiveInt(payload.callerId)) throw new Error('callerId обязателен');
     return { kind: 'call', data: { ...payload }, ttlSeconds: CALL_TTL_SECONDS, collapseKey: null };
+  }
+  if (payload.type === 'read') {
+    if (!positiveInt(payload.targetId)) throw new Error('Неверное уведомление о прочтении');
+    return {
+      kind: 'read',
+      data: { ...payload },
+      ttlSeconds: MESSAGE_TTL_SECONDS,
+      collapseKey: `r-${payload.conversationType}-${payload.targetId}`
+    };
   }
   if (payload.type !== 'message' || !positiveInt(payload.targetId) || !positiveInt(payload.messageId)) {
     throw new Error('Неверное уведомление о сообщении');
@@ -55,4 +74,4 @@ function notificationFor(payload) {
   };
 }
 
-module.exports = { messagePayload, callPayload, notificationFor, APNS_ALERT_BODY, MESSAGE_TTL_SECONDS, CALL_TTL_SECONDS };
+module.exports = { messagePayload, callPayload, readPayload, notificationFor, APNS_ALERT_BODY, MESSAGE_TTL_SECONDS, CALL_TTL_SECONDS };

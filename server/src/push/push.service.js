@@ -1,5 +1,5 @@
 const PushTokens = require('./token-store');
-const { messagePayload, callPayload, notificationFor, CALL_TTL_SECONDS } = require('./payload');
+const { messagePayload, callPayload, readPayload, notificationFor, CALL_TTL_SECONDS } = require('./payload');
 const { loadPushConfig, describePushConfig } = require('./config');
 
 // Очередь push-уведомлений (задача 18). Путь сообщения её не ждёт: notify*
@@ -29,9 +29,17 @@ const CALL_RING_MS = CALL_TTL_SECONDS * 1000;
 const callCapable = (row) => row.platform === 'android' || row.kind === 'voip';
 const messageCapable = (row) => row.platform === 'android' || row.kind === 'alert';
 
+// Устройство строки токена для решения «кому push» (notify-decision.js):
+// device_id из регистрации; без него — сам токен (с «#», которого нет в
+// допустимом device_id, — такое устройство никогда не совпадёт с сокетом).
+const deviceKeyOf = (row) => row.device_id || `#${row.token}`;
+
 const NO_PRESENCE = {
   isOnline: () => false,
   isDnd: () => false,
+  // Без сервера сокетов сокетов нет — push на все устройства.
+  messagePushTargets: (userId, payload, devices) => devices.map((d) => d.id),
+  readPushTargets: (userId, devices) => devices.map((d) => d.id),
   callOffer: () => null,
   callUndeliverable: () => {}
 };
@@ -150,12 +158,44 @@ class PushService {
 
   // ── Постановка ─────────────────────────────────────────────────────────────
 
-  /** Новое сообщение: получателям без сокета (фильтрует вызывающий). Не ждёт доставки. */
+  /**
+   * Устройства сотрудника, которым можно показать уведомление о сообщении
+   * (по таблице токенов, без проверки сеанса): [{ id }] для notify-decision.js.
+   * Синхронно — нужно при рассылке, чтобы решить, кому из сокетов баннер.
+   */
+  messageDevicesOf(userId) {
+    if (!this.enabled) return [];
+    const ids = [];
+    for (const row of PushTokens.forUser(userId)) {
+      if (!messageCapable(row) || !this.providerFor(row)) continue;
+      const id = deviceKeyOf(row);
+      if (!ids.includes(id)) ids.push(id);
+    }
+    return ids.map((id) => ({ id }));
+  }
+
+  /**
+   * Новое сообщение: получателям, которых не исключило решение (WsServer).
+   * Какие их устройства получат push, решается здесь же тем же правилом
+   * (presence.messagePushTargets) — при раздаче и перед каждой попыткой.
+   * Не ждёт доставки.
+   */
   notifyMessage(message, recipientIds) {
     if (!this.enabled) return;
     for (const userId of recipientIds) {
       this.enqueue({ type: 'user', kind: 'message', userId: Number(userId), payload: messagePayload(message, userId) });
     }
+  }
+
+  /**
+   * Прочитано на другом устройстве: тихий push «read» (только id переписки),
+   * чтобы приложение сняло показанное уведомление. Устройствам без сокета на
+   * переднем плане (presence.readPushTargets). Как получится: не повторяется
+   * после ошибки поставщика сверх обычных попыток, не ждёт доставки.
+   */
+  notifyRead(userId, { conversationType, targetId }) {
+    if (!this.enabled) return;
+    this.enqueue({ type: 'user', kind: 'read', userId: Number(userId), payload: readPayload({ conversationType, targetId }) });
   }
 
   /**
@@ -244,9 +284,21 @@ class PushService {
     }
   }
 
-  // Получатель мог подключиться (или включить «Не беспокоить»), а вызов —
-  // смениться или закончиться, пока задание ждало.
+  // Получатель мог подключиться, открыть чат или включить «Не беспокоить», а
+  // вызов — смениться или закончиться, пока задание ждало. Сообщение и «read»
+  // — тем же решением, что при рассылке (notify-decision.js): задание на
+  // устройство (type 'token') ещё нужно, только если устройство всё ещё в
+  // списке push; раздача (type 'user') отбирает устройства в fanOut.
   stillWanted(job) {
+    if (job.kind === 'message') {
+      if (this.presence.isDnd(job.userId)) return false;
+      if (job.type !== 'token') return true;
+      return this.presence.messagePushTargets(job.userId, job.payload, [{ id: job.deviceKey }]).length > 0;
+    }
+    if (job.kind === 'read') {
+      if (job.type !== 'token') return true;
+      return this.presence.readPushTargets(job.userId, [{ id: job.deviceKey }]).length > 0;
+    }
     if (this.presence.isOnline(job.userId)) return false;
     if (this.presence.isDnd(job.userId)) return false;
     if (job.call) {
@@ -270,10 +322,19 @@ class PushService {
   }
 
   async fanOut(job) {
-    const rows = await this.liveRows(job.userId, job.kind === 'call' ? callCapable : messageCapable);
+    let rows = await this.liveRows(job.userId, job.kind === 'call' ? callCapable : messageCapable);
     if (job.kind === 'call' && !rows.length) {
       this.settle(job, 'lost');
       return;
+    }
+    if (job.kind === 'message' || job.kind === 'read') {
+      // Устройство с сокетом на переднем плане увидит всё по сокету (баннер
+      // в приложении) — push только остальным; решение — notify-decision.js.
+      const devices = [...new Set(rows.map(deviceKeyOf))].map((id) => ({ id }));
+      const targets = new Set(job.kind === 'message'
+        ? this.presence.messagePushTargets(job.userId, job.payload, devices)
+        : this.presence.readPushTargets(job.userId, devices));
+      rows = rows.filter((row) => targets.has(deviceKeyOf(row)));
     }
     if (job.group) job.group.pending = rows.length;
     const notification = notificationFor(job.payload);
@@ -283,6 +344,8 @@ class PushService {
         kind: job.kind,
         userId: job.userId,
         token: row.token,
+        deviceKey: deviceKeyOf(row),
+        payload: job.payload,
         sessionJti: row.session_jti || null,
         notification,
         call: job.call,

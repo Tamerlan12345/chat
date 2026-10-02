@@ -31,6 +31,8 @@ fixtures/
 
 Полное соответствие «событие → файл» — `../ws-protocol.md` §7.
 
+`notify/` — табличные векторы решения «кому уведомление» (`../multi-device.md` §5, эталон `../reference/notify-decision.mjs`): `{name, description, decision: "message"|"read", input, expected}`; вход — как у функции, `expected` сравнивается глубоким равенством (порядок массивов важен). В `manifest.json` не входят; сервер гоняет их через свой код (`server/test/notify-decision.test.js`), платформы — через свой.
+
 `reducers/` — не ответы сервера, а табличные векторы клиентского редьюсера доставки (`../delivery-state.md`); в `manifest.json` не входят, декодирующие тесты их пропускают, `capture-fixtures.mjs --write` их не трогает. Формат и обязательный прогон на платформах — `reducers/README.md`.
 
 ## Нормализация (что в фикстурах не настоящее)
