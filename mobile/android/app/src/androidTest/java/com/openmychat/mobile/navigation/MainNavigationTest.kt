@@ -120,7 +120,9 @@ class MainNavigationTest {
         tab("Сотрудники").assertIsSelected()
         composeRule.onNodeWithText("бухгалтер").assertIsDisplayed()
 
-        // «Назад» с корня вкладки — на «Чаты», а не из приложения.
+        // Клавиатуру закрываем явно: иначе первое «Назад» уходит ей, и итог зависит от IME.
+        Espresso.closeSoftKeyboard()
+        // «Назад» снимает поиск, следующее с корня вкладки — на «Чаты», а не из приложения.
         Espresso.pressBack()
         Espresso.pressBack()
         tab("Чаты").assertIsSelected()
