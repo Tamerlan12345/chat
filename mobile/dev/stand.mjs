@@ -61,6 +61,50 @@ async function waitForHealth(port, child, getLog) {
 }
 
 /**
+ * Starts the real CentyChat server as a child process on 127.0.0.1 with its own
+ * data dir (no TLS, no seeding). Shared by the stand and the fixture capture.
+ * port 0 = pick a random free port.
+ */
+export async function startServerProcess({ dataDir, port = 0, quiet = false, env = {} } = {}) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const listenPort = port || await freePort();
+  if (port) await assertPortFree(listenPort);
+
+  let log = '';
+  const child = spawn(process.execPath, [path.join(REPO, 'server/src/index.js')], {
+    cwd: path.join(REPO, 'server'),
+    env: {
+      ...process.env,
+      ...env,
+      PORT: String(listenPort),
+      HOST: '127.0.0.1',
+      DATA_DIR: dataDir,
+      INITIAL_ADMIN_PASSWORD: CREDENTIALS.adminInitial,
+      TRUSTED_PROXY_IPS: '127.0.0.1,::1,::ffff:127.0.0.1'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const onData = (chunk) => { log = (log + chunk).slice(-8000); if (!quiet) process.stdout.write(chunk); };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+
+  const close = async () => {
+    if (child.exitCode === null) {
+      const exited = new Promise((r) => child.once('exit', r));
+      child.kill();
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+    }
+  };
+  try {
+    await waitForHealth(listenPort, child, () => log);
+  } catch (err) {
+    await close();
+    throw err;
+  }
+  return { port: listenPort, close, getLog: () => log };
+}
+
+/**
  * @param {{dataDir?: string, certDir?: string, tlsPort?: number, serverPort?: number, quiet?: boolean}} opts
  *   serverPort/tlsPort 0 = pick a random free port.
  */
@@ -73,48 +117,23 @@ export async function startStand({
   env = {}
 } = {}) {
   ensureCerts(certDir);
-  fs.mkdirSync(dataDir, { recursive: true });
-  const port = serverPort || await freePort();
-  if (serverPort) await assertPortFree(port);
-
-  let log = '';
-  const child = spawn(process.execPath, [path.join(REPO, 'server/src/index.js')], {
-    cwd: path.join(REPO, 'server'),
-    env: {
-      ...process.env,
-      ...env,
-      PORT: String(port),
-      HOST: '127.0.0.1',
-      DATA_DIR: dataDir,
-      INITIAL_ADMIN_PASSWORD: CREDENTIALS.adminInitial,
-      TRUSTED_PROXY_IPS: '127.0.0.1,::1,::ffff:127.0.0.1'
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  const onData = (chunk) => { log = (log + chunk).slice(-8000); if (!quiet) process.stdout.write(chunk); };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
+  const server = await startServerProcess({ dataDir, port: serverPort, quiet, env });
 
   let proxy;
   const close = async () => {
     await proxy?.close();
-    if (child.exitCode === null) {
-      const exited = new Promise((r) => child.once('exit', r));
-      child.kill();
-      await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
-    }
+    await server.close();
   };
 
   try {
-    await waitForHealth(port, child, () => log);
-    const seeded = await seed({ baseUrl: `http://127.0.0.1:${port}` });
+    const seeded = await seed({ baseUrl: `http://127.0.0.1:${server.port}` });
     proxy = await startTlsProxy({
       key: fs.readFileSync(path.join(certDir, 'dev-leaf.key')),
       cert: fs.readFileSync(path.join(certDir, 'dev-chain.crt')),
       listenPort: tlsPort,
-      targetPort: port
+      targetPort: server.port
     });
-    return { serverPort: port, tlsPort: proxy.port, seed: seeded, caCert: path.join(certDir, 'dev-ca.crt'), close };
+    return { serverPort: server.port, tlsPort: proxy.port, seed: seeded, caCert: path.join(certDir, 'dev-ca.crt'), close };
   } catch (err) {
     await close();
     throw err;

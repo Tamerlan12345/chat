@@ -1,0 +1,10 @@
+{
+  "type": "messages_read",
+  "byUserId": 3,
+  "messageIds": [
+    1,
+    3,
+    7,
+    8
+  ]
+}

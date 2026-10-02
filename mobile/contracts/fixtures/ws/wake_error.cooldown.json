@@ -1,0 +1,7 @@
+{
+  "type": "wake_error",
+  "code": "cooldown",
+  "targetUserId": 3,
+  "retryAt": 1790931660000,
+  "message": "Будить можно не чаще раза в минуту"
+}

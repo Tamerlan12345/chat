@@ -1,0 +1,7 @@
+{
+  "type": "message_status_updated",
+  "messageId": 8,
+  "status": "delivered",
+  "userId": 3,
+  "timestamp": "2026-10-02T09:00:00.000Z"
+}

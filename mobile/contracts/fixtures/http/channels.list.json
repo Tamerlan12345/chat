@@ -1,0 +1,44 @@
+[
+  {
+    "id": 3,
+    "name": "#mobile-dev",
+    "topic": "Канал для разработки мобильных клиентов",
+    "type": "public",
+    "owner_id": 1,
+    "created_at": "2026-10-02T09:00:01.000Z",
+    "member_role": "member",
+    "last_read_message_id": 6,
+    "members_count": 3,
+    "unread_count": 0,
+    "last_message_text": "dev-stand-notes.txt",
+    "last_message_time": "2026-10-02T09:00:02.000Z"
+  },
+  {
+    "id": 1,
+    "name": "Общий",
+    "topic": "Главный корпоративный канал АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "type": "system",
+    "owner_id": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "member_role": "member",
+    "last_read_message_id": 0,
+    "members_count": 3,
+    "unread_count": 0,
+    "last_message_text": null,
+    "last_message_time": null
+  },
+  {
+    "id": 2,
+    "name": "Объявления",
+    "topic": "Официальные распоряжения и приказы руководства компании",
+    "type": "system",
+    "owner_id": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "member_role": "member",
+    "last_read_message_id": 0,
+    "members_count": 3,
+    "unread_count": 0,
+    "last_message_text": null,
+    "last_message_time": null
+  }
+]
