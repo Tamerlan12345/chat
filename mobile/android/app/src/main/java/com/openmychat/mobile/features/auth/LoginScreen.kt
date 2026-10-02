@@ -415,7 +415,7 @@ private fun errorText(error: LoginError, retryAfterSeconds: Long): String = when
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
     unfocusedContainerColor = CentyTheme.tokens.card,
     focusedContainerColor = CentyTheme.tokens.card,
     disabledContainerColor = CentyTheme.tokens.card
