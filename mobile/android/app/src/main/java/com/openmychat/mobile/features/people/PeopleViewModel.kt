@@ -68,7 +68,8 @@ private data class PeopleFilters(
     val query: String = "",
     val scope: PeopleScope = PeopleScope.ALL,
     val onlineOnly: Boolean = false,
-    val expanded: Set<Long> = emptySet()
+    /** null — как на настольном клиенте: верхний уровень раскрыт, пока сотрудник ничего не трогал. */
+    val expanded: Set<Long>? = null
 )
 
 @HiltViewModel
@@ -101,8 +102,12 @@ class PeopleViewModel @Inject constructor(
     fun toggleOnlineOnly() = filters.update { it.copy(onlineOnly = !it.onlineOnly) }
 
     fun toggleDepartment(id: Long) = filters.update {
-        it.copy(expanded = if (id in it.expanded) it.expanded - id else it.expanded + id)
+        val current = it.expanded ?: defaultExpanded()
+        it.copy(expanded = if (id in current) current - id else current + id)
     }
+
+    private fun defaultExpanded(): Set<Long> =
+        PeopleDirectory.departments(repository.state.value.tree, repository.state.value.people).mapTo(HashSet()) { it.id }
 
     fun refresh() = repository.refresh()
 
@@ -111,7 +116,7 @@ class PeopleViewModel @Inject constructor(
             is PeopleRequest.Search -> filters.update { it.copy(query = request.query, scope = PeopleScope.ALL) }
             is PeopleRequest.Department -> {
                 val path = PeopleDirectory.pathTo(PeopleDirectory.departments(repository.state.value.tree, repository.state.value.people), request.departmentId)
-                filters.update { it.copy(query = "", scope = PeopleScope.DEPARTMENTS, onlineOnly = false, expanded = it.expanded + path) }
+                filters.update { it.copy(query = "", scope = PeopleScope.DEPARTMENTS, onlineOnly = false, expanded = (it.expanded ?: defaultExpanded()) + path) }
             }
         }
     }
@@ -135,7 +140,11 @@ class PeopleViewModel @Inject constructor(
             results = if (f.scope == PeopleScope.ALL && searching) PeopleSearch.rank(visible, f.query) else emptyList(),
             departments = tree,
             // Поиск раскрывает найденные ветки (как на настольном клиенте); фильтр «В сети» — тоже.
-            expanded = if (searching || f.onlineOnly) PeopleDirectory.allIds(tree) else f.expanded
+            expanded = when {
+                searching || f.onlineOnly -> PeopleDirectory.allIds(tree)
+                f.expanded != null -> f.expanded
+                else -> tree.mapTo(HashSet()) { it.id }
+            }
         )
     }
 }

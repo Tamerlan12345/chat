@@ -58,6 +58,8 @@ fun CentySearchField(
     onActiveChange: (Boolean) -> Unit = {},
     onSearch: () -> Unit = {},
     focusRequester: FocusRequester? = null,
+    /** Фокус поля пришёл или ушёл (экран сам решает, что считать режимом поиска). */
+    onFocusChange: (Boolean) -> Unit = {},
     testTag: String = "search-field"
 ) {
     val tokens = CentyTheme.tokens
@@ -73,7 +75,10 @@ fun CentySearchField(
         modifier = modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { if (it.isFocused && !active) onActiveChange(true) }
+            .onFocusChanged {
+                onFocusChange(it.isFocused)
+                if (it.isFocused && !active) onActiveChange(true)
+            }
             .testTag(testTag),
         decorationBox = { inner ->
             Row(

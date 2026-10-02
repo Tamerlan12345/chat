@@ -78,11 +78,11 @@ class PeopleViewModelTest {
     fun departmentsExpandOnTapAndSearchExpandsMatches() {
         val vm = viewModel()
         vm.setScope(PeopleScope.DEPARTMENTS)
-        assertEquals(emptySet<Long>(), vm.state.value.expanded)
+        assertEquals("верхний уровень раскрыт, как на десктопе", setOf(1L, 3L), vm.state.value.expanded)
         vm.toggleDepartment(1)
-        assertEquals(setOf(1L), vm.state.value.expanded)
-        vm.toggleDepartment(1)
-        assertEquals(emptySet<Long>(), vm.state.value.expanded)
+        assertEquals(setOf(3L), vm.state.value.expanded)
+        vm.toggleDepartment(2)
+        assertEquals(setOf(2L, 3L), vm.state.value.expanded)
 
         vm.setQuery("сидор")
         assertEquals(setOf(1L, 2L), vm.state.value.expanded)
@@ -107,7 +107,7 @@ class PeopleViewModelTest {
         assertEquals(PeopleScope.DEPARTMENTS, vm.state.value.scope)
         assertEquals("", vm.state.value.query)
         assertFalse(vm.state.value.onlineOnly)
-        assertEquals(setOf(1L, 2L), vm.state.value.expanded)
+        assertEquals(setOf(1L, 2L, 3L), vm.state.value.expanded)
     }
 
     @Test

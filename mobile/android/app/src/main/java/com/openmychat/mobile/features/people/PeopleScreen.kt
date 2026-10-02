@@ -145,7 +145,8 @@ fun PeopleContent(
     val tokens = CentyTheme.tokens
     val reduce = LocalReduceMotion.current
     val focus = LocalFocusManager.current
-    var searchFocused by rememberSaveable { mutableStateOf(false) }
+    // Режим поиска — пока поле в фокусе или в нём есть текст: запрос из карточки («Отдел») его закрывает.
+    var searchFocused by remember { mutableStateOf(false) }
     val searchActive = searchFocused || state.query.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
     val allState = rememberLazyListState()
@@ -215,6 +216,7 @@ fun PeopleContent(
                         if (first != null) actions.onOpenPerson(first) else focus.clearFocus()
                     },
                     focusRequester = focusRequester,
+                    onFocusChange = { searchFocused = it },
                     testTag = "people-search",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
@@ -340,7 +342,10 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
                 if (state.onlineOnly) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 } else {
-                    Box(Modifier.size(8.dp).background(tokens.online, CircleShape))
+                    // Та же ширина, что у галочки: переключатели рядом не прыгают.
+                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(8.dp).background(tokens.online, CircleShape))
+                    }
                 }
             },
             shape = RoundedCornerShape(CentyRadius.control),
