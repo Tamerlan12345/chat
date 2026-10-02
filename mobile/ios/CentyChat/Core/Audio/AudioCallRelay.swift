@@ -442,9 +442,24 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         let generation = playbackGeneration
         let delay = max(0, next.time - CACurrentMediaTime())
         let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay)
-        player.scheduleBuffer(next.buffer, at: AVAudioTime(hostTime: hostTime), options: []) { [weak self] in
-            Task { @MainActor [weak self] in
+        player.scheduleBuffer(
+            next.buffer,
+            at: AVAudioTime(hostTime: hostTime),
+            options: [],
+            completionHandler: Self.makePlaybackCompletionHandler(generation: generation) { [weak self] generation in
                 self?.finishPlayback(generation: generation)
+            }
+        )
+    }
+
+    /// Builds the scheduleBuffer completion handler, which AVFoundation calls on its own queue.
+    static func makePlaybackCompletionHandler(
+        generation: Int,
+        onFinished: @escaping @MainActor (Int) -> Void
+    ) -> AVAudioNodeCompletionHandler {
+        {
+            Task { @MainActor in
+                onFinished(generation)
             }
         }
     }
@@ -476,15 +491,29 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
 
     private func installCaptureTap(on inputNode: AVAudioInputNode) {
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { [weak self] buffer, _ in
+        inputNode.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: nil,
+            block: Self.makeCaptureTapBlock { [weak self] samples in
+                self?.captureHandler?(samples)
+            }
+        )
+    }
+
+    /// Builds the input tap block, which AVFoundation calls on its realtime audio thread.
+    static func makeCaptureTapBlock(
+        deliver: @escaping @MainActor ([Float]) -> Void
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in
             let monoSamples = Self.monoSamples(from: buffer)
             let normalized = AudioCaptureNormalizer.normalize(
                 monoSamples,
                 bufferSampleRate: buffer.format.sampleRate
             )
             guard !normalized.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                self?.captureHandler?(normalized)
+            Task { @MainActor in
+                deliver(normalized)
             }
         }
     }
