@@ -24,6 +24,8 @@ interface AuthRepository {
     /**
      * Announces this device to the build-time server (`/auth/knock`), as the old server-setup step
      * did. Returns true only when the server answered "paired" and the session it issued was stored.
+     * Without a device secret stored by an earlier claim nothing is sent: such a knock can never pair,
+     * but the server would still record a pending device, notify admins and count a failed knock.
      */
     suspend fun knock(): Boolean
 
@@ -50,10 +52,11 @@ class DefaultAuthRepository @Inject constructor(
     override val hasSessionToken: Boolean get() = sessionManager.token != null
 
     override suspend fun knock(): Boolean {
+        val secret = sessionManager.deviceSecret?.takeIf { it.isNotBlank() } ?: return false
         val response = apiClient.knock(
             KnockRequest(
                 deviceId = sessionManager.deviceId,
-                deviceSecret = null,
+                deviceSecret = secret,
                 deviceName = "Android Device"
             )
         )
