@@ -1,0 +1,5 @@
+{
+  "type": "call_unavailable",
+  "targetUserId": 1,
+  "reason": "Сотрудник сейчас не в сети"
+}

@@ -1,0 +1,5 @@
+{
+  "type": "error",
+  "context": "edit_message",
+  "message": "Нельзя редактировать чужое сообщение"
+}

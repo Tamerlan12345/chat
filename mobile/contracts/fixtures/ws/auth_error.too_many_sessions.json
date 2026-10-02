@@ -1,0 +1,5 @@
+{
+  "type": "auth_error",
+  "code": "TOO_MANY_SESSIONS",
+  "message": "Слишком много открытых окон. Закройте лишние."
+}

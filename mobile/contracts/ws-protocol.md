@@ -14,6 +14,14 @@
 
 ---
 
+### 1.1. Адрес сервера в мобильных клиентах
+
+Мобильные клиенты **не имеют экрана выбора сервера**. Адрес зашивается при сборке (решение владельца 2026-10-02, задачи 11–12 плана):
+
+- **Release**: константа времени компиляции `https://centychat-production.up.railway.app`; REST — `…/api`, WebSocket — `wss://centychat-production.up.railway.app/ws`. Только HTTPS/WSS, никакого переопределения во время работы.
+- **Debug**: адрес берётся из конфигурации сборки (по умолчанию — продакшн). Для локального стенда `mobile/dev` — `https://10.0.2.2:8443` (эмулятор Android) и `https://localhost:8443` (симулятор iOS), WebSocket — `wss://…/ws`.
+- Фикстуры и тесты контракта от адреса не зависят.
+
 ## 2. Установка соединения, хэндшейк и безопасность
 
 ### 2.1. Проверки при рукопожатии (`verifyClient`)
@@ -326,27 +334,77 @@
 
 ## 4. Сообщения: Сервер -> Клиент
 
+Все примеры ниже — **дословные кадры реального сервера** (значения нормализованы: токены, время, UIN). Они же лежат в `mobile/contracts/fixtures/ws/` и декодируются в unit-тестах обеих платформ; соответствие «событие → файл» — в §7. Клиент обязан **игнорировать неизвестные поля** (сервер добавляет поля аддитивно) и **неизвестные `type`**.
+
+Общие правила декодирования:
+- Идентификаторы — JSON-числа (`Int64`/`Long`). Исключение: `announcement_acknowledged.announcementId` — **строка** (берётся из URL).
+- `is_active`, `is_deleted`, `must_change_password` — числа `0/1`, не boolean.
+- Время в сообщениях — ISO-8601 строки UTC (`2026-10-02T09:00:00.000Z`); время в событиях побудки (`at`, `retryAt`) — **epoch в миллисекундах** (число).
+- Для личных сообщений `target_id` — id **получателя**, поэтому собеседник = та сторона пары (`sender_id`, `target_id`), которая не вы.
+
 ### 4.1. Авторизация и статус соединения
 
-#### `auth_success` — Успешный вход сокета
+#### `auth_success` — сокет авторизован
+Объект `user` — полный профиль сессии (как `user` в `/auth/me`): помимо базовых полей содержит служебные (`permissions_json` — те же права, но строкой; `token_version`, `bound_ip`, `last_login_ip`). Клиент использует `id`, `username`, `full_name`, `permissions`, `status`, остальное игнорирует.
 ```json
 {
   "type": "auth_success",
   "user": {
-    "id": 7,
-    "username": "k.akhmetov",
-    "full_name": "Ахметов Канат",
+    "id": 2,
+    "username": "alice",
+    "full_name": "Алиса Тестова",
+    "email": "alice@example.test",
+    "phone": "",
+    "job_title": "Сотрудник",
+    "department_id": null,
+    "uin": 1002,
+    "extension": "",
+    "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "role_id": 2,
+    "avatar_url": null,
     "status": "online",
+    "custom_status": null,
+    "last_seen": "2026-10-02T09:00:01.000Z",
+    "is_active": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "bound_ip": null,
+    "admin_scope_dept_id": null,
+    "must_change_password": 0,
+    "approval_status": "approved",
+    "registered_at": null,
+    "token_version": 1,
+    "last_login_at": "2026-10-02T09:00:01.000Z",
+    "last_login_ip": "127.0.0.1",
+    "role_name": "Сотрудник",
+    "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+    "department_name": null,
+    "admin_scope_dept_name": null,
     "permissions": {
+      "is_admin": false,
+      "can_manage_users": false,
+      "can_manage_structure": false,
+      "can_manage_db": false,
+      "can_broadcast": false,
       "can_call": true,
-      "can_upload_files": true,
-      "can_create_channels": true
+      "can_remote_control": false,
+      "can_create_channels": true,
+      "can_upload_files": true
     }
   }
 }
 ```
+Порядок после успешного `auth`: `auth_success` → `wake_state` → широковещательный `user_status_changed` (приходит и самому вошедшему).
 
-#### `auth_error` — Ошибка авторизации
+#### `auth_error` — ошибка авторизации сокета
+Сервер сокет **не закрывает** (кроме тайм-аута 4001), клиент сам решает, что делать. `code` — машинное поле, `message` — для показа.
+
+| `code` | Когда | Действие клиента |
+|---|---|---|
+| `INVALID_TOKEN` | токен подделан, истёк, отозван (logout, смена пароля/роли, отключение учётной записи) | остановить автопереподключение; получить новый токен (см. §6.3): `/auth/knock` с секретом устройства или экран входа |
+| `MUST_CHANGE_PASSWORD` | `must_change_password = 1` | показать экран смены пароля, сокет не открывать |
+| `TOO_MANY_SESSIONS` | уже 8 сокетов у пользователя | повторить позже с backoff |
+| `RATE_LIMITED` | 10 неудачных `auth` за минуту с адреса | backoff не менее 60 с |
+
 ```json
 {
   "type": "auth_error",
@@ -354,25 +412,58 @@
   "message": "Недействительный токен авторизации"
 }
 ```
-*Коды: `INVALID_TOKEN`, `MUST_CHANGE_PASSWORD`, `TOO_MANY_SESSIONS`, `RATE_LIMITED`.*
+```json
+{
+  "type": "auth_error",
+  "message": "Требуется смена пароля перед продолжением работы",
+  "code": "MUST_CHANGE_PASSWORD"
+}
+```
+```json
+{
+  "type": "auth_error",
+  "code": "TOO_MANY_SESSIONS",
+  "message": "Слишком много открытых окон. Закройте лишние."
+}
+```
+```json
+{
+  "type": "auth_error",
+  "code": "RATE_LIMITED",
+  "message": "Слишком много попыток. Повторите через минуту."
+}
+```
 
-#### `wake_state` — Текущее состояние таймера побудки
-Отправляется сразу после `auth_success`.
+#### `wake_state` — состояние паузы побудки
+Приходит сразу после `auth_success`. `retryAt` — epoch мс; `0` — пауза не активна (полей `targetUserId`/`at` тогда нет).
 ```json
 {
   "type": "wake_state",
-  "targetUserId": 12,
-  "at": 1759230000000,
-  "retryAt": 1759230060000
+  "retryAt": 0
 }
 ```
-*Если кулдаун не активен: `{ "type": "wake_state", "retryAt": 0 }`.*
+```json
+{
+  "type": "wake_state",
+  "targetUserId": 3,
+  "at": 1790931600000,
+  "retryAt": 1790931660000
+}
+```
 
-#### `server_disconnect` — Принудительное отключение сервером
+#### `server_disconnect` — принудительное отключение
+Сразу после кадра сервер закрывает сокет с кодом `4003`. **Переподключаться тем же токеном нельзя.**
+Причины (`reason`, строка для показа): `Выход из системы`, `Пароль изменён — переподключение`, `Сессия недействительна — войдите заново`, `Права учётной записи изменены — войдите заново`, `Права вашей роли изменены администратором — войдите заново`, `Учётная запись отключена администратором`, `Пароль сброшен администратором — войдите заново`, `Сессия принудительно завершена администратором через панель управления`.
 ```json
 {
   "type": "server_disconnect",
-  "reason": "Пароль изменён — переподключение"
+  "reason": "Выход из системы"
+}
+```
+```json
+{
+  "type": "server_disconnect",
+  "reason": "Права вашей роли изменены администратором — войдите заново"
 }
 ```
 
@@ -380,116 +471,312 @@
 
 ### 4.2. Чат и сообщения
 
-#### `new_message` / `direct_message` / `channel_message` — Новое сообщение
-Сервер одновременно отправляет `new_message` и специфичный тип (`direct_message` или `channel_message`).
+#### `new_message` + `direct_message` / `channel_message` — новое сообщение (ВСЕГДА ДВА КАДРА)
+Для **каждого** нового сообщения сервер шлёт каждому получателю **два кадра с идентичным `message`**:
+1. специфичный: `direct_message` (личное) или `channel_message` (канал);
+2. сразу за ним — `new_message`.
 
+Получатели: для личного — собеседник **и сам отправитель** (эхо на все его сокеты); для канала — все участники, включая отправителя. Верно и для WS-отправки (`send_message`), и для REST (`POST /api/messages/direct|channels/{id}`).
+
+**Правило для клиентов:** считать оба кадра одним событием и **дедуплицировать по `message.id`**. Нельзя увеличивать счётчик непрочитанного по каждому кадру отдельно. Допустимые стратегии: слушать только `new_message` и игнорировать специфичные типы; либо обрабатывать оба при обязательной дедупликации по id.
+
+В живых кадрах в `message` **нет** `delivery_status` (он есть только в `GET /api/messages/direct/{id}`). Для отправителя «доставлено» приходит отдельным `message_status_updated`.
+
+Личное сообщение — оба кадра:
+```json
+{
+  "type": "direct_message",
+  "message": {
+    "id": 8,
+    "conversation_type": "direct",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Привет, Боб! Договор готов к подписанию.",
+    "type": "text",
+    "reply_to_id": null,
+    "metadata_json": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "updated_at": null,
+    "is_deleted": 0,
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
+    "sender_avatar": null,
+    "sender_department": null,
+    "file_original_name": null
+  }
+}
+```
 ```json
 {
   "type": "new_message",
   "message": {
-    "id": 512,
+    "id": 8,
     "conversation_type": "direct",
-    "target_id": 12,
-    "sender_id": 7,
-    "text": "Отправил обновленные контракты",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Привет, Боб! Договор готов к подписанию.",
     "type": "text",
     "reply_to_id": null,
     "metadata_json": null,
-    "created_at": "2026-09-30T09:40:00.000Z",
+    "created_at": "2026-10-02T09:00:00.000Z",
     "updated_at": null,
     "is_deleted": 0,
-    "sender_username": "k.akhmetov",
-    "sender_name": "Ахметов Канат",
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
     "sender_avatar": null,
-    "sender_department": "Отдел разработки",
-    "file_original_name": null,
-    "delivery_status": "delivered"
+    "sender_department": null,
+    "file_original_name": null
   }
 }
 ```
+Сообщение канала — оба кадра:
+```json
+{
+  "type": "channel_message",
+  "message": {
+    "id": 9,
+    "conversation_type": "channel",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Релиз мобильных клиентов — в пятницу.",
+    "type": "text",
+    "reply_to_id": null,
+    "metadata_json": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "updated_at": null,
+    "is_deleted": 0,
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
+    "sender_avatar": null,
+    "sender_department": null,
+    "file_original_name": null
+  }
+}
+```
+```json
+{
+  "type": "new_message",
+  "message": {
+    "id": 9,
+    "conversation_type": "channel",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Релиз мобильных клиентов — в пятницу.",
+    "type": "text",
+    "reply_to_id": null,
+    "metadata_json": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "updated_at": null,
+    "is_deleted": 0,
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
+    "sender_avatar": null,
+    "sender_department": null,
+    "file_original_name": null
+  }
+}
+```
+`metadata_json` — **строка** с JSON (или `null`), для вложений `{"file_id":1}`; `file_original_name` — имя файла для скачивания (брать только оттуда, не из `text`). `type`: `text` | `file` | `image`.
 
-#### `message_status_updated` — Отметка о доставке личного сообщения
-Отправляется автору сообщения, когда получатель находится онлайн в момент отправки.
+#### `message_status_updated` — личное сообщение доставлено
+Только автору (всем его сокетам) и **только если получатель был онлайн в момент отправки**. Если получатель подключился позже, статус «доставлено» сервер **не ставит** (см. §6.2).
 ```json
 {
   "type": "message_status_updated",
-  "messageId": 512,
+  "messageId": 8,
   "status": "delivered",
-  "userId": 12,
-  "timestamp": "2026-09-30T09:40:01.000Z"
+  "userId": 3,
+  "timestamp": "2026-10-02T09:00:00.000Z"
 }
 ```
 
-#### `messages_read` — Собеседник прочитал сообщения
+#### `messages_read` — собеседник прочитал сообщения
+Только для личных диалогов; уходит автору сообщений. `messageIds` — только вновь прочитанные. Для каналов события нет.
 ```json
 {
   "type": "messages_read",
-  "byUserId": 12,
-  "messageIds": [510, 511, 512]
+  "byUserId": 3,
+  "messageIds": [
+    1,
+    3,
+    7,
+    8
+  ]
 }
 ```
 
-#### `message_updated` — Сообщение отредактировано
+#### `message_updated` — сообщение отредактировано
+Содержит **полную** запись сообщения (как `new_message`), `updated_at` не `null`. Получатели те же, что у исходного сообщения.
 ```json
 {
   "type": "message_updated",
   "message": {
-    "id": 512,
-    "text": "Отправил обновленные контракты и OpenAPI spec",
-    "updated_at": "2026-09-30T09:41:00.000Z"
+    "id": 8,
+    "conversation_type": "direct",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Привет, Боб! Договор готов, жду подпись до 17:00.",
+    "type": "text",
+    "reply_to_id": null,
+    "metadata_json": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "updated_at": "2026-10-02T09:00:01.000Z",
+    "is_deleted": 0,
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
+    "sender_avatar": null,
+    "sender_department": null,
+    "file_original_name": null
   }
 }
 ```
 
-#### `message_deleted` — Сообщение удалено
+#### `message_deleted` — сообщение удалено
+Записи сообщения в кадре нет: клиент находит его по `messageId` и помечает удалённым (`is_deleted = 1`, пустой `text`).
 ```json
 {
   "type": "message_deleted",
-  "messageId": 512,
+  "messageId": 8,
   "conversationType": "direct",
-  "targetId": 12
+  "targetId": 3
+}
+```
+```json
+{
+  "type": "message_deleted",
+  "messageId": 9,
+  "conversationType": "channel",
+  "targetId": 3
 }
 ```
 
-#### `user_typing` — Собеседник печатает
+#### `user_typing` — собеседник печатает
+`userId` — кто печатает. Для **личных** диалогов `targetId` равен id получателя кадра (то есть вашему), поэтому диалог определяется по `userId`; для **каналов** `targetId` — id канала. Автосброса на сервере нет: индикатор гасится по `isTyping:false` либо клиентом через 3–5 с.
 ```json
 {
   "type": "user_typing",
-  "userId": 12,
-  "userName": "Нурпеисов Данияр",
-  "conversationType": "channel",
-  "targetId": 1,
+  "userId": 3,
+  "userName": "Боб Тестов",
+  "conversationType": "direct",
+  "targetId": 2,
   "isTyping": true
 }
 ```
+```json
+{
+  "type": "user_typing",
+  "userId": 3,
+  "userName": "Боб Тестов",
+  "conversationType": "channel",
+  "targetId": 3,
+  "isTyping": false
+}
+```
+
+#### `error` — отказ на запрос клиента
+Приходит только отправителю запроса. Для `send_message` сервер возвращает исходный `text`, чтобы восстановить поле ввода (композер уже очищен).
+```json
+{
+  "type": "error",
+  "context": "send_message",
+  "message": "Получатель не найден",
+  "text": "Это сообщение не будет доставлено"
+}
+```
+```json
+{
+  "type": "error",
+  "context": "edit_message",
+  "message": "Нельзя редактировать чужое сообщение"
+}
+```
+Значения `context`: `send_message`, `edit_message`, `delete_message`; при внутренней ошибке обработки `context` отсутствует (`{"type":"error","message":"Ошибка обработки запроса"}`). `message` — русский текст для показа; машинного кода у `error` нет.
 
 ---
 
 ### 4.3. Присутствие и пользователи
 
-#### `user_status_changed` — Изменение статуса пользователя
-Широковещательное оповещение (broadcast) всем подключенным клиентам.
+#### `user_status_changed` — изменение статуса
+Широковещательно всем авторизованным сокетам (в том числе инициатору). Всегда оба поля `userId` и `user_id`. `status`: `online` | `away` | `dnd` | `offline`; `customStatus` — строка или `null`. В кадре `offline` (закрыт последний сокет пользователя) поля `customStatus` **нет**.
 ```json
 {
   "type": "user_status_changed",
-  "userId": 7,
-  "user_id": 7,
+  "userId": 2,
+  "user_id": 2,
   "status": "online",
-  "customStatus": "Работаю над iOS релизом"
+  "customStatus": null
 }
 ```
-*Возможные значения `status`: `"online"`, `"away"`, `"dnd"`, `"offline"`.*
+```json
+{
+  "type": "user_status_changed",
+  "userId": 2,
+  "user_id": 2,
+  "status": "away",
+  "customStatus": "Обед до 14:00"
+}
+```
+```json
+{
+  "type": "user_status_changed",
+  "userId": 3,
+  "user_id": 3,
+  "status": "dnd",
+  "customStatus": null
+}
+```
 
-#### `user_created` и `user_updated` — Изменения в справочнике
+#### `user_created` и `user_updated` — изменения справочника
+Рассылаются всем; `user` — публичный профиль (как в `GET /api/users`).
 ```json
 {
   "type": "user_created",
   "user": {
-    "id": 25,
-    "username": "s.bolat",
-    "full_name": "Болат Серик",
-    "department_name": "Бухгалтерия",
-    "status": "offline"
+    "id": 4,
+    "username": "carol",
+    "full_name": "Карина Тестова",
+    "email": "carol@example.test",
+    "phone": "",
+    "job_title": "Сотрудник",
+    "department_id": null,
+    "uin": 1004,
+    "extension": "",
+    "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "role_id": 2,
+    "avatar_url": null,
+    "status": "offline",
+    "custom_status": null,
+    "last_seen": null,
+    "is_active": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "department_name": null,
+    "role_name": "Сотрудник"
+  }
+}
+```
+```json
+{
+  "type": "user_updated",
+  "user": {
+    "id": 4,
+    "username": "carol",
+    "full_name": "Карина Тестова",
+    "email": "carol@example.test",
+    "phone": "",
+    "job_title": "Аналитик",
+    "department_id": null,
+    "uin": 1004,
+    "extension": "",
+    "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "role_id": 2,
+    "avatar_url": null,
+    "status": "offline",
+    "custom_status": null,
+    "last_seen": null,
+    "is_active": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "department_name": null,
+    "role_name": "Сотрудник"
   }
 }
 ```
@@ -499,17 +786,17 @@
 ### 4.4. Корпоративные каналы
 
 #### `channel_created`
-Рассылается всем участникам при создании канала (для приватных каналов — строго созданным участникам).
+Публичные каналы — всем; приватные — только участникам. Запись канала **без** счётчиков (`members_count`, `unread_count`…) — за ними нужен `GET /api/channels`.
 ```json
 {
   "type": "channel_created",
   "channel": {
-    "id": 8,
-    "name": "#Мобильные-Приложения",
-    "topic": "Координация iOS и Android разработки",
+    "id": 4,
+    "name": "#релиз",
+    "topic": "Подготовка релиза",
     "type": "public",
-    "owner_id": 7,
-    "created_at": "2026-09-30T09:45:00.000Z"
+    "owner_id": 1,
+    "created_at": "2026-10-02T09:00:00.000Z"
   }
 }
 ```
@@ -518,7 +805,7 @@
 ```json
 {
   "type": "channel_deleted",
-  "channelId": 8
+  "channelId": 4
 }
 ```
 
@@ -527,96 +814,181 @@
 ### 4.5. Оповещения компании (Announcements)
 
 #### `new_announcement`
-Рассылается всем целевым сотрудникам при создании важного оповещения.
+При `target_type = all` — всем; иначе адресатам и автору. В кадре **нет** `read_at`, `confirmed_at`, `is_confirmed` (они есть в `GET /api/announcements`): для нового оповещения считать «не подтверждено». `priority`: `normal` | `urgent` | `critical`. `target_ids_json` — строка с JSON-массивом.
 ```json
 {
   "type": "new_announcement",
   "announcement": {
-    "id": 4,
+    "id": 2,
     "author_id": 1,
-    "title": "Срочное обновление безопасности",
-    "content": "Всем сотрудникам установить мобильное приложение CentyChat v1.0.",
-    "priority": "critical",
+    "title": "Плановое обновление",
+    "content": "Сегодня в 22:00 сервер будет недоступен 10 минут.",
     "target_type": "all",
-    "created_at": "2026-09-30T09:50:00.000Z",
-    "author_name": "Главный Администратор"
+    "target_ids_json": "[]",
+    "priority": "urgent",
+    "expires_at": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "author_name": "Администратор системы",
+    "author_job_title": "Главный системный администратор"
   }
 }
 ```
 
 #### `announcement_acknowledged`
-Рассылается автору и получателям при подтверждении ознакомления сотрудником.
+Автору и адресатам. `announcementId` — **строка**.
 ```json
 {
   "type": "announcement_acknowledged",
-  "announcementId": "4",
-  "userId": 7,
-  "userName": "Ахметов Канат"
+  "announcementId": "2",
+  "userId": 2,
+  "userName": "Алиса Тестова"
 }
 ```
 
 ---
 
-### 4.6. Голосовые звонки (Server Relay)
+### 4.6. Побудка (Wake)
 
-#### `call_offer` — Входящий звонок
+`wake_state` описан в §4.1. Пауза — 60 с на отправителя (не на пару). Отказы `dnd`, `offline`, `invalid_target` паузу **не** запускают.
+
+#### `wake_sent` — инициатору: побудка ушла
+```json
+{
+  "type": "wake_sent",
+  "targetUserId": 3,
+  "at": 1790931600000,
+  "retryAt": 1790931660000
+}
+```
+#### `wake_ring` — адресату: его будят
+```json
+{
+  "type": "wake_ring",
+  "fromUserId": 2,
+  "fromName": "Алиса Тестова",
+  "at": 1790931600000
+}
+```
+#### `wake_error` — отказ
+`code`: `cooldown` (есть `retryAt`) | `invalid_target` | `dnd` | `offline`. `message` — русский текст для показа.
+```json
+{
+  "type": "wake_error",
+  "code": "cooldown",
+  "targetUserId": 3,
+  "retryAt": 1790931660000,
+  "message": "Будить можно не чаще раза в минуту"
+}
+```
+```json
+{
+  "type": "wake_error",
+  "code": "dnd",
+  "targetUserId": 3,
+  "message": "У собеседника включено «Не беспокоить»"
+}
+```
+```json
+{
+  "type": "wake_error",
+  "code": "offline",
+  "targetUserId": 1,
+  "message": "Собеседник не в сети"
+}
+```
+```json
+{
+  "type": "wake_error",
+  "code": "invalid_target",
+  "targetUserId": 2,
+  "message": "Разбудить можно только коллегу"
+}
+```
+
+---
+
+### 4.7. Голосовые звонки (Server Relay)
+
+Сигнальные кадры `call_offer`, `call_answer`, `call_rejected`, `call_end`, `ice_candidate` сервер **ретранслирует как есть**: берётся кадр отправителя целиком (включая необязательные `reason`, `candidate`), в нём `targetUserId` — **получатель кадра (вы)**, а `senderId`/`senderName` — собеседник. Собеседника клиент всегда определяет по `senderId`.
+
 ```json
 {
   "type": "call_offer",
-  "targetUserId": 7,
-  "senderId": 12,
-  "senderName": "Нурпеисов Данияр"
+  "targetUserId": 3,
+  "senderId": 2,
+  "senderName": "Алиса Тестова"
 }
 ```
-
-#### `call_answer` — Ответ на вызов
+```json
+{
+  "type": "ice_candidate",
+  "targetUserId": 2,
+  "candidate": {
+    "candidate": "candidate:1 1 UDP 2130706431 192.168.1.50 54321 typ host",
+    "sdpMid": "audio",
+    "sdpMLineIndex": 0
+  },
+  "senderId": 3,
+  "senderName": "Боб Тестов"
+}
+```
 ```json
 {
   "type": "call_answer",
-  "targetUserId": 12,
-  "senderId": 7,
-  "senderName": "Ахметов Канат"
+  "targetUserId": 2,
+  "senderId": 3,
+  "senderName": "Боб Тестов"
 }
 ```
-
-#### `call_rejected` — Вызов отклонен
 ```json
 {
   "type": "call_rejected",
-  "targetUserId": 12,
-  "senderId": 7,
-  "senderName": "Ахметов Канат",
-  "reason": "Занят на совещании"
+  "targetUserId": 2,
+  "reason": "Занят на совещании",
+  "senderId": 3,
+  "senderName": "Боб Тестов"
 }
 ```
-
-#### `call_end` — Вызов завершен
 ```json
 {
   "type": "call_end",
-  "targetUserId": 12,
-  "senderId": 7,
-  "senderName": "Ахметов Канат",
+  "targetUserId": 3,
+  "reason": "Разговор завершен",
+  "senderId": 2,
+  "senderName": "Алиса Тестова"
+}
+```
+Если собеседник пропал (закрыт его последний сокет), сервер сам шлёт `call_end` **без `targetUserId`** и с `reason = "connection_lost"`; то же — если пропал тот, кто звонил (или кому звонили) и вызов ещё не принят:
+```json
+{
+  "type": "call_end",
+  "senderId": 3,
+  "senderName": "Боб Тестов",
   "reason": "connection_lost"
 }
 ```
-
-#### `call_denied` — Звонок запрещен политикой
+Кадры, которые сервер формирует сам (инициатору вызова):
 ```json
 {
   "type": "call_denied",
   "reason": "Звонки не разрешены для вашей роли. Обратитесь к администратору."
 }
 ```
-
-#### `call_unavailable` — Собеседник недоступен
 ```json
 {
   "type": "call_unavailable",
-  "targetUserId": 12,
+  "targetUserId": 3,
   "reason": "У сотрудника включено «Не беспокоить»"
 }
 ```
+```json
+{
+  "type": "call_unavailable",
+  "targetUserId": 1,
+  "reason": "Сотрудник сейчас не в сети"
+}
+```
+`call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети». `call_answer` без реально ожидающего вызова сервер молча игнорирует; ожидающий вызов живёт 2 минуты.
 
 ---
 
@@ -710,23 +1082,26 @@ sequenceDiagram
     actor B as Получатель (iOS/Android)
 
     A->>S: WS send_message {targetId: B, text: "Привет"}
-    S->>S: Сохранение в SQLite DB
-    S-->>A: WS new_message / direct_message {id: 101, status: "delivered"}
-    alt B находится Online
-        S->>B: WS new_message / direct_message {id: 101}
+    S->>S: Сохранение в БД (идемпотентности нет: client_msg_id не поддерживается)
+    S-->>A: WS direct_message + new_message {message.id: 101} (эхо автору)
+    S-->>B: WS direct_message + new_message {message.id: 101} (если B онлайн)
+    alt B онлайн в момент отправки
         S-->>A: WS message_status_updated {messageId: 101, status: "delivered"}
         Note over B: Пользователь открывает чат
-        B->>S: WS mark_read {targetId: A}
-        S->>A: WS messages_read {byUserId: B, messageIds: [101]}
-    else B находится Offline
-        Note over S: Сообщение ждет в БД
-        Note over B: B подключается к сети и шлет auth
-        S->>B: WS auth_success
-        B->>S: REST GET /api/messages/direct/A
-        B->>S: WS mark_read {targetId: A}
-        S->>A: WS messages_read {byUserId: B, messageIds: [101]}
+        B->>S: WS mark_read {conversationType: "direct", targetId: A}
+        S-->>A: WS messages_read {byUserId: B, messageIds: [101]}
+    else B офлайн
+        Note over S: Сообщение ждёт в БД; «доставлено» НЕ ставится ни сейчас, ни при подключении B
+        Note over B: B подключается, шлёт auth, получает auth_success
+        B->>S: REST GET /api/conversations/direct и /api/messages/direct/A
+        B->>S: WS mark_read
+        S-->>A: WS messages_read {byUserId: B, messageIds: [101]}
     end
 ```
+
+Следствия для клиентов:
+- Автор получает собственное сообщение обратно двумя кадрами (`direct_message` и `new_message`) — это и есть подтверждение сохранения; временную локальную запись нужно заменить записью сервера. Привязки «локальный id → серверный id» нет, сопоставлять приходится по тексту/времени/автору, пока сервер не получит `client_msg_id`.
+- При ошибке сервер отвечает `error` с `context: "send_message"` и возвращает `text`. При обрыве соединения до ответа исход **неизвестен**: перед повторной отправкой запросить последнюю страницу переписки и убедиться, что сообщения там нет.
 
 ### 6.3. Стратегия переподключения (Reconnection Strategy)
 
@@ -736,8 +1111,48 @@ sequenceDiagram
    - Попытка 2: через 2 секунды.
    - Попытка 3: через 4 секунды.
    - Попытка N: до максимума в 30 секунд с добавлением случайного джиттера ±20%.
+   - При `auth_error` с `RATE_LIMITED` — не менее 60 секунд; при `TOO_MANY_SESSIONS` — медленный откат.
 2. **Шаги восстановления после реконнекта**:
-   - Шаг 1: `ws.connect()`.
-   - Шаг 2: отправка `{ type: 'auth', token: currentToken }`.
-   - Шаг 3: при получении `auth_error (INVALID_TOKEN)` — запрос свежего токена через REST `POST /api/auth/refresh` или повторный вход.
-   - Шаг 4: синхронизация пропущенных сообщений через REST `GET /api/messages?beforeId=...`.
+   - Шаг 1: открыть `wss://<сервер>/ws`.
+   - Шаг 2: отправить `{ "type": "auth", "token": currentToken }`.
+   - Шаг 3: при `auth_error` (`INVALID_TOKEN`), `server_disconnect` или HTTP `401` токен **мёртв — автопереподключение остановить**. **Истёкший или отозванный токен продлить нельзя**: `POST /api/auth/refresh` принимает только ещё действующий токен (иначе `401 «Войдите заново»` / `«Недействительный или истекший токен»`), а успешное продление сразу отзывает старый токен. Новый токен можно получить только так:
+     - есть секрет устройства: `POST /api/auth/knock` с `device_id` и `device_secret` → `status: "paired"` (новый `token`); `login_required` — секрет недействителен (истёк, сменён пароль), нужен экран входа; `pending` — устройство ждёт привязки администратором;
+     - иначе — вход по паролю `POST /api/auth/login`.
+     После нового токена — снова шаг 2. Повторять `refresh` с мёртвым токеном нельзя.
+   - Шаг 4: **догрузка пропущенного.** Серверной дельта-синхронизации пока нет (нет `afterId`/`updatedSince`; параметр `beforeId` листает только **назад**, к более старым сообщениям, и пропущенное им не получить). После успешного `auth_success`:
+     - перезапросить `GET /api/conversations/direct` и `GET /api/channels` (актуальные `unread_count`, последние сообщения);
+     - для открытого диалога перезапросить последнюю страницу `GET /api/messages/direct/{id}` или `/api/messages/channels/{id}` (`?limit=50`, максимум 200) и слить с локальной историей **по `id`**;
+     - если пробел длиннее страницы — листать `beforeId` от самого нового к последнему известному `id`;
+     - пропущенные правки и удаления видны в слитых данных (`updated_at`, `is_deleted = 1`, пустой `text`); пропущенные `messages_read`/`message_status_updated` восстанавливаются только полем `delivery_status` страницы личного диалога (`null` | `delivered` | `read`).
+   - Шаг 5: показать индикатор соединения до завершения шага 4.
+3. **Проактивное продление**: пока токен действует, за 30 минут до `exp` вызывать `POST /api/auth/refresh`; открытый сокет сервер переводит на новый токен сам.
+
+
+---
+
+## 7. Фикстуры и соответствие «событие → файл»
+
+Каждый кадр из §4 лежит в `mobile/contracts/fixtures/ws/<событие>[.<вариант>].json` (дословно как на проводе, без обёртки). Ответы HTTP — в `mobile/contracts/fixtures/http/`. Описание способа получения каждого файла — `fixtures/manifest.json`; правила именования и обновления — `fixtures/README.md`. Фикстуры снимает с настоящего сервера `mobile/dev/capture-fixtures.mjs`, дрейф ловит серверный тест `server/test/mobile-contract-fixtures.test.js`.
+
+| Событие | Файлы |
+|---|---|
+| `auth_success` | `ws/auth_success.json` |
+| `auth_error` | `ws/auth_error.invalid_token.json`, `.must_change_password.json`, `.too_many_sessions.json`, `.rate_limited.json` |
+| `server_disconnect` | `ws/server_disconnect.logout.json`, `.role-changed.json` |
+| `new_message` | `ws/new_message.direct.json`, `ws/new_message.channel.json` |
+| `direct_message` / `channel_message` | `ws/direct_message.json`, `ws/channel_message.json` |
+| `message_status_updated` | `ws/message_status_updated.json` |
+| `messages_read` | `ws/messages_read.json` |
+| `message_updated` | `ws/message_updated.json` |
+| `message_deleted` | `ws/message_deleted.direct.json`, `.channel.json` |
+| `user_typing` | `ws/user_typing.direct.json`, `.channel.json` |
+| `user_status_changed` | `ws/user_status_changed.online.json`, `.away.json`, `.dnd.json` |
+| `user_created` / `user_updated` | `ws/user_created.json`, `ws/user_updated.json` |
+| `channel_created` / `channel_deleted` | `ws/channel_created.json`, `ws/channel_deleted.json` |
+| `new_announcement` / `announcement_acknowledged` | `ws/new_announcement.json`, `ws/announcement_acknowledged.json` |
+| `call_offer` / `call_answer` / `call_rejected` / `ice_candidate` | `ws/call_offer.json`, `ws/call_answer.json`, `ws/call_rejected.json`, `ws/ice_candidate.json` |
+| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json` |
+| `call_denied` / `call_unavailable` | `ws/call_denied.json`, `ws/call_unavailable.dnd.json`, `.offline.json` |
+| `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
+| `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
+| `error` | `ws/error.send_message.json`, `ws/error.edit_message.json` |

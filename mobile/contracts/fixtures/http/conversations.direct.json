@@ -1,0 +1,23 @@
+[
+  {
+    "user_id": 3,
+    "username": "bob",
+    "full_name": "Боб Тестов",
+    "avatar_url": null,
+    "status": "online",
+    "custom_status": null,
+    "job_title": "Сотрудник",
+    "uin": 1003,
+    "extension": null,
+    "email": "bob@example.test",
+    "phone": null,
+    "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "department_name": null,
+    "last_message_id": 3,
+    "last_message_text": "Отлично, проверяем мобильное приложение.",
+    "last_message_time": "2026-10-02T09:00:00.000Z",
+    "last_message_sender_id": 2,
+    "last_message_type": "text",
+    "unread_count": 1
+  }
+]

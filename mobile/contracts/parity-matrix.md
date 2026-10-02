@@ -25,28 +25,40 @@
 
 ## 2. Матрица функционального паритета (Feature Parity)
 
-| Модуль / Фича | Описание бизнес-логики | iOS | Android | Статус |
-|---|---|:---:|:---:|:---:|
-| **Device Knock** | Генерация стабильного UUID v4 устройства, отправка в `/api/auth/knock` при старте. | ✅ | ✅ | Обязательно |
-| **Device Claim** | Сохранение 256-битного секрета после входа по паролю для беспарольного входа. | ✅ | ✅ | Обязательно |
-| **Auth & Refresh** | Авторизация JWT, проактивное обновление токена до истечения `exp`. | ✅ | ✅ | Обязательно |
-| **Must Change Password** | Перехват 403 `MUST_CHANGE_PASSWORD` и принудительный экран смены пароля. | ✅ | ✅ | Обязательно |
-| **Direct Messaging** | Личная переписка 1-на-1, статусы доставки (`delivered`), статусы прочтения (`read`). | ✅ | ✅ | Обязательно |
-| **Channel Messaging** | Корпоративные каналы (`#Общий` и др.), счетчики непрочитанных, роли. | ✅ | ✅ | Обязательно |
-| **Message Editing** | Правка текста с валидацией окна `message_edit_window_minutes`. | ✅ | ✅ | Обязательно |
-| **Message Deleting** | Удаление с валидацией окна `message_delete_window_minutes`. | ✅ | ✅ | Обязательно |
-| **Typing Indicator** | Индикатор «печатает…» с автосбросом через 3 секунды. | ✅ | ✅ | Обязательно |
-| **Presence & DND** | Переключение `online` / `away` и режим «Не беспокоить» (`dnd`). | ✅ | ✅ | Обязательно |
-| **Wake (Побудка)** | Прием сигнала с вибрацией и звуком. Отправка с кулдауном 60с. | ✅ | ✅ | Обязательно |
-| **Voice Calls (Signalling)** | Сигналинг вызова (`call_offer`, `call_answer`, `call_rejected`, `call_end`). | ✅ | ✅ | Обязательно |
-| **Audio Relay (WebSocket)** | Захват микрофона и воспроизведение через WS binary stream (16 кГц PCM). | ✅ | ✅ | Обязательно |
-| **Silence Suppression** | Отсечение тишины при передаче звука (`SILENCE_THRESHOLD = 0.0015`). | ✅ | ✅ | Обязательно |
-| **Jitter Buffer** | Планировщик звука с задержкой 60 мс и потолком 250 мс. | ✅ | ✅ | Обязательно |
-| **Announcements** | Список распоряжений, бейджи срочности, кнопка «Ознакомлен». | ✅ | ✅ | Обязательно |
-| **Org Structure** | Иерархическое дерево отделов, поиск сотрудников, карточка коллеги. | ✅ | ✅ | Обязательно |
-| **File Policy Filter** | Локальная предпроверка расширений файлов перед загрузкой (`/api/files/policy`). | ✅ | ✅ | Обязательно |
-| **File Upload/Download** | Фоновая загрузка с прогресс-баром, просмотр изображений и PDF. | ✅ | ✅ | Обязательно |
-| **Offline Cache** | Локальная очередь неотправленных сообщений и кэш диалогов в SQLite. | ✅ | ✅ | Обязательно |
+Статусы отражают **реальное состояние на аудите 2026-10-02** (раздел 0 плана `docs/superpowers/plans/2026-10-02-mobile-completion.md`), а не намерения. Прежние ✅ были заявлены без подтверждающего кода или проверки и сняты.
+
+Обозначения: **✓** — реализовано и подтверждено (тесты зелёные в CI/локально и/или проверено на живом стенде); **◐** — код есть, но не проверен вживую либо работает частично (дефект указан); **✗** — отсутствует или сломано; **?** — не проверялось аудитом; **—** — к платформе не относится. Номера `D1…D15` — дефекты из раздела 0 плана. Пока авторизованные экраны ни разу не видел человек (в debug Bearer не уходит по HTTP, локального HTTPS не было), **ни одна авторизованная функция не получает ✓**; ✓ появится после Задач 3/6/8 и сквозной проверки на стенде `mobile/dev`. Платформенные оговорки: 21 коммит iOS (Keychain fail-closed, аудиореле ~900 строк, редизайн инбокса, иконка) локально не компилировался под iOS; на Android один тест `ServerEndpointPolicyTest` (кириллица) красный и не закоммичен.
+
+| Модуль / Фича | Описание бизнес-логики | iOS | Android | Дефект / комментарий |
+|---|---|:---:|:---:|---|
+| **Device Knock** | Стабильный UUID устройства, отправка в `/api/auth/knock` при старте. | ◐ | ◐ | Код есть, живого прогона нет. Сервер: `paired` / `login_required` / `pending` — см. фикстуры `http/auth.knock-*.json`. |
+| **Device Claim** | Сохранение секрета (≥43 символов `[A-Za-z0-9_-]`) сразу после входа по паролю (не позднее 5 мин). | ◐ | ◐ | Живого прогона нет. |
+| **Auth & Refresh** | JWT, проактивное продление **ещё действующего** токена. | ◐ | ◐ | Истёкший токен продлить нельзя (только пароль или `/auth/knock`): `ws-protocol.md` §6.3. Долгоживущего refresh на сервере нет. |
+| **Must Change Password** | Перехват 403 `MUST_CHANGE_PASSWORD`, экран смены пароля. | ✗ | ◐ | D9: iOS застревает, двойной sheet. |
+| **Direct Messaging** | Личная переписка, статусы `delivered`/`read`. | ◐ | ◐ | D1 (потеря при разрыве, нет outbox), D2 (iOS: открытый чат без realtime), D3 (двойной `new_message`+`direct_message` → двойной unread), D4. |
+| **Channel Messaging** | Каналы, счётчики непрочитанного. | ◐ | ◐ | Те же D1–D4. |
+| **Create chat / channel** | Новый личный чат, создание канала. | ✗ | ✗ | D6: iOS — сломан sheet; Android — отсутствует. |
+| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер без `afterId`/дельты: догрузка перезапросом страниц (§6.3). |
+| **Message Editing** | Правка в окне `message_edit_window_minutes`. | ✗ | ? | D2: на iOS обработчики `updateMessage*` — заглушки. |
+| **Message Deleting** | Удаление в окне `message_delete_window_minutes`. | ✗ | ? | D2 (iOS); Android не проверялся. |
+| **Typing Indicator** | «печатает…», автосброс. | ✗ | ? | D2 (iOS: realtime открытого чата). |
+| **Presence & DND** | `online`/`away`/`dnd`. | ◐ | ◐ | Живого прогона нет. |
+| **Wake (Побудка)** | Приём с вибрацией/звуком, кулдаун 60 с. | ◐ | ◐ | Только foreground (D10). |
+| **Voice Calls (Signalling)** | `call_offer/answer/rejected/end`. | ◐ | ✗ | D7 (Android: повторный звонок сразу закрывается, «назад» не завершает звонок — ViewModel привязаны к Activity). D10: только foreground. |
+| **Background / incoming call** | CallKit / foreground service / push. | ✗ | ✗ | D10; на сервере нет push (APNs/FCM). |
+| **Audio Relay (WebSocket)** | PCM 16 кГц через WS binary. | ◐ | ◐ | iOS: код ~900 строк ни разу не компилировался; D15 — возможный краш Swift 6 в аудиоколбэках (`installTap`/`scheduleBuffer` из @MainActor). |
+| **Silence Suppression / Jitter Buffer** | `SILENCE_THRESHOLD`, 60/250 мс. | ◐ | ◐ | Юнит-логика есть; в связке с живым звонком не проверена. |
+| **Announcements** | Список, бейджи, «Ознакомлен». | ◐ | ◐ | Живого прогона нет. |
+| **Org Structure** | Дерево отделов, поиск, карточка коллеги. | ? | ? | Аудитом не проверялось. |
+| **File Policy Filter** | Предпроверка расширений (`/api/files/policy`). | ✗ | ✗ | D5: политика не применяется. Список расширений — **без точки**. |
+| **File Upload/Download** | Загрузка с прогрессом, просмотр картинок/PDF. | ✗ | ✗ | D5: iOS — картинки без Bearer не грузятся; Android — upload отсутствует. |
+| **Offline Cache / Outbox** | Очередь неотправленных, кэш диалогов. | ✗ | ✗ | D1. Идемпотентности на сервере нет (`client_msg_id`). |
+| **Error / loading / retry states** | Понятные ошибки вместо `catch {}`. | ✗ | ✗ | D11. |
+| **Навигация** | Корректный back stack, очистка при выходе. | ? | ✗ | D8 (Android: вкладки копятся, `onLoggedOut` не чистит стек). |
+| **Accessibility** | Dynamic Type/fontScale, VoiceOver/TalkBack, 44pt/48dp, локализация RU. | ✗ | ✗ | D12. |
+| **Дизайн как у десктопа** | Токены `theme.css`, DayNight, единая навигация. | ◐ | ✗ | D13: iOS — только инбокс; Android — 3 копии NavigationBar, XML-тема не DayNight. |
+| **Store / Compliance** | iPad `UIRequiresFullScreen`, PrivacyInfo (SystemBootTime). | ✗ | — | D14. |
+| **Фиксированный сервер + брендированный вход** | Адрес зашит в сборку, без экрана «подключиться». | ✗ | ✗ | Задачи 11–12; контракт: `ws-protocol.md` §1.1. |
 
 ---
 
@@ -106,8 +118,7 @@
 | `text` | `TEXT` | `String` | `String` | Нет | Текст (до 16000 символов) |
 | `type` | `TEXT` | `MessageType` | `MessageType` | Нет | `text`, `file`, `image` |
 | `reply_to_id` | `INTEGER` | `Int64?` | `Long?` | Да | ID сообщения, на которое отвечают |
-| `metadata_json` | `TEXT` | `String?` | `String?` | Да | Сырая JSON-строка метаданных |
-| `metadata` | `object` (parsed) | `MessageMetadata?` | `MessageMetadata?` | Да | Разобранный объект (`file_id` и др.) |
+| `metadata_json` | `TEXT` | `String?` | `String?` | Да | JSON-**строка** (`{"file_id":1}`); отдельного поля `metadata` сервер не отдаёт — клиент разбирает строку сам |
 | `created_at` | `TEXT` | `Date` (ISO-8601) | `Instant` (ISO-8601) | Нет | Дата и время отправки |
 | `updated_at` | `TEXT` | `Date?` (ISO-8601) | `Instant?` (ISO-8601) | Да | Дата и время правки |
 | `is_deleted` | `INTEGER` | `Bool` (0/1 -> Bool) | `Boolean` | Нет | Флаг удаления |
@@ -116,7 +127,7 @@
 | `sender_avatar` | `TEXT` | `String?` | `String?` | Да | Аватар автора |
 | `sender_department` | `TEXT` | `String?` | `String?` | Да | Подразделение автора |
 | `file_original_name` | `TEXT` | `String?` | `String?` | Да | Неизменное имя вложенного файла |
-| `delivery_status` | `TEXT` | `DeliveryStatus?` | `DeliveryStatus?` | Да | `delivered` или `read` |
+| `delivery_status` | `TEXT` | `DeliveryStatus?` | `DeliveryStatus?` | Да | `null` / `delivered` / `read`. Есть **только** в `GET /api/messages/direct/{id}`; в каналах, REST-ответе `POST` и живых кадрах `new_message`/`direct_message`/`message_updated` поля нет (ключ отсутствует) |
 
 ### 3.4. DirectConversation / Диалог в списке чатов
 
@@ -151,8 +162,10 @@
 | `created_at` | `string` | `Date` (ISO-8601) | `Instant` (ISO-8601) | Нет | Время публикации |
 | `author_name` | `string` | `String` | `String` | Нет | ФИО автора |
 | `author_job_title` | `string` | `String?` | `String?` | Да | Должность автора |
-| `confirmed_at` | `string` | `Date?` (ISO-8601) | `Instant?` (ISO-8601) | Да | Дата ознакомления текущим юзером |
-| `is_confirmed` | `number` | `Bool` (0/1 -> Bool) | `Boolean` | Нет | Подтверждено текущим пользователем |
+| `target_ids_json` | `string` | `String` | `String` | Нет | JSON-строка с массивом id (`"[]"` при `all`) |
+| `read_at` | `string` | `Date?` (ISO-8601) | `Instant?` (ISO-8601) | Да | Только в `GET /api/announcements`; в WS `new_announcement` ключа нет |
+| `confirmed_at` | `string` | `Date?` (ISO-8601) | `Instant?` (ISO-8601) | Да | Дата ознакомления текущим юзером; только в REST-списке |
+| `is_confirmed` | `number` | `Bool` (0/1 -> Bool) | `Boolean` | Да (ключа может не быть) | Подтверждено текущим пользователем; в WS-кадре отсутствует — считать `false` |
 
 ---
 
@@ -242,8 +255,9 @@ function canEditOrDelete(createdAt, windowMinutesStr, isSuperAdmin = false) {
 
 ## 5. Контрольный чек-лист готовности контрактов
 
-- [x] Полная OpenAPI 3.1 спецификация всех HTTP эндпоинтов создана в `mobile/contracts/openapi.yaml`.
-- [x] Детальный протокол WebSocket сообщений с таймингами и бинарным форматом звука создан в `mobile/contracts/ws-protocol.md`.
-- [x] Таблица архитектурного паритета, моделей и бизнес-правил создана в `mobile/contracts/parity-matrix.md`.
-- [x] Все поля и типы строго соответствуют серверным модулям `server/src/api/index.js`, `server/src/ws/server.js`, `server/src/services/`.
-- [x] Файлы вне директорий `mobile/contracts/` и `mobile/docs/` не модифицировались.
+- [x] OpenAPI 3.1 спецификация HTTP эндпоинтов — `mobile/contracts/openapi.yaml` (описание `/auth/refresh` исправлено: истёкший токен не продлевается, старый отзывается сразу).
+- [x] Протокол WebSocket — `mobile/contracts/ws-protocol.md`; все серверные события из §4 приведены дословными кадрами реального сервера; исправлены §6.2 и §6.3 (нет продления истёкшего токена, нет `afterId`, дубль `new_message`).
+- [x] Общие JSON-фикстуры — `mobile/contracts/fixtures/` (снимаются `mobile/dev/capture-fixtures.mjs`, дрейф ловит `server/test/mobile-contract-fixtures.test.js`).
+- [ ] Обе платформы декодируют **каждую** фикстуру в unit-тестах (iOS — Задача 6, Android — Задача 8).
+- [ ] Серверные пробелы закрыты (идемпотентность `client_msg_id`, дельта-синхронизация, push, «доставлено» после реконнекта) — Задача 5 и далее.
+- [ ] Паритет функций подтверждён на живом стенде (матрица §2 содержит ✓ только после этого).

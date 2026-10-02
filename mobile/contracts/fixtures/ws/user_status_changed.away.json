@@ -1,0 +1,7 @@
+{
+  "type": "user_status_changed",
+  "userId": 2,
+  "user_id": 2,
+  "status": "away",
+  "customStatus": "Обед до 14:00"
+}

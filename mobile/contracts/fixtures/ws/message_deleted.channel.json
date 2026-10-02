@@ -1,0 +1,6 @@
+{
+  "type": "message_deleted",
+  "messageId": 9,
+  "conversationType": "channel",
+  "targetId": 3
+}

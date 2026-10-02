@@ -1,0 +1,5 @@
+{
+  "type": "auth_error",
+  "code": "INVALID_TOKEN",
+  "message": "Недействительный токен авторизации"
+}

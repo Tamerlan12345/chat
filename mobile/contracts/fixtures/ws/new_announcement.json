@@ -1,0 +1,16 @@
+{
+  "type": "new_announcement",
+  "announcement": {
+    "id": 2,
+    "author_id": 1,
+    "title": "Плановое обновление",
+    "content": "Сегодня в 22:00 сервер будет недоступен 10 минут.",
+    "target_type": "all",
+    "target_ids_json": "[]",
+    "priority": "urgent",
+    "expires_at": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "author_name": "Администратор системы",
+    "author_job_title": "Главный системный администратор"
+  }
+}

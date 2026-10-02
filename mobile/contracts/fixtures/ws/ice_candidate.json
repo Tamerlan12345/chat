@@ -1,0 +1,11 @@
+{
+  "type": "ice_candidate",
+  "targetUserId": 2,
+  "candidate": {
+    "candidate": "candidate:1 1 UDP 2130706431 192.168.1.50 54321 typ host",
+    "sdpMid": "audio",
+    "sdpMLineIndex": 0
+  },
+  "senderId": 3,
+  "senderName": "Боб Тестов"
+}

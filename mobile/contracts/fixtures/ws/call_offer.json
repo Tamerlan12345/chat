@@ -1,0 +1,6 @@
+{
+  "type": "call_offer",
+  "targetUserId": 3,
+  "senderId": 2,
+  "senderName": "Алиса Тестова"
+}

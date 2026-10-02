@@ -1,0 +1,6 @@
+{
+  "type": "wake_error",
+  "code": "dnd",
+  "targetUserId": 3,
+  "message": "У собеседника включено «Не беспокоить»"
+}

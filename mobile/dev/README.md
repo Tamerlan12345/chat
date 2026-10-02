@@ -79,3 +79,11 @@ It generates a short-lived (2 day) CA into a temp dir with make-dev-ca.sh and is
 
 The server honours an optional `DATA_DIR` environment variable (added for this stand)
 to place its databases and uploads outside `server/data`.
+
+## Contract fixtures
+
+`node mobile/dev/capture-fixtures.mjs --write` starts a throwaway server (empty data dir, random port, no TLS),
+seeds it with the data above and replays a client scenario over HTTP and WebSocket, writing the real responses and
+frames to `mobile/contracts/fixtures/`. `--check` compares against the committed files. The server test
+`server/test/mobile-contract-fixtures.test.js` runs the same capture and fails on drift. See
+`mobile/contracts/fixtures/README.md`.

@@ -1,0 +1,464 @@
+{
+  "http/announcements.list.json": {
+    "kind": "http",
+    "description": "Оповещения, видимые пользователю.",
+    "method": "GET",
+    "path": "/api/announcements",
+    "status": 200
+  },
+  "http/auth.device-claim.json": {
+    "kind": "http",
+    "description": "Сохранение секрета устройства сразу после входа по паролю (не позднее 5 минут): { claimed }.",
+    "method": "POST",
+    "path": "/api/auth/device/claim",
+    "status": 200
+  },
+  "http/auth.knock-login-required.json": {
+    "kind": "http",
+    "description": "Устройство привязано, но секрета нет/неверен: вход только по паролю.",
+    "method": "POST",
+    "path": "/api/auth/knock",
+    "status": 200
+  },
+  "http/auth.knock-paired.json": {
+    "kind": "http",
+    "description": "Беспарольный вход устройства: status \"paired\", user и token.",
+    "method": "POST",
+    "path": "/api/auth/knock",
+    "status": 200
+  },
+  "http/auth.knock-pending.json": {
+    "kind": "http",
+    "description": "Неизвестное устройство встало в очередь на привязку администратором (токена нет).",
+    "method": "POST",
+    "path": "/api/auth/knock",
+    "status": 200
+  },
+  "http/auth.login-error.json": {
+    "kind": "http",
+    "description": "Неверный пароль: HTTP 400 и { error } (не 401).",
+    "method": "POST",
+    "path": "/api/auth/login",
+    "status": 400
+  },
+  "http/auth.login.json": {
+    "kind": "http",
+    "description": "Успешный вход по паролю: токен и профиль пользователя (user как в /auth/me).",
+    "method": "POST",
+    "path": "/api/auth/login",
+    "status": 200
+  },
+  "http/auth.logout.json": {
+    "kind": "http",
+    "description": "Выход: токен отзывается, сокеты с этим токеном закрываются. Тело необязательно: device_id снимает секрет устройства.",
+    "method": "POST",
+    "path": "/api/auth/logout",
+    "status": 200
+  },
+  "http/auth.me.json": {
+    "kind": "http",
+    "description": "Профиль текущего пользователя: { user }.",
+    "method": "GET",
+    "path": "/api/auth/me",
+    "status": 200
+  },
+  "http/auth.refresh.json": {
+    "kind": "http",
+    "description": "Продление ещё действующего токена: { token }. Старый токен сразу отзывается.",
+    "method": "POST",
+    "path": "/api/auth/refresh",
+    "status": 200
+  },
+  "http/auth.unauthorized.json": {
+    "kind": "http",
+    "description": "Любой защищённый маршрут с неверным/истёкшим токеном: HTTP 401 и { error }.",
+    "method": "GET",
+    "path": "/api/auth/me",
+    "status": 401
+  },
+  "http/channels.list.json": {
+    "kind": "http",
+    "description": "Каналы пользователя со счётчиками непрочитанного.",
+    "method": "GET",
+    "path": "/api/channels",
+    "status": 200
+  },
+  "http/conversations.direct.json": {
+    "kind": "http",
+    "description": "Личные диалоги: последнее сообщение и счётчик непрочитанного.",
+    "method": "GET",
+    "path": "/api/conversations/direct",
+    "status": 200
+  },
+  "http/files.policy.json": {
+    "kind": "http",
+    "description": "Политика вложений: { enabled, allowed } (расширения в нижнем регистре, БЕЗ точки).",
+    "method": "GET",
+    "path": "/api/files/policy",
+    "status": 200
+  },
+  "http/files.upload.json": {
+    "kind": "http",
+    "description": "Загрузка файла (multipart, поле file): HTTP 201 и запись файла; id кладётся в metadata.file_id сообщения.",
+    "method": "POST",
+    "path": "/api/files/upload",
+    "status": 201
+  },
+  "http/messages.channel-page.json": {
+    "kind": "http",
+    "description": "Страница канала (массив, старые → новые), включая сообщение-вложение.",
+    "method": "GET",
+    "path": "/api/messages/channels/{id}",
+    "status": 200
+  },
+  "http/messages.direct-page.json": {
+    "kind": "http",
+    "description": "Страница личной переписки (массив, старые → новые), с delivery_status.",
+    "method": "GET",
+    "path": "/api/messages/direct/{id}",
+    "status": 200
+  },
+  "http/messages.send-direct.json": {
+    "kind": "http",
+    "description": "REST-отправка личного сообщения: HTTP 201 и сохранённое сообщение (без delivery_status).",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 201
+  },
+  "http/users.get.json": {
+    "kind": "http",
+    "description": "Профиль одного сотрудника.",
+    "method": "GET",
+    "path": "/api/users/{id}",
+    "status": 200
+  },
+  "http/users.list.json": {
+    "kind": "http",
+    "description": "Справочник сотрудников: массив публичных профилей.",
+    "method": "GET",
+    "path": "/api/users",
+    "status": 200
+  },
+  "ws/announcement_acknowledged.json": {
+    "kind": "ws",
+    "description": "Сотрудник ознакомился. announcementId — СТРОКА (взята из URL), userId — число.",
+    "event": "announcement_acknowledged",
+    "direction": "server->client",
+    "trigger": "POST /api/announcements/{id}/acknowledge"
+  },
+  "ws/auth_error.invalid_token.json": {
+    "kind": "ws",
+    "description": "Токен недействителен/истёк/отозван. Получить новый можно только входом по паролю или /auth/knock.",
+    "event": "auth_error",
+    "direction": "server->client",
+    "trigger": "auth с неверным токеном"
+  },
+  "ws/auth_error.must_change_password.json": {
+    "kind": "ws",
+    "description": "Нужно сменить пароль до работы в сокете.",
+    "event": "auth_error",
+    "direction": "server->client",
+    "trigger": "auth пользователя с must_change_password"
+  },
+  "ws/auth_error.rate_limited.json": {
+    "kind": "ws",
+    "description": "Слишком много неудачных auth с адреса (10 за минуту).",
+    "event": "auth_error",
+    "direction": "server->client",
+    "trigger": "серия auth с неверными токенами"
+  },
+  "ws/auth_error.too_many_sessions.json": {
+    "kind": "ws",
+    "description": "Не больше 8 одновременных сокетов на пользователя.",
+    "event": "auth_error",
+    "direction": "server->client",
+    "trigger": "девятый сокет одного пользователя"
+  },
+  "ws/auth_success.json": {
+    "kind": "ws",
+    "description": "Сокет авторизован: полный профиль пользователя с permissions.",
+    "event": "auth_success",
+    "direction": "server->client",
+    "trigger": "клиент отправил { type: \"auth\", token }"
+  },
+  "ws/call_answer.json": {
+    "kind": "ws",
+    "description": "Абонент ответил; после этого разрешён двоичный аудиопоток.",
+    "event": "call_answer",
+    "direction": "server->client",
+    "trigger": "call_answer bob → alice"
+  },
+  "ws/call_denied.json": {
+    "kind": "ws",
+    "description": "Роль пользователя не имеет права звонить.",
+    "event": "call_denied",
+    "direction": "server->client",
+    "trigger": "call_offer без права can_call"
+  },
+  "ws/call_end.connection_lost.json": {
+    "kind": "ws",
+    "description": "Собеседник пропал: кадр БЕЗ targetUserId, reason = \"connection_lost\".",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "сокет собеседника закрыт посреди разговора"
+  },
+  "ws/call_end.json": {
+    "kind": "ws",
+    "description": "Собеседник завершил вызов (reason — необязательная строка клиента).",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "call_end alice → bob"
+  },
+  "ws/call_offer.json": {
+    "kind": "ws",
+    "description": "Входящий звонок: targetUserId — адресат (вы), senderId/senderName — звонящий.",
+    "event": "call_offer",
+    "direction": "server->client",
+    "trigger": "call_offer alice → bob"
+  },
+  "ws/call_rejected.json": {
+    "kind": "ws",
+    "description": "Вызов отклонён адресатом (reason — строка клиента).",
+    "event": "call_rejected",
+    "direction": "server->client",
+    "trigger": "call_rejected bob → alice"
+  },
+  "ws/call_unavailable.dnd.json": {
+    "kind": "ws",
+    "description": "Вызов отклонён: у адресата «Не беспокоить».",
+    "event": "call_unavailable",
+    "direction": "server->client",
+    "trigger": "call_offer при dnd у адресата"
+  },
+  "ws/call_unavailable.offline.json": {
+    "kind": "ws",
+    "description": "Вызов отклонён: адресат не в сети.",
+    "event": "call_unavailable",
+    "direction": "server->client",
+    "trigger": "call_offer офлайн-сотруднику"
+  },
+  "ws/channel_created.json": {
+    "kind": "ws",
+    "description": "Создан публичный канал: запись канала (без счётчиков).",
+    "event": "channel_created",
+    "direction": "server->client",
+    "trigger": "POST /api/admin/channels"
+  },
+  "ws/channel_deleted.json": {
+    "kind": "ws",
+    "description": "Канал удалён: только channelId.",
+    "event": "channel_deleted",
+    "direction": "server->client",
+    "trigger": "DELETE /api/admin/channels/{id}"
+  },
+  "ws/channel_message.json": {
+    "kind": "ws",
+    "description": "Новое сообщение канала (всем участникам). Всегда сопровождается new_message.",
+    "event": "channel_message",
+    "direction": "server->client",
+    "trigger": "send_message conversationType=channel"
+  },
+  "ws/direct_message.json": {
+    "kind": "ws",
+    "description": "Новое личное сообщение (отправителю и получателю). Всегда сопровождается new_message с той же записью.",
+    "event": "direct_message",
+    "direction": "server->client",
+    "trigger": "send_message conversationType=direct"
+  },
+  "ws/error.edit_message.json": {
+    "kind": "ws",
+    "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "edit_message чужого сообщения"
+  },
+  "ws/error.send_message.json": {
+    "kind": "ws",
+    "description": "Ошибка отправки: сервер возвращает исходный text, чтобы вернуть его в поле ввода.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message несуществующему получателю"
+  },
+  "ws/ice_candidate.json": {
+    "kind": "ws",
+    "description": "Ретранслируется как есть (все поля кадра отправителя) плюс targetUserId/senderId/senderName.",
+    "event": "ice_candidate",
+    "direction": "server->client",
+    "trigger": "ice_candidate bob → alice внутри вызова"
+  },
+  "ws/message_deleted.channel.json": {
+    "kind": "ws",
+    "description": "Сообщение удалено в канале.",
+    "event": "message_deleted",
+    "direction": "server->client",
+    "trigger": "delete_message (channel)"
+  },
+  "ws/message_deleted.direct.json": {
+    "kind": "ws",
+    "description": "Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы.",
+    "event": "message_deleted",
+    "direction": "server->client",
+    "trigger": "delete_message (direct)"
+  },
+  "ws/message_status_updated.json": {
+    "kind": "ws",
+    "description": "Отправителю: получатель онлайн, сообщение доставлено.",
+    "event": "message_status_updated",
+    "direction": "server->client",
+    "trigger": "получатель bob онлайн в момент отправки"
+  },
+  "ws/message_updated.json": {
+    "kind": "ws",
+    "description": "Сообщение отредактировано: полная запись сообщения (как new_message) с updated_at.",
+    "event": "message_updated",
+    "direction": "server->client",
+    "trigger": "edit_message"
+  },
+  "ws/messages_read.json": {
+    "kind": "ws",
+    "description": "Собеседник прочитал личные сообщения: byUserId и messageIds.",
+    "event": "messages_read",
+    "direction": "server->client",
+    "trigger": "mark_read conversationType=direct"
+  },
+  "ws/new_announcement.json": {
+    "kind": "ws",
+    "description": "Новое оповещение (всем при target_type=all, иначе адресатам и автору).",
+    "event": "new_announcement",
+    "direction": "server->client",
+    "trigger": "POST /api/announcements"
+  },
+  "ws/new_message.channel.json": {
+    "kind": "ws",
+    "description": "Дубль сообщения канала под общим типом new_message. Дедуплицировать по message.id.",
+    "event": "new_message",
+    "direction": "server->client",
+    "trigger": "send_message conversationType=channel"
+  },
+  "ws/new_message.direct.json": {
+    "kind": "ws",
+    "description": "Дубль того же личного сообщения под общим типом new_message. Дедуплицировать по message.id.",
+    "event": "new_message",
+    "direction": "server->client",
+    "trigger": "send_message conversationType=direct"
+  },
+  "ws/server_disconnect.logout.json": {
+    "kind": "ws",
+    "description": "Сервер закрывает сокет (код 4003). Не переподключаться с тем же токеном.",
+    "event": "server_disconnect",
+    "direction": "server->client",
+    "trigger": "POST /api/auth/logout"
+  },
+  "ws/server_disconnect.role-changed.json": {
+    "kind": "ws",
+    "description": "Права роли изменены: сокеты закрываются, нужен повторный вход.",
+    "event": "server_disconnect",
+    "direction": "server->client",
+    "trigger": "PUT /api/admin/roles/{id}"
+  },
+  "ws/user_created.json": {
+    "kind": "ws",
+    "description": "Создан сотрудник: публичный профиль (без пароля).",
+    "event": "user_created",
+    "direction": "server->client",
+    "trigger": "POST /api/admin/users"
+  },
+  "ws/user_status_changed.away.json": {
+    "kind": "ws",
+    "description": "Статус «отошёл» с пользовательским текстом.",
+    "event": "user_status_changed",
+    "direction": "server->client",
+    "trigger": "presence state=away"
+  },
+  "ws/user_status_changed.dnd.json": {
+    "kind": "ws",
+    "description": "Режим «Не беспокоить».",
+    "event": "user_status_changed",
+    "direction": "server->client",
+    "trigger": "set_dnd enabled=true"
+  },
+  "ws/user_status_changed.online.json": {
+    "kind": "ws",
+    "description": "Широковещательно при входе (приходит и самому вошедшему).",
+    "event": "user_status_changed",
+    "direction": "server->client",
+    "trigger": "вход alice"
+  },
+  "ws/user_typing.channel.json": {
+    "kind": "ws",
+    "description": "Участник канала перестал печатать (isTyping=false).",
+    "event": "user_typing",
+    "direction": "server->client",
+    "trigger": "typing conversationType=channel"
+  },
+  "ws/user_typing.direct.json": {
+    "kind": "ws",
+    "description": "Собеседник печатает в личном диалоге. userId — кто печатает; targetId — id получателя кадра (то есть ваш собственный id), поэтому диалог определяется по userId.",
+    "event": "user_typing",
+    "direction": "server->client",
+    "trigger": "typing conversationType=direct"
+  },
+  "ws/user_updated.json": {
+    "kind": "ws",
+    "description": "Профиль сотрудника изменён администратором.",
+    "event": "user_updated",
+    "direction": "server->client",
+    "trigger": "PUT /api/admin/users/{id}"
+  },
+  "ws/wake_error.cooldown.json": {
+    "kind": "ws",
+    "description": "Пауза: не чаще раза в минуту; содержит retryAt (epoch ms).",
+    "event": "wake_error",
+    "direction": "server->client",
+    "trigger": "повторный wake_send"
+  },
+  "ws/wake_error.dnd.json": {
+    "kind": "ws",
+    "description": "Побудка отклонена: «Не беспокоить» (паузу не запускает).",
+    "event": "wake_error",
+    "direction": "server->client",
+    "trigger": "wake_send при dnd"
+  },
+  "ws/wake_error.invalid_target.json": {
+    "kind": "ws",
+    "description": "Побудка самому себе недопустима.",
+    "event": "wake_error",
+    "direction": "server->client",
+    "trigger": "wake_send самому себе"
+  },
+  "ws/wake_error.offline.json": {
+    "kind": "ws",
+    "description": "Побудка отклонена: адресат не в сети.",
+    "event": "wake_error",
+    "direction": "server->client",
+    "trigger": "wake_send офлайн-сотруднику"
+  },
+  "ws/wake_ring.json": {
+    "kind": "ws",
+    "description": "Адресату: его будят (fromUserId, fromName, at в epoch ms).",
+    "event": "wake_ring",
+    "direction": "server->client",
+    "trigger": "wake_send от alice"
+  },
+  "ws/wake_sent.json": {
+    "kind": "ws",
+    "description": "Инициатору: побудка отправлена, retryAt — когда можно будить снова (epoch ms).",
+    "event": "wake_sent",
+    "direction": "server->client",
+    "trigger": "wake_send"
+  },
+  "ws/wake_state.cooldown.json": {
+    "kind": "ws",
+    "description": "После переподключения во время паузы: targetUserId, at, retryAt.",
+    "event": "wake_state",
+    "direction": "server->client",
+    "trigger": "auth при активной паузе побудки"
+  },
+  "ws/wake_state.idle.json": {
+    "kind": "ws",
+    "description": "Сразу после auth_success: побудка доступна (retryAt = 0).",
+    "event": "wake_state",
+    "direction": "server->client",
+    "trigger": "следует за auth_success"
+  }
+}
