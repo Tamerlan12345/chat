@@ -76,6 +76,7 @@ internal fun MessageList(
     val scope = rememberCoroutineScope()
     val reduce = LocalReduceMotion.current
     val slack = with(LocalDensity.current) { 8.dp.roundToPx() }
+    val strings = rememberChatRowStrings()
     var unseen by rememberSaveable { mutableIntStateOf(0) }
 
     val atBottom by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= slack } }
@@ -164,6 +165,7 @@ internal fun MessageList(
                         val fresh = remember(id) { id !in baseline && animated.add(id) }
                         ChatBubbleRow(
                             item = item,
+                            strings = strings,
                             showSenderName = showSenderNames && !item.isOwn && item.startsGroup,
                             fresh = fresh,
                             actions = actions,

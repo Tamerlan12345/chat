@@ -1,5 +1,6 @@
 package com.openmychat.mobile.features.chat
 
+import android.content.res.Resources
 import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -23,6 +25,8 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -62,6 +66,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun ChatBubbleRow(
     item: ChatItem.Bubble,
+    strings: ChatRowStrings,
     showSenderName: Boolean,
     fresh: Boolean,
     actions: ChatActions,
@@ -77,7 +82,6 @@ internal fun ChatBubbleRow(
     val clipboard = LocalClipboardManager.current
     val snackbar = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
-    val copied = stringResource(R.string.chat_copied)
     val failed = item.mark == DeliveryMark.FAILED
 
     val progress = remember { Animatable(if (fresh) 0f else 1f) }
@@ -96,10 +100,7 @@ internal fun ChatBubbleRow(
     val rise = with(LocalDensity.current) { (if (isOwn) 24.dp else 8.dp).toPx() }
 
     val time = remember(message.createdAt) { DateTimeUtils.formatTime(message.createdAt) }
-    val sender = if (isOwn) stringResource(R.string.chat_from_you) else message.senderName
-    val body = if (message.isDeleted) stringResource(R.string.chat_deleted) else message.text
-    val markLabel = item.mark?.let { stringResource(deliveryLabel(it)) }
-    val description = stringResource(R.string.chat_message_description, sender, time, body) + (markLabel?.let { ", $it" } ?: "")
+    val body = if (message.isDeleted) strings.deleted else message.text
     val reply = message.metadata?.replyText?.takeIf { it.isNotBlank() }?.let { ReplyPreview(message.metadata.replySenderName, it) }
     val edited = !message.updatedAt.isNullOrBlank() && !message.isDeleted
     val meta = if (item.showsMeta) BubbleMeta(time = time, edited = edited, mark = item.mark, drawMarkIn = fresh && isOwn) else null
@@ -129,10 +130,6 @@ internal fun ChatBubbleRow(
         )
     }
 
-    val replyLabel = stringResource(MessageAction.REPLY.label)
-    val copyLabel = stringResource(MessageAction.COPY.label)
-    val editLabel = stringResource(MessageAction.EDIT.label)
-    val deleteLabel = stringResource(MessageAction.DELETE.label)
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     fun perform(action: MessageAction) {
         when (action) {
@@ -140,7 +137,7 @@ internal fun ChatBubbleRow(
             MessageAction.COPY -> {
                 clipboard.setText(AnnotatedString(message.text))
                 // Android 13+ confirms copies itself.
-                if (Build.VERSION.SDK_INT < 33) scope.launch { snackbar.showSnackbar(copied) }
+                if (Build.VERSION.SDK_INT < 33) scope.launch { snackbar.showSnackbar(strings.copied) }
             }
             MessageAction.EDIT -> onEdit(message)
             MessageAction.DELETE -> if (failed) actions.onDiscardFailed(message) else onRequestDelete(message)
@@ -193,26 +190,52 @@ internal fun ChatBubbleRow(
                         // action; combinedClickable performs the long-press haptic itself.
                         .combinedClickable(
                             onClick = openMenu,
-                            onClickLabel = stringResource(R.string.chat_message_actions),
+                            onClickLabel = strings.actions,
                             onLongClick = openMenu,
-                            onLongClickLabel = stringResource(R.string.chat_message_actions)
+                            onLongClickLabel = strings.actions
                         )
                         .semantics(mergeDescendants = true) {
-                            contentDescription = description
+                            // Formatted only when accessibility asks, not on every composition.
+                            contentDescription = strings.describe(
+                                sender = if (isOwn) strings.fromYou else message.senderName,
+                                time = time,
+                                body = body,
+                                mark = item.mark
+                            )
                             customActions = menuActions().map { action ->
-                                val label = when (action) {
-                                    MessageAction.REPLY -> replyLabel
-                                    MessageAction.COPY -> copyLabel
-                                    MessageAction.EDIT -> editLabel
-                                    MessageAction.DELETE -> deleteLabel
-                                }
-                                CustomAccessibilityAction(label) { perform(action); true }
+                                CustomAccessibilityAction(strings.action(action)) { perform(action); true }
                             }
                         }
                 )
             }
         }
     }
+}
+
+/**
+ * Text every bubble row needs, resolved once per list instead of once per row (row composition is
+ * on the critical path of the inbox → chat transition).
+ */
+@Stable
+internal class ChatRowStrings(private val resources: Resources) {
+    val deleted: String = resources.getString(R.string.chat_deleted)
+    val fromYou: String = resources.getString(R.string.chat_from_you)
+    val copied: String = resources.getString(R.string.chat_copied)
+    val actions: String = resources.getString(R.string.chat_message_actions)
+    private val actionLabels = MessageAction.entries.map { resources.getString(it.label) }
+    private val markLabels = DeliveryMark.entries.map { resources.getString(deliveryLabel(it)) }
+
+    fun action(action: MessageAction): String = actionLabels[action.ordinal]
+
+    fun describe(sender: String, time: String, body: String, mark: DeliveryMark?): String =
+        resources.getString(R.string.chat_message_description, sender, time, body) + (mark?.let { ", " + markLabels[it.ordinal] } ?: "")
+}
+
+@Composable
+internal fun rememberChatRowStrings(): ChatRowStrings {
+    val resources = LocalContext.current.resources
+    val configuration = LocalConfiguration.current
+    return remember(resources, configuration) { ChatRowStrings(resources) }
 }
 
 @Composable
