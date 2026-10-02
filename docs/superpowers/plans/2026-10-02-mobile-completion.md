@@ -256,6 +256,8 @@ Worktree `m-ios`. Depends on Task 6.
   - the delight moments and Reduce Motion fallbacks.
   
   Record the simulator videos listed in the brief in CI.
+- **Extended 2026-10-02 (2):** also implement «People surface + universal search» and the «Anti-"AI-generated" polish pass» sections on iOS (native `.searchable`, segmented Picker, inset grouped lists, `.navigationTransition(.zoom)`).
+
 
 ### Task 8: Android — toolchain, Navigation 3, DI, lifecycle fixes (F0/F1)
 
@@ -424,6 +426,43 @@ Worktree `m-integration`. Depends on Task 19. Additive and desktop compatible.
 - Update `openapi.yaml`, `ws-protocol.md`, `push.md` and fixtures (`--write`).
 - TDD throughout. Server and desktop suites green.
 
+### Task 21: Android — «Сотрудники» tab, person card, universal search, button system
+
+Worktree `m-android`. Depends on Task 17.
+
+Implement the design brief section «People surface + universal search» in full on Android:
+- 4-tab navigation;
+- the «Сотрудники» screen with «Все» (A–Я sections) and «Отделы» (org tree);
+- the «В сети» filter and the summary line;
+- the person card with the shared element, the action row and the info group (phone/email intents);
+- universal search in «Чаты» (people / channels / messages, recents, jump to message with highlight);
+- the transition order;
+- the system-wide button styles from «Buttons».
+
+Data comes from the existing endpoints only: `/api/users`, `/api/org/tree`, `/api/users/:id`, `/api/messages/search`, with a cached people list. The ranking and normalisation rules are pure functions with unit tests.
+
+Acceptance:
+- Compose UI tests for search ranking display, card actions (including the disabled call state) and tab state retention.
+- Screen recordings against the dev stand of: people tab → search → card → «Написать» → back chain; universal search → message jump.
+- Screenshots in light, dark and font 2.0.
+
+### Task 23: Android — anti-"AI-generated" polish pass across all screens
+
+Worktree `m-android`. Depends on Task 21.
+
+Apply the design brief section «Anti-"AI-generated" polish pass» to every screen:
+- borders only where specified;
+- the spacing rhythm;
+- three type steps per row;
+- empty states with next-step actions;
+- copy naming its objects;
+- badge rules;
+- the chat refinements (group contour, quiet date pills, baseline time, filled composer);
+- grouped native lists in Profile/Announcements;
+- announcement importance dot (no left border).
+
+Functionality must not change. Provide before/after screenshots of every screen in light, dark and font 2.0, followed by an independent design finish-review.
+
 ### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
 
 Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
@@ -444,5 +483,5 @@ Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/deliver
 
 Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19 → 20; QA 10 after Wave 1.
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 21 → 23 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19 → 20; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.

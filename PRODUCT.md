@@ -22,7 +22,8 @@ Self-hosted: the company runs its own server, data never leaves the internal per
 
 ## Operating Context
 
-- Server address is configured per installation (onboarding starts with "server setup"), then login; devices can pair for passwordless re-entry (knock/claim).
+- Mobile builds ship with the production server fixed at build time (`https://centychat-production.up.railway.app`); onboarding starts at login, with no server setup. Devices can pair for passwordless re-entry (knock/claim).
+- Colleagues are found through the «Сотрудники» tab (A–Я + org tree) and universal search (people / channels / messages), mirroring the desktop «Контакты» section and Ctrl+K palette.
 - Direct chats and channels; official announcements with "Ознакомлен" acknowledgement and audit; colleague "wake" (побудка); 1:1 voice calls over the server's audio relay; attachments governed by an admin file policy; presence (online/away/DND) and custom status; org structure on desktop.
 - Role-based permissions (calls, channel creation, broadcasting) come from the server.
 
@@ -31,7 +32,7 @@ Self-hosted: the company runs its own server, data never leaves the internal per
 - Russian-only UI copy.
 - Release builds talk to the server only over HTTPS/WSS; credentials are stored in Keychain / Android Keystore and fail closed.
 - Distribution is corporate (TestFlight / Apple Business Manager, Managed Google Play), not public stores.
-- No push notifications yet (server work planned); remote desktop is desktop-only.
+- Push notifications carry ids only (no message text or names to Google/Apple); the app fetches content from the company server. Remote desktop is desktop-only.
 
 ## Brand Commitments
 
