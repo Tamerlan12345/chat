@@ -12,6 +12,7 @@ const DbStudioService = require('../services/db-studio.service');
 const FileService = require('../services/file.service');
 const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
+const { parseRange, etagListMatches, ifRangeAllows } = require('../files/http-range');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
@@ -1965,6 +1966,15 @@ router.get('/files/policy', requireAuth, route(async (req, res) => {
   res.json({ enabled: policy.enabled, allowed });
 }));
 
+// Метка содержимого вложения: SHA-256, посчитанный при загрузке (файл после
+// этого не меняется). У старых записей без хеша — размер и время изменения.
+function downloadEtag(file, size) {
+  if (/^[0-9a-f]{64}$/.test(String(file.sha256 || ''))) return `"${file.sha256}"`;
+  let mtime = 0;
+  try { mtime = Math.floor(fs.statSync(file.path).mtimeMs); } catch { /* метка без времени */ }
+  return `"${size.toString(16).padStart(8, '0')}${mtime.toString(16).padStart(12, '0')}"`;
+}
+
 router.get('/files/download/:id', requireAuth, (req, res) => {
   const file = FileService.getFileById(req.params.id);
   if (!file || !fs.existsSync(file.path)) {
@@ -1983,14 +1993,47 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   res.setHeader('Content-Type', safeDownloadType(file.mime_type));
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // no-store остаётся: вложение не должно оседать в кэше браузера или
+  // Electron. Метка ETag нужна клиентам со своим кэшем (мобильные): они сами
+  // присылают If-None-Match и получают 304 без тела.
   res.setHeader('Cache-Control', 'private, no-store');
+
+  // Докачка (задача 20): один диапазон байт — 206, всё прочее в Range — 416.
+  // Доступ уже проверен выше: диапазон отдаётся тем же, кому и весь файл.
+  let size;
+  try {
+    size = fs.statSync(file.path).size;
+  } catch {
+    return res.status(404).send('Файл не найден');
+  }
+  const etag = downloadEtag(file, size);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('ETag', etag);
+  if (etagListMatches(req.headers['if-none-match'], etag)) {
+    res.removeHeader('Content-Disposition');
+    return res.status(304).end();
+  }
+  let range = parseRange(req.headers.range, size);
+  if (range && !range.invalid && !ifRangeAllows(req.headers['if-range'], etag)) range = null;
+  if (range?.invalid) {
+    res.removeHeader('Content-Disposition');
+    res.setHeader('Content-Range', `bytes */${size}`);
+    return res.status(416).end();
+  }
+  if (range) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+    res.setHeader('Content-Length', String(range.end - range.start + 1));
+  } else {
+    res.setHeader('Content-Length', String(size));
+  }
   // Обрыв соединения закрывает поток чтения (иначе дескриптор подтекал бы на
   // каждом прерванном скачивании), а ошибка чтения (файл исчез между проверкой
   // и открытием, исчерпаны дескрипторы) не роняет процесс, а отвечает 500 (M3).
   // stream.pipeline здесь не подходит: при ошибке источника он разрушает res
   // до того, как удастся отдать понятный 500. Поэтому — ручной pipe плюс явное
   // закрытие потока на 'close' соединения.
-  const src = fs.createReadStream(file.path);
+  const src = fs.createReadStream(file.path, range ? { start: range.start, end: range.end } : undefined);
   const closeSrc = () => src.destroy();
   res.on('close', closeSrc);
   src.on('error', (err) => {
@@ -1998,6 +2041,8 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
     src.destroy();
     if (!res.headersSent) {
       res.removeHeader('Content-Disposition');
+      res.removeHeader('Content-Length');
+      res.removeHeader('Content-Range');
       res.type('json').status(500).json({ error: 'Внутренняя ошибка сервера' });
     } else {
       res.destroy();
