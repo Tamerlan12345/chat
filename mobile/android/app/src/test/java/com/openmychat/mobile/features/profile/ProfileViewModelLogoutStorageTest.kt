@@ -44,36 +44,17 @@ class ProfileViewModelLogoutStorageTest {
         }
     }
 
-    @Test
-    fun setStatusShowsRecoverableErrorWhenUserWriteCannotBePersisted() = runBlocking {
-        Dispatchers.setMain(Dispatchers.Unconfined)
-        try {
-            val storage = FailingAfterFirstCommitSharedPreferences()
-            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
-            sessionManager.saveAuthSuccess(
-                User(id = 1, username = "alice", fullName = "Alice"),
-                "trusted-token"
-            )
-            val viewModel = profileViewModel(sessionManager)
-
-            viewModel.setStatus(UserStatus.AWAY)
-
-            val error = requireNotNull(withTimeout(2_000) {
-                viewModel.storageError.first { !it.isNullOrBlank() }
-            })
-            assertTrue(error.contains("storage", ignoreCase = true))
-            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
-        } finally {
-            Dispatchers.resetMain()
-        }
-    }
-
     private fun profileViewModel(sessionManager: SessionManager): ProfileViewModel {
         val apiClient = ApiClient(sessionManager)
+        val realtime = DefaultRealtimeRepository(WebSocketClient(sessionManager))
         return ProfileViewModel(
             profileRepository = DefaultProfileRepository(apiClient, sessionManager),
             authRepository = DefaultAuthRepository(apiClient, sessionManager),
-            realtimeRepository = DefaultRealtimeRepository(WebSocketClient(sessionManager))
+            realtimeRepository = realtime,
+            presenceController = com.openmychat.mobile.data.realtime.PresenceController(
+                realtime,
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+            )
         )
     }
 

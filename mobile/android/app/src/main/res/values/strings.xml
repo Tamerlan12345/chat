@@ -180,6 +180,9 @@
     <string name="profile_status_section">Статус</string>
     <string name="profile_custom_status">Свой статус</string>
     <string name="profile_custom_status_hint">Чем вы сейчас заняты?</string>
+    <string name="profile_presence_now">Сейчас: %1$s</string>
+    <string name="profile_presence_auto">Меняется само: приложение открыто — «В сети», свёрнуто — «Отошёл».</string>
+    <string name="profile_dnd_hint">Звонки к вам не проходят, коллеги видят «Не беспокоить».</string>
     <string name="profile_save_status">Сохранить статус</string>
     <string name="profile_status_saved">Статус сохранён</string>
     <string name="profile_status_failed">Не удалось сохранить статус</string>

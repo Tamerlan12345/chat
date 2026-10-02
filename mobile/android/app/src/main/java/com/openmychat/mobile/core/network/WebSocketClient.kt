@@ -327,20 +327,26 @@ class WebSocketClient(
         return sendJson(payload.toString())
     }
 
-    fun sendPresence(state: String, customStatus: String?): Boolean {
+    /**
+     * Сигнал системы о присутствии: «online» или «away». Без [includeCustomStatus] поле
+     * customStatus не отправляется вовсе — сервер считает null командой стереть свой статус.
+     */
+    fun sendPresence(state: String, customStatus: String? = null, includeCustomStatus: Boolean = false): Boolean {
         val payload = buildJsonObject {
             put("type", "presence")
             put("state", state)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            if (includeCustomStatus) {
+                if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            }
         }
         return sendJson(payload.toString())
     }
 
-    fun setDnd(enabled: Boolean, customStatus: String? = null): Boolean {
+    /** «Не беспокоить» поверх присутствия; свой статус не трогает. */
+    fun setDnd(enabled: Boolean): Boolean {
         val payload = buildJsonObject {
             put("type", "set_dnd")
             put("enabled", enabled)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
         }
         return sendJson(payload.toString())
     }

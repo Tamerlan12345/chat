@@ -24,8 +24,12 @@ interface RealtimeRepository {
     fun deleteMessage(messageId: Long): Boolean
     fun markRead(conversationType: ConversationType, targetId: Long): Boolean
     fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean): Boolean
-    fun sendPresence(state: String, customStatus: String?): Boolean
-    fun setDnd(enabled: Boolean, customStatus: String? = null): Boolean
+    /** Автоматическое присутствие («online» / «away»), свой статус не меняется. */
+    fun sendPresence(state: String): Boolean
+
+    /** Свой статус вместе с текущим присутствием; null стирает его. */
+    fun sendCustomStatus(state: String, customStatus: String?): Boolean
+    fun setDnd(enabled: Boolean): Boolean
     fun sendWake(targetUserId: Long): Boolean
 
     fun sendCallOffer(targetUserId: Long): Boolean
@@ -54,8 +58,10 @@ class DefaultRealtimeRepository @Inject constructor(
     override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
         webSocketClient.sendTyping(conversationType, targetId, isTyping)
 
-    override fun sendPresence(state: String, customStatus: String?) = webSocketClient.sendPresence(state, customStatus)
-    override fun setDnd(enabled: Boolean, customStatus: String?) = webSocketClient.setDnd(enabled, customStatus)
+    override fun sendPresence(state: String) = webSocketClient.sendPresence(state)
+    override fun sendCustomStatus(state: String, customStatus: String?) =
+        webSocketClient.sendPresence(state, customStatus, includeCustomStatus = true)
+    override fun setDnd(enabled: Boolean) = webSocketClient.setDnd(enabled)
     override fun sendWake(targetUserId: Long) = webSocketClient.sendWake(targetUserId)
     override fun sendCallOffer(targetUserId: Long) = webSocketClient.sendCallOffer(targetUserId)
     override fun sendCallAnswer(targetUserId: Long) = webSocketClient.sendCallAnswer(targetUserId)

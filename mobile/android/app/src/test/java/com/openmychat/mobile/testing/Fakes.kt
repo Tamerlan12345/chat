@@ -48,8 +48,9 @@ class FakeRealtimeRepository : RealtimeRepository {
         record("mark_read ${conversationType.value} $targetId")
     override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
         record("typing $targetId $isTyping")
-    override fun sendPresence(state: String, customStatus: String?) = record("presence $state")
-    override fun setDnd(enabled: Boolean, customStatus: String?) = record("set_dnd $enabled")
+    override fun sendPresence(state: String) = record("presence $state")
+    override fun sendCustomStatus(state: String, customStatus: String?) = record("presence $state custom=$customStatus")
+    override fun setDnd(enabled: Boolean) = record("set_dnd $enabled")
     override fun sendWake(targetUserId: Long) = record("wake_send $targetUserId")
     override fun sendCallOffer(targetUserId: Long) = record("call_offer $targetUserId")
     override fun sendCallAnswer(targetUserId: Long) = record("call_answer $targetUserId")
