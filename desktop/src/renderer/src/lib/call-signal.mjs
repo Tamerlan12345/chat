@@ -14,6 +14,25 @@ export const RING_TIMEOUT_MS = 45000;
 
 const RELAYED = new Set(['call_answer', 'call_rejected', 'call_end']);
 
+// Причины конца звонка, которые сервер присылает кодом (mobile/contracts/push.md §3).
+const REASON_TEXT = {
+  no_call: 'Звонок уже завершён',
+  unavailable: 'Не удалось дозвониться: сотрудник недоступен',
+  cancelled: 'Вызов отменён',
+  timeout: 'Время вызова истекло',
+  connection_lost: 'Связь с собеседником прервалась'
+};
+const REASON_CODE_RE = /^[a-z][a-z0-9_]*$/;
+
+// Текст причины для панели: код сервера — по-русски; причина, которую
+// написал собеседник (уже текст), — как есть; неизвестный код или пусто —
+// запасной текст, но не сам код.
+export function callReasonText(reason, fallback = 'Звонок завершён') {
+  if (typeof reason !== 'string' || !reason) return fallback;
+  if (Object.prototype.hasOwnProperty.call(REASON_TEXT, reason)) return REASON_TEXT[reason];
+  return REASON_CODE_RE.test(reason) ? fallback : reason;
+}
+
 export function callSignalAction({ phase, direction, peerId }, msg) {
   const ignore = { action: 'ignore' };
   if (!msg || typeof msg !== 'object' || phase === 'failed') return ignore;
@@ -28,17 +47,17 @@ export function callSignalAction({ phase, direction, peerId }, msg) {
 
     case 'call_rejected':
       if (phase === 'ringing') return { action: 'dismiss' };
-      if (phase === 'calling') return { action: 'fail', error: msg.reason || 'Сотрудник отклонил звонок' };
-      return { action: 'fail', error: msg.reason || 'Звонок завершён' };
+      if (phase === 'calling') return { action: 'fail', error: callReasonText(msg.reason, 'Сотрудник отклонил звонок') };
+      return { action: 'fail', error: callReasonText(msg.reason, 'Звонок завершён') };
 
     case 'call_end':
       if (phase === 'ringing') return { action: 'dismiss' };
-      if (phase === 'calling') return { action: 'fail', error: msg.reason || 'Сотрудник завершил вызов' };
-      if (phase === 'connecting') return { action: 'fail', error: msg.reason || 'Собеседник завершил звонок' };
+      if (phase === 'calling') return { action: 'fail', error: callReasonText(msg.reason, 'Сотрудник завершил вызов') };
+      if (phase === 'connecting') return { action: 'fail', error: callReasonText(msg.reason, 'Собеседник завершил звонок') };
       // Разговор закончен как обычно — панель просто закрывается. Причина
       // приходит, когда разговор оборвался (собеседник отключился): её
       // стоит показать, иначе непонятно, куда он пропал.
-      return msg.reason ? { action: 'fail', error: msg.reason } : { action: 'close' };
+      return msg.reason ? { action: 'fail', error: callReasonText(msg.reason, 'Собеседник завершил звонок') } : { action: 'close' };
 
     case 'call_unavailable':
     case 'call_denied':
@@ -46,7 +65,7 @@ export function callSignalAction({ phase, direction, peerId }, msg) {
       if (msg.targetUserId !== undefined && msg.targetUserId !== peerId) return ignore;
       return {
         action: 'fail',
-        error: msg.reason || (msg.type === 'call_denied' ? 'Звонки недоступны для вашей роли' : 'Сотрудник недоступен')
+        error: callReasonText(msg.reason, msg.type === 'call_denied' ? 'Звонки недоступны для вашей роли' : 'Сотрудник недоступен')
       };
 
     default:
