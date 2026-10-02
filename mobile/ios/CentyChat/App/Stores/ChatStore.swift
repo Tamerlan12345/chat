@@ -15,6 +15,9 @@ public final class ChatStore: RealtimeEventHandling {
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private let conversations: ConversationsStore
     @ObservationIgnored private var lastTypingSent = Date.distantPast
+    /// Optimistic messages awaiting the server echo; they use negative ids.
+    @ObservationIgnored private var pendingMessageIDs: [Int64] = []
+    @ObservationIgnored private var nextPendingID: Int64 = -1
 
     init(
         conversation: ConversationKey,
@@ -35,7 +38,10 @@ public final class ChatStore: RealtimeEventHandling {
     public func load() async {
         loadState = .loading
         do {
-            messages = try await repository.messages(in: conversation, limit: 50, beforeId: nil)
+            let loaded = try await repository.messages(in: conversation, limit: 50, beforeId: nil)
+            // Keep what arrived over realtime (or is still pending) while the page was loading.
+            let loadedIDs = Set(loaded.map(\.id))
+            messages = loaded + messages.filter { !loadedIDs.contains($0.id) }
             loadState = .loaded
         } catch {
             Log.chat.error("Loading messages failed: \(error.localizedDescription, privacy: .public)")
@@ -66,9 +72,12 @@ public final class ChatStore: RealtimeEventHandling {
             msgType: .text
         ))
 
-        // Оптимистичное добавление в локальный список
+        // Оптимистичное добавление; заменяется эхом сервера с настоящим id
+        let pendingID = nextPendingID
+        nextPendingID -= 1
+        pendingMessageIDs.append(pendingID)
         let pending = Message(
-            id: Int64(Date().timeIntervalSince1970 * 1000),
+            id: pendingID,
             conversationType: conversation.type,
             targetId: conversation.targetId,
             senderId: session.currentUser?.id ?? 0,
@@ -131,27 +140,71 @@ public final class ChatStore: RealtimeEventHandling {
 
     func handle(_ event: WSServerEvent) {
         switch event {
+        case .newMessage(let message):
+            if belongsHere(message) {
+                receive(message)
+            }
         case .messageStatusUpdated(let messageId, let status, _, _):
-            updateMessageStatus(messageId: messageId, status: status)
+            updateMessage(id: messageId) { $0.deliveryStatus = status }
+        case .messagesRead(let byUserId, let messageIds):
+            guard conversation == ConversationKey(type: .direct, targetId: byUserId) else { return }
+            let readIDs = Set(messageIds)
+            for index in messages.indices where readIDs.contains(messages[index].id) {
+                messages[index].deliveryStatus = .read
+            }
         case .messageUpdated(let messageId, let text, let updatedAt):
-            updateMessageContent(messageId: messageId, text: text, updatedAt: updatedAt)
+            updateMessage(id: messageId) {
+                $0.text = text
+                $0.updatedAt = updatedAt ?? Date()
+            }
         case .messageDeleted(let messageId, _, _):
-            markMessageDeleted(messageId: messageId)
+            // targetId in this event is the stored target, not relative to us: match by id only.
+            updateMessage(id: messageId) {
+                $0.isDeleted = true
+                $0.text = ""
+                $0.metadata = nil
+            }
         default:
             break
         }
     }
 
-    private func updateMessageStatus(messageId: Int64, status: DeliveryStatus) {
-        // Broadcasts to active chat view model
+    private func belongsHere(_ message: Message) -> Bool {
+        guard message.conversationType == conversation.type else { return false }
+        switch conversation.type {
+        case .channel:
+            return message.targetId == conversation.targetId
+        case .direct:
+            let partner = message.senderId == session.currentUser?.id ? message.targetId : message.senderId
+            return partner == conversation.targetId
+        }
     }
 
-    private func updateMessageContent(messageId: Int64, text: String, updatedAt: Date?) {
-        // Will be reflected in chat detail view
+    private func receive(_ incoming: Message) {
+        var message = incoming
+        let isOwn = message.senderId == session.currentUser?.id
+        if isOwn, message.deliveryStatus == nil {
+            // Live frames carry no delivery status; the server has stored the message.
+            message.deliveryStatus = .sent
+        }
+        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[index] = message
+            return
+        }
+        if isOwn,
+           let index = messages.firstIndex(where: {
+               pendingMessageIDs.contains($0.id) && $0.text == message.text && $0.type == message.type
+           }) {
+            pendingMessageIDs.removeAll { $0 == messages[index].id }
+            messages[index] = message
+            return
+        }
+        messages.append(message)
     }
 
-    private func markMessageDeleted(messageId: Int64) {
-        // Will be reflected in chat detail view
+    private func updateMessage(id: Int64, _ change: (inout Message) -> Void) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        change(&messages[index])
     }
 }
 

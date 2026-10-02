@@ -80,11 +80,6 @@ public final class ConversationsStore: RealtimeEventHandling {
         case .newMessage(let message):
             handleIncomingMessage(message)
 
-        case .messagesRead(let byUserId, _):
-            if let index = directConversations.firstIndex(where: { $0.userId == byUserId }) {
-                directConversations[index].unreadCount = 0
-            }
-
         case .userTyping(let userId, let userName, let conversationType, let targetId, let isTyping):
             handleTypingIndicator(
                 userId: userId,
@@ -148,7 +143,9 @@ public final class ConversationsStore: RealtimeEventHandling {
         targetId: Int64,
         isTyping: Bool
     ) {
-        let key = Self.typingKey(for: ConversationKey(type: conversationType, targetId: targetId))
+        // For direct dialogs the server sends targetId = recipient (us); the dialog is the typist's.
+        let dialogTarget = conversationType == .direct ? userId : targetId
+        let key = Self.typingKey(for: ConversationKey(type: conversationType, targetId: dialogTarget))
         if isTyping {
             typingUsers[key] = String(localized: "\(userName) печатает...")
 

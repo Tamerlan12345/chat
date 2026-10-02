@@ -13,6 +13,9 @@ public final class RealtimeStore {
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var audioTask: Task<Void, Never>?
     @ObservationIgnored private var stateTask: Task<Void, Never>?
+    /// The server sends `new_message` together with `direct_message`/`channel_message`
+    /// for the same message; each message id is delivered to the stores once.
+    @ObservationIgnored private var deliveredMessageIDs = RecentIDs(capacity: 1_024)
     /// Receives decoded call audio frames.
     @ObservationIgnored var audioSink: (@MainActor (AudioRelayEngine.DecodedAudioFrame) -> Void)?
 
@@ -80,9 +83,38 @@ public final class RealtimeStore {
     // MARK: - Dispatch
 
     func dispatch(_ event: WSServerEvent) {
+        if case .newMessage(let message) = event, !deliveredMessageIDs.insert(message.id) {
+            return
+        }
         handlers.removeAll { $0.value == nil }
         for handler in handlers {
             handler.value?.handle(event)
         }
+    }
+}
+
+/// A bounded set that remembers the most recent ids.
+struct RecentIDs {
+    let capacity: Int
+    private var order: [Int64] = []
+    private var members: Set<Int64> = []
+
+    init(capacity: Int) {
+        self.capacity = capacity
+    }
+
+    /// Returns false when the id was already seen.
+    mutating func insert(_ id: Int64) -> Bool {
+        guard members.insert(id).inserted else { return false }
+        order.append(id)
+        if order.count > capacity {
+            members.remove(order.removeFirst())
+        }
+        return true
+    }
+
+    mutating func removeAll() {
+        order.removeAll()
+        members.removeAll()
     }
 }
