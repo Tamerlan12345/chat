@@ -32,7 +32,7 @@ object CompanyName {
  * `АО "Ромашка"` → `АО «Ромашка»`. A quote at the start or after a space or bracket opens, any other
  * closes; quotes left open at the end are closed, so `АО "Компания "Имя"` reads `АО «Компания «Имя»»`.
  */
-internal fun typographicQuotes(text: String): String {
+fun typographicQuotes(text: String): String {
     if ('"' !in text) return text
     var depth = 0
     val out = StringBuilder(text.length + 2)

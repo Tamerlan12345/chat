@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.BuildConfig
 import com.openmychat.mobile.R
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.features.auth.typographicQuotes
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyAvatar
 import com.openmychat.mobile.ui.components.CentyConfirmDialog
@@ -186,7 +187,7 @@ fun ProfileScreen(
                 Group {
                     val rows = listOfNotNull(
                         stringResource(R.string.profile_login) to (user?.username ?: "—"),
-                        user?.company?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_company) to it },
+                        user?.company?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_company) to typographicQuotes(it) },
                         user?.departmentName?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_department) to it },
                         user?.extension?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_extension) to it },
                         user?.email?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_email) to it },
@@ -202,7 +203,8 @@ fun ProfileScreen(
                 Group {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.profile_wake_hint), style = MaterialTheme.typography.bodyMedium, color = tokens.textSecondary)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Stacked, so the field and the button stay usable at large font sizes.
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = wakeTarget,
                                 onValueChange = { value -> wakeTarget = value.filter { it.isDigit() } },
@@ -211,7 +213,7 @@ fun ProfileScreen(
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 shape = RoundedCornerShape(CentyRadius.control),
                                 colors = fieldColors(),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth()
                             )
                             val cooldown = uiState.wakeCooldownSeconds
                             Button(
@@ -223,7 +225,7 @@ fun ProfileScreen(
                                 },
                                 enabled = cooldown == 0 && wakeTarget.isNotBlank(),
                                 shape = RoundedCornerShape(CentyRadius.control),
-                                modifier = Modifier.heightIn(min = 56.dp)
+                                modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
                             ) {
                                 Text(if (cooldown > 0) stringResource(R.string.profile_wake_wait, cooldown) else stringResource(R.string.profile_wake_send))
                             }

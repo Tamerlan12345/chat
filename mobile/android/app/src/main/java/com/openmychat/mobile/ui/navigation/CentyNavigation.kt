@@ -45,6 +45,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation3.runtime.NavEntry
@@ -183,7 +187,15 @@ fun CentyNavigation(
                     selected = selected,
                     onClick = { navigator.navigate(route) },
                     icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
-                    label = { Text(stringResource(item.label), maxLines = 1) },
+                    // Shrinks instead of clipping at large font sizes («Объявления» at fontScale 2.0).
+                    label = {
+                        BasicText(
+                            text = stringResource(item.label),
+                            maxLines = 1,
+                            style = MaterialTheme.typography.labelMedium.copy(color = LocalContentColor.current),
+                            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = MaterialTheme.typography.labelMedium.fontSize)
+                        )
+                    },
                     colors = itemColors
                 )
             }
