@@ -90,7 +90,7 @@
       "reply_to_id": null,
       "metadata_json": null,
       "created_at": "2026-10-02T09:00:04.000Z",
-      "updated_at": "2026-10-02T09:00:06.000Z",
+      "updated_at": "2026-10-02T09:00:05.000Z",
       "is_deleted": 1,
       "client_msg_id": null,
       "delivery_status": null,
@@ -109,7 +109,7 @@
       "type": "text",
       "reply_to_id": null,
       "metadata_json": null,
-      "created_at": "2026-10-02T09:00:07.000Z",
+      "created_at": "2026-10-02T09:00:06.000Z",
       "updated_at": null,
       "is_deleted": 0,
       "client_msg_id": "0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607",
@@ -121,6 +121,6 @@
       "file_original_name": null
     }
   ],
-  "next_cursor": "23",
+  "next_cursor": "5e7a1c0d9b3f4a62.23",
   "has_more": false
 }

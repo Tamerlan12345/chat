@@ -97,6 +97,8 @@ function normalizeFixture(value) {
     if (typeof v === 'string') {
       if (key === 'token') return FAKE_JWT;
       if (key === 'storedFilename') return '1790000000000_0123456789abcdef.txt';
+      // sync cursor "<epoch>.<seq>": the epoch is random per database.
+      if (key === 'next_cursor') return v.replace(/^[0-9a-f]{16}\./, '5e7a1c0d9b3f4a62.');
       if (ISO_RE.test(v)) return mapTime(v);
       return v;
     }
@@ -283,7 +285,7 @@ export async function captureFixtures({ dataDir } = {}) {
     await B.takeType('auth_success');
 
     // delta sync: without since = only the current head cursor (start point).
-    const syncStart = await http('http/sync.bootstrap.json', 'Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова. С него клиент начинает, загрузив страницы переписок.',
+    const syncStart = await http('http/sync.bootstrap.json', 'Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова (непрозрачная строка «<эпоха>.<номер>»). С него клиент начинает, загрузив страницы переписок.',
       'GET', '/sync', { token: tAlice }, 200);
 
     // send_message (direct): sender and recipient both get direct_message AND new_message.
@@ -355,8 +357,9 @@ export async function captureFixtures({ dataDir } = {}) {
       'GET', `/messages?conversationType=direct&targetId=${bob.id}&afterId=${directPage[directPage.length - 1].id}&limit=50`, { token: tAlice }, 200);
     await http('http/sync.page.json', 'Дельта после курсора: GET /api/sync?since={next_cursor}&limit=… — созданные, изменённые, удалённые (надгробие: is_deleted=1, text="", metadata_json=null) и сменившие статус сообщения во всех видимых переписках, по возрастанию изменения; каждое один раз в текущем состоянии. delivery_status — у личных, null у каналов.',
       'GET', `/sync?since=${syncStart.next_cursor}&limit=50`, { token: tAlice }, 200);
-    await http('http/sync.cursor-invalid.json', 'Курсор больше головы (база восстановлена из копии и т.п.): HTTP 410, { error, code: "SYNC_CURSOR_INVALID" } — начать заново с GET /api/sync без since.',
-      'GET', '/sync?since=999999999', { token: tAlice }, 410);
+    const foreignEpoch = syncStart.next_cursor.startsWith('0123456789abcdef.') ? 'fedcba9876543210' : '0123456789abcdef';
+    await http('http/sync.cursor-invalid.json', 'Курсор не этой базы (другая эпоха: база восстановлена из резервной копии, другой сервер), прежнего формата или впереди головы: HTTP 410, { error, code: "SYNC_CURSOR_INVALID" } — начать заново с GET /api/sync без since.',
+      'GET', `/sync?since=${foreignEpoch}.1`, { token: tAlice }, 410);
 
     // presence
     A.clear(); B.clear();

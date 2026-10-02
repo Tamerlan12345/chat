@@ -162,14 +162,14 @@
   },
   "http/sync.bootstrap.json": {
     "kind": "http",
-    "description": "Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова. С него клиент начинает, загрузив страницы переписок.",
+    "description": "Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова (непрозрачная строка «<эпоха>.<номер>»). С него клиент начинает, загрузив страницы переписок.",
     "method": "GET",
     "path": "/api/sync",
     "status": 200
   },
   "http/sync.cursor-invalid.json": {
     "kind": "http",
-    "description": "Курсор больше головы (база восстановлена из копии и т.п.): HTTP 410, { error, code: \"SYNC_CURSOR_INVALID\" } — начать заново с GET /api/sync без since.",
+    "description": "Курсор не этой базы (другая эпоха: база восстановлена из резервной копии, другой сервер), прежнего формата или впереди головы: HTTP 410, { error, code: \"SYNC_CURSOR_INVALID\" } — начать заново с GET /api/sync без since.",
     "method": "GET",
     "path": "/api/sync",
     "status": 410
