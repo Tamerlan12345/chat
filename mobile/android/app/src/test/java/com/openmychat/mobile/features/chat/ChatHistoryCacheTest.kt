@@ -2,6 +2,7 @@ package com.openmychat.mobile.features.chat
 
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -20,14 +21,15 @@ class ChatHistoryCacheTest {
 
     private val bob = 3L
     private val repository = FakeChatRepository(history = listOf(message(id = 10, from = bob, to = ME)))
-    private val cache = ChatHistoryCache()
+    private val session = FakeSessionRepository()
+    private val cache = ChatHistoryCache(session)
 
     private fun open(userId: Long = ME) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = bob,
         chatRepository = repository,
         realtimeRepository = FakeRealtimeRepository(),
-        sessionRepository = FakeSessionRepository(userId),
+        sessionRepository = if (userId == ME) session else FakeSessionRepository(userId),
         activeConversations = ActiveConversationRegistry(),
         historyCache = cache
     )
@@ -55,5 +57,26 @@ class ChatHistoryCacheTest {
 
         val someoneElse = open(userId = 99L)
         assertEquals(ChatUiState.Loading, someoneElse.uiState.value)
+    }
+
+    @Test
+    fun signingOutClearsTheCache() {
+        open()
+        assertEquals(listOf(10L), cache.get(ME, ConversationRef(ConversationType.DIRECT, bob))?.map { it.id })
+
+        session.token.value = null
+
+        assertEquals(null, cache.get(ME, ConversationRef(ConversationType.DIRECT, bob)))
+    }
+
+    @Test
+    fun aFailedRefreshOverCachedHistoryKeepsItAndSaysSo() {
+        open()
+        repository.historyFailure = IllegalStateException("offline")
+
+        val reopened = open()
+
+        assertEquals(listOf(10L), reopened.ids())
+        assertEquals(true, reopened.refreshFailed.value)
     }
 }

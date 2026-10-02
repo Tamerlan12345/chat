@@ -230,4 +230,20 @@ class ChatContentTest {
         compose.onNodeWithText("Моё новое").assertIsDisplayed()
         compose.onAllNodes(hasTestTag("new-messages-pill")).assertCountEquals(0)
     }
+
+    @Test
+    fun aFailedRefreshOverCachedHistorySaysSoAndRetries() {
+        compose.setContent {
+            CentyChatTheme(darkTheme = false, reduceMotion = true) {
+                ChatContent(
+                    title = "Боб Тестов", isDirect = true, uiState = ChatUiState.Content(listOf(message(1, peer))),
+                    currentUserId = me, connectionState = ConnectionState.Connected, actions = actions, refreshFailed = true
+                )
+            }
+        }
+        compose.onNodeWithText("Не удалось обновить").assertIsDisplayed()
+        compose.onNodeWithText("Сообщение 1").assertIsDisplayed()
+        compose.onNodeWithText("Повторить").performClick()
+        assertEquals(1, retries)
+    }
 }

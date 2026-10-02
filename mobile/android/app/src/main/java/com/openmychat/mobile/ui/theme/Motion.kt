@@ -95,7 +95,17 @@ object CentyMotion {
         }
 }
 
-/** True when the system asks for no animation (Developer options / Accessibility "Remove animations"). */
+/**
+ * True when the system asks for no animation: Accessibility «Удалить анимацию» / Developer options,
+ * i.e. `ANIMATOR_DURATION_SCALE == 0`.
+ *
+ * Why every reduce branch ends in a cut on Android: Compose multiplies every animation duration by
+ * that same system scale, so at 0 even the brief's 150 ms reduce-motion crossfade lasts 0 ms. That
+ * is the platform's contract and is kept. The reduce branches still matter: they remove spatial
+ * motion (no lift, no shared elements, no landing flight, no shake, no placement slides) and pick
+ * fades or instant swaps, so nothing moves even for the one frame a cut shows. A scale between 0
+ * and 1 is honoured by the system as shorter animations, with the full motion.
+ */
 val LocalReduceMotion = compositionLocalOf { false }
 
 /** Reads `ANIMATOR_DURATION_SCALE` and follows changes while the app is open. */

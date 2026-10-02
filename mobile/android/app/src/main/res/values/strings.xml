@@ -142,6 +142,7 @@
     <string name="chat_cancel_reply">Отменить ответ</string>
     <string name="chat_attach">Прикрепить файл</string>
     <string name="chat_jump_latest">К последним сообщениям</string>
+    <string name="chat_refresh_failed">Не удалось обновить</string>
     <string name="chat_typing_bubble">Собеседник печатает</string>
     <string name="attachment_failed">Не загрузилось</string>
     <string name="attachment_uploading">Загрузка: %1$d%%</string>

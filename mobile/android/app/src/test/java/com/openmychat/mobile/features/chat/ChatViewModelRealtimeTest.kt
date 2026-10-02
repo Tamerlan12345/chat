@@ -30,7 +30,7 @@ class ChatViewModelRealtimeTest {
         realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = registry,
-        historyCache = ChatHistoryCache()
+        historyCache = ChatHistoryCache(FakeSessionRepository())
     )
 
     private val ChatViewModel.messageIds get() = (uiState.value as ChatUiState.Content).messages.map { it.id }

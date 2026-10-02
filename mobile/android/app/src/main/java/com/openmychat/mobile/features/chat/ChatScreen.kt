@@ -36,6 +36,7 @@ import com.openmychat.mobile.ui.components.DeliveryMark
 import com.openmychat.mobile.ui.components.EmptyState
 import com.openmychat.mobile.ui.components.ErrorState
 import com.openmychat.mobile.ui.components.Illustration
+import com.openmychat.mobile.ui.components.InlineNotice
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.MessageMenuHost
 import com.openmychat.mobile.ui.components.SharedKeys
@@ -44,6 +45,9 @@ import com.openmychat.mobile.ui.components.rememberLift
 import com.openmychat.mobile.ui.components.rememberMessageMenuState
 import com.openmychat.mobile.ui.theme.CentyTheme
 import com.openmychat.mobile.ui.theme.CentyMotion
+import com.openmychat.mobile.ui.theme.LocalReduceMotion
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -93,6 +97,7 @@ fun ChatScreen(
     val editingMessage by viewModel.editingMessage.collectAsState()
     val connection by viewModel.connectionState.collectAsState()
     val livePeerStatus by viewModel.peerStatus.collectAsState()
+    val refreshFailed by viewModel.refreshFailed.collectAsState()
     val snackbar = LocalSnackbarHostState.current
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
@@ -144,7 +149,8 @@ fun ChatScreen(
         wakeCooldown = wakeCooldown,
         editingMessage = editingMessage,
         showBackButton = showBackButton,
-        sharedKey = SharedKeys.conversation(isChannel = !isDirect, id = viewModel.targetId)
+        sharedKey = SharedKeys.conversation(isChannel = !isDirect, id = viewModel.targetId),
+        refreshFailed = refreshFailed
     )
 }
 
@@ -172,7 +178,9 @@ fun ChatContent(
     editingMessage: Message? = null,
     showBackButton: Boolean = true,
     /** Ties the header's avatar and name to the inbox row for the shared-element transition. */
-    sharedKey: String? = null
+    sharedKey: String? = null,
+    /** A cached history is shown but the server could not refresh it. */
+    refreshFailed: Boolean = false
 ) {
     val tokens = CentyTheme.tokens
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
@@ -183,7 +191,9 @@ fun ChatContent(
     val landing = rememberLandingState()
     // The history composes two frames after the screen: the chat is still invisible then (the
     // fade-through starts after 90 ms), and the transition's first frame stays light.
-    var historyReady by remember { mutableStateOf(false) }
+    // With reduce motion there is no fade to hide behind, so the history shows in the first frame.
+    val reduce = LocalReduceMotion.current
+    var historyReady by remember { mutableStateOf(reduce) }
     LaunchedEffect(Unit) {
         withFrameNanos { }
         withFrameNanos { }
@@ -231,6 +241,14 @@ fun ChatContent(
                     .consumeWindowInsets(innerPadding)
             ) {
                 ConnectionBanner(connectionState)
+                AnimatedVisibility(visible = refreshFailed && uiState is ChatUiState.Content) {
+                    InlineNotice(
+                        text = stringResource(R.string.chat_refresh_failed),
+                        actionLabel = stringResource(R.string.action_retry),
+                        onAction = actions::onRetry,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp).testTag("refresh-failed")
+                    )
+                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (uiState) {
                         is ChatUiState.Loading -> DelayedSkeleton()

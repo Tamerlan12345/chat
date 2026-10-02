@@ -66,6 +66,11 @@ class ChatViewModel @AssistedInject constructor(
     private val _wakeCooldownSeconds = MutableStateFlow(0)
     val wakeCooldownSeconds: StateFlow<Int> = _wakeCooldownSeconds.asStateFlow()
 
+    private val _refreshFailed = MutableStateFlow(false)
+
+    /** The server history could not be loaded while a cached one is shown. */
+    val refreshFailed: StateFlow<Boolean> = _refreshFailed.asStateFlow()
+
     private val _editingMessage = MutableStateFlow<Message?>(null)
     val editingMessage: StateFlow<Message?> = _editingMessage.asStateFlow()
 
@@ -114,6 +119,7 @@ class ChatViewModel @AssistedInject constructor(
             if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
             // What was already shown (a cached history) is replaced by the server, not merged.
             val shownBefore = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty().mapTo(HashSet()) { it.id }
+            _refreshFailed.value = false
             try {
                 val history = chatRepository.messages(conversationType, targetId)
                 _uiState.update { state ->
@@ -123,6 +129,8 @@ class ChatViewModel @AssistedInject constructor(
                     ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
                 }
             } catch (e: Exception) {
+                // A cached history stays on screen; the screen says it could not be refreshed.
+                if (_uiState.value is ChatUiState.Content) _refreshFailed.value = true
                 if (_uiState.value !is ChatUiState.Content) {
                     _uiState.value = ChatUiState.Error(e.message ?: "Не удалось загрузить сообщения")
                 }
