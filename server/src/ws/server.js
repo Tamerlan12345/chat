@@ -52,6 +52,18 @@ const CUSTOM_STATUS_MAX = 200;
 // не ошибка — сокет просто остаётся «без устройства», как у старых клиентов.
 const DEVICE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const CLIENT_PLATFORMS = new Set(['desktop', 'android', 'ios', 'web']);
+const MOBILE_PLATFORMS = new Set(['android', 'ios']);
+// Сколько переписок на сотрудника помнить «уходил push» (для тихого read).
+const PUSHED_CHATS_MAX = 100;
+
+// Кадр viewing (или поле viewing кадра auth) → { conversationType, targetId }
+// или null. Всё недопустимое — null («ни один чат»), а не «оставить прежнее».
+function parseViewing(v) {
+  if (!v || typeof v !== 'object') return null;
+  const targetId = Number(v.targetId);
+  if ((v.conversationType !== 'direct' && v.conversationType !== 'channel') || !Number.isInteger(targetId) || targetId <= 0) return null;
+  return { conversationType: v.conversationType, targetId };
+}
 
 // Побудка собеседника: сигнал уходит сразу, следующий — не раньше чем через
 // минуту. Пауза общая на отправителя, а не на пару: иначе можно было бы по
@@ -340,6 +352,7 @@ class WsServer {
       // момент проверки. Очередь зовёт это перед каждой попыткой доставки.
       messagePushTargets: (userId, payload, devices) => this.messagePushTargets(Number(userId), payload, devices),
       readPushTargets: (userId, devices) => this.readPushTargets(Number(userId), devices),
+      messageJobCurrent: (userId, payload, stamp) => this.messageJobCurrent(Number(userId), payload, stamp),
       // Жив ли вызов, ради которого шлётся уведомление: снятый вызов не будит телефон.
       callOffer: (callerId, calleeId) => {
         const offer = this.pendingOffers.get(Number(callerId));
@@ -406,19 +419,28 @@ class WsServer {
     return NotifyDecision.decideReadDismissal({ sockets: this.decisionSockets(userId), pushDevices: devices }).push;
   }
 
-  // Решение по сообщению для одного получателя при рассылке: кому из его
-  // сокетов баннер (notify в кадре) и нужен ли push вообще (reason === null).
-  // Устройства с push — по таблице токенов, без проверки сеанса: какие именно
-  // получат push, очередь решает заново перед отправкой (fanOut/deliver).
-  messageDecision(message, userId) {
-    const sockets = this.decisionSockets(userId);
-    return NotifyDecision.decideMessageNotification({
-      recipientId: userId,
-      dnd: this.dndUsers.has(userId),
-      message: { conversationType: message.conversation_type, targetId: Number(message.target_id), senderId: Number(message.sender_id) },
-      sockets,
-      pushDevices: sockets.length ? PushService.messageDevicesOf(userId) : []
-    });
+  // Задание push о сообщении ещё актуально: после него переписку не читали.
+  // stamp — отметка pushedChats на момент постановки (pushMessage); чтение
+  // удаляет отметку, и запоздалый повтор не приходит после тихого «read».
+  messageJobCurrent(userId, payload, stamp) {
+    if (stamp === undefined || stamp === null) return true;
+    const key = `${payload.conversationType}:${payload.targetId}`;
+    return this.pushedChats.get(userId)?.get(key) === stamp;
+  }
+
+  // Забыть, о каких переписках сотруднику уходил push: выход из канала
+  // (chatKey) или отключение сотрудника (всё).
+  forgetPushedChats(userId, chatKey = null) {
+    const map = this.pushedChats.get(Number(userId));
+    if (!map) return;
+    if (chatKey) map.delete(chatKey);
+    else map.clear();
+    if (!map.size) this.pushedChats.delete(Number(userId));
+  }
+
+  // Переписки больше нет (канал удалён) — забыть её у всех.
+  forgetPushedChatForAll(chatKey) {
+    for (const userId of [...this.pushedChats.keys()]) this.forgetPushedChats(userId, chatKey);
   }
 
   async publishStatus(user, previous = null) {
@@ -607,7 +629,10 @@ class WsServer {
         const rate = checkRate(ws, rateKey);
         if (!rate.allowed) {
           // Кадр по-прежнему отбрасывается; клиенту, который ждёт ответа,
-          // говорится, когда повторить (G2).
+          // говорится, когда повторить (G2). Отброшенный viewing (ответа на
+          // него нет) снимает прежнее значение: лучше лишнее уведомление, чем
+          // молча заглушённый чат, который человек уже закрыл.
+          if (data.type === 'viewing') ws.viewing = null;
           this.replyRateLimited(ws, data, rate.retryAfterMs);
           return;
         }
@@ -636,16 +661,22 @@ class WsServer {
     // Heartbeat to detect dead connections. unref'd so it never becomes the
     // only reason the process stays alive — otherwise Node cannot exit after
     // the server closes, which is what a test run does.
+    // Телефоны теряют сеть без закрытия сокета чаще компьютеров, а «зомби»
+    // телефона, считающийся «в сети», отнимает у него push. Поэтому их сокеты
+    // проверяются каждые 15 с, остальные — каждые 30 с, как раньше.
+    let tick = 0;
     this.heartbeat = setInterval(() => {
       if (!this.wss) return;
+      tick += 1;
       this.wss.clients.forEach((ws) => {
+        if (!MOBILE_PLATFORMS.has(ws.clientPlatform) && tick % 2) return;
         if (!ws.isAlive) {
           return ws.terminate();
         }
         ws.isAlive = false;
         ws.ping();
       });
-    }, 30000);
+    }, 15000);
     this.heartbeat.unref();
 
     // Токен, которым соединение вошло, мог быть отозван: смена пароля, роли,
@@ -854,7 +885,16 @@ class WsServer {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Требуется смена пароля перед продолжением работы', code: 'MUST_CHANGE_PASSWORD' }));
       }
 
-      if ((this.userSockets.get(user.id)?.size || 0) >= MAX_SOCKETS_PER_USER && !this.userSockets.get(user.id)?.has(ws)) {
+      // Прежние сокеты ЭТОГО ЖЕ устройства (тот же device_id) — «зомби»:
+      // телефон потерял сеть, а сервер ещё до минуты считает старый сокет
+      // живым. Он вытесняется: иначе устройство выглядело бы «в сети» (без
+      // push), а его старый viewing глушил бы все устройства сотрудника.
+      const deviceId = typeof msg.device_id === 'string' && DEVICE_ID_RE.test(msg.device_id) ? msg.device_id : null;
+      const superseded = deviceId
+        ? [...(this.userSockets.get(user.id) || [])].filter((s) => s !== ws && s.deviceId === deviceId)
+        : [];
+      const occupied = (this.userSockets.get(user.id)?.size || 0) - superseded.length;
+      if (occupied >= MAX_SOCKETS_PER_USER && !this.userSockets.get(user.id)?.has(ws)) {
         return ws.send(JSON.stringify({ type: 'auth_error', code: 'TOO_MANY_SESSIONS', message: 'Слишком много открытых окон. Закройте лишние.' }));
       }
 
@@ -867,9 +907,21 @@ class WsServer {
       // в auth); открытого чата сервер ещё не знает. Устройство — из
       // необязательных полей auth.
       ws.presenceState = msg.presence === 'away' ? 'away' : 'online';
-      ws.viewing = null;
-      ws.deviceId = typeof msg.device_id === 'string' && DEVICE_ID_RE.test(msg.device_id) ? msg.device_id : null;
+      // Открытый чат можно сообщить прямо в auth — без окна, когда сервер
+      // уже шлёт сообщения, а viewing ещё не пришёл.
+      ws.viewing = ws.presenceState === 'online' ? parseViewing(msg.viewing) : null;
+      ws.deviceId = deviceId;
       ws.clientPlatform = CLIENT_PLATFORMS.has(msg.platform) ? msg.platform : null;
+
+      // Вытесненный сокет сразу перестаёт что-либо значить (away, без
+      // viewing) и обрывается; его закрытие обычным путём (handleDisconnect)
+      // освобождает место и пересчитывает итог присутствия.
+      for (const old of superseded) {
+        old.presenceState = 'away';
+        old.viewing = null;
+        old.superseded = true;
+        try { old.terminate(); } catch {}
+      }
 
       clearTimeout(ws.authTimer);
       this.socketUser.set(ws, user);
@@ -1063,13 +1115,10 @@ class WsServer {
     //     не уведомляется ни одно устройство сотрудника. Недопустимый кадр не
     //     меняет ничего.
     if (type === 'viewing') {
-      if (msg.conversationType === null || msg.conversationType === undefined) {
-        ws.viewing = null;
-        return;
-      }
-      const targetId = Number(msg.targetId);
-      if ((msg.conversationType !== 'direct' && msg.conversationType !== 'channel') || !Number.isInteger(targetId) || targetId <= 0) return;
-      ws.viewing = { conversationType: msg.conversationType, targetId };
+      // Недопустимый кадр — «ни один чат»: ошибка клиента не должна глушить
+      // уведомления. На сокете в фоне viewing не запоминается.
+      const viewing = parseViewing(msg);
+      ws.viewing = ws.presenceState === 'away' ? null : viewing;
       return;
     }
 
@@ -1639,16 +1688,11 @@ class WsServer {
 
     // Каждому сокету — признак notify: показывать ли баннер (решение
     // notify-decision.js, multi-device.md §5). Своё эхо и повтор — без баннера.
+    const userIds = [...new Set(recipients.map(Number))];
+    const decisions = duplicate ? new Map() : this.messageDecisions(message, userIds);
     const toPush = [];
-    for (const userId of [...new Set(recipients.map(Number))]) {
-      let decision = null;
-      if (!duplicate) {
-        try {
-          decision = this.messageDecision(message, userId);
-        } catch (err) {
-          console.warn('[WS] решение об уведомлении не принято:', err.message);
-        }
-      }
+    for (const userId of userIds) {
+      const decision = decisions.get(userId) || null;
       const banner = new Set(decision ? decision.banner : []);
       for (const ws of this.userSockets.get(userId) || []) {
         if (ws.readyState !== WebSocket.OPEN) continue;
@@ -1656,11 +1700,61 @@ class WsServer {
         ws.send(JSON.stringify({ type: specific, message, notify }));
         ws.send(JSON.stringify({ type: 'new_message', message, notify }));
       }
-      if (decision && decision.reason === null && userId !== senderId) toPush.push(userId);
+      // В очередь — только тем, у кого есть кому слать push: участник
+      // большого канала, сидящий в приложении, заданий не порождает.
+      if (decision && decision.push.length && userId !== senderId) toPush.push(userId);
     }
 
     if (!duplicate && message.conversation_type === 'direct') this.markDeliveredIfOnline(message);
     if (toPush.length) this.pushMessage(message, toPush);
+  }
+
+  /**
+   * Решения по сообщению для всех получателей: userId -> решение
+   * notify-decision. Устройства с push читаются ОДНИМ запросом на сообщение и
+   * только для тех, кого не исключили «своё», «Не беспокоить» и «чат открыт».
+   * Сбой решения — не тишина: уведомить, как до этого правила (баннер всем
+   * сокетам и push), с предупреждением в журнал.
+   */
+  messageDecisions(message, userIds) {
+    const msg = { conversationType: message.conversation_type, targetId: Number(message.target_id), senderId: Number(message.sender_id) };
+    const result = new Map();
+    const needDevices = [];
+    const prepared = new Map();
+    for (const userId of userIds) {
+      try {
+        const input = { recipientId: userId, dnd: this.dndUsers.has(userId), message: msg, sockets: this.decisionSockets(userId), pushDevices: [] };
+        const first = NotifyDecision.decideMessageNotification(input);
+        prepared.set(userId, input);
+        if (first.reason !== null) result.set(userId, first);
+        else needDevices.push(userId);
+      } catch (err) {
+        result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      }
+    }
+    let devices = new Map();
+    try {
+      devices = needDevices.length ? PushService.messageDevicesFor(needDevices) : devices;
+    } catch (err) {
+      console.warn('[WS] устройства для push не прочитаны:', err.message);
+      for (const userId of needDevices) result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      return result;
+    }
+    for (const userId of needDevices) {
+      try {
+        result.set(userId, NotifyDecision.decideMessageNotification({ ...prepared.get(userId), pushDevices: devices.get(userId) || [] }));
+      } catch (err) {
+        result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      }
+    }
+    return result;
+  }
+
+  fallbackDecision(userId, senderId, err) {
+    console.warn('[WS] решение об уведомлении не принято — уведомляем:', err.message);
+    const ids = [...(this.userSockets.get(userId) || [])].map((s) => s.socketId);
+    if (userId === senderId) return { reason: 'own', push: [], banner: [], quiet: ids };
+    return { reason: null, push: ['*'], banner: ids, quiet: [] };
   }
 
   // Push-уведомление (только id) получателям, которых решение не исключило
@@ -1669,13 +1763,27 @@ class WsServer {
   // перед каждой попыткой. Рассылка доставки не ждёт и не падает из-за неё.
   pushMessage(message, userIds) {
     try {
-      PushService.notifyMessage(message, userIds);
       if (!PushService.enabled) return;
+      // pushedChats: userId -> Map(ключ переписки -> отметка), не больше
+      // PUSHED_CHATS_MAX на сотрудника (самая давняя вытесняется). Отметка
+      // живёт до прочтения переписки — по ней очередь узнаёт устаревшие задания.
+      const stamps = new Map();
       for (const userId of userIds) {
         const chat = NotifyDecision.chatOf({ conversationType: message.conversation_type, targetId: message.target_id, senderId: message.sender_id }, userId);
-        if (!this.pushedChats.has(userId)) this.pushedChats.set(userId, new Set());
-        this.pushedChats.get(userId).add(`${chat.conversationType}:${chat.targetId}`);
+        const key = `${chat.conversationType}:${chat.targetId}`;
+        if (!this.pushedChats.has(userId)) this.pushedChats.set(userId, new Map());
+        const map = this.pushedChats.get(userId);
+        let stamp = map.get(key);
+        if (stamp === undefined) {
+          this.pushStampSeq = (this.pushStampSeq || 0) + 1;
+          stamp = this.pushStampSeq;
+        }
+        map.delete(key);
+        map.set(key, stamp);
+        while (map.size > PUSHED_CHATS_MAX) map.delete(map.keys().next().value);
+        stamps.set(userId, stamp);
       }
+      PushService.notifyMessage(message, userIds, stamps);
     } catch (err) {
       console.warn('[Push] постановка уведомлений не удалась:', err.message);
     }
@@ -1703,10 +1811,8 @@ class WsServer {
       if (other !== ws && other.readyState === WebSocket.OPEN) other.send(payload);
     }
     const key = `${conversationType}:${targetId}`;
-    const pushed = this.pushedChats.get(userId);
-    if (!pushed || !pushed.has(key)) return;
-    pushed.delete(key);
-    if (!pushed.size) this.pushedChats.delete(userId);
+    if (!this.pushedChats.get(userId)?.has(key)) return;
+    this.forgetPushedChats(userId, key);
     try {
       PushService.notifyRead(userId, { conversationType, targetId });
     } catch (err) {

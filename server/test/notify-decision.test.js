@@ -23,7 +23,9 @@ const REQUIRED = [
   '01-viewing-on-desktop', '02-viewing-on-phone', '03-desktop-other-chat-phone-in-pocket', '04-both-on-list',
   '05-desktop-away-while-viewing', '06-phone-background-desktop-viewing', '07-dnd', '08-own-message',
   '09-channel-viewing-other-chat', '10-channel-viewing-same', '11-no-sockets', '12-old-clients-never-send-viewing',
-  'r01-read-dismiss-pocket-devices'
+  '13-phone-background-socket-desktop-list', '14-phone-foreground-other-screen', '15-phone-away-without-push-token',
+  '16-two-phones-one-foreground', '17-viewing-ignored-while-away-everywhere', '18-old-mobile-foreground-no-device-id',
+  'r01-read-dismiss-pocket-devices', 'r02-read-on-phone-no-dismiss-push'
 ];
 
 function loadVectors() {

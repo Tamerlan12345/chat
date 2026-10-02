@@ -943,6 +943,7 @@ router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(
       details: { targetUserId: Number(req.params.id) }
     });
     wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    wsServer.forgetPushedChats(Number(req.params.id));
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json({ success: true, user: updated });
   } catch (err) {
@@ -954,7 +955,10 @@ router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, route(a
   try {
     const updated = await UserService.toggleUserActive(Number(req.params.id));
     AuditService.log({ userId: req.user.id, action: updated.is_active ? 'user_activated' : 'user_deactivated', ip: getClientIp(req), details: { targetUserId: Number(req.params.id) } });
-    if (!updated.is_active) wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    if (!updated.is_active) {
+      wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+      wsServer.forgetPushedChats(Number(req.params.id));
+    }
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
   } catch (err) {
@@ -1193,6 +1197,7 @@ router.delete('/admin/channels/:id', requireAuth, requireAdmin, (req, res) => {
     db.prepare("DELETE FROM messages WHERE conversation_type = 'channel' AND target_id = ?").run(channelId);
     db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
     db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+    wsServer.forgetPushedChatForAll(`channel:${channelId}`);
 
     wsServer.broadcast({ type: 'channel_deleted', channelId });
     res.json({ success: true });

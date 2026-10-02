@@ -39,6 +39,7 @@ const NO_PRESENCE = {
   isDnd: () => false,
   // Без сервера сокетов сокетов нет — push на все устройства.
   messagePushTargets: (userId, payload, devices) => devices.map((d) => d.id),
+  messageJobCurrent: () => true,
   readPushTargets: (userId, devices) => devices.map((d) => d.id),
   callOffer: () => null,
   callUndeliverable: () => {}
@@ -59,7 +60,10 @@ class PushService {
     this.active = 0;
     this.timers = new Set();
     this.drainScheduled = false;
-    this.options = { concurrency: 8, queueMax: 10000, maxAttempts: 4, baseDelayMs: 1000 };
+    // callReserve — места сверх queueMax только для звонков: поток сообщений
+    // большого канала не вытесняет вызов (иначе вызывающий получил бы
+    // call_unavailable из-за чужих уведомлений).
+    this.options = { concurrency: 8, queueMax: 10000, callReserve: 100, maxAttempts: 4, baseDelayMs: 1000 };
     this.stats = { sent: 0, invalid: 0, failed: 0, retried: 0, dropped: 0 };
     this.lastDropWarn = 0;
     this.configErrorsLogged = new Set();
@@ -78,7 +82,7 @@ class PushService {
    * providers: { fcm, apns } — объекты с send(); отсутствующий — платформа
    * выключена. Остальное — пределы очереди.
    */
-  configure({ providers = {}, concurrency, queueMax, maxAttempts, baseDelayMs } = {}) {
+  configure({ providers = {}, concurrency, queueMax, callReserve, maxAttempts, baseDelayMs } = {}) {
     this.reset();
     this.providers = { android: providers.fcm || null, ios: providers.apns || null };
     const set = (name, value, min) => { if (Number.isInteger(value) && value >= min) this.options[name] = value; };
@@ -86,6 +90,7 @@ class PushService {
     set('queueMax', queueMax, 1);
     set('maxAttempts', maxAttempts, 1);
     set('baseDelayMs', baseDelayMs, 0);
+    set('callReserve', callReserve, 0);
   }
 
   /** Настройка из окружения при запуске сервера; одна строка в журнал о состоянии. */
@@ -159,31 +164,36 @@ class PushService {
   // ── Постановка ─────────────────────────────────────────────────────────────
 
   /**
-   * Устройства сотрудника, которым можно показать уведомление о сообщении
-   * (по таблице токенов, без проверки сеанса): [{ id }] для notify-decision.js.
-   * Синхронно — нужно при рассылке, чтобы решить, кому из сокетов баннер.
+   * Устройства сотрудников, которым можно показать уведомление о сообщении
+   * (по таблице токенов, без проверки сеанса): userId -> [{ id }] для
+   * notify-decision.js. Один запрос на всех — путь рассылки синхронный и
+   * горячий; без push — пустой ответ без запроса.
    */
-  messageDevicesOf(userId) {
-    if (!this.enabled) return [];
-    const ids = [];
-    for (const row of PushTokens.forUser(userId)) {
+  messageDevicesFor(userIds) {
+    const result = new Map();
+    if (!this.enabled || !userIds.length) return result;
+    for (const row of PushTokens.forUsers(userIds)) {
       if (!messageCapable(row) || !this.providerFor(row)) continue;
+      const userId = Number(row.user_id);
+      if (!result.has(userId)) result.set(userId, []);
+      const list = result.get(userId);
       const id = deviceKeyOf(row);
-      if (!ids.includes(id)) ids.push(id);
+      if (!list.some((d) => d.id === id)) list.push({ id });
     }
-    return ids.map((id) => ({ id }));
+    return result;
   }
 
   /**
    * Новое сообщение: получателям, которых не исключило решение (WsServer).
    * Какие их устройства получат push, решается здесь же тем же правилом
    * (presence.messagePushTargets) — при раздаче и перед каждой попыткой.
-   * Не ждёт доставки.
+   * stamps: userId -> отметка переписки (WsServer.pushedChats): переписку
+   * прочитали — задание и его повторы снимаются. Не ждёт доставки.
    */
-  notifyMessage(message, recipientIds) {
+  notifyMessage(message, recipientIds, stamps = new Map()) {
     if (!this.enabled) return;
     for (const userId of recipientIds) {
-      this.enqueue({ type: 'user', kind: 'message', userId: Number(userId), payload: messagePayload(message, userId) });
+      this.enqueue({ type: 'user', kind: 'message', userId: Number(userId), payload: messagePayload(message, userId), stamp: stamps.get(Number(userId)) });
     }
   }
 
@@ -218,7 +228,9 @@ class PushService {
   }
 
   enqueue(job) {
-    if (this.queue.length >= this.options.queueMax) {
+    const isCall = job.kind === 'call';
+    const limit = this.options.queueMax + (isCall ? this.options.callReserve : 0);
+    if (this.queue.length >= limit) {
       this.stats.dropped += 1;
       const now = Date.now();
       if (now - this.lastDropWarn > DROP_WARN_INTERVAL_MS) {
@@ -228,7 +240,14 @@ class PushService {
       this.settle(job, 'lost');
       return;
     }
-    this.queue.push(job);
+    // Звонок встаёт впереди уведомлений о сообщениях: у него 30 секунд.
+    if (isCall) {
+      const at = this.queue.findIndex((j) => j.kind !== 'call');
+      if (at < 0) this.queue.push(job);
+      else this.queue.splice(at, 0, job);
+    } else {
+      this.queue.push(job);
+    }
     this.scheduleDrain();
   }
 
@@ -292,8 +311,15 @@ class PushService {
   stillWanted(job) {
     if (job.kind === 'message') {
       if (this.presence.isDnd(job.userId)) return false;
+      // Переписку прочитали после постановки — уведомление устарело.
+      if (!this.presence.messageJobCurrent(job.userId, job.payload, job.stamp)) return false;
       if (job.type !== 'token') return true;
-      return this.presence.messagePushTargets(job.userId, job.payload, [{ id: job.deviceKey }]).length > 0;
+      try {
+        return this.presence.messagePushTargets(job.userId, job.payload, [{ id: job.deviceKey }]).length > 0;
+      } catch (err) {
+        console.warn('[Push] решение об уведомлении не принято — доставляем:', err.message);
+        return true;
+      }
     }
     if (job.kind === 'read') {
       if (job.type !== 'token') return true;
@@ -330,10 +356,17 @@ class PushService {
     if (job.kind === 'message' || job.kind === 'read') {
       // Устройство с сокетом на переднем плане увидит всё по сокету (баннер
       // в приложении) — push только остальным; решение — notify-decision.js.
+      // Сбой решения — уведомить все устройства (как до этого правила).
       const devices = [...new Set(rows.map(deviceKeyOf))].map((id) => ({ id }));
-      const targets = new Set(job.kind === 'message'
-        ? this.presence.messagePushTargets(job.userId, job.payload, devices)
-        : this.presence.readPushTargets(job.userId, devices));
+      let targets;
+      try {
+        targets = new Set(job.kind === 'message'
+          ? this.presence.messagePushTargets(job.userId, job.payload, devices)
+          : this.presence.readPushTargets(job.userId, devices));
+      } catch (err) {
+        console.warn('[Push] решение об уведомлении не принято — шлём всем устройствам:', err.message);
+        targets = new Set(devices.map((d) => d.id));
+      }
       rows = rows.filter((row) => targets.has(deviceKeyOf(row)));
     }
     if (job.group) job.group.pending = rows.length;
@@ -346,6 +379,7 @@ class PushService {
         token: row.token,
         deviceKey: deviceKeyOf(row),
         payload: job.payload,
+        stamp: job.stamp,
         sessionJti: row.session_jti || null,
         notification,
         call: job.call,

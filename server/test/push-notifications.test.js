@@ -819,7 +819,8 @@ test('Т19-5: call_end о закончившемся вызове приходи
 });
 
 test('Т19-6: очередь push переполнена при вызове — вызывающему call_unavailable, вызов снят', async () => {
-  configurePush({ concurrency: 1, queueMax: 1 });
+  // Резерв для звонков выключен: проверяется переполнение самой очереди звонков.
+  configurePush({ concurrency: 1, queueMax: 1, callReserve: 0 });
   await android('bob', 164);
   await android('carol', 165);
   const held = gate();

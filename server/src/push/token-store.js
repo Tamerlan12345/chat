@@ -138,6 +138,21 @@ function forUser(userId) {
   return getDatabase().prepare('SELECT * FROM push_tokens WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC').all(Number(userId));
 }
 
+/** Токены нескольких сотрудников одним запросом (рассылка сообщения в канал). */
+function forUsers(userIds) {
+  const ids = [...new Set(userIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return [];
+  const rows = [];
+  // Предел параметров SQLite — по 500 за запрос.
+  for (let i = 0; i < ids.length; i += 500) {
+    const part = ids.slice(i, i + 500);
+    rows.push(...getDatabase()
+      .prepare(`SELECT * FROM push_tokens WHERE user_id IN (${part.map(() => '?').join(',')}) ORDER BY updated_at DESC, rowid DESC`)
+      .all(...part));
+  }
+  return rows;
+}
+
 function get(token) {
   return getDatabase().prepare('SELECT * FROM push_tokens WHERE token = ?').get(String(token)) || null;
 }
@@ -163,6 +178,7 @@ module.exports = {
   rebindSession,
   currentJti,
   forUser,
+  forUsers,
   get,
   deleteToken,
   deleteOwned,

@@ -121,8 +121,13 @@ async function device(name, extra = {}) {
   });
   sock.on('error', () => {});
   await new Promise((resolve) => sock.on('open', resolve));
+  const before = new Set(wsServer.userSockets.get(people[name].id) || []);
   sock.send(JSON.stringify({ type: 'auth', token: people[name].token, ...extra }));
   await waitFor(client, (m) => m.type === 'auth_success');
+  // Серверная сторона этого сокета — чтобы ждать применения кадров по
+  // состоянию сервера, а не фиксированной паузой.
+  client.server = [...(wsServer.userSockets.get(people[name].id) || [])].find((ws) => !before.has(ws));
+  client.expect = {};
   open.add(client);
   return client;
 }
@@ -138,7 +143,18 @@ async function close(client) {
   for (let i = 0; i < 100 && (wsServer.userSockets.get(people[client.name].id)?.size || 0) >= before && before > 0; i += 1) await sleep(10);
 }
 
-const send = (client, payload) => client.sock.send(JSON.stringify(payload));
+const send = (client, payload) => {
+  // Что сервер должен применить у этого сокета (presence/viewing идут мимо
+  // очереди и без ответа) — settle() ждёт именно этого состояния.
+  if (payload.type === 'presence') {
+    client.expect.presence = payload.state;
+    if (payload.state === 'away') client.expect.viewing = null;
+  }
+  if (payload.type === 'viewing') {
+    client.expect.viewing = payload.conversationType ? { conversationType: payload.conversationType, targetId: payload.targetId } : null;
+  }
+  client.sock.send(JSON.stringify(payload));
+};
 
 async function waitFor(client, predicate, timeoutMs = 3000) {
   const started = Date.now();
@@ -162,8 +178,28 @@ const statusOf = (observer, userId) => {
 const statusEvent = (userId, status) => (m) => m.type === 'user_status_changed' && m.userId === userId && m.status === status;
 const clear = (...clients) => { for (const c of clients) c.inbox.length = 0; };
 
-// Ждать, пока сервер применит кадр presence/viewing этого сокета (они идут мимо очереди).
-async function settle() { await sleep(60); }
+async function until(predicate, timeoutMs = 3000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await sleep(5);
+  }
+  throw new Error('условие не выполнилось за отведённое время');
+}
+
+// Ждать, пока сервер применит отправленные presence/viewing (опрос состояния
+// сокетов на сервере; на нагруженной машине фиксированная пауза ненадёжна).
+async function settle(timeoutMs = 3000) {
+  const applied = (c) => !c.server
+    || ((c.expect.presence === undefined || c.server.presenceState === c.expect.presence)
+      && (c.expect.viewing === undefined || JSON.stringify(c.server.viewing) === JSON.stringify(c.expect.viewing)));
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if ([...open].every(applied)) return;
+    await sleep(5);
+  }
+  throw new Error('сервер не применил presence/viewing за отведённое время');
+}
 
 const ANDROID = (n) => `fcm-${n}-ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghij:0123456789`;
 async function androidToken(name, n, deviceId) {
@@ -433,10 +469,40 @@ test('viewing снимается кадром с conversationType: null; нед�
   await aliceSays(alice, 'Ушёл из чата', 'md-n-8');
   await waitFor(desk, (m) => m.type === 'direct_message');
   assert.strictEqual(frameOf(desk, 'md-n-8').notify, true);
-  send(desk, { type: 'viewing', conversationType: 'direct', targetId: 'abc' });
-  send(desk, { type: 'viewing', conversationType: 'group', targetId: people.alice.id });
-  await settle();
-  assert.strictEqual([...wsServer.userSockets.get(people.bob.id)][0].viewing, null);
+  // Недопустимый кадр не оставляет прежний чат «открытым» — снимает его.
+  for (const bad of [
+    { type: 'viewing', conversationType: 'direct', targetId: 'abc' },
+    { type: 'viewing', conversationType: 'group', targetId: people.alice.id },
+    { type: 'viewing', conversationType: 'direct', targetId: -3 }
+  ]) {
+    send(desk, { type: 'viewing', conversationType: 'direct', targetId: people.alice.id });
+    await settle();
+    desk.sock.send(JSON.stringify(bad));
+    await until(() => desk.server.viewing === null);
+  }
+});
+
+test('viewing сверх предела частоты снимает прежнее значение (лучше лишнее уведомление)', async () => {
+  const desk = await device('bob');
+  for (let i = 0; i < 25; i += 1) desk.sock.send(JSON.stringify({ type: 'viewing', conversationType: 'direct', targetId: people.alice.id }));
+  await until(() => desk.server.viewing === null);
+  desk.expect.viewing = null;
+});
+
+test('viewing в кадре auth: чат «смотрят» сразу после входа; при presence away в auth — нет', async () => {
+  await androidToken('bob', 11, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob', { viewing: { conversationType: 'direct', targetId: people.alice.id } });
+  assert.deepStrictEqual(desk.server.viewing, { conversationType: 'direct', targetId: people.alice.id });
+  await aliceSays(alice, 'Сразу после входа', 'md-auth-v1');
+  await waitFor(desk, (m) => m.type === 'direct_message');
+  assert.strictEqual(frameOf(desk, 'md-auth-v1').notify, false);
+  await push.idle();
+  assert.deepStrictEqual(pushData(), []);
+  const hidden = await device('bob', { presence: 'away', viewing: { conversationType: 'direct', targetId: people.alice.id } });
+  assert.strictEqual(hidden.server.viewing, null);
+  const junk = await device('bob', { viewing: { conversationType: 'direct', targetId: 'x' } });
+  assert.strictEqual(junk.server.viewing, null);
 });
 
 test('«Не беспокоить»: кадры без баннера, push нет; канал — как личный', async () => {
@@ -607,4 +673,179 @@ test('/api/sync: устройство, бывшее без связи, дого�
   // Присутствие телефона: вошёл — «в сети», общий итог не «отошёл».
   const phone = await device('bob', { device_id: 'bob-phone', platform: 'android' });
   assert.strictEqual(statusOf(phone, people.bob.id), 'online');
+});
+
+// ══ Проверка ревью: зомби-сокеты, очередь, устаревшие push, сбои ═══════════
+
+test('Зомби-сокет телефона: новый auth с тем же device_id вытесняет старый — итог пересчитан, push не заглушён', async () => {
+  await androidToken('bob', 20, 'bob-phone');
+  const observer = await device('carol');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'presence', state: 'away' });
+  // Старый сокет телефона: «в сети» и смотрит чат с Алисой — потом телефон
+  // теряет сеть, а сокет на сервере остаётся живым.
+  const zombie = await device('bob', { device_id: 'bob-phone', platform: 'android' });
+  send(zombie, { type: 'viewing', conversationType: 'direct', targetId: people.alice.id });
+  await settle();
+  const zombieServer = zombie.server;
+  open.delete(zombie);
+  clear(observer);
+  // Телефон переподключается в фоне.
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  await until(() => !wsServer.userSockets.get(people.bob.id).has(zombieServer));
+  await new Promise((resolve) => (zombie.sock.readyState === WebSocket.CLOSED ? resolve() : zombie.sock.once('close', resolve)));
+  await waitFor(observer, statusEvent(people.bob.id, 'away'));
+  assert.strictEqual(wsServer.aggregatePresence(people.bob.id), 'away');
+  assert.strictEqual(wsServer.userSockets.get(people.bob.id).size, 2, 'место зомби освобождено');
+  await aliceSays(alice, 'Телефон снова в кармане', 'md-zombie-1');
+  await waitFor(phone, (m) => m.type === 'direct_message');
+  assert.strictEqual(frameOf(phone, 'md-zombie-1').notify, false, 'в фоне с push — без баннера');
+  assert.strictEqual(frameOf(desk, 'md-zombie-1').notify, true);
+  await push.idle();
+  assert.strictEqual(pushData().length, 1, 'push на телефон — зомби его не заглушил');
+});
+
+test('Зомби не занимает место: девятый вход того же устройства вытесняет прежний, а не TOO_MANY_SESSIONS', async () => {
+  for (let i = 0; i < 7; i += 1) await device('carol');
+  await device('carol', { device_id: 'carol-phone' });
+  const again = await device('carol', { device_id: 'carol-phone' });
+  assert.ok(again.server, 'вошёл');
+  await until(() => wsServer.userSockets.get(people.carol.id).size === 8);
+});
+
+test('Очередь push: участник в приложении без устройств с push заданий не порождает; телефон в кармане — порождает', async () => {
+  const alice = await device('alice');
+  await device('bob');
+  const enqueued = [];
+  const original = push.enqueue;
+  push.enqueue = function spy(job) { enqueued.push(job); return original.call(this, job); };
+  try {
+    await aliceSays(alice, 'В канал, Боб в приложении', 'md-q-1', 'channel');
+    await push.idle();
+    assert.deepStrictEqual(enqueued.filter((j) => j.kind === 'message'), []);
+    await androidToken('bob', 21, 'bob-phone');
+    await aliceSays(alice, 'Теперь у Боба есть телефон', 'md-q-2', 'channel');
+    await push.idle();
+    assert.strictEqual(enqueued.filter((j) => j.kind === 'message' && j.type === 'user').length, 1);
+    assert.strictEqual(pushData().length, 1);
+  } finally {
+    push.enqueue = original;
+  }
+});
+
+test('Звонок не вытесняется потоком сообщений: резерв мест и место впереди очереди', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  push.configure({ providers: { fcm, apns }, baseDelayMs: 20, concurrency: 1, queueMax: 1 });
+  fcm.send = async (args) => {
+    fcm.calls.push(JSON.parse(JSON.stringify(args)));
+    if (args.notification.kind === 'message') await held;
+    return { status: 'ok' };
+  };
+  await androidToken('bob', 22, 'bob-phone');
+  await androidToken('carol', 23, 'carol-phone');
+  const alice = await device('alice');
+  await aliceSays(alice, 'Раз', 'md-call-1');
+  await until(() => fcm.calls.length === 1);
+  await aliceSays(alice, 'Два', 'md-call-2');
+  await aliceSays(alice, 'Три', 'md-call-3');
+  assert.ok(push.queue.length >= 1, 'очередь сообщений заполнена');
+  send(alice, { type: 'call_offer', targetUserId: people.carol.id });
+  await until(() => push.queue.some((j) => j.kind === 'call'));
+  assert.strictEqual(push.queue[0].kind, 'call', 'звонок впереди сообщений');
+  release();
+  await push.idle();
+  assert.ok(fcm.calls.some((c) => c.notification.kind === 'call'), 'звонок доставлен');
+  assert.ok(!alice.inbox.some((m) => m.type === 'call_unavailable'));
+  send(alice, { type: 'call_end', targetUserId: people.carol.id });
+  await sleep(50);
+  wsServer.pendingOffers.clear();
+});
+
+test('Устаревший push: повтор доставки после прочтения на компьютере не уходит', async () => {
+  push.configure({ providers: { fcm, apns }, baseDelayMs: 400 });
+  let first = true;
+  fcm.send = async (args) => {
+    fcm.calls.push(JSON.parse(JSON.stringify(args)));
+    if (args.notification.kind === 'message' && first) { first = false; return { status: 'retry' }; }
+    return { status: 'ok' };
+  };
+  await androidToken('bob', 24, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  await aliceSays(alice, 'Повторится?', 'md-stale-1');
+  await until(() => fcm.calls.length === 1);
+  send(desk, { type: 'mark_read', conversationType: 'direct', targetId: people.alice.id });
+  await push.idle();
+  assert.deepStrictEqual(fcm.calls.map((c) => c.notification.data.type), ['message', 'read'], 'повтора сообщения после «read» нет');
+});
+
+test('Очередь: «Не беспокоить» включили между раздачей и доставкой — не уходит; устройство перепроверяется в deliver', async () => {
+  await androidToken('bob', 25, 'bob-phone');
+  const alice = await device('alice');
+  const hooks = push.presence;
+  // 1) «Не беспокоить» появилось после раздачи по устройствам (третья проверка — в deliver).
+  let dndChecks = 0;
+  push.presence = { ...hooks, isDnd: (id) => (Number(id) === people.bob.id ? (dndChecks += 1) >= 3 : hooks.isDnd(id)) };
+  try {
+    await aliceSays(alice, 'DND во время доставки', 'md-dnd-late');
+    await push.idle();
+    assert.ok(dndChecks >= 3);
+    assert.deepStrictEqual(pushData(), []);
+  } finally {
+    push.presence = hooks;
+  }
+  // 2) Устройство выпало из решения к моменту deliver (сокет телефона ожил).
+  let targetChecks = 0;
+  push.presence = {
+    ...hooks,
+    messagePushTargets: (userId, payload, devices) => ((targetChecks += 1) >= 3 ? [] : hooks.messagePushTargets(userId, payload, devices))
+  };
+  try {
+    await aliceSays(alice, 'Телефон ожил во время доставки', 'md-dev-late');
+    await push.idle();
+    assert.ok(targetChecks >= 3);
+    assert.deepStrictEqual(pushData(), []);
+  } finally {
+    push.presence = hooks;
+  }
+});
+
+test('Сбой решения — не тишина: баннер всем сокетам и push (как до правила)', async () => {
+  await androidToken('bob', 26, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'viewing', conversationType: 'direct', targetId: people.alice.id });
+  await settle();
+  const decision = require('../src/push/notify-decision');
+  const original = decision.decideMessageNotification;
+  decision.decideMessageNotification = () => { throw new Error('проверка: сбой решения'); };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await aliceSays(alice, 'Сбой решения', 'md-fail-1');
+    await waitFor(desk, (m) => m.type === 'direct_message');
+    assert.strictEqual(frameOf(desk, 'md-fail-1').notify, true);
+    assert.strictEqual(frameOf(alice, 'md-fail-1').notify, false, 'своё — всё равно без уведомления');
+    await push.idle();
+    assert.strictEqual(pushData().length, 1);
+  } finally {
+    decision.decideMessageNotification = original;
+    console.warn = warn;
+  }
+});
+
+test('pushedChats: не больше 100 переписок на сотрудника; чистится при отключении и удалении канала', () => {
+  const uid = people.carol.id;
+  for (let i = 1; i <= 105; i += 1) {
+    wsServer.pushMessage({ id: 900000 + i, conversation_type: 'channel', target_id: 5000 + i, sender_id: people.alice.id }, [uid]);
+  }
+  const map = wsServer.pushedChats.get(uid);
+  assert.strictEqual(map.size, 100);
+  assert.ok(!map.has('channel:5001') && map.has('channel:5105'), 'вытесняются самые давние');
+  wsServer.forgetPushedChatForAll('channel:5105');
+  assert.ok(!wsServer.pushedChats.get(uid).has('channel:5105'));
+  wsServer.forgetPushedChats(uid);
+  assert.strictEqual(wsServer.pushedChats.get(uid), undefined);
 });
