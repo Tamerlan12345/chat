@@ -24,10 +24,13 @@ if (!projectDir.absolutePath.all { it.code < 128 }) {
 // override and no build property that reaches the release build type.
 val productionServerUrl = "https://centychat-production.up.railway.app"
 
-// Debug builds only: `-Pcentychat.serverUrl=https://10.0.2.2:8443` points the app at the local dev
-// stand (mobile/dev/README.md). Defaults to production. Only a bare scheme://host[:port] is accepted.
+// Debug builds talk to the local HTTPS dev stand (mobile/dev/README.md) through the emulator's alias
+// for the host, never to production by default: a connected test or a stray debug install must not
+// send dev credentials to the real server. `-Pcentychat.serverUrl=https://host[:port]` overrides it
+// (production only when asked for explicitly). Only a bare scheme://host[:port] is accepted.
+val devStandServerUrl = "https://10.0.2.2:8443"
 val debugServerUrl: String = providers.gradleProperty("centychat.serverUrl").orNull
-    ?.trim()?.removeSuffix("/")?.takeIf { it.isNotEmpty() } ?: productionServerUrl
+    ?.trim()?.removeSuffix("/")?.takeIf { it.isNotEmpty() } ?: devStandServerUrl
 require(Regex("""https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?""").matches(debugServerUrl)) {
     "centychat.serverUrl must look like https://host[:port], got '$debugServerUrl'"
 }
