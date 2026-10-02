@@ -62,8 +62,13 @@ class AppNavigator(val state: AppNavigationState) {
         state.authBackStack.resetTo(if (hasConfiguredServer) NavKey.Login else NavKey.ServerConnect)
     }
 
-    /** Aligns a restored state with the current session (e.g. after process death). */
+    /**
+     * Aligns a restored state with the current session (e.g. after process death). Calls never
+     * survive a restore: their signalling state is gone, and showing the entry again would re-send
+     * call_offer or show a phantom ringing screen.
+     */
     fun syncWithSession(session: AuthenticatedRouteState, hasConfiguredServer: Boolean) {
+        state.topLevelBackStacks.values.forEach { stack -> stack.removeAll { it is NavKey.Call } }
         val authenticated = SessionRouteGuard.hasAuthenticatedSession(session)
         when {
             !authenticated && !state.isAuthFlow -> onLoggedOut(hasConfiguredServer)

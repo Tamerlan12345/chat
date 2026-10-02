@@ -9,6 +9,7 @@ import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository.Companion.ME
 import com.openmychat.mobile.testing.MainDispatcherRule
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +24,7 @@ class CallViewModelLifecycleTest {
     private val store = ViewModelStore()
 
     /** Creates the ViewModel through a store so clearing the store runs onCleared like a popped entry. */
-    private fun call(isIncoming: Boolean): CallViewModel =
+    private fun call(isIncoming: Boolean, store: ViewModelStore = this.store): CallViewModel =
         ViewModelProvider(store, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -90,5 +91,26 @@ class CallViewModelLifecycleTest {
         realtime.emitAudio(WsEvent.AudioFrameReceived(senderId = peer, pcmSamples = ShortArray(512)))
 
         assertEquals(1, audio.played.size)
+    }
+
+    @Test
+    fun clearingAnOldCallDoesNotTearDownTheNextCallsAudio() {
+        call(isIncoming = false)
+        realtime.emit(WsEvent.CallEnd(targetUserId = ME, senderId = peer, senderName = "Alice", reason = null))
+
+        // Call back right away: the new entry exists before the old one finishes its exit.
+        val nextStore = ViewModelStore()
+        call(isIncoming = false, store = nextStore)
+        realtime.emit(WsEvent.CallAnswer(targetUserId = ME, senderId = peer, senderName = "Alice"))
+        val nextCallback = audio.onFrameRecorded
+        val stopsBefore = audio.stopped
+        val endsBefore = realtime.sent.count { it == "call_end $peer" }
+
+        store.clear()
+
+        assertEquals("the finished call must not hang up the new one", endsBefore, realtime.sent.count { it == "call_end $peer" })
+        assertSame("the shared engine must keep feeding the new call", nextCallback, audio.onFrameRecorded)
+        assertEquals("the old call must not stop the new call's audio", stopsBefore, audio.stopped)
+        nextStore.clear()
     }
 }

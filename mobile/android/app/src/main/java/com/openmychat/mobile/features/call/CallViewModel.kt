@@ -98,17 +98,22 @@ class CallViewModel @AssistedInject constructor(
 
     private var durationJob: Job? = null
 
+    /** This call's microphone sink; the shared audio engine may already serve a newer call. */
+    private val frameCallback: (ShortArray) -> Unit = { samples ->
+        if (_callSession.value.state == CallState.ACTIVE) {
+            realtimeRepository.sendAudioFrame(peerId, samples)
+        }
+    }
+
+    private val ownsAudio: Boolean get() = callAudio.onFrameRecorded === frameCallback
+
     init {
         observeEvents()
         if (!isIncoming) {
             realtimeRepository.sendCallOffer(peerId)
         }
 
-        callAudio.onFrameRecorded = { samples ->
-            if (_callSession.value.state == CallState.ACTIVE) {
-                realtimeRepository.sendAudioFrame(peerId, samples)
-            }
-        }
+        callAudio.onFrameRecorded = frameCallback
     }
 
     private fun observeEvents() {
@@ -180,6 +185,8 @@ class CallViewModel @AssistedInject constructor(
     }
 
     private fun startActiveCall() {
+        // A finished call is terminal: a later call with the same peer has its own entry and ViewModel.
+        if (isFinished || _callSession.value.state == CallState.ACTIVE) return
         _callSession.value = _callSession.value.copy(state = CallState.ACTIVE)
         callAudio.start(viewModelScope)
 
@@ -195,6 +202,7 @@ class CallViewModel @AssistedInject constructor(
     }
 
     private fun endCall(reason: String) {
+        if (isFinished) return
         durationJob?.cancel()
         durationJob = null
         callAudio.stop()
@@ -225,8 +233,11 @@ class CallViewModel @AssistedInject constructor(
                 realtimeRepository.sendCallEnd(peerId, "Завершен пользователем")
             }
         }
-        callAudio.onFrameRecorded = null
-        callAudio.stop()
+        // A quick call-back creates the next call before this entry is cleared: leave its audio alone.
+        if (ownsAudio) {
+            callAudio.onFrameRecorded = null
+            callAudio.stop()
+        }
         durationJob?.cancel()
         super.onCleared()
     }

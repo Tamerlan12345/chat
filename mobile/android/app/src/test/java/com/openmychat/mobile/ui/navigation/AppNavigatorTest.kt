@@ -180,4 +180,21 @@ class AppNavigatorTest {
 
         assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
     }
+
+    @Test
+    fun callsRestoredAfterProcessDeathAreDropped() {
+        val navigator = authenticatedNavigator()
+        navigator.navigate(chatWithAlice)
+        navigator.navigate(NavKey.Call(peerId = 7, peerName = "Alice"))
+        navigator.navigate(NavKey.Profile)
+        navigator.showIncomingCall(NavKey.Call(peerId = 8, peerName = "Bob", isIncoming = true))
+        val validSession = AuthenticatedRouteState("token", hasCurrentUser = true, SessionStorageState.AVAILABLE)
+
+        // A restored Call key would re-send call_offer or show a phantom ringing screen.
+        navigator.syncWithSession(validSession, hasConfiguredServer = true)
+
+        assertFalse(navigator.hasActiveCall)
+        assertEquals(listOf(NavKey.Conversations, chatWithAlice), navigator.state.topLevelBackStacks.getValue(NavKey.Conversations).toList())
+        assertEquals(listOf(NavKey.Profile), navigator.state.topLevelBackStacks.getValue(NavKey.Profile).toList())
+    }
 }
