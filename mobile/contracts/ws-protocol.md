@@ -350,7 +350,7 @@
   "targetUserId": 7
 }
 ```
-*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`. Ответ на вызов, которого нет (сброшен, истёк), разговор не начинает: отвечающему приходит `call_end {senderId: targetUserId, senderName, reason}` (`ws/call_end.no_call.json`, `reason: "no_call"` или причина конца вызова через push). Повторный `call_answer`, когда разговор с `targetUserId` уже идёт (ответили и CallKit, и экран приложения; ответили два устройства), идемпотентен: сервер его молча игнорирует — не пересылает собеседнику и **не** отвечает `call_end`.*
+*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`. Ответ на вызов, которого нет (сброшен, истёк), разговор не начинает: отвечающему приходит `call_end {senderId: targetUserId, senderName, reason}` (`ws/call_end.no_call.json`, `reason: "no_call"` или причина конца вызова через push). Ответить может только **одно устройство** сотрудника (задача 20): разговор привязан к сокету, которым ответили (и к сокету, с которого звонили). Повторный `call_answer` с **того же сокета**, когда разговор с `targetUserId` уже идёт (ответили и CallKit, и экран приложения), идемпотентен: сервер его молча игнорирует — не пересылает собеседнику и **не** отвечает `call_end`. `call_answer` с **другого сокета** того же сотрудника во время разговора разговор не перехватывает: этому сокету приходит `call_end {senderId: targetUserId, senderName, reason: "answered_elsewhere"}` (`ws/call_end.answered_elsewhere.json`). В момент ответа все остальные сокеты вызываемого получают тот же `call_end … answered_elsewhere` — перестать звонить (CallKit: `CXCallEndedReason.answeredElsewhere`); его же получает сокет, вошедший во время такого разговора (например, второй телефон, разбуженный тем же push).*
 
 #### `call_rejected` — Отклонение вызова
 ```json
@@ -398,6 +398,8 @@
 ### 4.1. Авторизация и статус соединения
 
 #### `auth_success` — сокет авторизован
+Фото сотрудников во всех кадрах (`user.avatar_url` здесь, в `user_created`/`user_updated`, `sender_avatar` сообщений) — адрес `/api/users/{id}/avatar?v=…` или `null`, как в REST (`openapi.yaml`, `User.avatar_url`); data URL получает только настольный клиент (User-Agent с `Electron/`). Сообщения с вложением-картинкой несут `file_width`, `file_height`, `file_dominant_color` (у прочих — `null`).
+
 Объект `user` — полный профиль сессии (как `user` в `/auth/me`): помимо базовых полей содержит служебные (`permissions_json` — те же права, но строкой; `token_version`, `bound_ip`, `last_login_ip`). Клиент использует `id`, `username`, `full_name`, `permissions`, `status`, остальное игнорирует.
 ```json
 {
@@ -1084,7 +1086,7 @@
   "senderName": "Алиса Тестова"
 }
 ```
-Если собеседник пропал (закрыт его последний сокет), сервер сам шлёт `call_end` **без `targetUserId`** и с `reason = "connection_lost"`; то же — если пропал тот, кто звонил (или кому звонили) и вызов ещё не принят:
+Если собеседник пропал, сервер сам шлёт `call_end` **без `targetUserId`** и с `reason = "connection_lost"`. «Пропал» — закрыт сокет разговора (тот, которым ответили или с которого звонили), даже если у собеседника остались другие устройства: звук шёл только через этот сокет. То же — если закрыт сокет, с которого звонят, и вызов ещё не принят, или у вызываемого не осталось ни одного сокета:
 ```json
 {
   "type": "call_end",
@@ -1114,6 +1116,18 @@
   "reason": "Сотрудник сейчас не в сети"
 }
 ```
+Во время разговора `call_rejected`, `call_end` и `ice_candidate` принимаются только с сокета разговора: «Отклонить» на компьютере, когда ответили с телефона, разговор не обрывает (кадр молча отбрасывается).
+
+```json
+{
+  "type": "call_end",
+  "senderId": 2,
+  "senderName": "Алиса Тестова",
+  "reason": "answered_elsewhere"
+}
+```
+Коды `reason` в `call_end`, которые формирует сам сервер: `connection_lost`, `no_call`, `cancelled`, `timeout`, `unavailable` (`push.md` §3), `answered_elsewhere` — показывать по-русски («Звонок принят на другом устройстве»), а не кодом.
+
 `call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети» (второе — только если у вызываемого нет устройства, которое будит push о звонке, или push на сервере выключен; иначе вызов ждёт, `push.md` §3; или push-уведомление не удалось доставить, в том числе при переполненной очереди push). `call_answer` без реально ожидающего вызова разговор не начинает: отвечающему приходит `call_end` (`reason: "no_call"` или причина конца вызова через push); повторный `call_answer` в уже начатом разговоре с тем же собеседником сервер молча игнорирует. Ожидающий вызов живёт 2 минуты.
 
 ---
@@ -1142,7 +1156,7 @@
 
 1. **Заголовок (Байты 0..3)**:
    - **От клиента к серверу**: `targetUserId` — числовой ID собеседника (UInt32 Big-Endian).
-   - **Серверная маршрутизация**: Сервер проверяет, что между отправителем и получателем зафиксирован активный разговор (`activeCalls.get(sender.id) === targetUserId`). Сервер заменяет байты 0..3 на `senderId` (UInt32 Big-Endian) и отправляет кадр получателю.
+   - **Серверная маршрутизация**: Сервер проверяет, что между отправителем и получателем зафиксирован активный разговор (`activeCalls.get(sender.id) === targetUserId`) и что кадр пришёл с **сокета разговора** отправителя (с которого звонили или которым ответили, задача 20); кадры с других устройств тех же сотрудников отбрасываются. Сервер заменяет байты 0..3 на `senderId` (UInt32 Big-Endian) и отправляет кадр **только на сокет разговора** получателя — другие его устройства звук не получают.
    - **От сервера к получателю**: Байты 0..3 содержат `senderId` (UInt32 Big-Endian).
 2. **Аудиоданные (Байты 4..1027)**:
    - 512 сэмплов по 2 байта (16 бит, signed integer, **Big-Endian**).
@@ -1307,12 +1321,14 @@ sequenceDiagram
 | `channel_created` / `channel_deleted` | `ws/channel_created.json`, `ws/channel_deleted.json` |
 | `new_announcement` / `announcement_acknowledged` | `ws/new_announcement.json`, `ws/announcement_acknowledged.json` |
 | `call_offer` / `call_answer` / `call_rejected` / `ice_candidate` | `ws/call_offer.json`, `ws/call_answer.json`, `ws/call_rejected.json`, `ws/ice_candidate.json` |
-| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json`, `ws/call_end.no_call.json` (ответ на вызов, которого нет; та же форма — вызов через push закончился до входа) |
+| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json`, `ws/call_end.no_call.json` (ответ на вызов, которого нет; та же форма — вызов через push закончился до входа), `ws/call_end.answered_elsewhere.json` (ответило другое устройство того же сотрудника) |
 | `call_denied` / `call_unavailable` | `ws/call_denied.json`, `ws/call_unavailable.dnd.json`, `.offline.json` |
 | `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
 | `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
 | `error` | `ws/error.send_message.json`, `ws/error.edit_message.json`, `ws/error.delete_message.json`, `ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json`, `ws/error.rate_limited.json`, `ws/error.cancelled.json`, `ws/error.cancel_message.json` |
 
 Push-уведомления (задача 18): регистрация токена — `http/devices.push-token-register.json`, `.push-token-invalid.json`, `.push-token-delete.json`; что уходит через Google/Apple — `push/fcm.*.json`, `push/apns.*.json` (описание — `push.md`).
+
+Медиа (задача 20): `http/files.upload-image.json` (размеры и цвет картинки), `http/users.avatar-upload.json`, `http/users.get-with-avatar.json` (`avatar_url` — адрес), `http/users.avatar-not-image.json` (415). Миниатюры и сами картинки — двоичные ответы, их форма описана в `openapi.yaml` (`/files/thumb/{id}`, `/users/{id}/avatar`, `Range` у `/files/download/{id}`).
 
 HTTP-фикстуры надёжной доставки: `http/messages.send-direct-idempotent.json` (201 с `client_msg_id`), `http/messages.send-direct-duplicate.json` (200, повтор), `http/messages.send-client-msg-id-invalid.json` (400), `http/messages.send-client-msg-id-conflict.json` (409), `http/messages.send-cancelled.json` (409 `CANCELLED`), `http/messages.after-page.json` (`afterId`), `http/sync.bootstrap.json`, `http/sync.page.json`, `http/sync.cursor-invalid.json` (410).
