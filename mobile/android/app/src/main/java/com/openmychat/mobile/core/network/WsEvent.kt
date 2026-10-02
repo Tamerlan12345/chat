@@ -40,7 +40,9 @@ sealed interface WsEvent {
     data class UserStatusChanged(
         val userId: Long,
         val status: UserStatus,
-        val customStatus: String?
+        val customStatus: String?,
+        /** Событие несёт поле customStatus (null в нём — свой статус стёрт). */
+        val customStatusPresent: Boolean = true
     ) : WsEvent
 
     // Channels

@@ -124,8 +124,10 @@ class PeopleViewModel @Inject constructor(
     private fun present(data: PeopleState, f: PeopleFilters): PeopleUiState {
         val visible = if (f.onlineOnly) data.people.filter { it.status.isReachable } else data.people
         val searching = f.query.isNotBlank()
+        // В «Отделах» сотрудник видит и себя: счётчики совпадают с десктопом и totalStaffCount сервера.
+        val everyone = data.people + listOfNotNull(data.self)
         val tree = if (f.scope == PeopleScope.DEPARTMENTS) {
-            PeopleDirectory.filter(PeopleDirectory.departments(data.tree, data.people), f.query, f.onlineOnly)
+            PeopleDirectory.filter(PeopleDirectory.departments(data.tree, everyone), f.query, f.onlineOnly)
         } else emptyList()
         return PeopleUiState(
             isLoaded = data.isLoaded,

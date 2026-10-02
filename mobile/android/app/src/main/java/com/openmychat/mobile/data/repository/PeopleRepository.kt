@@ -31,6 +31,8 @@ import javax.inject.Singleton
 /** Справочник для экрана «Сотрудники», поиска и карточки. */
 data class PeopleState(
     val people: List<Person> = emptyList(),
+    /** Сам сотрудник: в список не входит, но в «Отделах» и счётчиках он есть, как на десктопе. */
+    val self: Person? = null,
     val tree: OrgTree? = null,
     /** Есть что показать (из кэша или с сервера). */
     val isLoaded: Boolean = false,
@@ -68,7 +70,8 @@ data class CachedPeople(
     @SerialName("owner_id") val ownerId: Long,
     @SerialName("saved_at") val savedAt: Long,
     @SerialName("people") val people: List<Person>,
-    @SerialName("tree") val tree: OrgTree? = null
+    @SerialName("tree") val tree: OrgTree? = null,
+    @SerialName("self") val self: Person? = null
 )
 
 interface PeopleCache {
@@ -154,7 +157,7 @@ class DefaultPeopleRepository(
                 cacheShown = true
                 val cached = cache.read()?.takeIf { owner != null && it.ownerId == owner }
                 if (cached != null && !_state.value.isLoaded) {
-                    _state.update { it.copy(people = cached.people, tree = cached.tree, isLoaded = true) }
+                    _state.update { it.copy(people = cached.people, self = cached.self, tree = cached.tree, isLoaded = true) }
                 }
             }
             try {
@@ -162,9 +165,10 @@ class DefaultPeopleRepository(
                 val users = source.users()
                 val freshTree = tree.await() ?: _state.value.tree
                 val people = PeopleDirectory.people(users, freshTree, owner)
-                _state.value = PeopleState(people = people, tree = freshTree, isLoaded = true)
+                val self = owner?.let { id -> PeopleDirectory.people(users.filter { it.id == id }, freshTree, null).firstOrNull() }
+                _state.value = PeopleState(people = people, self = self, tree = freshTree, isLoaded = true)
                 if (owner != null && session.token.value != null) {
-                    cache.write(CachedPeople(ownerId = owner, savedAt = clock(), people = people, tree = freshTree))
+                    cache.write(CachedPeople(ownerId = owner, savedAt = clock(), people = people, tree = freshTree, self = self))
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -192,7 +196,8 @@ class DefaultPeopleRepository(
                 if (person.id != event.userId) return@map person
                 person.copy(
                     status = event.status,
-                    customStatus = event.customStatus ?: person.customStatus,
+                    // Поле пришло — берём как есть, и null тоже: свой статус стёрли.
+                    customStatus = if (event.customStatusPresent) event.customStatus?.takeIf { it.isNotBlank() } else person.customStatus,
                     // Ушёл из сети только что: «был(а) в сети сегодня в …» — по этому событию.
                     lastSeen = if (event.status == UserStatus.OFFLINE && person.status != UserStatus.OFFLINE) {
                         Instant.ofEpochMilli(clock()).toString()

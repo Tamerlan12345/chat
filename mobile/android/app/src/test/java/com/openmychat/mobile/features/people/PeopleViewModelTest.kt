@@ -111,6 +111,17 @@ class PeopleViewModelTest {
     }
 
     @Test
+    fun departmentCountersIncludeTheSignedInUserLikeTheDesktop() {
+        repository.state.value = repository.state.value.copy(self = Person(id = 1, fullName = "Я Сам", departmentId = 3, status = UserStatus.ONLINE))
+        val vm = viewModel()
+        vm.setScope(PeopleScope.DEPARTMENTS)
+        val sklad = vm.state.value.departments.first { it.name == "Склад" }
+        assertEquals(3, sklad.total)
+        assertEquals(2, sklad.online)
+        assertEquals("в списке «Все» себя нет", 4, vm.state.value.total)
+    }
+
+    @Test
     fun nothingFoundIsAnEmptyResult() {
         val vm = viewModel()
         vm.setQuery("zzz")

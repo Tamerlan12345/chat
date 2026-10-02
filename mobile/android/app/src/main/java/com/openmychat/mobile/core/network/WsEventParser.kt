@@ -95,7 +95,8 @@ object WsEventParser {
         "user_status_changed" -> WsEvent.UserStatusChanged(
             userId = root.long("userId") ?: root.long("user_id") ?: 0L,
             status = UserStatus.fromValue(root.string("status")),
-            customStatus = root.string("customStatus")
+            customStatus = root.string("customStatus"),
+            customStatusPresent = "customStatus" in root
         )
         "channel_created" -> WsEvent.ChannelCreated(json.decodeFromJsonElement<Channel>(root.required("channel")))
         "channel_deleted" -> WsEvent.ChannelDeleted(root.long("channelId") ?: 0L)

@@ -96,6 +96,9 @@ class UniversalSearchViewModel @Inject constructor(
 
     private var channelsLoaded = false
 
+    /** Последняя строка (без пробелов по краям), дошедшая до поиска сообщений. */
+    @Volatile private var lastSearched: String? = null
+
     init {
         viewModelScope.launch {
             combine(query, people.state, channels, recents.items, messages) { q, directory, list, recent, found ->
@@ -107,6 +110,7 @@ class UniversalSearchViewModel @Inject constructor(
             query.map { it.trim() }
                 .distinctUntilChanged()
                 .collectLatest { q ->
+                    lastSearched = q
                     if (q.length < MIN_SERVER_QUERY) {
                         messages.value = MessageResults.Idle
                         return@collectLatest
@@ -132,8 +136,9 @@ class UniversalSearchViewModel @Inject constructor(
         query.value = value
         // Сразу, не дожидаясь паузы: скелетон сообщений появляется вместе с локальной выдачей.
         val q = value.trim()
+        // Пробел в конце строку поиска не меняет — прежняя выдача остаётся, без вечного скелетона.
         if (q.length < MIN_SERVER_QUERY) messages.value = MessageResults.Idle
-        else if (messages.value !is MessageResults.Loading) messages.value = MessageResults.Loading
+        else if (q != lastSearched) messages.value = MessageResults.Loading
     }
 
     fun clear() = setQuery("")

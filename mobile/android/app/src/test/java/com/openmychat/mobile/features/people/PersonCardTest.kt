@@ -25,11 +25,12 @@ class PersonCardTest {
         val allowed = RolePermissions(canCall = true)
         assertEquals(CallAvailability.AVAILABLE, CallAvailability.of(allowed, UserStatus.ONLINE))
         assertEquals(CallAvailability.AVAILABLE, CallAvailability.of(allowed, UserStatus.AWAY))
-        assertEquals("«не беспокоить» — человек на связи, решает сам", CallAvailability.AVAILABLE, CallAvailability.of(allowed, UserStatus.DND))
+        assertEquals("«не беспокоить» — сервер ответит call_unavailable", CallAvailability.PEER_DND, CallAvailability.of(allowed, UserStatus.DND))
         assertEquals(CallAvailability.PEER_OFFLINE, CallAvailability.of(allowed, UserStatus.OFFLINE))
         assertEquals(CallAvailability.NOT_PERMITTED, CallAvailability.of(RolePermissions(canCall = false), UserStatus.ONLINE))
         // Право важнее: «Звонки недоступны», даже если коллега не в сети.
         assertEquals(CallAvailability.NOT_PERMITTED, CallAvailability.of(RolePermissions(canCall = false), UserStatus.OFFLINE))
+        assertEquals("право — раньше «не беспокоить»", CallAvailability.NOT_PERMITTED, CallAvailability.of(RolePermissions(canCall = false), UserStatus.DND))
         // Прав в сессии нет (старая запись) — решит сервер.
         assertEquals(CallAvailability.AVAILABLE, CallAvailability.of(null, UserStatus.ONLINE))
     }
@@ -99,6 +100,14 @@ class PersonCardTest {
         val vm = PersonViewModel(8, FakePeople(listOf(bob.copy(departmentId = 4))), FakeSessionRepository(), FakeRealtimeRepository(), requests)
         vm.showDepartment()
         assertEquals(PeopleRequest.Department(4), requests.pending.value)
+    }
+
+    @Test
+    fun aFormerEmployeeIsShownAsInactive() {
+        val people = FakePeople(emptyList())
+        people.fresh = bob.copy(isActive = false)
+        val vm = PersonViewModel(8, people, FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests())
+        assertTrue(vm.state.value.inactive)
     }
 
     @Test

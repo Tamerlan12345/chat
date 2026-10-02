@@ -163,6 +163,28 @@ class UniversalSearchViewModelTest {
     }
 
     @Test
+    fun aTrailingSpaceNeitherSearchesAgainNorLeavesTheSkeleton() = runTest(mainDispatcher.dispatcher) {
+        val vm = viewModel()
+        runCurrent()
+        vm.setQuery("план")
+        advanceTimeBy(301)
+        runCurrent()
+        server.gates.getValue("план").complete(listOf(message(5, "план готов", from = 30, to = ME)))
+        runCurrent()
+        assertTrue(vm.state.value.messages is MessageResults.Found)
+
+        vm.setQuery("план ")
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue("пробел в конце — выдача та же", vm.state.value.messages is MessageResults.Found)
+        vm.setQuery("план")
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(vm.state.value.messages is MessageResults.Found)
+        assertEquals(listOf("план"), server.queries)
+    }
+
+    @Test
     fun rateLimitIsReportedApart() = runTest(mainDispatcher.dispatcher) {
         server.failure = ApiException(429, null, "Слишком много")
         val vm = viewModel()

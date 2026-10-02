@@ -24,7 +24,9 @@ data class Person(
     @SerialName("status") val status: UserStatus = UserStatus.OFFLINE,
     @SerialName("custom_status") val customStatus: String? = null,
     @SerialName("last_seen") val lastSeen: String? = null,
-    @SerialName("role_name") val roleName: String? = null
+    @SerialName("role_name") val roleName: String? = null,
+    /** false — сотрудник уволен (карточка из старого чата): действия недоступны. */
+    @SerialName("is_active") val isActive: Boolean = true
 ) {
     /** «Должность · Отдел» для второй строки, без пустых частей. */
     val subtitle: String
@@ -46,7 +48,8 @@ data class Person(
             status = user.status,
             customStatus = user.customStatus?.trim()?.takeIf { it.isNotEmpty() },
             lastSeen = user.lastSeen,
-            roleName = user.roleName?.trim()?.takeIf { it.isNotEmpty() }
+            roleName = user.roleName?.trim()?.takeIf { it.isNotEmpty() },
+            isActive = user.isActive && user.approvalStatus == "approved"
         )
     }
 }

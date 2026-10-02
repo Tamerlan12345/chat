@@ -81,6 +81,21 @@ class PeopleSearchTest {
     }
 
     @Test
+    fun aPhoneTypedWithSpacesIsFound() {
+        val person = person(1, "Абрамова Мария", phone = "+7 702 303 30 30")
+        assertEquals(MatchRank.OTHER_FIELD, PeopleSearch.match(person, "+7 702 303 30 30")?.rank)
+        assertEquals(MatchRank.OTHER_FIELD, PeopleSearch.match(person, "702 303")?.rank)
+        assertNull(PeopleSearch.match(person, "702 999"))
+    }
+
+    @Test
+    fun fieldMatchesAreHighlightedWhereTheyWereFound() {
+        val match = PeopleSearch.match(person(1, "Иванов Пётр", job = "Бухгалтер", department = "Финансы", extension = "214"), "финан 21")!!
+        assertEquals(listOf(12 until 17), match.subtitleHighlights)
+        assertEquals(listOf(0 until 2), match.extensionHighlights)
+    }
+
+    @Test
     fun multiWordQueriesNeedEveryToken() {
         val ivan = person(1, "Иванов Пётр", department = "Финансы")
         val other = person(2, "Иванова Анна", department = "Склад")

@@ -21,6 +21,12 @@ object SearchText {
 
     fun digits(text: String): String = text.filter { it in '0'..'9' }
 
+    /** Весь запрос — номер телефона, набранный с пробелами («+7 702 303 30 30»). */
+    fun isPhoneQuery(query: String): Boolean {
+        val q = query.trim()
+        return q.count { it in '0'..'9' } >= 3 && q.all { it in '0'..'9' || it.isWhitespace() || it in PHONE_PUNCTUATION }
+    }
+
     /** Слово похоже на кусок номера телефона: цифры и знаки «+ ( ) - .». */
     fun isPhoneLike(token: String): Boolean =
         token.any { it in '0'..'9' } && token.all { it in '0'..'9' || it in PHONE_PUNCTUATION }
@@ -48,7 +54,11 @@ data class PersonMatch(
     val person: Person,
     val rank: MatchRank,
     /** Найденные части ФИО (индексы в `person.fullName`) для подсветки; пусто, если нашлось в другом поле. */
-    val highlights: List<IntRange> = emptyList()
+    val highlights: List<IntRange> = emptyList(),
+    /** Найденное во второй строке («должность · отдел», индексы в `person.subtitle`). */
+    val subtitleHighlights: List<IntRange> = emptyList(),
+    /** Найденное во внутреннем номере (индексы в `person.extension`). */
+    val extensionHighlights: List<IntRange> = emptyList()
 )
 
 object PeopleSearch {
@@ -57,7 +67,7 @@ object PeopleSearch {
     fun match(person: Person, query: String): PersonMatch? {
         val tokens = SearchText.tokens(query)
         if (tokens.isEmpty()) return null
-        return match(person, tokens)
+        return match(person, tokens) ?: phoneMatch(person, query)
     }
 
     /**
@@ -69,13 +79,20 @@ object PeopleSearch {
         if (tokens.isEmpty()) {
             return people.sortedWith(compareBy(NameOrder) { it.fullName }).map { PersonMatch(it, MatchRank.NAME_PREFIX) }
         }
-        return people.mapNotNull { match(it, tokens) }.sortedWith(RESULT_ORDER)
+        return people.mapNotNull { match(it, tokens) ?: phoneMatch(it, query) }.sortedWith(RESULT_ORDER)
     }
 
     /** Подходит ли человек под запрос (для фильтра дерева отделов). */
     fun matches(person: Person, query: String): Boolean {
         val tokens = SearchText.tokens(query)
-        return tokens.isEmpty() || match(person, tokens) != null
+        return tokens.isEmpty() || match(person, tokens) != null || phoneMatch(person, query) != null
+    }
+
+    /** Номер, набранный с пробелами: его цифры ищутся одним куском в цифрах телефона. */
+    private fun phoneMatch(person: Person, query: String): PersonMatch? {
+        if (!SearchText.isPhoneQuery(query)) return null
+        val phone = person.phone ?: return null
+        return if (SearchText.digits(phone).contains(SearchText.digits(query))) PersonMatch(person, MatchRank.OTHER_FIELD) else null
     }
 
     private val RESULT_ORDER: Comparator<PersonMatch> =
@@ -88,11 +105,23 @@ object PeopleSearch {
         val words = wordsOf(name)
         var worst = MatchRank.NAME_PREFIX
         val highlights = ArrayList<IntRange>()
+        val subtitle = SearchText.normalize(person.subtitle)
+        val extension = person.extension?.let(SearchText::normalize)
+        val subtitleHits = ArrayList<IntRange>()
+        val extensionHits = ArrayList<IntRange>()
         for (token in tokens) {
             val found = matchToken(person, name, words, token, highlights) ?: return null
             if (found > worst) worst = found
+            if (found == MatchRank.OTHER_FIELD) {
+                subtitle.indexOf(token).takeIf { it >= 0 }?.let { subtitleHits += it until it + token.length }
+                extension?.indexOf(token)?.takeIf { it >= 0 }?.let { extensionHits += it until it + token.length }
+            }
         }
-        return PersonMatch(person, worst, highlights.sortedBy { it.first }.distinct())
+        return PersonMatch(
+            person, worst, highlights.sortedBy { it.first }.distinct(),
+            subtitleHighlights = subtitleHits.sortedBy { it.first },
+            extensionHighlights = extensionHits.sortedBy { it.first }
+        )
     }
 
     private fun matchToken(

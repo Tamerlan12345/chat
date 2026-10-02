@@ -23,8 +23,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Можно ли позвонить из карточки. Право — своё (`can_call` текущего сотрудника: `/api/users` не
- * отдаёт права коллег), а собеседник должен быть на связи. «Не беспокоить» не мешает: человек в
- * сети и сам решит, отвечать ли.
+ * отдаёт права коллег), затем «Не беспокоить» (сервер отвечает call_unavailable), затем «не в сети».
  */
 enum class CallAvailability {
     AVAILABLE,
@@ -32,12 +31,16 @@ enum class CallAvailability {
     /** «Звонки недоступны»: роли текущего сотрудника звонки не разрешены. */
     NOT_PERMITTED,
 
+    /** «Не беспокоить»: сервер не пропустит вызов. */
+    PEER_DND,
+
     /** «Не в сети»: звонок некуда доставить. */
     PEER_OFFLINE;
 
     companion object {
         fun of(myPermissions: RolePermissions?, peerStatus: UserStatus): CallAvailability = when {
             myPermissions != null && !myPermissions.canCall -> NOT_PERMITTED
+            peerStatus == UserStatus.DND -> PEER_DND
             peerStatus == UserStatus.OFFLINE -> PEER_OFFLINE
             else -> AVAILABLE
         }
@@ -50,7 +53,10 @@ data class PersonCardState(
     val call: CallAvailability = CallAvailability.AVAILABLE,
     /** Секунды до следующей побудки; 0 — можно. */
     val wakeCooldown: Int = 0
-)
+) {
+    /** Сотрудник больше не работает (карточка из старого чата): действия недоступны. */
+    val inactive: Boolean get() = person?.isActive == false
+}
 
 @HiltViewModel(assistedFactory = PersonViewModel.Factory::class)
 class PersonViewModel @AssistedInject constructor(

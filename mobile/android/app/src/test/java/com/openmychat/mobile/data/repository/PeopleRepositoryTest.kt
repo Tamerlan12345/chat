@@ -163,6 +163,35 @@ class PeopleRepositoryTest {
     }
 
     @Test
+    fun aRepositoryCreatedAfterTheSessionEndedWipesTheStaleCache() = runTest(UnconfinedTestDispatcher()) {
+        cache.stored = CachedPeople(ownerId = FakeSessionRepository.ME, savedAt = 1, people = listOf(Person(id = 2, fullName = "Кэш")))
+        session.token.value = null // 401 или отозванный токен до первого открытия вкладки
+        repository()
+        assertNull(cache.stored)
+    }
+
+    @Test
+    fun aClearedCustomStatusIsRemoved() = runTest(UnconfinedTestDispatcher()) {
+        source.users = listOf(user(2, "Коллега", status = UserStatus.ONLINE).copy(customStatus = "Обед"))
+        val repo = repository()
+        repo.refresh()
+        realtime.emit(WsEvent.UserStatusChanged(userId = 2, status = UserStatus.ONLINE, customStatus = null))
+        assertNull(repo.state.value.people.single().customStatus)
+        realtime.emit(WsEvent.UserStatusChanged(userId = 2, status = UserStatus.AWAY, customStatus = "Звонок"))
+        realtime.emit(WsEvent.UserStatusChanged(userId = 2, status = UserStatus.ONLINE, customStatus = null, customStatusPresent = false))
+        assertEquals("поля нет — свой статус прежний", "Звонок", repo.state.value.people.single().customStatus)
+    }
+
+    @Test
+    fun theSignedInUserIsKeptApartForTheDepartmentCounters() = runTest(UnconfinedTestDispatcher()) {
+        source.users = listOf(user(FakeSessionRepository.ME, "Я Сам", departmentId = 5), user(2, "Коллега", departmentId = 5))
+        val repo = repository()
+        repo.refresh()
+        assertEquals(listOf(2L), repo.state.value.people.map { it.id })
+        assertEquals(FakeSessionRepository.ME, repo.state.value.self?.id)
+    }
+
+    @Test
     fun concurrentRefreshesShareOneRequest() = runTest(UnconfinedTestDispatcher()) {
         source.gate = CompletableDeferred()
         val repo = repository()
