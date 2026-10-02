@@ -5,6 +5,15 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// The JVM test worker cannot load classes from a build directory whose path
+// contains non-ASCII characters on Windows (sun.jnu.encoding is not UTF-8),
+// so redirect build output to an ASCII-only location in that case.
+if (!projectDir.absolutePath.all { it.code < 128 }) {
+    layout.buildDirectory.set(
+        File(System.getProperty("java.io.tmpdir"), "centychat-android-build/${rootProject.name}/app")
+    )
+}
+
 android {
     namespace = "com.openmychat.mobile"
     compileSdk = 35
