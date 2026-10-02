@@ -114,6 +114,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.okhttp)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
 
