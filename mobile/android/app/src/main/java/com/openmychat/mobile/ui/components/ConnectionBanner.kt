@@ -71,7 +71,7 @@ fun ConnectionBanner(
     networkAvailable: Boolean = rememberNetworkAvailable()
 ) {
     val problem = linkProblem(state, networkAvailable)
-    var shown by remember { mutableStateOf<LinkProblem?>(null) }
+    var shown by remember { mutableStateOf(if (graceMillis <= 0) problem else null) }
     LaunchedEffect(problem) {
         if (problem != null && shown == null) delay(graceMillis)
         shown = problem
