@@ -202,7 +202,9 @@ class SessionManagerPersistentInvalidationTest {
             assertEquals("https://chat.example/api", sessionManager.serverUrl)
             assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
 
-            val login = LoginViewModel(DefaultAuthRepository(ApiClient(sessionManager, okHttpClient = loginClient()), sessionManager))
+            val login = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(ApiClient(sessionManager, okHttpClient = loginClient()), sessionManager))
             login.login("alice", "password")
             withTimeout(2_000) { login.uiState.first { it is LoginUiState.Success } }
 

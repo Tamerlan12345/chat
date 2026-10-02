@@ -92,6 +92,10 @@ class FakeSessionRepository(userId: Long = ME) : SessionRepository {
     }
 }
 
+class FakeLoginPreferences : com.openmychat.mobile.features.auth.LoginPreferences {
+    override var lastUsername: String? = null
+}
+
 class FakeCallAudio : CallAudio {
     override var onFrameRecorded: ((ShortArray) -> Unit)? = null
     var started = 0
@@ -136,6 +140,7 @@ class FakeAuthRepository : AuthRepository {
     override var hasSessionToken: Boolean = false
 
     var onKnock: suspend () -> Boolean = { false }
+    var onCompanyName: suspend () -> String? = { null }
     var onLogin: suspend (String, String) -> LoginResult = { _, _ -> LoginResult.SUCCESS }
     val loginAttempts = mutableListOf<Pair<String, String>>()
     var knocks = 0
@@ -144,6 +149,8 @@ class FakeAuthRepository : AuthRepository {
         knocks++
         return onKnock()
     }
+
+    override suspend fun companyName(): String? = onCompanyName()
 
     override suspend fun login(username: String, password: String): LoginResult {
         loginAttempts += username to password

@@ -14,6 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 class ApiClient(
     private val sessionManager: SessionManager,
@@ -347,13 +348,18 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+    /** Public server settings (no authentication). Has no side effects. */
+    suspend fun fetchServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
         val httpRequest = Request.Builder()
             .url("${getBaseUrl()}/settings/info")
             .get()
             .build()
 
-        val info: ServerInfo = executeRequest(httpRequest)
+        executeRequest(httpRequest)
+    }
+
+    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+        val info = fetchServerInfo()
         sessionManager.messageEditWindowMinutes = info.messageEditWindowMinutes
         sessionManager.messageDeleteWindowMinutes = info.messageDeleteWindowMinutes
         info
@@ -372,16 +378,12 @@ class ApiClient(
         request: Request,
         requestClient: OkHttpClient = client
     ): T {
-        val response = try {
-            requestClient.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
-        }
+        val response = execute(requestClient, request)
 
         val bodyString = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
         }
 
         return try {
@@ -392,19 +394,28 @@ class ApiClient(
     }
 
     private fun executeRequestNoContent(request: Request) {
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
-        }
+        val response = execute(client, request)
 
         if (!response.isSuccessful) {
             val bodyString = response.body?.string() ?: ""
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
         }
     }
 
-    private fun handleErrorResponse(code: Int, bodyString: String): Nothing {
+    /** Transport failures: a refused certificate is reported apart from being offline. */
+    private fun execute(requestClient: OkHttpClient, request: Request): Response = try {
+        requestClient.newCall(request).execute()
+    } catch (e: SSLException) {
+        throw ApiException(0, "TLS_ERROR", e.message ?: "Ошибка защищённого соединения")
+    } catch (e: IOException) {
+        throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
+    }
+
+    /** `Retry-After` in delta-seconds (the form the server sends on 429/503); anything else is ignored. */
+    private fun retryAfterSeconds(response: Response): Long? =
+        response.header("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+
+    private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long? = null): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"
 
@@ -428,6 +439,6 @@ class ApiClient(
             throw UnauthorizedException(errorMessage)
         }
 
-        throw ApiException(code, errorCode, errorMessage)
+        throw ApiException(code, errorCode, errorMessage, retryAfterSeconds)
     }
 }

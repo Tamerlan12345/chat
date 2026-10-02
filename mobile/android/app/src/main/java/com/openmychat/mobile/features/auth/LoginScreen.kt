@@ -37,7 +37,7 @@ fun LoginScreen(
 
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(viewModel) { viewModel.announceDevice() }
+    LaunchedEffect(viewModel) { viewModel.onScreenShown() }
 
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) {
@@ -154,7 +154,7 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = (uiState as LoginUiState.Error).message,
+                        text = (uiState as LoginUiState.Error).error.toString(), // replaced by the branded screen
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(16.dp)

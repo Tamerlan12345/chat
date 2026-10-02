@@ -9,7 +9,7 @@ data class ServerInfo(
     val serverName: String = "CentyChat Server",
 
     @SerialName("company_name")
-    val companyName: String = "АО СК «Сентрас Иншуранс»",
+    val companyName: String? = null,
 
     @SerialName("allow_registration")
     val allowRegistration: Boolean = false,

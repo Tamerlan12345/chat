@@ -32,7 +32,9 @@ class LoginViewModelStorageTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
-            val viewModel = LoginViewModel(DefaultAuthRepository(ApiClient(sessionManager, successfulLoginClient()), sessionManager))
+            val viewModel = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(ApiClient(sessionManager, successfulLoginClient()), sessionManager))
 
             viewModel.login(username = "alice", password = "password")
 
@@ -55,7 +57,8 @@ class LoginViewModelStorageTest {
             val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
-                DefaultAuthRepository(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
                     ApiClient(sessionManager, claimedDeviceLoginClient(requestPaths)),
                     sessionManager
                 )
@@ -103,7 +106,8 @@ class LoginViewModelStorageTest {
             )
             val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val viewModel = LoginViewModel(
-                DefaultAuthRepository(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
                     ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
                     sessionManager
                 )
@@ -142,7 +146,8 @@ class LoginViewModelStorageTest {
             val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
-                DefaultAuthRepository(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
                     ApiClient(sessionManager, successfulPasswordChangeClient(requestPaths)),
                     sessionManager
                 )
