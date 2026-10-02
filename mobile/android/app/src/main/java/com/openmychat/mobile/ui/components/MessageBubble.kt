@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -105,10 +106,12 @@ fun MessageBubble(
 ) {
     val tokens = CentyTheme.tokens
     val shape = bubbleShape(own, position)
-    val container = if (own) tokens.primarySoft else tokens.card
+    // Opaque fills: grouped bubbles overlap by a hairline so a group has one outline, and a lifted or
+    // swiped bubble never shows what is behind it. Own = primary-soft / primary-line flattened on canvas.
+    val container = if (own) tokens.primarySoft.compositeOver(tokens.canvas) else tokens.card
     val outline = when {
-        failed -> tokens.dangerLine
-        own -> tokens.primaryLine
+        failed -> tokens.dangerLine.compositeOver(container)
+        own -> tokens.primaryLine.compositeOver(tokens.canvas)
         else -> tokens.border
     }
     // On primary-soft, textDim drops below 4.5:1 in dark; the own footer uses textSecondary.

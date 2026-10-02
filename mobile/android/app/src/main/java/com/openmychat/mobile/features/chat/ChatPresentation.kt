@@ -53,8 +53,8 @@ sealed interface ChatItem {
         val position: BubblePosition,
         val mark: DeliveryMark?,
         /**
-         * Time and state are shown on the last bubble of a group; an earlier bubble keeps them only
-         * when they say something the last one does not (edited, or a different delivery state).
+         * Time and state are shown on the last bubble of a group; an earlier bubble shows them only
+         * when it is edited. Stable inputs only: a delivery status catching up never reflows history.
          */
         val showsMeta: Boolean,
         override val day: LocalDate
@@ -114,7 +114,7 @@ fun buildChatItems(
             isOwn = message.senderId == currentUserId,
             position = position,
             mark = marks[i],
-            showsMeta = ends || edited || marks[i] != marks[groupEnd[i]],
+            showsMeta = ends || edited,
             day = days[i]
         )
     }

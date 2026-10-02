@@ -16,10 +16,10 @@ class ChatGroupingTest {
     private val me = 1L
     private val peer = 2L
 
-    private fun msg(id: Long, from: Long, minute: Int, status: DeliveryStatus? = null, edited: Boolean = false, day: Int = 2) = Message(
+    private fun msg(id: Long, from: Long, minute: Int, status: DeliveryStatus? = null, edited: Boolean = false, day: Int = 2, deleted: Boolean = false) = Message(
         id = id, conversationType = ConversationType.DIRECT, targetId = if (from == me) peer else me,
-        senderId = from, text = "m$id", createdAt = "2026-10-%02dT09:%02d:00.000Z".format(day, minute),
-        deliveryStatus = status, updatedAt = if (edited) "2026-10-02T10:00:00.000Z" else null
+        senderId = from, text = if (deleted) "" else "m$id", createdAt = "2026-10-%02dT09:%02d:00.000Z".format(day, minute),
+        deliveryStatus = status, updatedAt = if (edited) "2026-10-02T10:00:00.000Z" else null, isDeleted = deleted
     )
 
     private fun bubbles(vararg messages: Message) =
@@ -79,15 +79,37 @@ class ChatGroupingTest {
     }
 
     @Test
-    fun anEarlierBubbleKeepsItsMetaWhenItSaysSomethingTheLastDoesNot() {
+    fun metaComesFromStableInputsNeverFromTheDeliveryState() {
+        // History must not reflow when a status catches up: an older bubble that is only delivered
+        // while the last one is read keeps the same (meta-less) geometry; only «изменено» adds meta.
         val b = bubbles(
-            msg(1, me, 0, DeliveryStatus.DELIVERED), // older one only delivered while the last is read
-            msg(2, me, 1, DeliveryStatus.READ, edited = true), // «изменено» is per message
+            msg(1, me, 0, DeliveryStatus.DELIVERED),
+            msg(2, me, 1, DeliveryStatus.READ, edited = true),
             msg(3, me, 2, DeliveryStatus.READ)
         )
-        assertTrue("its own delivery state differs from the group's last", b.getValue(1).showsMeta)
+        assertFalse("a different delivery state alone shows nothing", b.getValue(1).showsMeta)
         assertTrue("edited", b.getValue(2).showsMeta)
         assertTrue(b.getValue(3).showsMeta)
+
+        val caughtUp = bubbles(msg(1, me, 0, DeliveryStatus.READ), msg(2, me, 1, DeliveryStatus.READ, edited = true), msg(3, me, 2, DeliveryStatus.READ))
+        caughtUp.keys.forEach { id -> assertEquals("message $id keeps its geometry", b.getValue(id).showsMeta, caughtUp.getValue(id).showsMeta) }
+    }
+
+    @Test
+    fun aDeletedMessageKeepsItsPlaceInTheGroup() {
+        val b = bubbles(msg(1, peer, 0), msg(2, peer, 1, deleted = true), msg(3, peer, 2))
+        assertEquals(BubblePosition.FIRST, b.getValue(1).position)
+        assertEquals(BubblePosition.MIDDLE, b.getValue(2).position)
+        assertEquals(BubblePosition.LAST, b.getValue(3).position)
+    }
+
+    @Test
+    fun deletedIsNotEdited() {
+        // The server stamps updated_at on deletion; a tombstone is not «изменено».
+        val b = bubbles(msg(1, peer, 0), msg(2, peer, 1, edited = true, deleted = true), msg(3, peer, 2))
+        assertFalse(b.getValue(2).showsMeta)
+        val last = bubbles(msg(1, peer, 0), msg(2, peer, 1, edited = true, deleted = true))
+        assertTrue("the last bubble of a group still shows its time", last.getValue(2).showsMeta)
     }
 
     @Test
