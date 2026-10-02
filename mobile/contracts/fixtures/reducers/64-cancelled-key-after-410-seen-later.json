@@ -1,0 +1,249 @@
+{
+  "name": "64-cancelled-key-after-410-seen-later",
+  "description": "Отложенная находка задачи 13: после 410 bootstrap-цепочка ничего не доказывает, а следующая обычная цепочка удаляет отменённую запись, хотя видеть её не могла (сообщение сохранено до нового курсора, история его не вернула). Теперь ключ удалённой без доказательства записи хранится в cancelled (persist cancelled): повторный enqueue с ним ничего не делает, а когда сообщение позже приходит страницей истории — уходит delete_message и ключ забывается. До надгробия сообщение есть в messages, но не показывается (есть delete в ops, §3.4).",
+  "covers": [
+    "T51",
+    "T34",
+    "T42",
+    "T36",
+    "T03"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "0123456789abcdef.40",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000261-0000-4000-8000-000000000261",
+        "conversation": "direct:4",
+        "seq": 1,
+        "text": "Отменено до 410",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": true
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "sync_reset_410",
+      "now": 1000,
+      "chain": 1,
+      "body": {
+        "error": "Курсор синхронизации недействителен — загрузите переписку заново",
+        "code": "SYNC_CURSOR_INVALID"
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1100,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "history_page",
+      "now": 1200,
+      "body": []
+    },
+    {
+      "type": "sync_start",
+      "now": 1300
+    },
+    {
+      "type": "sync_page",
+      "now": 1400,
+      "chain": 2,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.11",
+        "has_more": false
+      }
+    },
+    {
+      "type": "enqueue",
+      "now": 1500,
+      "client_msg_id": "a0000261-0000-4000-8000-000000000261",
+      "conversation": "direct:4",
+      "text": "Отменено до 410"
+    },
+    {
+      "type": "history_page",
+      "now": 1600,
+      "body": [
+        {
+          "id": 330,
+          "conversation_type": "direct",
+          "target_id": 4,
+          "sender_id": 2,
+          "text": "Отменено до 410",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000261-0000-4000-8000-000000000261",
+          "delivery_status": null,
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      ]
+    },
+    {
+      "type": "ws",
+      "now": 1700,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 330,
+        "conversationType": "direct",
+        "targetId": 4,
+        "updated_at": "2026-10-02T09:00:09.000Z"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor"
+        ]
+      },
+      {
+        "type": "sync_request",
+        "cursor": null,
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "load_history",
+        "conversation": "direct:4"
+      }
+    ],
+    [],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 2
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cancelled",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cancelled",
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 330
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11600,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 330,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [],
+    "ops": [],
+    "cancelled": [],
+    "messages": {
+      "direct:4": [
+        {
+          "id": 330,
+          "client_msg_id": "a0000261-0000-4000-8000-000000000261",
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:09.000Z",
+          "is_deleted": 1,
+          "status": "sent"
+        }
+      ]
+    },
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 2
+    }
+  }
+}

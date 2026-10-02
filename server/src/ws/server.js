@@ -84,6 +84,7 @@ const RATE_LIMITS = {
   channel_message: [10, 1000],
   edit_message: [10, 1000],
   delete_message: [10, 1000],
+  cancel_message: [10, 1000],
   mark_read: [20, 1000],
   call_offer: [3, 10000],
   rd_request: [3, 30000],
@@ -124,17 +125,107 @@ function conversationRecipients(message) {
 }
 
 function allowRate(ws, key) {
+  return checkRate(ws, key).allowed;
+}
+
+// Предел частоты с ответом: allowed — пропустить кадр; иначе retryAfterMs —
+// через сколько откроется окно (для кадра error RATE_LIMITED, G2).
+function checkRate(ws, key) {
   const [limit, windowMs] = RATE_LIMITS[key] || RATE_LIMITS['*'];
   if (!ws.rate) ws.rate = new Map();
   const now = Date.now();
   const bucket = ws.rate.get(key);
   if (!bucket || now - bucket.start >= windowMs) {
     ws.rate.set(key, { start: now, count: 1 });
-    return true;
+    return { allowed: true, retryAfterMs: 0 };
   }
   bucket.count += 1;
-  return bucket.count <= limit;
+  if (bucket.count <= limit) return { allowed: true, retryAfterMs: 0 };
+  return { allowed: false, retryAfterMs: Math.max(1, bucket.start + windowMs - now) };
 }
+
+// ── Очередь кадров сокета (G1) ──────────────────────────────────────────────
+// Кадры переписки одного сокета обрабатываются строго по очереди: обработчик
+// отправки ждёт базу учётных записей и проверку файла, и без очереди два
+// сообщения подряд сохранялись в обратном порядке. Очередь своя у каждого
+// сокета — медленный кадр одного не задерживает остальных. Звонки, удалённый
+// стол, «печатает…», присутствие и auth идут мимо очереди, как раньше: их
+// порядок относительно сообщений не важен, а задержка заметна.
+const SEND_TYPES = new Set(['send_message', 'direct_message', 'channel_message']);
+const SERIAL_TYPES = new Set([...SEND_TYPES, 'edit_message', 'delete_message', 'cancel_message', 'mark_read']);
+// Кадры, на которые клиент ждёт ответа: отказ пределом частоты или
+// переполненной очередью им сообщается кадром error RATE_LIMITED (G2).
+// Остальные (mark_read, typing, presence…) по-прежнему отбрасываются молча.
+const ACK_TYPES = new Set([...SEND_TYPES, 'edit_message', 'delete_message', 'cancel_message']);
+
+// Сколько кадров переписки может ждать в очереди одного сокета. Предел
+// частоты пропускает в неё до ~60 кадров/с; очередь растёт, только если
+// обработка медленнее. Сверх предела — отказ RATE_LIMITED, а не память.
+function maxQueuedFrames() {
+  const value = Number(process.env.WS_MAX_QUEUED_FRAMES);
+  return Number.isInteger(value) && value > 0 ? value : 100;
+}
+const QUEUE_FULL_RETRY_MS = 1000;
+
+// Обработчик, который не ответил за это время (зависла внешняя база),
+// перестаёт держать очередь сокета: следующий кадр идёт дальше.
+function frameTimeoutMs() {
+  const value = Number(process.env.WS_FRAME_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 30000;
+}
+
+// Ответы RATE_LIMITED сами ограничены: не больше REPLY_BUDGET за секунду на
+// сокет и не тогда, когда клиент не читает свой сокет (bufferedAmount) —
+// иначе поток отброшенных кадров превращался бы в поток ответов, копящихся в
+// памяти сервера. Без ответа клиент узнаёт об отказе по таймауту, как раньше.
+const REPLY_BUDGET = 10;
+const REPLY_WINDOW_MS = 1000;
+const MAX_BUFFERED_FOR_REPLY = 1024 * 1024;
+
+function takeReplyBudget(ws) {
+  const now = Date.now();
+  if (!ws.replyBudget || now - ws.replyBudget.start >= REPLY_WINDOW_MS) ws.replyBudget = { start: now, count: 0 };
+  ws.replyBudget.count += 1;
+  return ws.replyBudget.count <= REPLY_BUDGET && (ws.bufferedAmount || 0) <= MAX_BUFFERED_FOR_REPLY;
+}
+
+function safeSend(ws, payload) {
+  try {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  } catch {
+    /* сокет уже закрыт */
+  }
+}
+
+// Поля, по которым клиент находит в своей очереди запрос, на который пришёл
+// отказ: client_msg_id отправки/отзыва (только допустимый — недопустимое
+// значение обратно не отражается) или messageId правки/удаления.
+function correlation(type, msg) {
+  const out = {};
+  if (SEND_TYPES.has(type) || type === 'cancel_message') {
+    if (typeof msg.client_msg_id === 'string' && MessageService.CLIENT_MSG_ID_RE.test(msg.client_msg_id)) {
+      out.client_msg_id = msg.client_msg_id;
+    }
+  } else if (type === 'edit_message' || type === 'delete_message') {
+    const id = Number(msg.messageId);
+    if (Number.isInteger(id) && id > 0) out.messageId = id;
+  }
+  return out;
+}
+
+// Кадр error в ответ на запрос. message (и text отправки/правки) — как
+// раньше, их читает настольный клиент; code, retryable и поля корреляции —
+// дополнение для мобильных клиентов (delivery-state.md).
+function errorFrame(type, msg, { message, code, retryable }, extra = {}) {
+  const context = SEND_TYPES.has(type) ? 'send_message' : type;
+  const frame = { type: 'error', context, message };
+  if ((SEND_TYPES.has(type) || type === 'edit_message') && typeof msg.text === 'string') frame.text = msg.text;
+  frame.code = code;
+  frame.retryable = retryable;
+  return { ...frame, ...correlation(type, msg), ...extra };
+}
+
+const RATE_LIMITED_MESSAGE = 'Слишком много запросов — повторите чуть позже';
 
 // Браузерная страница с чужого сайта может открыть соединение к серверу от
 // имени пользователя. Токен в cookie не хранится, поэтому вреда сейчас нет,
@@ -372,18 +463,18 @@ class WsServer {
           return;
         }
         const rateKey = RATE_LIMITS[data.type] ? data.type : '*';
-        if (!allowRate(ws, rateKey)) return;
-        // Обработчик обращается к двум базам и потому асинхронен. Отказ
-        // обещания без перехвата завершает процесс Node — одно кривое
-        // сообщение роняло бы сервер для всех.
-        Promise.resolve(this.handleMessage(ws, data)).catch((err) => {
-          console.error('[WS Error] Обработка сообщения не удалась:', err.message);
-          try {
-            ws.send(JSON.stringify({ type: 'error', message: 'Ошибка обработки запроса' }));
-          } catch {
-            /* сокет уже закрыт */
-          }
-        });
+        const rate = checkRate(ws, rateKey);
+        if (!rate.allowed) {
+          // Кадр по-прежнему отбрасывается; клиенту, который ждёт ответа,
+          // говорится, когда повторить (G2).
+          this.replyRateLimited(ws, data, rate.retryAfterMs);
+          return;
+        }
+        if (authenticated && SERIAL_TYPES.has(data.type)) {
+          this.enqueueFrame(ws, data);
+          return;
+        }
+        this.runFrame(ws, data);
       });
 
       ws.on('close', () => {
@@ -426,6 +517,54 @@ class WsServer {
     this.revalidator.unref();
 
     console.log('[WS Server] Realtime WebSocket gateway ready at /ws');
+  }
+
+  replyRateLimited(ws, data, retryAfterMs) {
+    if (!ACK_TYPES.has(data.type) || !takeReplyBudget(ws)) return;
+    safeSend(ws, errorFrame(data.type, data, { message: RATE_LIMITED_MESSAGE, code: 'RATE_LIMITED', retryable: true }, { retry_after_ms: retryAfterMs }));
+  }
+
+  // Кадр переписки встаёт в очередь своего сокета (G1). Пользователь
+  // запоминается на момент получения: кадр, пришедший до обычного закрытия
+  // сокета, обрабатывается (настольный клиент мог отправить сообщение и сразу
+  // закрыться); отозванный сокет (revokeSocket) свои кадры теряет.
+  enqueueFrame(ws, data) {
+    if (!ws.lane) ws.lane = { tail: Promise.resolve(), pending: 0 };
+    const lane = ws.lane;
+    if (lane.pending >= maxQueuedFrames()) {
+      this.replyRateLimited(ws, data, QUEUE_FULL_RETRY_MS);
+      return;
+    }
+    lane.pending += 1;
+    const userAtArrival = this.socketUser.get(ws) || null;
+    const run = () => this.runFrame(ws, data, userAtArrival).finally(() => { lane.pending -= 1; });
+    lane.tail = lane.tail.then(run, run);
+  }
+
+  // Обработчик обращается к двум базам и потому асинхронен. Отказ обещания без
+  // перехвата завершает процесс Node — одно кривое сообщение роняло бы сервер
+  // для всех. Зависший обработчик держит очередь сокета не дольше
+  // frameTimeoutMs.
+  runFrame(ws, data, userAtArrival = null) {
+    if (ws.revoked) return Promise.resolve();
+    const work = Promise.resolve()
+      .then(() => this.handleMessage(ws, data, userAtArrival))
+      .catch((err) => {
+        console.error('[WS Error] Обработка сообщения не удалась:', err.message);
+        const frame = ACK_TYPES.has(data.type)
+          ? errorFrame(data.type, data, { message: 'Ошибка обработки запроса', code: 'INTERNAL_ERROR', retryable: true })
+          : { type: 'error', message: 'Ошибка обработки запроса' };
+        safeSend(ws, frame);
+      });
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[WS] кадр ${String(data.type).slice(0, 40)} обрабатывается дольше ${frameTimeoutMs()} мс — очередь сокета идёт дальше`);
+        resolve();
+      }, frameTimeoutMs());
+      timer.unref?.();
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
   }
 
   // Кадр звука: 4 байта — кому, дальше сам звук. Пересылается только между
@@ -481,7 +620,7 @@ class WsServer {
     return false;
   }
 
-  async handleMessage(ws, msg) {
+  async handleMessage(ws, msg, userAtArrival = null) {
     const { type } = msg;
 
     // 1. Authentication
@@ -571,9 +710,10 @@ class WsServer {
       return;
     }
 
-    const currentUser = this.socketUser.get(ws);
+    const currentUser = this.socketUser.get(ws)
+      || (userAtArrival && !ws.revoked && ws.readyState !== WebSocket.OPEN ? userAtArrival : null);
     if (!currentUser) {
-      return ws.send(JSON.stringify({ type: 'error', message: 'Необходима авторизация' }));
+      return safeSend(ws, { type: 'error', message: 'Необходима авторизация' });
     }
 
     // 2. Chat messaging
@@ -600,23 +740,27 @@ class WsServer {
           type: msgType || 'text',
           replyToId: replyToId ? Number(replyToId) : null,
           metadata,
-          clientMsgId
+          clientMsgId,
+          senderProfile: currentUser
         }));
       } catch (err) {
-        const message = err.message === 'NOT_CHANNEL_MEMBER' ? 'Вы не участник этого канала' : err.message;
         // Текст возвращается клиенту: поле ввода у него уже очищено, и без
         // этого сообщение пропало бы без следа. client_msg_id — чтобы клиент
         // нашёл в своей очереди, какая именно отправка не удалась; недопустимое
-        // значение обратно не отражается.
-        const frame = { type: 'error', context: 'send_message', message, text };
-        if (err.code === 'INVALID_CLIENT_MSG_ID' || err.code === 'CLIENT_MSG_ID_CONFLICT') frame.code = err.code;
-        if (typeof clientMsgId === 'string' && MessageService.CLIENT_MSG_ID_RE.test(clientMsgId)) {
-          frame.client_msg_id = clientMsgId;
-        }
-        return ws.send(JSON.stringify(frame));
+        // значение обратно не отражается. code и retryable — повторять ли (G3).
+        return safeSend(ws, errorFrame('send_message', { text, client_msg_id: clientMsgId }, MessageService.describeError(err)));
       }
 
-      this.publishNewMessage(savedMsg, { duplicate });
+      // Сообщение уже сохранено: что бы ни случилось с рассылкой, автор
+      // получает подтверждение, а не ошибку (G3).
+      try {
+        this.publishNewMessage(savedMsg, { duplicate });
+      } catch (err) {
+        console.error('[WS Error] рассылка сохранённого сообщения не удалась:', err.message);
+        const specific = savedMsg.conversation_type === 'channel' ? 'channel_message' : 'direct_message';
+        this.sendToUser(currentUser.id, { type: specific, message: savedMsg });
+        this.sendToUser(currentUser.id, { type: 'new_message', message: savedMsg });
+      }
       return;
     }
 
@@ -632,7 +776,7 @@ class WsServer {
           this.sendToUser(userId, { type: 'message_updated', message: updated });
         }
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', context: 'edit_message', message: err.message }));
+        safeSend(ws, errorFrame('edit_message', msg, MessageService.describeError(err)));
       }
       return;
     }
@@ -647,7 +791,7 @@ class WsServer {
           actorId: currentUser.id,
           isSuperAdmin: isSuperAdminUser
         });
-        if (isSuperAdminUser && deleted.sender_id !== currentUser.id) {
+        if (isSuperAdminUser && !deleted.alreadyDeleted && deleted.sender_id !== currentUser.id) {
           AuditService.log({
             userId: currentUser.id,
             action: 'message_deleted_by_admin',
@@ -660,16 +804,27 @@ class WsServer {
             }
           });
         }
-        for (const userId of conversationRecipients(deleted)) {
-          this.sendToUser(userId, {
-            type: 'message_deleted',
-            messageId: deleted.id,
-            conversationType: deleted.conversation_type,
-            targetId: deleted.target_id
-          });
-        }
+        this.publishDeleted(ws, deleted);
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', context: 'delete_message', message: err.message }));
+        safeSend(ws, errorFrame('delete_message', msg, MessageService.describeError(err)));
+      }
+      return;
+    }
+
+    // 2d. Отзыв отправки по ключу (G9): «если этот client_msg_id придёт — не
+    // сохраняй; если уже сохранён — удали». Ответ — message_cancelled этому
+    // сокету; удаление, если было, рассылается обычным message_deleted.
+    if (type === 'cancel_message') {
+      try {
+        const { messageId, deleted } = await MessageService.cancelClientMessage({
+          senderId: currentUser.id,
+          clientMsgId: msg.client_msg_id
+        });
+        if (deleted) this.publishDeleted(ws, deleted);
+        safeSend(ws, { type: 'message_cancelled', client_msg_id: msg.client_msg_id, messageId });
+      } catch (err) {
+        const extra = Number.isInteger(err.messageId) ? { messageId: err.messageId } : {};
+        safeSend(ws, errorFrame('cancel_message', msg, MessageService.describeError(err), extra));
       }
       return;
     }
@@ -1157,6 +1312,26 @@ class WsServer {
       status: 'offline'
     });
     console.log(`[WS] User disconnected: ${user.full_name} (#${user.id})`);
+  }
+
+  /**
+   * Надгробие участникам переписки; updated_at — время удаления (G8). Повтор
+   * удаления уже удалённого (alreadyDeleted) — подтверждение только этому
+   * сокету: остальные надгробие уже получили (G4).
+   */
+  publishDeleted(ws, deleted) {
+    const frame = {
+      type: 'message_deleted',
+      messageId: deleted.id,
+      conversationType: deleted.conversation_type,
+      targetId: deleted.target_id,
+      updated_at: deleted.updated_at
+    };
+    if (deleted.alreadyDeleted) {
+      safeSend(ws, frame);
+      return;
+    }
+    for (const userId of conversationRecipients(deleted)) this.sendToUser(userId, frame);
   }
 
   isUserOnline(userId) {

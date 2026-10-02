@@ -26,7 +26,7 @@ const CAPTURE = pathToFileURL(path.join(REPO, 'mobile/dev/capture-fixtures.mjs')
 const REQUIRED_WS_EVENTS = [
   'auth_success', 'auth_error', 'server_disconnect',
   'new_message', 'direct_message', 'channel_message',
-  'message_status_updated', 'messages_read', 'message_updated', 'message_deleted',
+  'message_status_updated', 'messages_read', 'message_updated', 'message_deleted', 'message_cancelled',
   'user_typing', 'user_status_changed', 'user_created', 'user_updated',
   'channel_created', 'channel_deleted',
   'new_announcement', 'announcement_acknowledged',
@@ -48,7 +48,7 @@ const REQUIRED_HTTP = [
   // надёжная доставка (задача 5): идемпотентная отправка, страница вперёд, дельта-синхронизация
   'http/messages.send-direct-idempotent.json', 'http/messages.send-direct-duplicate.json',
   'http/messages.send-client-msg-id-invalid.json', 'http/messages.send-client-msg-id-conflict.json',
-  'http/messages.after-page.json',
+  'http/messages.after-page.json', 'http/messages.send-cancelled.json',
   'http/sync.bootstrap.json', 'http/sync.page.json', 'http/sync.cursor-invalid.json',
   'http/files.policy.json', 'http/files.upload.json',
   'http/announcements.list.json'

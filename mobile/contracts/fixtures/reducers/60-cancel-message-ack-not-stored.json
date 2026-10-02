@@ -1,0 +1,141 @@
+{
+  "name": "60-cancel-message-ack-not-stored",
+  "description": "G9: отмена записи, которая уже уходила (maybe_stored), ставит в ops операцию cancel; она уходит кадром cancel_message после завершения цепочки синхронизации (как и прочие ops). Обычная цепочка не нашла ключ — запись удалена локально, а ключ запомнен в cancelled (вдруг сообщение всё же появится). Ответ message_cancelled с messageId = null доказывает, что сервер не сохранит ключ и позже: операция снята, ключ забыт.",
+  "covers": [
+    "T46",
+    "T47",
+    "T51",
+    "T42",
+    "T24"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000221-0000-4000-8000-000000000221",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Передумал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": 5000,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "cancel",
+      "now": 1000,
+      "client_msg_id": "a0000221-0000-4000-8000-000000000221"
+    },
+    {
+      "type": "sync_page",
+      "now": 1100,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "message_cancelled",
+        "client_msg_id": "a0000221-0000-4000-8000-000000000221",
+        "messageId": null
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cancelled",
+          "cursor",
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000221-0000-4000-8000-000000000221"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11100,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000221-0000-4000-8000-000000000221",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cancelled",
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [],
+    "ops": [],
+    "cancelled": [],
+    "opsLog": [
+      1100
+    ]
+  }
+}

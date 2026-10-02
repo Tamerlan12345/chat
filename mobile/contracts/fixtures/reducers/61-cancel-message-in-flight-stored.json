@@ -1,0 +1,202 @@
+{
+  "name": "61-cancel-message-in-flight-stored",
+  "description": "G9 на новом сервере: отмена записи в полёте сразу отправляет cancel_message (сокет на связи, цепочка не идёт; G1 — сервер обработает его после send_message того же сокета). Эхо send_message пришло раньше: сообщение сохранено под id 310 — операция cancel заменяется delete (лишний cancel_message не повторяется). Сервер, обработав cancel_message, сам удалил сообщение: message_deleted с updated_at (G8) — надгробие с временем удаления и снятие delete; message_cancelled с messageId и повтор надгробия (ответ на delete уже удалённого, G4) ничего не меняют.",
+  "covers": [
+    "T46",
+    "T47",
+    "T52",
+    "T07",
+    "T41",
+    "T39"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000231-0000-4000-8000-000000000231",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Уже ушло",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 10900,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      900
+    ],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "cancel",
+      "now": 1000,
+      "client_msg_id": "a0000231-0000-4000-8000-000000000231"
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "direct_message",
+        "message": {
+          "id": 310,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Уже ушло",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000231-0000-4000-8000-000000000231",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1200,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 310,
+        "conversationType": "direct",
+        "targetId": 3,
+        "updated_at": "2026-10-02T09:00:05.000Z"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1210,
+      "frame": {
+        "type": "message_cancelled",
+        "client_msg_id": "a0000231-0000-4000-8000-000000000231",
+        "messageId": 310
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1300,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 310,
+        "conversationType": "direct",
+        "targetId": 3,
+        "updated_at": "2026-10-02T09:00:05.000Z"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000231-0000-4000-8000-000000000231"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000231-0000-4000-8000-000000000231",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 310
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11100,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 310,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 310,
+          "client_msg_id": "a0000231-0000-4000-8000-000000000231",
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:05.000Z",
+          "is_deleted": 1,
+          "status": "sent"
+        }
+      ]
+    },
+    "cancelled": []
+  }
+}

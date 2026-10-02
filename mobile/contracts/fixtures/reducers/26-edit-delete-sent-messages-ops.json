@@ -79,7 +79,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -290,6 +291,7 @@
       {
         "op": "delete",
         "message_id": 93,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,

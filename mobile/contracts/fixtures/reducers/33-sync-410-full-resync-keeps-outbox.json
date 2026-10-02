@@ -66,6 +66,7 @@
       {
         "op": "delete",
         "message_id": 150,
+        "client_msg_id": null,
         "text": null,
         "state": "queued",
         "attempts": 0,
@@ -111,7 +112,8 @@
     },
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -316,6 +318,7 @@
       {
         "op": "delete",
         "message_id": 150,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,

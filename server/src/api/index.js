@@ -1294,13 +1294,17 @@ function parseAfterId(raw) {
 
 const AFTER_ID_ERROR = 'afterId — неотрицательное целое (id последнего известного сообщения)';
 
-// Отказ отправки: известные коды client_msg_id — машинным полем code (409 для
-// повтора ключа в другой переписке), остальное — как раньше.
+// Отказ отправки — всегда с машинным code (G3): 409 — ключ занят другой
+// перепиской (CLIENT_MSG_ID_CONFLICT) или отозван автором (CANCELLED), 403 —
+// не участник канала, 400 — прочие отказы проверок. Внутренний сбой (база,
+// сеть) — 503 INTERNAL_ERROR без подробностей: временный, повтор тем же
+// client_msg_id безопасен.
 function sendErrorResponse(res, err) {
-  if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
-  if (err.code === 'CLIENT_MSG_ID_CONFLICT') return res.status(409).json({ error: err.message, code: err.code });
-  if (err.code === 'INVALID_CLIENT_MSG_ID') return res.status(400).json({ error: err.message, code: err.code });
-  return res.status(400).json({ error: err.message });
+  const { code, retryable, message } = MessageService.describeError(err);
+  if (retryable) return res.status(503).json({ error: message, code });
+  if (code === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: message, code });
+  if (code === 'CLIENT_MSG_ID_CONFLICT' || code === 'CANCELLED') return res.status(409).json({ error: message, code });
+  return res.status(400).json({ error: message, code });
 }
 
 router.get('/messages', requireAuth, route(async (req, res) => {
@@ -1352,9 +1356,15 @@ async function sendViaRest(req, res, conversationType) {
       type: type || 'text',
       replyToId: reply_to_id || null,
       metadata,
-      clientMsgId: client_msg_id
+      clientMsgId: client_msg_id,
+      senderProfile: req.user
     });
-    wsServer.publishNewMessage(message, { duplicate });
+    // Сообщение уже сохранено: сбой рассылки не превращает ответ в отказ (G3).
+    try {
+      wsServer.publishNewMessage(message, { duplicate });
+    } catch (err) {
+      console.error('[API] рассылка сохранённого сообщения не удалась:', err.message);
+    }
     res.status(duplicate ? 200 : 201).json(message);
   } catch (err) {
     sendErrorResponse(res, err);

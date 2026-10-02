@@ -183,7 +183,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
@@ -572,6 +573,7 @@
       {
         "op": "delete",
         "message_id": 301,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -582,6 +584,7 @@
       {
         "op": "delete",
         "message_id": 302,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -592,6 +595,7 @@
       {
         "op": "delete",
         "message_id": 303,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -602,6 +606,7 @@
       {
         "op": "delete",
         "message_id": 304,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -612,6 +617,7 @@
       {
         "op": "delete",
         "message_id": 305,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -622,6 +628,7 @@
       {
         "op": "delete",
         "message_id": 306,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -632,6 +639,7 @@
       {
         "op": "delete",
         "message_id": 307,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -642,6 +650,7 @@
       {
         "op": "delete",
         "message_id": 309,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -652,6 +661,7 @@
       {
         "op": "delete",
         "message_id": 310,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,
@@ -662,6 +672,7 @@
       {
         "op": "delete",
         "message_id": 311,
+        "client_msg_id": null,
         "text": null,
         "state": "sending",
         "attempts": 1,

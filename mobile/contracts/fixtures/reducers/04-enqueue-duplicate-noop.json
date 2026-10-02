@@ -37,7 +37,8 @@
     "unread": {},
     "sendLog": [],
     "opsLog": [],
-    "wake_at": null
+    "wake_at": null,
+    "cancelled": []
   },
   "events": [
     {
