@@ -128,6 +128,8 @@ public enum WSServerEvent: Sendable {
     case callEnd(targetUserId: Int64?, senderId: Int64, senderName: String, reason: String?)
     case callDenied(reason: String)
     case callUnavailable(targetUserId: Int64, reason: String)
+    /// Relayed WebRTC signalling. Calls use the server audio relay, so it is parsed and ignored.
+    case iceCandidate(targetUserId: Int64, senderId: Int64, senderName: String)
     case wakeRing(fromUserId: Int64, fromName: String, at: Int64)
     case wakeSent(targetUserId: Int64, at: Int64, retryAt: Int64)
     case wakeError(code: String, message: String?)
@@ -297,6 +299,12 @@ public enum WSServerEvent: Sendable {
             let reason = json["reason"] as? String ?? String(localized: "Собеседник недоступен")
             return .callUnavailable(targetUserId: tId, reason: reason)
             
+        case "ice_candidate":
+            guard let tId = (json["targetUserId"] as? NSNumber)?.int64Value,
+                  let sId = (json["senderId"] as? NSNumber)?.int64Value else { return nil }
+            let sName = json["senderName"] as? String ?? ""
+            return .iceCandidate(targetUserId: tId, senderId: sId, senderName: sName)
+
         case "wake_ring":
             guard let fId = (json["fromUserId"] as? NSNumber)?.int64Value,
                   let fName = json["fromName"] as? String else { return nil }

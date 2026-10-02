@@ -83,36 +83,23 @@ enum TestModels {
 // MARK: - Repositories
 
 final class FakeServerRepository: ServerRepository, @unchecked Sendable {
-    private let state: Locked<(url: String, healthy: Bool)>
+    private let healthy: Locked<Bool>
+    let info = Locked(ServerInfo(companyName: "ТОО «Тестовая компания»"))
 
-    init(storedServerURL: String = "https://chat.example.com", healthy: Bool = true) {
-        state = Locked((storedServerURL, healthy))
+    init(healthy: Bool = true) {
+        self.healthy = Locked(healthy)
     }
-
-    var storedServerURL: String { state.value.url }
 
     func setHealthy(_ healthy: Bool) {
-        state.withValue { $0.healthy = healthy }
-    }
-
-    func saveServerURL(_ value: String) throws {
-        state.withValue { $0.url = value }
+        self.healthy.withValue { $0 = healthy }
     }
 
     func checkHealth() async throws -> HealthResponse {
-        HealthResponse(status: state.value.healthy ? "ok" : "maintenance", error: nil)
+        HealthResponse(status: healthy.value ? "ok" : "maintenance", error: nil)
     }
 
     func fetchServerInfo() async throws -> ServerInfo {
-        ServerInfo()
-    }
-
-    func checkHealth(serverURL: URL) async throws -> HealthResponse {
-        try await checkHealth()
-    }
-
-    func fetchServerInfo(serverURL: URL) async throws -> ServerInfo {
-        ServerInfo()
+        info.value
     }
 }
 
@@ -128,15 +115,41 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
         var loginCount = 0
         var changePasswordCount = 0
         var logoutCount = 0
+        var hasDeviceSecret = false
+        /// Origin the stored token/secret was issued for.
+        var issuerOrigin: String? = ServerEnvironment.test.origin
+        var bindError: (any Error)?
+        var loginGate: TestGate?
+        var currentUserCount = 0
+        var knockCount = 0
     }
 
     let state = Locked(State())
 
     var hasStoredToken: Bool { state.value.hasToken }
+    var hasDeviceSecret: Bool { state.value.hasDeviceSecret }
     var savedUsername: String? { nil }
 
-    func login(username: String, password: String) async throws -> AuthSuccessResponse {
+    func bindStoredCredentials(to origin: String) throws -> StoredCredentialDecision {
         try state.withValue { state in
+            if let error = state.bindError { throw error }
+            let hasCredentials = state.hasToken || state.hasDeviceSecret
+            defer { state.issuerOrigin = origin }
+            guard hasCredentials else { return .nothingStored }
+            guard state.issuerOrigin == origin else {
+                state.hasToken = false
+                state.hasDeviceSecret = false
+                return .wiped
+            }
+            return .kept
+        }
+    }
+
+    func login(username: String, password: String) async throws -> AuthSuccessResponse {
+        if let gate = state.value.loginGate {
+            await gate.wait()
+        }
+        return try state.withValue { state in
             state.loginCount += 1
             if let error = state.loginError { throw error }
             state.hasToken = true
@@ -148,6 +161,7 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
 
     func knock(device: DeviceDescriptor) async throws -> KnockResponse {
         state.withValue { state in
+            state.knockCount += 1
             if state.knockStatus == .paired {
                 state.hasToken = true
                 return KnockResponse(status: .paired, message: nil, deviceId: "device", deviceName: device.name, user: state.loginUser, token: "knock-token")
@@ -157,7 +171,10 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
     }
 
     func currentUser() async throws -> User {
-        try state.value.currentUserResult.get()
+        try state.withValue { state in
+            state.currentUserCount += 1
+            return try state.currentUserResult.get()
+        }
     }
 
     func changePassword(oldPassword: String, newPassword: String) async throws -> ChangePasswordResponse {
@@ -319,8 +336,8 @@ struct TestApp {
     let announcements: FakeAnnouncementsRepository
     let realtime: FakeRealtimeRepository
 
-    init(serverURL: String = "https://chat.example.com") {
-        server = FakeServerRepository(storedServerURL: serverURL)
+    init(environment: ServerEnvironment = .test) {
+        server = FakeServerRepository()
         auth = FakeAuthRepository()
         chat = FakeChatRepository()
         announcements = FakeAnnouncementsRepository()
@@ -331,6 +348,7 @@ struct TestApp {
             chat: chat,
             announcements: announcements,
             realtime: realtime,
+            environment: environment,
             audioRelayFactory: { peerId in
                 AudioCallRelay(targetUserId: peerId, backend: SilentAudioBackend(), sendFrame: { _ in })
             },

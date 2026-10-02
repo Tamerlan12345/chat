@@ -255,8 +255,7 @@ final class KeychainFailClosedTests: XCTestCase {
     func testFailedTokenSaveMakesLoginFailBeforeCallerCanAuthenticate() async throws {
         let store = InMemoryKeychainItemStore(failure: .add(account: "auth_token", status: errSecAuthFailed))
         let keychain = KeychainManager(testStore: store)
-        try keychain.saveServerURL("https://chat.example.com")
-        let client = APIClient(session: makeSession(), keychain: keychain)
+        let client = APIClient(session: makeSession(), keychain: keychain, environment: .test)
         let session = await Self.makeSessionStore(client: client, keychain: keychain)
 
         do {
@@ -276,8 +275,7 @@ final class KeychainFailClosedTests: XCTestCase {
     func testFailedTokenDeleteMakesLogoutFailAndPreservesAuthenticatedState() async throws {
         let store = InMemoryKeychainItemStore(failure: .delete(account: "auth_token", status: errSecAuthFailed))
         let keychain = KeychainManager(testStore: store)
-        try keychain.saveServerURL("https://chat.example.com")
-        let client = APIClient(session: makeSession(), keychain: keychain)
+        let client = APIClient(session: makeSession(), keychain: keychain, environment: .test)
         let session = await Self.makeSessionStore(client: client, keychain: keychain)
         _ = try await session.login(username: "qa", password: "password")
         let tokenBeforeLogout = try XCTUnwrap(keychain.authToken)
@@ -300,8 +298,9 @@ final class KeychainFailClosedTests: XCTestCase {
     private static func makeSessionStore(client: APIClient, keychain: KeychainManager) -> SessionStore {
         SessionStore(
             auth: LiveAuthRepository(client: client, keychain: keychain),
-            server: LiveServerRepository(client: client, keychain: keychain),
+            server: LiveServerRepository(client: client),
             realtime: RealtimeStore(repository: FakeRealtimeRepository()),
+            environment: .test,
             deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") }
         )
     }
@@ -405,10 +404,9 @@ final class TerminalRefresh401Tests: XCTestCase {
         let keychain = KeychainManager(
             testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
         )
-        try keychain.saveServerURL("https://chat.example.com")
         try keychain.saveAuthToken("stale-token")
         Terminal401ChannelsURLProtocol.reset()
-        let client = APIClient(session: makeSession(using: Terminal401ChannelsURLProtocol.self), keychain: keychain)
+        let client = APIClient(session: makeSession(using: Terminal401ChannelsURLProtocol.self), keychain: keychain, environment: .test)
 
         do {
             let _: [Channel] = try await client.getChannels()
@@ -427,10 +425,9 @@ final class TerminalRefresh401Tests: XCTestCase {
         let keychain = KeychainManager(
             testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
         )
-        try keychain.saveServerURL("https://chat.example.com")
         try keychain.saveAuthToken("stale-token")
         Terminal401UploadURLProtocol.reset()
-        let client = APIClient(session: makeSession(using: Terminal401UploadURLProtocol.self), keychain: keychain)
+        let client = APIClient(session: makeSession(using: Terminal401UploadURLProtocol.self), keychain: keychain, environment: .test)
 
         do {
             _ = try await client.uploadFile(

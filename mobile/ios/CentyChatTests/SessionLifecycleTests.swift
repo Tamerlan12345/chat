@@ -16,12 +16,11 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertTrue(alerted, "The realtime event did not reach the stores", file: file, line: line)
     }
 
-    func testFirstRunServerSetupThenLoginListensToRealtime() async throws {
-        let app = TestApp(serverURL: "")
+    func testFirstRunLoginListensToRealtime() async throws {
+        let app = TestApp()
         await app.session.bootstrap()
-        XCTAssertEqual(app.session.phase, .serverSetup)
+        XCTAssertEqual(app.session.phase, .signedOut)
 
-        try app.session.configureServer(address: "https://chat.example.com", info: ServerInfo())
         let outcome = try await app.session.login(username: "qa", password: "password")
 
         XCTAssertEqual(outcome, .authenticated)

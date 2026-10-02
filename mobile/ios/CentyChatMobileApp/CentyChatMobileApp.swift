@@ -17,8 +17,19 @@ struct CentyChatMobileApp: App {
 
     var body: some Scene {
         WindowGroup {
+#if DEBUG
+            if LaunchTestFixture.isUnitTestHost {
+                // Unit tests build their own stores; the host app stays idle and offline.
+                Color.clear
+            } else {
+                RootView()
+                    .appEnvironment(container)
+                    .preferredColorScheme(LaunchTestFixture.forcedColorScheme)
+            }
+#else
             RootView()
                 .appEnvironment(container)
+#endif
         }
     }
 }

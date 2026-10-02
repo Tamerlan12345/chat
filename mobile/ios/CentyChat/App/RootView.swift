@@ -18,9 +18,6 @@ public struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(CentyColors.chatBackground)
                     .accessibilityLabel("Загрузка")
-            case .serverSetup:
-                ServerConnectView()
-                    .accessibilityIdentifier("server-setup")
             case .signedOut:
                 LoginView()
             case .passwordChangeRequired:

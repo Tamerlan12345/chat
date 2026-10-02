@@ -12,6 +12,28 @@
         }
       }
     },
+    "%lld мин" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин"
+          }
+        }
+      }
+    },
+    "%lld мин %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин %lld с"
+          }
+        }
+      }
+    },
     "%lld с" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -232,6 +254,17 @@
         }
       }
     },
+    "Вход…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход…"
+          }
+        }
+      }
+    },
     "Выбранным сотрудникам" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -320,6 +353,17 @@
         }
       }
     },
+    "Выполняется вход" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется вход"
+          }
+        }
+      }
+    },
     "Готов к вызову" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -371,6 +415,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Документ"
+          }
+        }
+      }
+    },
+    "Забыли пароль? Обратитесь к администратору." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забыли пароль? Обратитесь к администратору."
           }
         }
       }
@@ -584,6 +639,17 @@
         }
       }
     },
+    "Корпоративный мессенджер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративный мессенджер"
+          }
+        }
+      }
+    },
     "Критический" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -679,6 +745,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось включить звук. Проверьте аудиоустройство и попробуйте снова."
+          }
+        }
+      }
+    },
+    "Не удалось войти. Повторите попытку позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось войти. Повторите попытку позже."
           }
         }
       }
@@ -793,6 +870,17 @@
         }
       }
     },
+    "Неверный логин или пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный логин или пароль"
+          }
+        }
+      }
+    },
     "Некорректный ответ от сервера" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -855,6 +943,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нет подключения к серверу. Проверьте интернет или адрес сервера."
+          }
+        }
+      }
+    },
+    "Нет связи с сервером. Проверьте подключение к интернету." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет связи с сервером. Проверьте подключение к интернету."
           }
         }
       }
@@ -1321,6 +1420,17 @@
         }
       }
     },
+    "Показать пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать пароль"
+          }
+        }
+      }
+    },
     "Пользователь" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1563,6 +1673,17 @@
         }
       }
     },
+    "Сервер обрабатывает много входов. Повторите через %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер обрабатывает много входов. Повторите через %@."
+          }
+        }
+      }
+    },
     "Сервер ответил статусом: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1625,6 +1746,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скопировать текст"
+          }
+        }
+      }
+    },
+    "Скрыть пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть пароль"
+          }
+        }
+      }
+    },
+    "Слишком много попыток входа. Повторите через %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много попыток входа. Повторите через %@."
           }
         }
       }

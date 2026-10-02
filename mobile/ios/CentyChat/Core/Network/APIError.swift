@@ -5,7 +5,8 @@ public enum APIError: Error, LocalizedError, Sendable {
     case invalidURL(String)
     case insecureTransport
     case invalidResponse
-    case httpError(statusCode: Int, message: String, code: String?)
+    /// `retryAfter` is the server's `Retry-After` in seconds, when it sent one.
+    case httpError(statusCode: Int, message: String, code: String?, retryAfter: TimeInterval? = nil)
     case mustChangePassword(message: String)
     case unauthorized
     case decodingError(String)
@@ -20,7 +21,7 @@ public enum APIError: Error, LocalizedError, Sendable {
             return String(localized: "Для защиты сессии требуется защищённое соединение (HTTPS).")
         case .invalidResponse:
             return String(localized: "Некорректный ответ от сервера")
-        case .httpError(let statusCode, let message, _):
+        case .httpError(let statusCode, let message, _, _):
             return String(localized: "Ошибка сервера (\(statusCode)): \(message)")
         case .mustChangePassword(let message):
             return message

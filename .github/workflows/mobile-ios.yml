@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'mobile/ios/**'
+      - 'mobile/contracts/fixtures/**'
+      - 'mobile/dev/**'
       - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'
   push:
     paths:
       - 'mobile/ios/**'
+      - 'mobile/contracts/fixtures/**'
+      - 'mobile/dev/**'
       - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'
 
@@ -18,23 +22,60 @@ permissions:
 jobs:
   ios-simulator-tests:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Validate iOS privacy manifest
         shell: pwsh
         run: ./mobile/qa/verify-ios-privacy-manifest.ps1
-      - name: Run unsigned iOS simulator tests
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      # DEV ONLY: the local HTTPS stand (real server + TLS proxy + seed data), so UI tests can
+      # sign in without ever touching production. See mobile/dev/README.md.
+      - name: Start the dev stand
+        run: |
+          (cd server && npm ci --no-audit --no-fund)
+          node mobile/dev/stand.mjs > "$RUNNER_TEMP/centy-stand.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            if curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/health > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/health
+          echo
+          curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/settings/info
+          echo
+      - name: Boot the simulator and trust the dev CA (simulator only)
+        run: |
+          udid="$(xcrun simctl list devices available --json | python3 mobile/ios/scripts/pick-simulator.py "iPhone 16")"
+          echo "Simulator: $udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl keychain "$udid" add-root-cert mobile/dev/certs/dev-ca.crt
+          echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+      # Ad-hoc ("Sign to Run Locally") signing, no team needed: an unsigned simulator app has
+      # no entitlements, so every Keychain write fails with errSecMissingEntitlement.
+      - name: Run iOS simulator tests (ad-hoc signed)
+        env:
+          # xcodebuild forwards TEST_RUNNER_* variables to the test processes (prefix stripped).
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
         run: |
           mkdir -p mobile/ios/build
           xcodebuild \
             -project mobile/ios/CentyChat.xcodeproj \
             -scheme CentyChat \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "id=$SIMULATOR_UDID" \
             -resultBundlePath mobile/ios/build/CentyChat.xcresult \
             clean test \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CENTYCHAT_SERVER_URL=https://localhost:8443
+      - name: Dev stand log
+        if: always()
+        run: tail -n 200 "$RUNNER_TEMP/centy-stand.log" || true
       - name: Upload iOS test result bundle
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -52,6 +93,28 @@ jobs:
           name: ios-screenshots
           if-no-files-found: ignore
           path: mobile/ios/build/screenshots/*.png
+
+  # The Release configuration must be locked to production: build it with a hostile
+  # CENTYCHAT_SERVER_URL and check the binary ignores it and has no Debug override points.
+  ios-release-server-lock:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build Release for the simulator with a server override attempt
+        run: |
+          xcodebuild \
+            -project mobile/ios/CentyChat.xcodeproj \
+            -scheme CentyChat \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/release" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CENTYCHAT_SERVER_URL=https://override.invalid
+      - name: Verify the Release binary is locked to production
+        run: bash mobile/ios/scripts/verify-release-server-lock.sh "$RUNNER_TEMP/release/Build/Products/Release-iphonesimulator/CentyChat.app" https://override.invalid
 
   # Publishes the PNGs to the orphan branch `ci/ios-screenshots` under <short-sha>/
   # so they can be read through the contents API without downloading artifacts.
