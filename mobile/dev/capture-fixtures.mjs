@@ -357,7 +357,7 @@ export async function captureFixtures({ dataDir } = {}) {
     // read receipts; bob also has a phone socket (device_id + platform in auth,
     // multi-device.md §3): reading on one device clears unread on the others.
     const BPhone = await open();
-    BPhone.send({ type: 'auth', token: tBob, device_id: 'android-dev-bob-01', platform: 'android' });
+    BPhone.send({ type: 'auth', token: tBob, device_id: 'android-dev-bob-01', platform: 'android', presence: 'away', viewing: { conversationType: 'direct', targetId: alice.id } });
     await BPhone.takeType('auth_success');
     BPhone.clear();
     A.clear();
