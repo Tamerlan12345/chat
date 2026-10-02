@@ -1,0 +1,108 @@
+{
+  "name": "45-stale-ack-timeout-for-live-attempt",
+  "description": "Запись в полёте со второй попытки: будильник первой попытки (другой attempt) и будильник второй, сработавший раньше ack_deadline, игнорируются; своевременный будильник второй попытки — пауза 2 с и tick.",
+  "covers": [
+    "T15",
+    "T13"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000064-0000-4000-8000-000000000064",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Будильники",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 16100,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      6100
+    ],
+    "wake_at": null
+  },
+  "events": [
+    {
+      "type": "ack_timeout",
+      "now": 14000,
+      "client_msg_id": "a0000064-0000-4000-8000-000000000064",
+      "attempt": 1
+    },
+    {
+      "type": "ack_timeout",
+      "now": 16000,
+      "client_msg_id": "a0000064-0000-4000-8000-000000000064",
+      "attempt": 2
+    },
+    {
+      "type": "ack_timeout",
+      "now": 16100,
+      "client_msg_id": "a0000064-0000-4000-8000-000000000064",
+      "attempt": 2
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 18100,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000064-0000-4000-8000-000000000064",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Будильники",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 2,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": 18100,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": 18100
+  }
+}
