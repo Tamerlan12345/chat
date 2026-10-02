@@ -17,6 +17,9 @@
     "sender_name": "Алиса Тестова",
     "sender_avatar": null,
     "sender_department": null,
-    "file_original_name": null
+    "file_original_name": null,
+    "file_width": null,
+    "file_height": null,
+    "file_dominant_color": null
   }
 }

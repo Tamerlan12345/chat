@@ -8,6 +8,7 @@ const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
 const PushService = require('../push/push.service');
+const Avatars = require('../media/avatars');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -280,8 +281,18 @@ class WsServer {
     // Кто с кем сейчас разговаривает. Только эти пары могут обмениваться
     // звуком — см. relayAudioFrame.
     this.activeCalls = new Map(); // userId -> userId
-    // Кто кому звонит и ещё не получил ответа: callerId -> { targetId, at }.
+    // Кто кому звонит и ещё не получил ответа:
+    // callerId -> { targetId, at, seq, ws } — ws: сокет, с которого звонят.
     this.pendingOffers = new Map();
+    // Номер вызова (задача 20): растёт с каждым вызовом. По нему push-очередь
+    // отличает вызов, ради которого шла доставка, от нового вызова той же пары
+    // — время вызова (at) у двух вызовов может совпасть до миллисекунды.
+    this.offerSeq = 0;
+    // Какие сокеты участвуют в разговоре (задача 20): userId -> { ws, peerId,
+    // role: 'caller' | 'callee' }. Звук принимается только с этих сокетов и
+    // уходит только на них — у сотрудника может быть несколько устройств, но
+    // разговаривает одно: то, с которого звонили, и то, которым ответили.
+    this.callBindings = new Map();
     // «Не беспокоить» переживает переподключение: переход ноутбука в сон не
     // должен молча снимать режим.
     this.dndUsers = new Set();
@@ -309,10 +320,10 @@ class WsServer {
       callOffer: (callerId, calleeId) => {
         const offer = this.pendingOffers.get(Number(callerId));
         return offer && offer.viaPush && offer.targetId === Number(calleeId) && this.hasPendingOffer(Number(callerId), Number(calleeId))
-          ? { at: offer.at }
+          ? { at: offer.at, seq: offer.seq }
           : null;
       },
-      callUndeliverable: (callerId, calleeId, offerAt) => this.pushCallUndeliverable(Number(callerId), Number(calleeId), offerAt)
+      callUndeliverable: (callerId, calleeId, offerSeq) => this.pushCallUndeliverable(Number(callerId), Number(calleeId), offerSeq)
     });
   }
 
@@ -418,6 +429,14 @@ class WsServer {
     });
 
     this.wss.on('connection', (ws, req) => {
+      // Аватары ссылкой (задача 20): сокету, подключившемуся с ?avatars=url,
+      // в каждом текстовом кадре с полем фото data URL заменяется адресом,
+      // старая ссылка — null. Обёртка на самом send — так её не обходит ни
+      // одна рассылка. Остальным сокетам — прежняя форма.
+      if (Avatars.socketWantsAvatarUrls(req)) {
+        const rawSend = ws.send.bind(ws);
+        ws.send = (data, ...rest) => rawSend(typeof data === 'string' ? Avatars.shapeFrame(data) : data, ...rest);
+      }
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
       ws.ipKey = rateLimitIpKey(ws.remoteIp);
       this.socketsPerIp.set(ws.ipKey, (this.socketsPerIp.get(ws.ipKey) || 0) + 1);
@@ -600,20 +619,25 @@ class WsServer {
   // Кадр звука: 4 байта — кому, дальше сам звук. Пересылается только между
   // участниками разговора, который обе стороны подтвердили: иначе любой
   // авторизованный пользователь мог бы вещать кому угодно.
+  // Звук принимается только с сокета, участвующего в разговоре (с которого
+  // звонили или которым ответили), и уходит только на сокет собеседника,
+  // участвующий в разговоре: другие устройства тех же сотрудников его не
+  // слышат и вещать в разговор не могут (задача 20).
   relayAudioFrame(ws, raw) {
     const sender = this.socketUser.get(ws);
     if (!sender || raw.length < 5) return;
 
     const targetUserId = raw.readUInt32BE(0);
     if (this.activeCalls.get(sender.id) !== targetUserId) return;
+    const own = this.callBindings.get(sender.id);
+    const peer = this.callBindings.get(targetUserId);
+    if (!own || own.ws !== ws || own.peerId !== targetUserId || !peer || peer.peerId !== sender.id) return;
 
     const out = Buffer.allocUnsafe(raw.length);
     out.writeUInt32BE(sender.id, 0);
     raw.copy(out, 4, 4);
 
-    for (const socket of this.userSockets.get(targetUserId) || []) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(out, { binary: true });
-    }
+    if (peer.ws.readyState === WebSocket.OPEN) peer.ws.send(out, { binary: true });
   }
 
   setCallPair(a, b) {
@@ -628,7 +652,50 @@ class WsServer {
   clearCallPair(a) {
     const b = this.activeCalls.get(a);
     this.activeCalls.delete(a);
-    if (b !== undefined && this.activeCalls.get(b) === a) this.activeCalls.delete(b);
+    this.callBindings.delete(a);
+    if (b !== undefined && this.activeCalls.get(b) === a) {
+      this.activeCalls.delete(b);
+      this.callBindings.delete(b);
+    }
+  }
+
+  // Сокеты разговора: вызывающего — тот, с которого звонили; вызываемого —
+  // тот, которым ответили.
+  bindCall(callerId, callerWs, calleeId, calleeWs) {
+    this.callBindings.set(callerId, { ws: callerWs, peerId: calleeId, role: 'caller' });
+    this.callBindings.set(calleeId, { ws: calleeWs, peerId: callerId, role: 'callee' });
+  }
+
+  // Новый номер вызова.
+  nextOfferSeq() {
+    this.offerSeq += 1;
+    return this.offerSeq;
+  }
+
+  // Сокет ушёл. Разговор, в котором он участвовал, окончен, даже если у
+  // сотрудника остались другие устройства: звук шёл только через этот сокет.
+  // То же — с вызовом, который шёл с этого сокета. Входящие вызовы
+  // снимаются, только когда у сотрудника не осталось ни одного сокета:
+  // ответить может любое его устройство.
+  endCallsOfSocket(user, ws, lastSocket) {
+    const peer = this.activeCalls.get(user.id);
+    if (peer !== undefined && (lastSocket || this.callBindings.get(user.id)?.ws === ws)) {
+      this.clearCallPair(user.id);
+      this.sendToUser(peer, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    const outgoing = this.pendingOffers.get(user.id);
+    if (outgoing && (lastSocket || outgoing.ws === ws)) {
+      this.rememberEndedPushOffer(user.id, 'connection_lost');
+      this.pendingOffers.delete(user.id);
+      this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    if (!lastSocket) return;
+    for (const [callerId, offer] of this.pendingOffers) {
+      if (offer.targetId === user.id) {
+        this.pendingOffers.delete(callerId);
+        this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+      }
+    }
   }
 
   hasPendingOffer(callerId, targetId) {
@@ -978,7 +1045,7 @@ class WsServer {
           // Unless the callee has a phone that a push can wake (задача 18):
           // then the offer waits, and the phone receives it on connecting.
           if (!this.userSockets.get(targetUserId)?.size) {
-            if (await this.ringByPush(currentUser, targetUserId, msg, abandoned)) return;
+            if (await this.ringByPush(currentUser, targetUserId, msg, abandoned, ws)) return;
             if (abandoned()) return;
             // Пока проверялись устройства, вызываемый мог подключиться — тогда обычный звонок.
             if (!this.userSockets.get(targetUserId)?.size) {
@@ -990,7 +1057,7 @@ class WsServer {
               return;
             }
           }
-          this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now() });
+          this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now(), seq: this.nextOfferSeq(), ws });
         } finally {
           this.endOfferAttempt(attempt);
         }
@@ -1000,10 +1067,16 @@ class WsServer {
       // вызов. Раньше «ответ» принимался от кого угодно и переписывал пару —
       // посторонний мог перехватить звук чужого разговора.
       if (type === 'call_answer') {
-        // Повторный ответ в уже начатом разговоре (CallKit и экран приложения,
-        // два устройства) ничего не меняет: не пересылается и не получает
-        // call_end — иначе второй ответ обрывал бы только что начатый разговор.
-        if (this.activeCalls.get(currentUser.id) === targetUserId && !this.hasPendingOffer(targetUserId, currentUser.id)) return;
+        // Ответ в уже начатом разговоре. С того же сокета (CallKit и экран
+        // приложения) — ничего не меняет: не пересылается и не получает
+        // call_end, иначе второй ответ обрывал бы только что начатый разговор.
+        // С другого устройства того же сотрудника — call_end
+        // «answered_elsewhere»: разговаривает только одно устройство (задача 20).
+        if (this.activeCalls.get(currentUser.id) === targetUserId && !this.hasPendingOffer(targetUserId, currentUser.id)) {
+          const binding = this.callBindings.get(currentUser.id);
+          if (binding && binding.ws !== ws) safeSend(ws, this.callEndFrame(targetUserId, 'answered_elsewhere'));
+          return;
+        }
         // Ответ на вызов, которого уже нет (сброшен, истёк, не дождался
         // подключения разбуженного телефона): отвечающему — call_end, чтобы он
         // не держал экран разговора, в котором никого нет.
@@ -1012,8 +1085,24 @@ class WsServer {
           safeSend(ws, this.callEndFrame(targetUserId, ended?.reason || 'no_call', ended?.senderName));
           return;
         }
+        const offer = this.pendingOffers.get(targetUserId);
         this.pendingOffers.delete(targetUserId);
         this.setCallPair(currentUser.id, targetUserId);
+        const callerWs = offer.ws && this.socketUser.has(offer.ws) ? offer.ws : this.userSockets.get(targetUserId)?.values().next().value;
+        this.bindCall(targetUserId, callerWs, currentUser.id, ws);
+        // Остальные устройства вызываемого перестают звонить.
+        const ended = this.callEndFrame(targetUserId, 'answered_elsewhere');
+        for (const other of this.userSockets.get(currentUser.id) || []) {
+          if (other !== ws) safeSend(other, ended);
+        }
+      }
+
+      // Во время разговора отказ, сброс и кандидаты соединения принимаются
+      // только с сокета разговора: «Отклонить» на компьютере, когда ответили
+      // с телефона, не обрывает разговор (задача 20).
+      if (type === 'call_rejected' || type === 'call_end' || type === 'ice_candidate') {
+        const binding = this.callBindings.get(currentUser.id);
+        if (this.activeCalls.get(currentUser.id) === targetUserId && binding && binding.ws !== ws) return;
       }
 
       // Отказ и завершение касаются только разговора с тем, кому адресованы.
@@ -1330,28 +1419,18 @@ class WsServer {
 
   async handleDisconnect(ws) {
     const unbound = this.unbindSocket(ws);
-    if (!unbound || !unbound.lastSocket) return;
+    if (!unbound) return;
+    // Сокет разговора или вызова уходит — разговор окончен, даже если у
+    // сотрудника остались другие устройства (задача 20).
+    if (!unbound.lastSocket) {
+      this.endCallsOfSocket(unbound.user, ws, false);
+      return;
+    }
     const { user } = unbound;
 
     // Оборвалась связь — разговор окончен, и собеседник должен об этом
     // узнать: иначе у него идёт таймер разговора, в котором никто не говорит.
-    const peer = this.activeCalls.get(user.id);
-    if (peer !== undefined) {
-      this.clearCallPair(user.id);
-      this.sendToUser(peer, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-    }
-    const outgoing = this.pendingOffers.get(user.id);
-    if (outgoing) {
-      this.rememberEndedPushOffer(user.id, 'connection_lost');
-      this.pendingOffers.delete(user.id);
-      this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-    }
-    for (const [callerId, offer] of this.pendingOffers) {
-      if (offer.targetId === user.id) {
-        this.pendingOffers.delete(callerId);
-        this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-      }
-    }
+    this.endCallsOfSocket(user, ws, true);
 
     // Сеанс удалённого доступа без одного из участников продолжаться не
     // должен: ни трансляция экрана, ни включённый ввод у второго.
@@ -1450,7 +1529,7 @@ class WsServer {
   // Устройство считается, только если его токен жив (сеанс действует).
   // abandoned() — вызывающий сбросил вызов или отключился, пока шла проверка:
   // тогда true (обработано, делать нечего) — ни вызова, ни уведомления.
-  async ringByPush(caller, targetUserId, msg, abandoned = () => false) {
+  async ringByPush(caller, targetUserId, msg, abandoned = () => false, callerWs = null) {
     let canRing = false;
     try {
       canRing = await PushService.canRing(targetUserId);
@@ -1460,10 +1539,11 @@ class WsServer {
     if (abandoned()) return true;
     if (!canRing || this.userSockets.get(targetUserId)?.size) return false;
     const at = Date.now();
+    const seq = this.nextOfferSeq();
     const frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
-    this.pendingOffers.set(caller.id, { targetId: targetUserId, at, viaPush: true, frame });
+    this.pendingOffers.set(caller.id, { targetId: targetUserId, at, seq, viaPush: true, frame, ws: callerWs });
     this.endedPushOffers.get(targetUserId)?.delete(caller.id);
-    PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at });
+    PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at, offerSeq: seq });
     return true;
   }
 
@@ -1516,13 +1596,14 @@ class WsServer {
   }
 
   // Очередь push не разбудила ни одно устройство вызываемого: вызывающему —
-  // call_unavailable, как если бы push не было, вызов снимается. offerAt —
-  // время вызова, ради которого шли уведомления: запоздалый провал прежнего
-  // вызова не снимает новый вызов той же пары.
-  pushCallUndeliverable(callerId, calleeId, offerAt) {
+  // call_unavailable, как если бы push не было, вызов снимается. offerSeq —
+  // номер вызова, ради которого шли уведомления: запоздалый провал прежнего
+  // вызова не снимает новый вызов той же пары (время вызова у них может
+  // совпасть, номер — нет).
+  pushCallUndeliverable(callerId, calleeId, offerSeq) {
     const offer = this.pendingOffers.get(callerId);
     if (!offer || !offer.viaPush || offer.targetId !== calleeId || this.isUserOnline(calleeId)) return;
-    if (offerAt !== undefined && offer.at !== offerAt) return;
+    if (offerSeq !== undefined && offer.seq !== offerSeq) return;
     this.rememberEndedPushOffer(callerId, 'unavailable');
     this.pendingOffers.delete(callerId);
     this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
@@ -1549,6 +1630,12 @@ class WsServer {
       if (ws.readyState !== WebSocket.OPEN) continue;
       safeSend(ws, this.callEndFrame(callerId, entry.reason, entry.senderName));
       entry.delivered = true;
+    }
+    // Сотрудник уже разговаривает с другого устройства — вошедшее (например,
+    // второй телефон, разбуженный тем же push) гасит экран звонка.
+    const binding = this.callBindings.get(userId);
+    if (binding && binding.role === 'callee' && binding.ws !== ws && this.activeCalls.get(userId) === binding.peerId) {
+      safeSend(ws, this.callEndFrame(binding.peerId, 'answered_elsewhere'));
     }
   }
 

@@ -118,6 +118,13 @@
     "path": "/api/files/policy",
     "status": 200
   },
+  "http/files.upload-image.json": {
+    "kind": "http",
+    "description": "Загрузка картинки: width/height (с учётом поворота по EXIF) и dominantColor посчитаны сервером по сигнатуре файла; у не-картинок — null.",
+    "method": "POST",
+    "path": "/api/files/upload",
+    "status": 201
+  },
   "http/files.upload.json": {
     "kind": "http",
     "description": "Загрузка файла (multipart, поле file): HTTP 201 и запись файла; id кладётся в metadata.file_id сообщения.",
@@ -207,6 +214,27 @@
     "description": "Дельта после курсора: GET /api/sync?since={next_cursor}&limit=… — созданные, изменённые, удалённые (надгробие: is_deleted=1, text=\"\", metadata_json=null) и сменившие статус сообщения во всех видимых переписках, по возрастанию изменения; каждое один раз в текущем состоянии. delivery_status — у личных, null у каналов.",
     "method": "GET",
     "path": "/api/sync",
+    "status": 200
+  },
+  "http/users.avatar-not-image.json": {
+    "kind": "http",
+    "description": "Фото не картинка JPEG/PNG/GIF/WebP по сигнатуре: 415 { error, code: NOT_AN_IMAGE }.",
+    "method": "PUT",
+    "path": "/api/users/avatar",
+    "status": 415
+  },
+  "http/users.avatar-upload.json": {
+    "kind": "http",
+    "description": "PUT /users/avatar (multipart, поле file): профиль, avatar_url — адрес /api/users/{id}/avatar?v=<версия>, а не data URL.",
+    "method": "PUT",
+    "path": "/api/users/avatar",
+    "status": 200
+  },
+  "http/users.get-with-avatar.json": {
+    "kind": "http",
+    "description": "Карточка коллеги с фото: avatar_url — адрес фото (загружать с Authorization).",
+    "method": "GET",
+    "path": "/api/users/{id}",
     "status": 200
   },
   "http/users.get.json": {
@@ -314,6 +342,13 @@
     "event": "call_denied",
     "direction": "server->client",
     "trigger": "call_offer без права can_call"
+  },
+  "ws/call_end.answered_elsewhere.json": {
+    "kind": "ws",
+    "description": "На звонок ответило другое устройство того же сотрудника: остальным его сокетам — call_end (senderId — звонящий, reason \"answered_elsewhere\"); тот же кадр — в ответ на call_answer с другого устройства во время разговора и устройству, вошедшему во время разговора.",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "call_answer с другого сокета bob"
   },
   "ws/call_end.connection_lost.json": {
     "kind": "ws",

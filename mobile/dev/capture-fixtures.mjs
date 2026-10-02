@@ -102,7 +102,8 @@ function normalizeFixture(value) {
     if (typeof v === 'string') {
       // Токен сеанса (JWT). Токены устройств push (FCM/APNs) в фикстурах — заведомые заглушки.
       if (key === 'token' && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(v)) return FAKE_JWT;
-      if (key === 'storedFilename') return '1790000000000_0123456789abcdef.txt';
+      // Имя на диске: время + случайная часть; расширение (от имени файла) остаётся.
+      if (key === 'storedFilename') return v.replace(/^\d+_[0-9a-f]+/, '1790000000000_0123456789abcdef');
       // sync cursor "<epoch>.<seq>": the epoch is random per database.
       if (key === 'next_cursor') return v.replace(/^[0-9a-f]{16}\./, '5e7a1c0d9b3f4a62.');
       if (ISO_RE.test(v)) return mapTime(v);
@@ -122,8 +123,11 @@ function normalizeFixture(value) {
 
 // ── tiny HTTP / WebSocket clients ───────────────────────────────────────────
 
+// Фикстуры — то, что видит мобильный клиент: он просит фото адресами
+// (X-Avatar-Format: url по HTTP, ?avatars=url у WebSocket; openapi.yaml,
+// User.avatar_url). Без этого сервер отдаёт прежнюю форму — data URL.
 async function call(baseUrl, method, urlPath, { body, token, form } = {}) {
-  const headers = {};
+  const headers = { 'X-Avatar-Format': 'url' };
   if (token) headers.Authorization = `Bearer ${token}`;
   let payload;
   if (form) payload = form;
@@ -196,7 +200,7 @@ export async function captureFixtures({ dataDir } = {}) {
   const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'centy-fixtures-'));
   const server = await startServerProcess({ dataDir: dir, port: 0, quiet: true });
   const base = `http://127.0.0.1:${server.port}`;
-  const wsUrl = `ws://127.0.0.1:${server.port}/ws`;
+  const wsUrl = `ws://127.0.0.1:${server.port}/ws?avatars=url`;
   const sockets = [];
 
   const raw = {}; // path -> value (insertion order = capture order, drives timestamp numbering)
@@ -471,6 +475,27 @@ export async function captureFixtures({ dataDir } = {}) {
     B.send({ type: 'call_answer', targetUserId: alice.id });
     ws('ws/call_end.no_call.json', 'call_end', 'Ответ на вызов, которого нет: отвечающему call_end (senderId — тот, кому отвечали; reason "no_call"). Тот же кадр с reason "cancelled" | "connection_lost" | "timeout" | "unavailable" приходит телефону, разбуженному push о звонке, если вызов закончился до его подключения (push.md §3).', await B.takeType('call_end'), 'call_answer без ждущего вызова');
 
+    // Второе устройство того же сотрудника (задача 20): ответило одно —
+    // остальным call_end answered_elsewhere; разговаривает только ответившее.
+    // Свой сокет звонящего: предел call_offer считается на сокет (3 за 10 с).
+    const Acaller = await open();
+    auth(Acaller, tA);
+    await Acaller.takeType('auth_success');
+    const Bphone = await open();
+    auth(Bphone, tBob);
+    await Bphone.takeType('auth_success');
+    Acaller.clear(); B.clear(); Bphone.clear();
+    Acaller.send({ type: 'call_offer', targetUserId: bob.id });
+    await B.takeType('call_offer');
+    await Bphone.takeType('call_offer');
+    B.send({ type: 'call_answer', targetUserId: alice.id });
+    await Acaller.takeType('call_answer');
+    ws('ws/call_end.answered_elsewhere.json', 'call_end', 'На звонок ответило другое устройство того же сотрудника: остальным его сокетам — call_end (senderId — звонящий, reason "answered_elsewhere"); тот же кадр — в ответ на call_answer с другого устройства во время разговора и устройству, вошедшему во время разговора.', await Bphone.takeType('call_end'), 'call_answer с другого сокета bob');
+    Acaller.send({ type: 'call_end', targetUserId: bob.id });
+    await B.takeType('call_end');
+    Bphone.close();
+    Acaller.close();
+
     // admin-driven broadcasts
     A.clear(); B.clear();
     const created = await call(base, 'POST', '/api/admin/channels', { token: adminToken, body: { name: 'релиз', topic: 'Подготовка релиза' } });
@@ -551,6 +576,30 @@ export async function captureFixtures({ dataDir } = {}) {
     D.send({ type: 'call_offer', targetUserId: bob.id });
     ws('ws/call_denied.json', 'call_denied', 'Роль пользователя не имеет права звонить.', await D.takeType('call_denied'), 'call_offer без права can_call');
     await call(base, 'PUT', `/api/admin/roles/${employee.id}`, { token: adminToken, body: { permissions: employee.permissions } });
+
+    // Медиа (задача 20): картинка-вложение с размерами и цветом, фото профиля ссылкой.
+    // Права роли менялись выше — прежние токены отозваны, вход заново.
+    const tAliceMedia = (await login(CREDENTIALS.alice)).token;
+    const sharp = serverRequire('sharp');
+    const picture = await sharp({ create: { width: 640, height: 480, channels: 3, background: '#c83a32' } })
+      .composite([{ input: { create: { width: 160, height: 480, channels: 3, background: '#2a72ee' } }, left: 0, top: 0 }])
+      .png()
+      .toBuffer();
+    const imageForm = new FormData();
+    imageForm.append('file', new Blob([picture], { type: 'image/png' }), 'schema.png');
+    await http('http/files.upload-image.json', 'Загрузка картинки: width/height (с учётом поворота по EXIF) и dominantColor посчитаны сервером по сигнатуре файла; у не-картинок — null.',
+      'POST', '/files/upload', { token: tAliceMedia, form: imageForm }, 201);
+    const tCarolMedia = (await login({ username: 'carol', password: 'Carol-Dev-Stand-4417' })).token;
+    const avatarForm = new FormData();
+    avatarForm.append('file', new Blob([picture], { type: 'image/png' }), 'me.png');
+    await http('http/users.avatar-upload.json', 'PUT /users/avatar (multipart, поле file): профиль, avatar_url — адрес /api/users/{id}/avatar?v=<версия>, а не data URL.',
+      'PUT', '/users/avatar', { token: tCarolMedia, form: avatarForm }, 200);
+    await http('http/users.get-with-avatar.json', 'Карточка коллеги с фото: avatar_url — адрес фото (загружать с Authorization).',
+      'GET', `/users/${carolUser.id}`, { token: tAliceMedia }, 200);
+    const notImage = new FormData();
+    notImage.append('file', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"/>'], { type: 'image/svg+xml' }), 'me.svg');
+    await http('http/users.avatar-not-image.json', 'Фото не картинка JPEG/PNG/GIF/WebP по сигнатуре: 415 { error, code: NOT_AN_IMAGE }.',
+      'PUT', '/users/avatar', { token: tCarolMedia, form: notImage }, 415);
 
     // rate limit on socket auth (last: blocks this IP for a minute)
     let limited = null;

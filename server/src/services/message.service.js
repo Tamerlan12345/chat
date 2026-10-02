@@ -758,7 +758,12 @@ class MessageService {
         // сообщения. Текст задаёт отправитель и его можно подделать/спутать
         // (см. аудит безопасности, находка №6) — original_name из таблицы
         // files записывается один раз при загрузке и с тех пор неизменен.
-        file_original_name: fileId != null ? (originalNames.get(fileId) ?? null) : null
+        file_original_name: fileId != null ? (originalNames.get(fileId) ?? null) : null,
+        // Размеры и цвет картинки-вложения (задача 20) — из таблицы files,
+        // посчитанные сервером, а не присланные отправителем в metadata_json.
+        file_width: fileId != null ? (originalNames.imageInfo?.get(fileId)?.width ?? null) : null,
+        file_height: fileId != null ? (originalNames.imageInfo?.get(fileId)?.height ?? null) : null,
+        file_dominant_color: fileId != null ? (originalNames.imageInfo?.get(fileId)?.dominant_color ?? null) : null
       };
     });
   }
@@ -785,8 +790,15 @@ class MessageService {
     if (!ids.length) return new Map();
     const db = getDatabase();
     const placeholders = ids.map(() => '?').join(', ');
-    const found = db.prepare(`SELECT id, original_name FROM files WHERE id IN (${placeholders})`).all(...ids);
-    return new Map(found.map((f) => [Number(f.id), f.original_name]));
+    const found = db.prepare(`SELECT id, original_name, width, height, dominant_color FROM files WHERE id IN (${placeholders})`).all(...ids);
+    const names = new Map(found.map((f) => [Number(f.id), f.original_name]));
+    // Размеры картинок — тем же запросом; Map имён остаётся прежней формы.
+    names.imageInfo = new Map(found.map((f) => [Number(f.id), {
+      width: f.width == null ? null : Number(f.width),
+      height: f.height == null ? null : Number(f.height),
+      dominant_color: f.dominant_color ?? null
+    }]));
+    return names;
   }
 
   static markAsRead(conversationType, targetId, currentUserId) {
