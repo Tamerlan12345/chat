@@ -10,14 +10,7 @@
 		A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* CentyChatMobileApp.swift */; };
 		A10000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* Assets.xcassets */; };
 		A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* PrivacyInfo.xcprivacy */; };
-		A10000000000000000000021 /* AudioRelayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* AudioRelayTests.swift */; };
-		A10000000000000000000022 /* CallStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* CallStateMachineTests.swift */; };
-		A10000000000000000000023 /* DTOParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* DTOParsingTests.swift */; };
-		A10000000000000000000024 /* EditWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000034 /* EditWindowTests.swift */; };
 		A10000000000000000000025 /* AppLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* AppLaunchTests.swift */; };
-		A10000000000000000000026 /* AudioRelayLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000036 /* AudioRelayLifecycleTests.swift */; };
-		A10000000000000000000027 /* BundleMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000037 /* BundleMetadataTests.swift */; };
-		A10000000000000000000028 /* AudioEngineCallbackIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000038 /* AudioEngineCallbackIsolationTests.swift */; };
 		A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000039 /* ScreenshotTourTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -35,14 +28,7 @@
 		A10000000000000000000015 /* CentyChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CentyChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000016 /* CentyChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CentyChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000017 /* CentyChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CentyChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000031 /* AudioRelayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRelayTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000032 /* CallStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallStateMachineTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000033 /* DTOParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DTOParsingTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000034 /* EditWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditWindowTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000035 /* AppLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000036 /* AudioRelayLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRelayLifecycleTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000037 /* BundleMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleMetadataTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000038 /* AudioEngineCallbackIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngineCallbackIsolationTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000039 /* ScreenshotTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTourTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -65,6 +51,11 @@
 			path = CentyChat;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000062 /* CentyChatTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CentyChatTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,14 +70,13 @@
 			children = (
 				A10000000000000000000061 /* CentyChat */,
 				A10000000000000000000081 /* CentyChatMobileApp */,
-				A10000000000000000000082 /* CentyChatTests */,
+				A10000000000000000000062 /* CentyChatTests */,
 				A10000000000000000000084 /* CentyChatUITests */,
 				A10000000000000000000083 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
 		A10000000000000000000081 /* CentyChatMobileApp */ = {isa = PBXGroup; children = (A10000000000000000000012 /* CentyChatMobileApp.swift */); path = CentyChatMobileApp; sourceTree = "<group>"; };
-		A10000000000000000000082 /* CentyChatTests */ = {isa = PBXGroup; children = (A10000000000000000000031 /* AudioRelayTests.swift */, A10000000000000000000032 /* CallStateMachineTests.swift */, A10000000000000000000033 /* DTOParsingTests.swift */, A10000000000000000000034 /* EditWindowTests.swift */, A10000000000000000000036 /* AudioRelayLifecycleTests.swift */, A10000000000000000000037 /* BundleMetadataTests.swift */, A10000000000000000000038 /* AudioEngineCallbackIsolationTests.swift */); path = CentyChatTests; sourceTree = "<group>"; };
 		A10000000000000000000084 /* CentyChatUITests */ = {isa = PBXGroup; children = (A10000000000000000000035 /* AppLaunchTests.swift */, A10000000000000000000039 /* ScreenshotTourTests.swift */); path = CentyChatUITests; sourceTree = "<group>"; };
 		A10000000000000000000083 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000015 /* CentyChat.app */, A10000000000000000000016 /* CentyChatTests.xctest */, A10000000000000000000017 /* CentyChatUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -111,6 +101,7 @@
 			buildPhases = (A10000000000000000000095 /* Sources */, A10000000000000000000073 /* Frameworks */, A10000000000000000000096 /* Resources */);
 			buildRules = ();
 			dependencies = (A100000000000000000000D2 /* PBXTargetDependency */);
+			fileSystemSynchronizedGroups = (A10000000000000000000062 /* CentyChatTests */);
 			name = CentyChatTests;
 			productName = CentyChatTests;
 			productReference = A10000000000000000000016 /* CentyChatTests.xctest */;
@@ -156,7 +147,7 @@
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000091 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 
-		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021 /* AudioRelayTests.swift in Sources */, A10000000000000000000022 /* CallStateMachineTests.swift in Sources */, A10000000000000000000023 /* DTOParsingTests.swift in Sources */, A10000000000000000000024 /* EditWindowTests.swift in Sources */, A10000000000000000000026 /* AudioRelayLifecycleTests.swift in Sources */, A10000000000000000000027 /* BundleMetadataTests.swift in Sources */, A10000000000000000000028 /* AudioEngineCallbackIsolationTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */, A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
