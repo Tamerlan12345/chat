@@ -11,7 +11,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 1,
     "outbox": [
@@ -25,6 +26,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 5,
+        "failures": 5,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
@@ -42,6 +44,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [

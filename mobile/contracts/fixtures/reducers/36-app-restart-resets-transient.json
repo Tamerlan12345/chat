@@ -1,6 +1,6 @@
 {
   "name": "36-app-restart-resets-transient",
-  "description": "Перезапуск: записи sending (ws и http) возвращаются в queued с сохранением attempts и maybe_stored; сокет, видимая переписка, цепочка синхронизации, кэш сообщений, счётчики, sendLog и wake_at сброшены; курсор, seq, outbox и ops сохраняются.",
+  "description": "Перезапуск: записи sending (ws и http) и удаление в полёте возвращаются в queued с сохранением attempts, failures и maybe_stored; сокет, видимая переписка, цепочка синхронизации, кэш сообщений, счётчики, sendLog/opsLog и wake_at сброшены; курсор, seq, outbox и ops сохраняются.",
   "covers": [
     "T22"
   ],
@@ -11,7 +11,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.12",
       "running": true,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "seq": 2,
     "outbox": [
@@ -25,6 +26,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 11000,
@@ -43,6 +45,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "http",
         "ack_deadline": 31000,
@@ -54,8 +57,14 @@
     ],
     "ops": [
       {
-        "type": "delete_message",
-        "messageId": 171
+        "op": "delete",
+        "message_id": 171,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 1,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
       }
     ],
     "messages": {
@@ -81,6 +90,9 @@
     "sendLog": [
       1000
     ],
+    "opsLog": [
+      1000
+    ],
     "wake_at": 5000
   },
   "events": [
@@ -94,6 +106,7 @@
       {
         "type": "persist",
         "slices": [
+          "ops",
           "outbox"
         ]
       }
@@ -106,7 +119,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.12",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "seq": 2,
     "outbox": [
@@ -120,6 +134,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
@@ -138,6 +153,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
@@ -149,13 +165,20 @@
     ],
     "ops": [
       {
-        "type": "delete_message",
-        "messageId": 171
+        "op": "delete",
+        "message_id": 171,
+        "text": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 1,
+        "ack_deadline": null,
+        "next_attempt_at": null
       }
     ],
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   }
 }

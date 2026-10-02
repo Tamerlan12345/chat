@@ -1,6 +1,6 @@
 {
   "name": "34-sync-failed-retry",
-  "description": "Неуспех /api/sync: цепочка остановлена, будильник sync_start через Retry-After (или 5 с), outbox повторяется сразу. 401 — без будильника. Без сокета sync_start ничего не делает; результат вне цепочки игнорируется.",
+  "description": "Неуспех /api/sync: цепочка остановлена, будильник sync_start через Retry-After (или 5 с), outbox повторяется сразу. Каждая новая цепочка получает следующий chain. 401 — без будильника. Без сокета sync_start ничего не делает; результат вне цепочки игнорируется.",
   "covers": [
     "T35",
     "T20",
@@ -13,7 +13,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": true,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "seq": 1,
     "outbox": [
@@ -27,6 +28,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 0,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -40,18 +42,21 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
     {
       "type": "sync_failed",
       "now": 1000,
+      "chain": 1,
       "status": 429,
       "retry_after_ms": 60000
     },
     {
       "type": "sync_failed",
       "now": 1001,
+      "chain": 1,
       "status": 500
     },
     {
@@ -61,6 +66,7 @@
     {
       "type": "sync_failed",
       "now": 62000,
+      "chain": 2,
       "status": 503
     },
     {
@@ -70,6 +76,7 @@
     {
       "type": "sync_failed",
       "now": 68000,
+      "chain": 3,
       "status": 401
     },
     {
@@ -124,7 +131,8 @@
       {
         "type": "sync_request",
         "cursor": "5e7a1c0d9b3f4a62.11",
-        "limit": 200
+        "limit": 200,
+        "chain": 2
       }
     ],
     [
@@ -140,7 +148,8 @@
       {
         "type": "sync_request",
         "cursor": "5e7a1c0d9b3f4a62.11",
-        "limit": 200
+        "limit": 200,
+        "chain": 3
       }
     ],
     [],
@@ -159,7 +168,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 3
     },
     "outbox": [
       {
@@ -172,6 +182,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,

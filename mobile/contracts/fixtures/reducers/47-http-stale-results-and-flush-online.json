@@ -15,7 +15,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 2,
     "outbox": [
@@ -29,6 +30,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": true,
         "transport": "http",
         "ack_deadline": 40000,
@@ -47,6 +49,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 1,
+        "failures": 1,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
@@ -60,6 +63,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": 25000
   },
   "events": [
@@ -152,6 +156,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -174,6 +179,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 35000,

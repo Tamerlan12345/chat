@@ -1,6 +1,6 @@
 {
   "name": "43-retry-guards",
-  "description": "retry только для failed; после обычного отказа ключ тот же, после CLIENT_MSG_ID_CONFLICT — новый, и он должен быть свободен (иначе user_error). Повторённые записи уходят в хвост очереди (seq 4, 5).",
+  "description": "retry только для failed; после обычного отказа ключ тот же, после CLIENT_MSG_ID_CONFLICT — новый, и он должен быть свободен (иначе user_error). Повторённые записи уходят в хвост очереди (seq 4, 5); attempts не сбрасывается, failures = 0.",
   "covers": [
     "T23",
     "T02"
@@ -12,7 +12,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 3,
     "outbox": [
@@ -26,6 +27,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -48,6 +50,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -70,6 +73,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 0,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -83,6 +87,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -149,6 +154,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 0,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -166,7 +172,8 @@
         "reply_to_id": null,
         "metadata": null,
         "state": "queued",
-        "attempts": 0,
+        "attempts": 1,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -184,7 +191,8 @@
         "reply_to_id": null,
         "metadata": null,
         "state": "queued",
-        "attempts": 0,
+        "attempts": 1,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,

@@ -1,6 +1,6 @@
 {
   "name": "13-ws-conflict-failed-retry-new-key",
-  "description": "Ошибка CLIENT_MSG_ID_CONFLICT по WS → failed (rejected), maybe_stored=false. retry с недопустимым новым ключом — user_error; с допустимым — запись получает новый ключ и уходит; таймауты старого ключа устарели.",
+  "description": "Ошибка CLIENT_MSG_ID_CONFLICT по WS → failed (rejected), maybe_stored=false. retry с недопустимым новым ключом — user_error; с допустимым — запись получает новый ключ и уходит (attempts продолжает счёт кадров записи); таймауты устарели.",
   "covers": [
     "T16",
     "T23",
@@ -14,7 +14,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 1,
     "outbox": [
@@ -28,6 +29,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 11000,
@@ -43,6 +45,7 @@
     "sendLog": [
       1000
     ],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -106,7 +109,7 @@
       "type": "ack_timeout",
       "now": 12001,
       "client_msg_id": "a0000014-0000-4000-8000-000000000014",
-      "attempt": 1
+      "attempt": 2
     }
   ],
   "expectedEffects": [
@@ -150,7 +153,7 @@
         "event": {
           "type": "ack_timeout",
           "client_msg_id": "a0000014-0000-4000-8000-000000000014",
-          "attempt": 1
+          "attempt": 2
         }
       }
     ],

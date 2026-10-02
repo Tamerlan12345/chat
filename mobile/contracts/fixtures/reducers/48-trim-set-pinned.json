@@ -1,8 +1,10 @@
 {
-  "name": "02-enqueue-offline-stays-queued",
-  "description": "Без сокета запись остаётся queued (надёжно записана, композер очищен). Вложение и пустой текст у image допустимы; reply_to_id и metadata сохраняются.",
+  "name": "48-trim-set-pinned",
+  "description": "Пустой текст определяется ровно набором пробельных символов ECMAScript (как trim() на сервере): NBSP, U+FEFF, U+3000, U+2028, U+1680, U+202F, U+205F, U+2000–U+200A, \\v, \\f — пробельные; U+200B (zero-width space) и U+0085 (NEL) — нет, такое сообщение принимается (сервер тоже примет).",
   "covers": [
-    "T01"
+    "T02",
+    "T01",
+    "T25"
   ],
   "initialState": {
     "me": 2,
@@ -27,39 +29,36 @@
     {
       "type": "enqueue",
       "now": 1000,
-      "client_msg_id": "a0000002-0000-4000-8000-000000000002",
-      "conversation": "channel:3",
-      "text": "Отчёт за квартал",
-      "msgType": "file",
-      "reply_to_id": 9,
-      "metadata": {
-        "file_id": 42
-      }
+      "client_msg_id": "a0000100-0000-4000-8000-000000000100",
+      "conversation": "direct:3",
+      "text": " ﻿　  \t"
     },
     {
       "type": "enqueue",
       "now": 1001,
-      "client_msg_id": "a0000003-0000-4000-8000-000000000003",
+      "client_msg_id": "a0000100-0000-4000-8000-000000000100",
       "conversation": "direct:3",
-      "text": "",
-      "msgType": "image",
-      "reply_to_id": null,
-      "metadata": {
-        "file_id": 43
-      }
+      "text": "​"
+    },
+    {
+      "type": "enqueue",
+      "now": 1002,
+      "client_msg_id": "a0000101-0000-4000-8000-000000000101",
+      "conversation": "direct:3",
+      "text": ""
+    },
+    {
+      "type": "edit",
+      "now": 1003,
+      "client_msg_id": "a0000100-0000-4000-8000-000000000100",
+      "text": "     \r\n\u000b\f "
     }
   ],
   "expectedEffects": [
     [
       {
-        "type": "persist",
-        "slices": [
-          "outbox"
-        ]
-      },
-      {
-        "type": "clear_composer",
-        "conversation": "channel:3"
+        "type": "user_error",
+        "code": "EMPTY_TEXT"
       }
     ],
     [
@@ -73,22 +72,37 @@
         "type": "clear_composer",
         "conversation": "direct:3"
       }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      }
+    ],
+    [
+      {
+        "type": "user_error",
+        "code": "EMPTY_TEXT"
+      }
     ]
   ],
   "expectedState": {
-    "connection": "offline",
     "seq": 2,
     "outbox": [
       {
-        "client_msg_id": "a0000002-0000-4000-8000-000000000002",
-        "conversation": "channel:3",
+        "client_msg_id": "a0000100-0000-4000-8000-000000000100",
+        "conversation": "direct:3",
         "seq": 1,
-        "text": "Отчёт за квартал",
-        "msgType": "file",
-        "reply_to_id": 9,
-        "metadata": {
-          "file_id": 42
-        },
+        "text": "​",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
         "state": "queued",
         "attempts": 0,
         "failures": 0,
@@ -101,15 +115,13 @@
         "pending_delete": false
       },
       {
-        "client_msg_id": "a0000003-0000-4000-8000-000000000003",
+        "client_msg_id": "a0000101-0000-4000-8000-000000000101",
         "conversation": "direct:3",
         "seq": 2,
-        "text": "",
-        "msgType": "image",
+        "text": "",
+        "msgType": "text",
         "reply_to_id": null,
-        "metadata": {
-          "file_id": 43
-        },
+        "metadata": null,
         "state": "queued",
         "attempts": 0,
         "failures": 0,
@@ -121,7 +133,6 @@
         "pending_edit": null,
         "pending_delete": false
       }
-    ],
-    "sendLog": []
+    ]
   }
 }

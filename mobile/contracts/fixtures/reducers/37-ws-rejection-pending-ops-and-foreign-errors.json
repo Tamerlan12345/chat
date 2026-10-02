@@ -1,6 +1,6 @@
 {
   "name": "37-ws-rejection-pending-ops-and-foreign-errors",
-  "description": "Отказ error send_message с client_msg_id: сообщения на сервере нет — pending_edit становится текстом, запись с pending_delete удаляется. error без client_msg_id (INVALID_CLIENT_MSG_ID), без context (внутренняя ошибка) и edit_message модель не меняют; повторный отказ для failed — тоже.",
+  "description": "Отказ error send_message с client_msg_id: pending_edit становится текстом, запись с pending_delete удаляется. error без client_msg_id (INVALID_CLIENT_MSG_ID), без context (внутренняя ошибка) и edit_message модель не меняют; повторный отказ для failed — тоже.",
   "covers": [
     "T16",
     "T24",
@@ -13,7 +13,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 2,
     "outbox": [
@@ -27,6 +28,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 11000,
@@ -45,6 +47,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 11000,
@@ -60,6 +63,7 @@
     "sendLog": [
       1000
     ],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -159,6 +163,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,

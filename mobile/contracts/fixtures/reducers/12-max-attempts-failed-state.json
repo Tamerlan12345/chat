@@ -1,6 +1,6 @@
 {
   "name": "12-max-attempts-failed-state",
-  "description": "После пятой неудачной попытки запись failed с причиной max_attempts, maybe_stored остаётся true (сервер мог сохранить), будильников нет; failed не блокирует следующую запись той же переписки.",
+  "description": "После пятой неудачи запись failed с причиной max_attempts, maybe_stored остаётся true (сервер мог сохранить), будильников нет; failed не блокирует следующую запись той же переписки.",
   "covers": [
     "T14",
     "T06"
@@ -12,7 +12,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 2,
     "outbox": [
@@ -26,6 +27,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 5,
+        "failures": 4,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 68000,
@@ -44,6 +46,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 0,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -57,6 +60,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -111,6 +115,7 @@
         "metadata": null,
         "state": "failed",
         "attempts": 5,
+        "failures": 5,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
@@ -133,6 +138,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 78000,

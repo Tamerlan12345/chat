@@ -1,11 +1,11 @@
 {
-  "name": "46-http-inflight-survives-ws-flap",
-  "description": "Фоновая REST-отправка в полёте, пока сокет подключается и снова рвётся: после синхронизации запись не уходит второй раз по WS (голова переписки в полёте), ws_disconnected не трогает HTTP-попытку; ответ 201 подтверждает её.",
+  "name": "52-cancel-reconnect-empty-sync-dropped",
+  "description": "Отмена без сети записи, которая уже уходила: она не отправляется ни при переподключении, ни после. Синхронизация (не bootstrap) после её последней попытки не вернула этот client_msg_id — сервера у него нет, запись удаляется локально. Отменённая запись не занимает переписку: следующая уходит сразу.",
   "covers": [
-    "T37",
-    "T06",
-    "T20",
-    "T17"
+    "T42",
+    "T24",
+    "T21",
+    "T06"
   ],
   "initialState": {
     "me": 2,
@@ -17,13 +17,32 @@
       "bootstrap": false,
       "chain": 0
     },
-    "seq": 1,
+    "seq": 2,
     "outbox": [
       {
-        "client_msg_id": "a0000065-0000-4000-8000-000000000065",
+        "client_msg_id": "a0000080-0000-4000-8000-000000000080",
         "conversation": "direct:3",
         "seq": 1,
-        "text": "Ушло через REST",
+        "text": "Отменённое",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000081-0000-4000-8000-000000000081",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Следом",
         "msgType": "text",
         "reply_to_id": null,
         "metadata": null,
@@ -48,12 +67,13 @@
   },
   "events": [
     {
-      "type": "background_flush",
-      "now": 1000
+      "type": "cancel",
+      "now": 1000,
+      "client_msg_id": "a0000080-0000-4000-8000-000000000080"
     },
     {
       "type": "ws",
-      "now": 1500,
+      "now": 2000,
       "frame": {
         "type": "auth_success",
         "user": {
@@ -102,42 +122,12 @@
     },
     {
       "type": "sync_page",
-      "now": 1600,
+      "now": 2100,
       "chain": 1,
       "body": {
         "messages": [],
         "next_cursor": "5e7a1c0d9b3f4a62.12",
         "has_more": false
-      }
-    },
-    {
-      "type": "ws_disconnected",
-      "now": 1700
-    },
-    {
-      "type": "http_send_result",
-      "now": 1800,
-      "client_msg_id": "a0000065-0000-4000-8000-000000000065",
-      "attempt": 1,
-      "status": 201,
-      "body": {
-        "id": 220,
-        "conversation_type": "direct",
-        "target_id": 3,
-        "sender_id": 2,
-        "text": "Ушло через REST",
-        "type": "text",
-        "reply_to_id": null,
-        "metadata_json": null,
-        "created_at": "2026-10-02T09:00:01.000Z",
-        "updated_at": null,
-        "is_deleted": 0,
-        "client_msg_id": "a0000065-0000-4000-8000-000000000065",
-        "sender_username": "alice",
-        "sender_name": "Алиса Тестова",
-        "sender_avatar": null,
-        "sender_department": null,
-        "file_original_name": null
       }
     }
   ],
@@ -148,29 +138,6 @@
         "slices": [
           "outbox"
         ]
-      },
-      {
-        "type": "send_http",
-        "client_msg_id": "a0000065-0000-4000-8000-000000000065",
-        "attempt": 1,
-        "method": "POST",
-        "path": "/api/messages/direct/3",
-        "body": {
-          "text": "Ушло через REST",
-          "type": "text",
-          "reply_to_id": null,
-          "metadata": null,
-          "client_msg_id": "a0000065-0000-4000-8000-000000000065"
-        }
-      },
-      {
-        "type": "schedule",
-        "at": 31000,
-        "event": {
-          "type": "ack_timeout",
-          "client_msg_id": "a0000065-0000-4000-8000-000000000065",
-          "attempt": 1
-        }
       }
     ],
     [
@@ -185,42 +152,64 @@
       {
         "type": "persist",
         "slices": [
-          "cursor"
+          "cursor",
+          "outbox"
         ]
       },
       {
         "type": "refresh_conversation_lists"
-      }
-    ],
-    [],
-    [
+      },
       {
-        "type": "persist",
-        "slices": [
-          "outbox"
-        ]
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Следом",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000081-0000-4000-8000-000000000081"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000081-0000-4000-8000-000000000081",
+          "attempt": 1
+        }
       }
     ]
   ],
   "expectedState": {
-    "connection": "offline",
-    "outbox": [],
-    "messages": {
-      "direct:3": [
-        {
-          "id": 220,
-          "client_msg_id": "a0000065-0000-4000-8000-000000000065",
-          "sender_id": 2,
-          "text": "Ушло через REST",
-          "type": "text",
-          "reply_to_id": null,
-          "metadata_json": null,
-          "created_at": "2026-10-02T09:00:01.000Z",
-          "updated_at": null,
-          "is_deleted": 0,
-          "status": "sent"
-        }
-      ]
-    }
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.12",
+      "running": false,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "outbox": [
+      {
+        "client_msg_id": "a0000081-0000-4000-8000-000000000081",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "Следом",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 12100,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
   }
 }

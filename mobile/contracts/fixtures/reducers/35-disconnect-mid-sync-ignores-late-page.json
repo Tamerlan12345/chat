@@ -3,7 +3,8 @@
   "description": "Сокет закрылся посреди синхронизации: цепочка прервана, запоздавшая страница и 410 игнорируются, курсор не меняется.",
   "covers": [
     "T20",
-    "T38"
+    "T38",
+    "T43"
   ],
   "initialState": {
     "me": 2,
@@ -12,7 +13,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": true,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "seq": 0,
     "outbox": [],
@@ -20,6 +22,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -30,6 +33,7 @@
     {
       "type": "sync_page",
       "now": 1100,
+      "chain": 1,
       "body": {
         "messages": [
           {
@@ -60,6 +64,7 @@
     {
       "type": "sync_reset_410",
       "now": 1200,
+      "chain": 1,
       "body": {
         "error": "Курсор синхронизации недействителен — загрузите переписку заново",
         "code": "SYNC_CURSOR_INVALID"
@@ -76,7 +81,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "messages": {}
   }

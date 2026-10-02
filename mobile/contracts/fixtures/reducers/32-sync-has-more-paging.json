@@ -1,6 +1,6 @@
 {
   "name": "32-sync-has-more-paging",
-  "description": "has_more=true: курсор сохраняется после каждой страницы, следующий запрос — с новым курсором, outbox ждёт конца цепочки; входящие из синхронизации непрочитанное не увеличивают.",
+  "description": "has_more=true: курсор сохраняется после каждой страницы, следующий запрос — с новым курсором и тем же chain, outbox ждёт конца цепочки; входящие из синхронизации непрочитанное не увеличивают.",
   "covers": [
     "T33",
     "T21"
@@ -12,7 +12,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": true,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "seq": 1,
     "outbox": [
@@ -26,6 +27,7 @@
         "metadata": null,
         "state": "queued",
         "attempts": 0,
+        "failures": 0,
         "maybe_stored": false,
         "transport": null,
         "ack_deadline": null,
@@ -39,12 +41,14 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
     {
       "type": "sync_page",
       "now": 1000,
+      "chain": 1,
       "body": {
         "messages": [
           {
@@ -75,6 +79,7 @@
     {
       "type": "sync_page",
       "now": 1100,
+      "chain": 1,
       "body": {
         "messages": [
           {
@@ -114,7 +119,8 @@
       {
         "type": "sync_request",
         "cursor": "5e7a1c0d9b3f4a62.15",
-        "limit": 200
+        "limit": 200,
+        "chain": 1
       }
     ],
     [
@@ -156,7 +162,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.23",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 1
     },
     "outbox": [
       {
@@ -169,6 +176,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 11100,

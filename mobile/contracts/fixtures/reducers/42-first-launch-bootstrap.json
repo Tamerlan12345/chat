@@ -1,6 +1,6 @@
 {
   "name": "42-first-launch-bootstrap",
-  "description": "Первый запуск: me берётся из auth_success, синхронизация без курсора (bootstrap) — курсор головы, списки, история и mark_read открытой переписки. Следующая синхронизация с тем же курсором курсор не переписывает.",
+  "description": "Первый запуск: me берётся из auth_success, синхронизация без курсора (bootstrap) — курсор головы, списки, история и mark_read открытой переписки. Следующая синхронизация (chain 2) с тем же курсором курсор не переписывает.",
   "covers": [
     "T21",
     "T33",
@@ -14,7 +14,8 @@
     "sync": {
       "cursor": null,
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 0,
     "outbox": [],
@@ -22,6 +23,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -77,6 +79,7 @@
     {
       "type": "sync_page",
       "now": 1100,
+      "chain": 1,
       "body": {
         "messages": [],
         "next_cursor": "5e7a1c0d9b3f4a62.11",
@@ -136,6 +139,7 @@
     {
       "type": "sync_page",
       "now": 1400,
+      "chain": 2,
       "body": {
         "messages": [],
         "next_cursor": "5e7a1c0d9b3f4a62.11",
@@ -148,7 +152,8 @@
       {
         "type": "sync_request",
         "cursor": null,
-        "limit": 200
+        "limit": 200,
+        "chain": 1
       }
     ],
     [
@@ -179,7 +184,8 @@
       {
         "type": "sync_request",
         "cursor": "5e7a1c0d9b3f4a62.11",
-        "limit": 200
+        "limit": 200,
+        "chain": 2
       }
     ],
     [
@@ -202,7 +208,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 2
     },
     "messages": {
       "direct:3": [

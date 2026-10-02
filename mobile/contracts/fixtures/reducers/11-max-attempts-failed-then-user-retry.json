@@ -1,6 +1,6 @@
 {
   "name": "11-max-attempts-failed-then-user-retry",
-  "description": "Пятая неудачная попытка → failed (max_attempts). «Повторить» оставляет тот же ключ (сообщение могло сохраниться), ставит запись в хвост (seq 2) с новым бюджетом и отправляет; эхо подтверждает.",
+  "description": "Пятая неудача (failures = 5) → failed (max_attempts). «Повторить» оставляет тот же ключ (сообщение могло сохраниться), обнуляет failures, ставит запись в хвост (seq 2) и отправляет шестой кадр; эхо подтверждает.",
   "covers": [
     "T13",
     "T14",
@@ -15,7 +15,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 1,
     "outbox": [
@@ -29,6 +30,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 4,
+        "failures": 3,
         "maybe_stored": true,
         "transport": "ws",
         "ack_deadline": 50000,
@@ -42,6 +44,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -174,7 +177,7 @@
         "event": {
           "type": "ack_timeout",
           "client_msg_id": "a0000012-0000-4000-8000-000000000012",
-          "attempt": 1
+          "attempt": 6
         }
       }
     ],

@@ -1,14 +1,9 @@
 {
-  "name": "05-offline-send-restart-replay-once",
-  "description": "Отправка без сети → перезапуск → auth_success → /api/sync → ровно одна отправка тем же ключом → эхо. Повторное подключение и страница с тем же сообщением ничего не отправляют повторно.",
+  "name": "53-stale-sync-chain-ignored",
+  "description": "Страница и ошибка от прерванной цепочки (chain 1) приходят во время новой (chain 2) — игнорируются; применяется только страница текущей цепочки.",
   "covers": [
-    "T01",
-    "T22",
+    "T43",
     "T21",
-    "T04",
-    "T07",
-    "T09",
-    "T20",
     "T33"
   ],
   "initialState": {
@@ -32,22 +27,8 @@
   },
   "events": [
     {
-      "type": "enqueue",
-      "now": 1000,
-      "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-      "conversation": "direct:3",
-      "text": "Счёт отправлен на почту.",
-      "msgType": "text",
-      "reply_to_id": null,
-      "metadata": null
-    },
-    {
-      "type": "app_restart",
-      "now": 5000
-    },
-    {
       "type": "ws",
-      "now": 6000,
+      "now": 1000,
       "frame": {
         "type": "auth_success",
         "user": {
@@ -91,78 +72,16 @@
             "can_create_channels": true,
             "can_upload_files": true
           }
-        }
-      }
-    },
-    {
-      "type": "sync_page",
-      "now": 6100,
-      "chain": 1,
-      "body": {
-        "messages": [],
-        "next_cursor": "5e7a1c0d9b3f4a62.12",
-        "has_more": false
-      }
-    },
-    {
-      "type": "ws",
-      "now": 6200,
-      "frame": {
-        "type": "direct_message",
-        "message": {
-          "id": 10,
-          "conversation_type": "direct",
-          "target_id": 3,
-          "sender_id": 2,
-          "text": "Счёт отправлен на почту.",
-          "type": "text",
-          "reply_to_id": null,
-          "metadata_json": null,
-          "created_at": "2026-10-02T09:00:06.000Z",
-          "updated_at": null,
-          "is_deleted": 0,
-          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-          "sender_username": "alice",
-          "sender_name": "Алиса Тестова",
-          "sender_avatar": null,
-          "sender_department": null,
-          "file_original_name": null
-        }
-      }
-    },
-    {
-      "type": "ws",
-      "now": 6201,
-      "frame": {
-        "type": "new_message",
-        "message": {
-          "id": 10,
-          "conversation_type": "direct",
-          "target_id": 3,
-          "sender_id": 2,
-          "text": "Счёт отправлен на почту.",
-          "type": "text",
-          "reply_to_id": null,
-          "metadata_json": null,
-          "created_at": "2026-10-02T09:00:06.000Z",
-          "updated_at": null,
-          "is_deleted": 0,
-          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-          "sender_username": "alice",
-          "sender_name": "Алиса Тестова",
-          "sender_avatar": null,
-          "sender_department": null,
-          "file_original_name": null
         }
       }
     },
     {
       "type": "ws_disconnected",
-      "now": 7000
+      "now": 1100
     },
     {
       "type": "ws",
-      "now": 8000,
+      "now": 1200,
       "frame": {
         "type": "auth_success",
         "user": {
@@ -211,26 +130,26 @@
     },
     {
       "type": "sync_page",
-      "now": 8100,
-      "chain": 2,
+      "now": 1300,
+      "chain": 1,
       "body": {
         "messages": [
           {
-            "id": 10,
+            "id": 400,
             "conversation_type": "direct",
-            "target_id": 3,
-            "sender_id": 2,
-            "text": "Счёт отправлен на почту.",
+            "target_id": 2,
+            "sender_id": 3,
+            "text": "Из старой цепочки",
             "type": "text",
             "reply_to_id": null,
             "metadata_json": null,
-            "created_at": "2026-10-02T09:00:06.000Z",
+            "created_at": "2026-10-02T09:00:01.000Z",
             "updated_at": null,
             "is_deleted": 0,
-            "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-            "delivery_status": "delivered",
-            "sender_username": "alice",
-            "sender_name": "Алиса Тестова",
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "bob",
+            "sender_name": "Боб Тестов",
             "sender_avatar": null,
             "sender_department": null,
             "file_original_name": null
@@ -239,22 +158,55 @@
         "next_cursor": "5e7a1c0d9b3f4a62.13",
         "has_more": false
       }
+    },
+    {
+      "type": "sync_failed",
+      "now": 1301,
+      "chain": 1,
+      "status": 500
+    },
+    {
+      "type": "sync_reset_410",
+      "now": 1302,
+      "chain": 1,
+      "body": {
+        "error": "Курсор синхронизации недействителен — загрузите переписку заново",
+        "code": "SYNC_CURSOR_INVALID"
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1400,
+      "chain": 2,
+      "body": {
+        "messages": [
+          {
+            "id": 401,
+            "conversation_type": "direct",
+            "target_id": 2,
+            "sender_id": 3,
+            "text": "Из новой цепочки",
+            "type": "text",
+            "reply_to_id": null,
+            "metadata_json": null,
+            "created_at": "2026-10-02T09:00:02.000Z",
+            "updated_at": null,
+            "is_deleted": 0,
+            "client_msg_id": null,
+            "delivery_status": null,
+            "sender_username": "bob",
+            "sender_name": "Боб Тестов",
+            "sender_avatar": null,
+            "sender_department": null,
+            "file_original_name": null
+          }
+        ],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
     }
   ],
   "expectedEffects": [
-    [
-      {
-        "type": "persist",
-        "slices": [
-          "outbox"
-        ]
-      },
-      {
-        "type": "clear_composer",
-        "conversation": "direct:3"
-      }
-    ],
-    [],
     [
       {
         "type": "sync_request",
@@ -263,58 +215,18 @@
         "chain": 1
       }
     ],
-    [
-      {
-        "type": "persist",
-        "slices": [
-          "cursor",
-          "outbox"
-        ]
-      },
-      {
-        "type": "refresh_conversation_lists"
-      },
-      {
-        "type": "send_ws",
-        "frame": {
-          "type": "send_message",
-          "conversationType": "direct",
-          "targetId": 3,
-          "text": "Счёт отправлен на почту.",
-          "msgType": "text",
-          "replyToId": null,
-          "metadata": null,
-          "client_msg_id": "a0000005-0000-4000-8000-000000000005"
-        }
-      },
-      {
-        "type": "schedule",
-        "at": 16100,
-        "event": {
-          "type": "ack_timeout",
-          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-          "attempt": 1
-        }
-      }
-    ],
-    [
-      {
-        "type": "persist",
-        "slices": [
-          "outbox"
-        ]
-      }
-    ],
-    [],
     [],
     [
       {
         "type": "sync_request",
-        "cursor": "5e7a1c0d9b3f4a62.12",
+        "cursor": "5e7a1c0d9b3f4a62.11",
         "limit": 200,
         "chain": 2
       }
     ],
+    [],
+    [],
+    [],
     [
       {
         "type": "persist",
@@ -328,33 +240,28 @@
     ]
   ],
   "expectedState": {
-    "connection": "online",
     "sync": {
-      "cursor": "5e7a1c0d9b3f4a62.13",
+      "cursor": "5e7a1c0d9b3f4a62.12",
       "running": false,
       "bootstrap": false,
       "chain": 2
     },
-    "seq": 1,
-    "outbox": [],
     "messages": {
       "direct:3": [
         {
-          "id": 10,
-          "client_msg_id": "a0000005-0000-4000-8000-000000000005",
-          "sender_id": 2,
-          "text": "Счёт отправлен на почту.",
+          "id": 401,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Из новой цепочки",
           "type": "text",
           "reply_to_id": null,
           "metadata_json": null,
-          "created_at": "2026-10-02T09:00:06.000Z",
+          "created_at": "2026-10-02T09:00:02.000Z",
           "updated_at": null,
           "is_deleted": 0,
-          "status": "delivered"
+          "status": null
         }
       ]
-    },
-    "unread": {},
-    "sendLog": []
+    }
   }
 }

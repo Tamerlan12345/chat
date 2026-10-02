@@ -1,10 +1,11 @@
 {
   "name": "26-edit-delete-sent-messages-ops",
-  "description": "Правка и удаление подтверждённых сообщений без сокета копятся в ops (надёжно записаны) и уходят после синхронизации; чужое, удалённое, файл и неизвестное — user_error. Локальный текст до message_updated не меняется.",
+  "description": "Правка и удаление подтверждённых сообщений без сокета копятся в ops (надёжно записаны) и уходят после синхронизации: правка — один раз, удаление ждёт подтверждения (op_timeout). Чужое, удалённое, файл и неизвестное — user_error. Локальный текст до message_updated не меняется.",
   "covers": [
     "T26",
     "T02",
-    "T21"
+    "T21",
+    "T39"
   ],
   "initialState": {
     "me": 2,
@@ -13,7 +14,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 0,
     "outbox": [],
@@ -76,6 +78,7 @@
     },
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -176,6 +179,7 @@
     {
       "type": "sync_page",
       "now": 2100,
+      "chain": 1,
       "body": {
         "messages": [],
         "next_cursor": "5e7a1c0d9b3f4a62.12",
@@ -240,7 +244,8 @@
       {
         "type": "sync_request",
         "cursor": "5e7a1c0d9b3f4a62.11",
-        "limit": 200
+        "limit": 200,
+        "chain": 1
       }
     ],
     [
@@ -268,11 +273,35 @@
           "type": "delete_message",
           "messageId": 93
         }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 93,
+          "attempt": 1
+        }
       }
     ]
   ],
   "expectedState": {
-    "ops": [],
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 93,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 12100,
+        "next_attempt_at": null
+      }
+    ],
+    "opsLog": [
+      2100,
+      2100
+    ],
     "messages": {
       "direct:3": [
         {

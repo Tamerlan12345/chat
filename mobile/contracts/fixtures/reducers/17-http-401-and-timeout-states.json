@@ -1,6 +1,6 @@
 {
   "name": "17-http-401-and-timeout-states",
-  "description": "Промежуточные состояния: после 401 — queued без next_attempt_at и с attempts=1, maybe_stored=true; после таймаута второй попытки — queued с next_attempt_at = now + 2000.",
+  "description": "Промежуточные состояния: после 401 — queued без next_attempt_at, attempts=1, failures=0, maybe_stored=true; после таймаута второй попытки — failures=1 и next_attempt_at = now + 1000.",
   "covers": [
     "T19",
     "T13"
@@ -12,7 +12,8 @@
     "sync": {
       "cursor": "5e7a1c0d9b3f4a62.11",
       "running": false,
-      "bootstrap": false
+      "bootstrap": false,
+      "chain": 0
     },
     "seq": 1,
     "outbox": [
@@ -26,6 +27,7 @@
         "metadata": null,
         "state": "sending",
         "attempts": 1,
+        "failures": 0,
         "maybe_stored": true,
         "transport": "http",
         "ack_deadline": 31000,
@@ -39,6 +41,7 @@
     "messages": {},
     "unread": {},
     "sendLog": [],
+    "opsLog": [],
     "wake_at": null
   },
   "events": [
@@ -124,10 +127,11 @@
         "metadata": null,
         "state": "queued",
         "attempts": 2,
+        "failures": 1,
         "maybe_stored": true,
         "transport": null,
         "ack_deadline": null,
-        "next_attempt_at": 34000,
+        "next_attempt_at": 33000,
         "failure": null,
         "pending_edit": null,
         "pending_delete": false
