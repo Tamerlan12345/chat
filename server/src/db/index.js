@@ -96,7 +96,10 @@ const TABLES = {
       mime_type TEXT,
       sha256 TEXT,
       path TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      dominant_color TEXT
     )`,
   // История правок и удалений: единственное место, где остаётся исходный
   // текст и метаданные после того, как сообщение в messages уже заменено
