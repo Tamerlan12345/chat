@@ -152,6 +152,10 @@ struct LiveRealtimeRepository: RealtimeRepository {
         await client.send(clientMessage: message)
     }
 
+    func sendIfAuthenticated(_ message: WSClientMessage) async -> Bool {
+        await client.sendIfAuthenticated(message)
+    }
+
     func sendAudioFrame(_ frame: Data) async {
         await client.sendAudioFrame(frame)
     }

@@ -127,7 +127,7 @@ public final class ConversationsStore: RealtimeEventHandling {
 
     func handle(_ event: WSServerEvent) {
         switch event {
-        case .newMessage(let message):
+        case .newMessage(let message, _):
             handleIncomingMessage(message)
 
         case .userTyping(let userId, let userName, let conversationType, let targetId, let isTyping):
@@ -149,6 +149,10 @@ public final class ConversationsStore: RealtimeEventHandling {
 
         case .channelDeleted(let channelId):
             channels.removeAll { $0.id == channelId }
+
+        case .conversationRead(let conversation, _, _, _):
+            // Read on another device of mine (multi-device.md §6).
+            markConversationRead(conversation)
 
         default:
             break

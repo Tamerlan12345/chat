@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Presence status and the wake buzzer.
+/// «Не беспокоить» and the wake buzzer. Presence itself is automatic (`PresenceController`).
 @Observable
 @MainActor
 public final class ProfileStore: RealtimeEventHandling {
@@ -10,23 +10,39 @@ public final class ProfileStore: RealtimeEventHandling {
 
     @ObservationIgnored private let realtime: RealtimeStore
     @ObservationIgnored private let session: SessionStore
+    @ObservationIgnored private let presence: PresenceController
     @ObservationIgnored private var wakeCooldownTimer: Task<Void, Never>?
 
-    init(realtime: RealtimeStore, session: SessionStore) {
+    init(realtime: RealtimeStore, session: SessionStore, presence: PresenceController) {
         self.realtime = realtime
         self.session = session
+        self.presence = presence
     }
 
     // MARK: - Presence
 
-    public func updatePresence(_ status: UserStatus) async {
-        session.currentUser?.status = status
-        if status == .dnd {
-            await realtime.send(.setDnd(enabled: true, customStatus: nil))
+    /// «Не беспокоить» — the only status the user picks (owner's rule). «В сети» / «Отошёл»
+    /// follow the app being on screen. Returns false and keeps the old value when it was not sent.
+    public var isDndEnabled: Bool { presence.isDndEnabled }
+
+    /// The automatic presence for «Сейчас: …».
+    public var automaticPresence: PresenceState { presence.presence }
+
+    @discardableResult
+    public func setDnd(_ enabled: Bool) async -> Bool {
+        let sent = await presence.setDnd(enabled)
+        if sent {
+            CentyHaptics.light()
         } else {
-            await realtime.send(.presence(state: status.rawValue, customStatus: nil))
+            session.errorMessage = String(localized: "Не удалось изменить статус. Проверьте подключение.")
         }
-        CentyHaptics.light()
+        return sent
+    }
+
+    /// Old three-status picker: only «Не беспокоить» is a choice now; any other value turns it off.
+    @available(*, deprecated, message: "Use setDnd(_:); presence is automatic")
+    public func updatePresence(_ status: UserStatus) async {
+        await setDnd(status == .dnd)
     }
 
     // MARK: - Wake buzzer

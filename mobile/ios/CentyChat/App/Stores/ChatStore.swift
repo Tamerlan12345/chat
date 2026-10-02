@@ -16,6 +16,8 @@ public final class ChatStore: RealtimeEventHandling {
     @ObservationIgnored private let realtime: RealtimeStore
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private let conversations: ConversationsStore
+    /// Tells the server which chat this device shows (`viewing`).
+    @ObservationIgnored private let presenceController: PresenceController?
     @ObservationIgnored private var lastTypingSent = Date.distantPast
     /// Optimistic messages awaiting the server echo; they use negative ids.
     @ObservationIgnored private var pendingMessageIDs: [Int64] = []
@@ -26,13 +28,15 @@ public final class ChatStore: RealtimeEventHandling {
         repository: any ChatRepository,
         realtime: RealtimeStore,
         session: SessionStore,
-        conversations: ConversationsStore
+        conversations: ConversationsStore,
+        presenceController: PresenceController? = nil
     ) {
         self.conversation = conversation
         self.repository = repository
         self.realtime = realtime
         self.session = session
         self.conversations = conversations
+        self.presenceController = presenceController
     }
 
     // MARK: - Visibility
@@ -66,6 +70,12 @@ public final class ChatStore: RealtimeEventHandling {
     private func applyPresence() {
         isVisible = presence.isVisible
         conversations.setConversation(conversation, visible: isVisible)
+        // The server hears only the open screen; foreground/background is the presence controller's.
+        if presence.appeared {
+            presenceController?.setViewing(conversation)
+        } else {
+            presenceController?.clearViewing(conversation)
+        }
     }
 
     // MARK: - Loading
@@ -175,7 +185,7 @@ public final class ChatStore: RealtimeEventHandling {
 
     func handle(_ event: WSServerEvent) {
         switch event {
-        case .newMessage(let message):
+        case .newMessage(let message, _):
             guard belongsHere(message) else { return }
             let isNewIncoming = receive(message) && message.senderId != session.currentUser?.id
             if isNewIncoming && isVisible {

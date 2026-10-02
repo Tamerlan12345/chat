@@ -37,10 +37,13 @@ public actor WebSocketClient {
     typealias Credentials = @Sendable () -> (serverURL: String, token: String?)
     typealias TransportFactory = @Sendable (URLRequest) -> any WebSocketTransport
     typealias Sleeper = @Sendable (TimeInterval) async throws -> Void
+    /// Device fields for the `auth` frame, read at every connect (presence and the open chat change).
+    typealias HandshakeProvider = @Sendable () -> AuthHandshake
 
     // MARK: - Dependencies
 
     private let credentials: Credentials
+    private let handshake: HandshakeProvider
     private let makeTransport: TransportFactory
     private let sleep: Sleeper
     private let jitter: @Sendable () -> Double
@@ -81,9 +84,11 @@ public actor WebSocketClient {
         makeTransport: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) },
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) },
-        pingIntervalSeconds: TimeInterval = 30
+        pingIntervalSeconds: TimeInterval = 30,
+        handshake: @escaping HandshakeProvider = { RealtimeHandshakeState.shared.handshake() }
     ) {
         self.credentials = credentials
+        self.handshake = handshake
         self.makeTransport = makeTransport
         self.sleep = sleep
         self.jitter = jitter
@@ -155,7 +160,7 @@ public actor WebSocketClient {
 
         // Автоматически отправляем auth, если токен есть в Keychain
         if let token = current.token {
-            send(clientMessage: .auth(token: token))
+            send(clientMessage: .auth(token: token, handshake: handshake()))
         }
 
         startReceiveLoop(transport: transport, generation: generation)
@@ -187,6 +192,15 @@ public actor WebSocketClient {
                 Log.realtime.error("Send failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// Sends only on an authenticated socket (after `auth_success`). Returns false when the frame
+    /// was not sent, so state the server must know (presence, viewing, «Не беспокоить») is re-sent later.
+    @discardableResult
+    public func sendIfAuthenticated(_ clientMessage: WSClientMessage) -> Bool {
+        guard connectionState == .connected, transport != nil else { return false }
+        send(clientMessage: clientMessage)
+        return true
     }
 
     /// Отправка бинарного аудиокадра (1028 байт)

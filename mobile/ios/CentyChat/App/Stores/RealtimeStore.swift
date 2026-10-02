@@ -89,10 +89,15 @@ public final class RealtimeStore {
         await repository.send(message)
     }
 
+    /// Sends only on an authenticated socket; false when the frame did not go out.
+    func sendIfAuthenticated(_ message: WSClientMessage) async -> Bool {
+        await repository.sendIfAuthenticated(message)
+    }
+
     // MARK: - Dispatch
 
     func dispatch(_ event: WSServerEvent) {
-        if case .newMessage(let message) = event, !deliveredMessageIDs.insert(message.id) {
+        if case .newMessage(let message, _) = event, !deliveredMessageIDs.insert(message.id) {
             return
         }
         handlers.removeAll { $0.value == nil }
@@ -120,6 +125,10 @@ struct RecentIDs {
             members.remove(order.removeFirst())
         }
         return true
+    }
+
+    func contains(_ id: Int64) -> Bool {
+        members.contains(id)
     }
 
     mutating func removeAll() {
