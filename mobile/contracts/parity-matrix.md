@@ -45,7 +45,7 @@
 | **Presence & DND** | `online`/`away`/`dnd`. | ◐ | ◐ | Живого прогона нет. |
 | **Wake (Побудка)** | Приём с вибрацией/звуком, кулдаун 60 с. | ◐ | ◐ | Только foreground (D10). |
 | **Voice Calls (Signalling)** | `call_offer/answer/rejected/end`. | ◐ | ✗ | D7 (Android: повторный звонок сразу закрывается, «назад» не завершает звонок — ViewModel привязаны к Activity). D10: только foreground. |
-| **Background / incoming call** | CallKit / foreground service / push. | ✗ | ✗ | D10; на сервере нет push (APNs/FCM). |
+| **Background / incoming call** | CallKit / foreground service / push. | ✗ | ✗ | D10. Сервер: push готов (задача 18, `push.md`: FCM/APNs, PushKit VoIP, только id, вызов ждёт и доставляется при подключении); клиенты — не реализовано. |
 | **Audio Relay (WebSocket)** | PCM 16 кГц через WS binary. | ◐ | ◐ | iOS: код ~900 строк ни разу не компилировался; D15 — возможный краш Swift 6 в аудиоколбэках (`installTap`/`scheduleBuffer` из @MainActor). |
 | **Silence Suppression / Jitter Buffer** | `SILENCE_THRESHOLD`, 60/250 мс. | ◐ | ◐ | Юнит-логика есть; в связке с живым звонком не проверена. |
 | **Announcements** | Список, бейджи, «Ознакомлен». | ◐ | ◐ | Живого прогона нет. |

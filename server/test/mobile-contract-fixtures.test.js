@@ -51,7 +51,14 @@ const REQUIRED_HTTP = [
   'http/messages.after-page.json', 'http/messages.send-cancelled.json',
   'http/sync.bootstrap.json', 'http/sync.page.json', 'http/sync.cursor-invalid.json',
   'http/files.policy.json', 'http/files.upload.json',
-  'http/announcements.list.json'
+  'http/announcements.list.json',
+  'http/devices.push-token-register.json', 'http/devices.push-token-invalid.json', 'http/devices.push-token-delete.json'
+];
+
+// Что уходит через поставщиков push (задача 18): по форме на сообщение и звонок.
+const REQUIRED_PUSH = [
+  'push/fcm.message.direct.json', 'push/fcm.message.channel.json', 'push/fcm.call.json',
+  'push/apns.message.direct.json', 'push/apns.message.channel.json', 'push/apns.call.json'
 ];
 
 function walk(dir, base = dir) {
@@ -95,15 +102,29 @@ test('every required HTTP fixture is committed', () => {
   for (const f of REQUIRED_HTTP) assert.ok(files.includes(f), `missing ${f}`);
 });
 
+test('every required push payload fixture is committed and carries ids only', () => {
+  const files = committedFiles();
+  for (const f of REQUIRED_PUSH) {
+    assert.ok(files.includes(f), `missing ${f}`);
+    const value = JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'utf8'));
+    const data = f.startsWith('push/fcm.') ? value.message.data : value.payload;
+    const { aps, ...ids } = data;
+    const allowed = ids.type === 'call' ? ['type', 'callerId', 'callId'] : ['type', 'conversationType', 'targetId', 'messageId'];
+    for (const k of Object.keys(ids)) assert.ok(allowed.includes(k), `${f}: unexpected field ${k} (only ids may pass through Google/Apple)`);
+    if (aps) assert.deepStrictEqual(aps.alert, { body: 'Новое сообщение' }, `${f}: alert must be the generic placeholder`);
+  }
+});
+
 test('manifest.json describes exactly the committed fixtures', () => {
   const manifestPath = path.join(FIXTURES, 'manifest.json');
   assert.ok(fs.existsSync(manifestPath), 'manifest.json is missing');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   assert.deepStrictEqual(Object.keys(manifest).sort(), committedFiles());
   for (const [file, meta] of Object.entries(manifest)) {
-    assert.ok(meta.kind === 'http' || meta.kind === 'ws', `${file}: kind`);
+    assert.ok(['http', 'ws', 'push'].includes(meta.kind), `${file}: kind`);
     assert.ok(typeof meta.description === 'string' && meta.description, `${file}: description`);
     if (meta.kind === 'http') assert.ok(meta.method && meta.path && meta.status, `${file}: method/path/status`);
+    else if (meta.kind === 'push') assert.ok(['fcm', 'apns'].includes(meta.provider) && meta.trigger, `${file}: provider/trigger`);
     else assert.ok(meta.event && meta.direction === 'server->client', `${file}: event/direction`);
   }
 });

@@ -90,6 +90,27 @@
     "path": "/api/conversations/direct",
     "status": 200
   },
+  "http/devices.push-token-delete.json": {
+    "kind": "http",
+    "description": "Удаление своего токена: { removed }. Чужой и несуществующий токен — тот же ответ { removed: false }.",
+    "method": "DELETE",
+    "path": "/api/devices/push-token",
+    "status": 200
+  },
+  "http/devices.push-token-invalid.json": {
+    "kind": "http",
+    "description": "Отказ регистрации: HTTP 400 и { error, code } (INVALID_PLATFORM, INVALID_TOKEN, INVALID_ENVIRONMENT, INVALID_KIND, INVALID_APP_VERSION, INVALID_DEVICE_ID).",
+    "method": "POST",
+    "path": "/api/devices/push-token",
+    "status": 400
+  },
+  "http/devices.push-token-register.json": {
+    "kind": "http",
+    "description": "Регистрация токена push устройства (идемпотентно): { registered, push_enabled }. push_enabled = false — у сервера нет учётных данных FCM/APNs, уведомлений не будет.",
+    "method": "POST",
+    "path": "/api/devices/push-token",
+    "status": 200
+  },
   "http/files.policy.json": {
     "kind": "http",
     "description": "Политика вложений: { enabled, allowed } (расширения в нижнем регистре, БЕЗ точки).",
@@ -201,6 +222,42 @@
     "method": "GET",
     "path": "/api/users",
     "status": 200
+  },
+  "push/apns.call.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "VoIP-уведомление PushKit о входящем звонке: topic <bundle>.voip, push-type voip, срок 30 с; payload { type: \"call\", callerId }.",
+    "trigger": "call_offer сотруднику без сокета"
+  },
+  "push/apns.message.channel.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Уведомление APNs о сообщении в канале.",
+    "trigger": "сообщение в канале, у участника нет сокета"
+  },
+  "push/apns.message.direct.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.",
+    "trigger": "личное сообщение alice → bob, у bob нет сокета"
+  },
+  "push/fcm.call.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о входящем звонке: высокий приоритет, ttl 30 с; data { type: \"call\", callerId }.",
+    "trigger": "call_offer сотруднику без сокета"
+  },
+  "push/fcm.message.channel.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о сообщении в канале: targetId — id канала.",
+    "trigger": "сообщение в канале, у участника нет сокета"
+  },
+  "push/fcm.message.direct.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о личном сообщении. Приложение получает message.data (все значения — строки): targetId — собеседник (автор), messageId — id сообщения. Текста и имени нет — приложение берёт их с сервера.",
+    "trigger": "личное сообщение alice → bob, у bob нет сокета"
   },
   "ws/announcement_acknowledged.json": {
     "kind": "ws",

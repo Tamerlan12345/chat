@@ -341,7 +341,7 @@
   "targetUserId": 12
 }
 ```
-*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`.*
+*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`.*
 
 #### `call_answer` — Принятие вызова
 ```json
@@ -1114,7 +1114,7 @@
   "reason": "Сотрудник сейчас не в сети"
 }
 ```
-`call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети». `call_answer` без реально ожидающего вызова сервер молча игнорирует; ожидающий вызов живёт 2 минуты.
+`call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети» (второе — только если у вызываемого нет устройства, которое будит push о звонке, или push на сервере выключен; иначе вызов ждёт, `push.md` §3). `call_answer` без реально ожидающего вызова сервер молча игнорирует; ожидающий вызов живёт 2 минуты.
 
 ---
 
@@ -1312,5 +1312,7 @@ sequenceDiagram
 | `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
 | `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
 | `error` | `ws/error.send_message.json`, `ws/error.edit_message.json`, `ws/error.delete_message.json`, `ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json`, `ws/error.rate_limited.json`, `ws/error.cancelled.json`, `ws/error.cancel_message.json` |
+
+Push-уведомления (задача 18): регистрация токена — `http/devices.push-token-register.json`, `.push-token-invalid.json`, `.push-token-delete.json`; что уходит через Google/Apple — `push/fcm.*.json`, `push/apns.*.json` (описание — `push.md`).
 
 HTTP-фикстуры надёжной доставки: `http/messages.send-direct-idempotent.json` (201 с `client_msg_id`), `http/messages.send-direct-duplicate.json` (200, повтор), `http/messages.send-client-msg-id-invalid.json` (400), `http/messages.send-client-msg-id-conflict.json` (409), `http/messages.send-cancelled.json` (409 `CANCELLED`), `http/messages.after-page.json` (`afterId`), `http/sync.bootstrap.json`, `http/sync.page.json`, `http/sync.cursor-invalid.json` (410).

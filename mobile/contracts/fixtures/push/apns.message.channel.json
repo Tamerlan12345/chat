@@ -1,0 +1,23 @@
+{
+  "headers": {
+    "apns-topic": "kz.centras.centychat",
+    "apns-push-type": "alert",
+    "apns-priority": "10",
+    "apns-expiration": "1791018000",
+    "apns-collapse-id": "m-channel-3"
+  },
+  "payload": {
+    "aps": {
+      "alert": {
+        "body": "Новое сообщение"
+      },
+      "sound": "default",
+      "mutable-content": 1,
+      "thread-id": "channel-3"
+    },
+    "type": "message",
+    "conversationType": "channel",
+    "targetId": 3,
+    "messageId": 9
+  }
+}

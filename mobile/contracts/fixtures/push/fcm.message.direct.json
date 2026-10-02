@@ -1,0 +1,16 @@
+{
+  "message": {
+    "token": "fcm-registration-token-EXAMPLE_0123456789:abcdefghijklmnop",
+    "data": {
+      "type": "message",
+      "conversationType": "direct",
+      "targetId": "2",
+      "messageId": "13"
+    },
+    "android": {
+      "priority": "HIGH",
+      "ttl": "86400s",
+      "collapse_key": "m-direct-2"
+    }
+  }
+}
