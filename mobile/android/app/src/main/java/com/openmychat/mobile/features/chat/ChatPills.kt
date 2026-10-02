@@ -29,8 +29,8 @@ internal fun DaySeparatorRow(date: LocalDate, modifier: Modifier = Modifier) {
 }
 
 /**
- * The sticky copy of the day separator: it floats at the top of the history while that day's
- * messages pass under it, and hands over to the inline separator when it reaches the top.
+ * The sticky copy of the day separator: it fades in (120 ms) while the history is scrolled and the
+ * inline separator of that day is off screen, and fades out a second after scrolling stops.
  */
 @Composable
 internal fun StickyDatePill(day: LocalDate?, modifier: Modifier = Modifier) {
@@ -42,6 +42,6 @@ internal fun StickyDatePill(day: LocalDate?, modifier: Modifier = Modifier) {
         enter = fadeIn(CentyMotion.fast()),
         exit = fadeOut(CentyMotion.fast())
     ) {
-        shown?.let { DateSeparator(dayLabel(it), Modifier.testTag("sticky-date")) }
+        shown?.let { DateSeparator(dayLabel(it), Modifier.testTag("sticky-date"), floating = true) }
     }
 }

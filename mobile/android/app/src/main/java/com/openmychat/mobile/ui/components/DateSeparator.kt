@@ -23,7 +23,7 @@ import java.util.Locale
  * sticky copy, floating at the top of the chat while that day scrolls by.
  */
 @Composable
-fun DateSeparator(label: String, modifier: Modifier = Modifier) {
+fun DateSeparator(label: String, modifier: Modifier = Modifier, floating: Boolean = false) {
     val tokens = CentyTheme.tokens
     Text(
         text = label,
@@ -31,7 +31,8 @@ fun DateSeparator(label: String, modifier: Modifier = Modifier) {
         color = tokens.textSecondary,
         modifier = modifier
             .background(tokens.elevated, CircleShape)
-            .border(1.dp, tokens.border, CircleShape)
+            // The floating copy sits over bubbles: a stronger hairline keeps it off the card tone.
+            .border(1.dp, if (floating) tokens.borderStrong else tokens.border, CircleShape)
             .padding(horizontal = 12.dp, vertical = 4.dp)
             .semantics { heading() }
     )
