@@ -344,6 +344,45 @@ Worktree `m-integration`. Depends on Task 13. Source: `mobile/contracts/delivery
 - Update `ws-protocol.md`, `delivery-state.md` (use the new signals when present; keep the old fallbacks), the reference reducer, vectors (new vectors for each signal; all existing vectors still pass), fixtures (`--write`), and the Task 13 deferred minors (persisted cancelled-key set; hide messages with a pending delete op).
 - TDD; full `npm test` green.
 
+### Task 18: Integration — server push notifications (ids only) + Task 16 follow-ups
+
+Worktree `m-integration`. Depends on Task 16. The owner confirmed that the push payload carries only ids: no message text and no sender name may pass through Google or Apple.
+
+**Push token API**
+- `POST /api/devices/push-token {platform: "ios"|"android", token, environment: "sandbox"|"production", app_version}` registers a token. It is idempotent, and the token is bound to the session's user and device.
+- `DELETE /api/devices/push-token {token}` removes a token. Tokens are also removed on logout and on `/auth/device/unbind`.
+- Validation and rate limits apply. One user may hold at most N tokens.
+
+**What is pushed**
+- A new direct or channel message is pushed to recipients' tokens when none of that user's devices is connected on WS. Muted/DND users get no push; follow the existing DND semantics.
+- Incoming call offers produce high-priority/VoIP-class pushes. iOS uses a PushKit VoIP topic (`<bundle>.voip`); Android uses FCM high priority with `ttl` 30 s.
+- Message payload: `{type:"message", conversationType, targetId, messageId}`.
+- Call payload: `{type:"call", callerId, callId?}`.
+- APNs alerts use `mutable-content: 1` with a generic localised placeholder («Новое сообщение»). The app's Notification Service Extension later fetches the real text from our server; that is a platform task.
+
+**Providers**
+- FCM HTTP v1 uses a service-account JSON from env/secret file, with OAuth token caching.
+- APNs uses HTTP/2 with token-based (.p8) auth.
+- Both sit behind a `PushProvider` interface. Push is disabled with a clear log line when it isn't configured.
+- Invalid tokens (FCM `UNREGISTERED`, APNs 410/`BadDeviceToken`) are pruned. Retries use backoff, and a queue keeps the request path from blocking.
+- Env names and setup steps are documented in `.env.example` and `mobile/dev/README.md`. No credentials are committed.
+
+**Contract**
+- `openapi.yaml`.
+- A new `mobile/contracts/push.md` covering payloads, collapse keys, priority, TTL, and the behaviour when the app is foreground vs background.
+- New fixtures.
+
+**Tests** use fake providers and cover: offline recipient gets a push; online recipient gets none; DND gets none; invalid-token pruning; payload contains no text; other users' tokens are inaccessible.
+
+**Task 16 follow-ups** (from the review):
+- a stale rate-limited edit must not revert a newer edit;
+- clamp `retry_after_ms` to ≤30000 in the reducer;
+- `snapshotTotals` ignores tombstones;
+- apply the frame timeout only on the queued path;
+- the history row uses the post-await `current` text in delete/edit;
+- doc wording fixes;
+- tests for the 3 untested branches.
+
 ### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
 
 Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
@@ -364,5 +403,5 @@ Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/deliver
 
 Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16; QA 10 after Wave 1.
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
