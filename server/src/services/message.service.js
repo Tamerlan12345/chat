@@ -1,4 +1,4 @@
-const { getDatabase } = require('../db');
+const { getDatabase, withChangeSeq, getSyncState } = require('../db');
 const UserService = require('./user.service');
 const SettingsService = require('./settings.service');
 
@@ -82,10 +82,24 @@ const VISIBLE_TO_USER_SQL = `(
   (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
 )`;
 
-// Номер следующего изменения. Подзапрос внутри той же инструкции: node:sqlite
-// синхронен, и между чтением максимума и записью никто не вклинится; уникальный
-// индекс idx_messages_change_seq — последняя страховка.
-const NEXT_CHANGE_SEQ_SQL = '(SELECT COALESCE(MAX(change_seq), 0) + 1 FROM messages)';
+// Номер изменения выдаёт счётчик sync_state (db/index.js withChangeSeq), а не
+// MAX(change_seq) по живым строкам: тот откатывался бы после физического
+// удаления строк, и номера, уже выданные клиентам, достались бы новым
+// изменениям.
+
+// Курсор /api/sync: «<эпоха базы>.<номер изменения>». Клиенту — непрозрачная
+// строка; эпоха отличает эту базу от её восстановленной копии.
+const SYNC_CURSOR_PARSE_RE = /^([0-9a-f]{16})\.(\d{1,15})$/;
+
+function formatSyncCursor(epoch, seq) {
+  return `${epoch}.${seq}`;
+}
+
+function syncCursorError() {
+  const err = new Error('Курсор синхронизации недействителен — загрузите переписку заново');
+  err.code = 'SYNC_CURSOR_INVALID';
+  return err;
+}
 
 function clientMsgIdError(code, message) {
   const err = new Error(message);
@@ -393,10 +407,10 @@ class MessageService {
 
     let result;
     try {
-      result = db
+      result = withChangeSeq(db, (seq) => db
         .prepare(`
           INSERT INTO messages (conversation_type, target_id, sender_id, text, type, reply_to_id, metadata_json, created_at, client_msg_id, change_seq)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NEXT_CHANGE_SEQ_SQL})
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           conversationType,
@@ -407,8 +421,9 @@ class MessageService {
           replyToId ? Number(replyToId) : null,
           metadata ? JSON.stringify(metadata) : null,
           now,
-          clientKey
-        );
+          clientKey,
+          seq
+        ));
     } catch (err) {
       // Уникальный индекс (sender_id, client_msg_id) — последняя линия защиты.
       const again = clientKey && /UNIQUE/i.test(String(err.message))
@@ -439,8 +454,9 @@ class MessageService {
   static touchMessages(ids) {
     const unique = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
     if (!unique.length) return;
-    const bump = getDatabase().prepare(`UPDATE messages SET change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`);
-    for (const id of unique) bump.run(id);
+    const db = getDatabase();
+    const bump = db.prepare('UPDATE messages SET change_seq = ? WHERE id = ?');
+    for (const id of unique) withChangeSeq(db, (seq) => bump.run(seq, id));
   }
 
   /**
@@ -475,8 +491,8 @@ class MessageService {
       VALUES (?, 'edit', ?, ?, ?, ?)
     `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
 
-    db.prepare(`UPDATE messages SET text = ?, updated_at = ?, change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`)
-      .run(body, now, message.id);
+    withChangeSeq(db, (seq) => db.prepare('UPDATE messages SET text = ?, updated_at = ?, change_seq = ? WHERE id = ?')
+      .run(body, now, seq, message.id));
 
     return this.getMessageById(message.id);
   }
@@ -512,8 +528,8 @@ class MessageService {
       VALUES (?, 'delete', ?, ?, ?, ?)
     `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
 
-    db.prepare(`UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ?, change_seq = ${NEXT_CHANGE_SEQ_SQL} WHERE id = ?`)
-      .run(now, message.id);
+    withChangeSeq(db, (seq) => db.prepare("UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ?, change_seq = ? WHERE id = ?")
+      .run(now, seq, message.id));
 
     return {
       id: message.id,
@@ -787,11 +803,31 @@ class MessageService {
   }
 
   /**
-   * Текущая «голова» последовательности изменений — курсор, после которого
-   * изменений ещё нет.
+   * Текущая «голова» последовательности изменений: последний выданный номер
+   * (счётчик sync_state, не MAX по живым строкам).
    */
   static syncHead() {
-    return Number(getDatabase().prepare('SELECT COALESCE(MAX(change_seq), 0) AS head FROM messages').get().head);
+    return getSyncState().lastSeq;
+  }
+
+  /** Курсор «изменений после этого нет» — начальная точка для клиента. */
+  static syncHeadCursor() {
+    const { lastSeq, epoch } = getSyncState();
+    return formatSyncCursor(epoch, lastSeq);
+  }
+
+  /**
+   * Номер изменения из курсора клиента. Курсор другой эпохи (база
+   * восстановлена из копии, другой сервер), прежнего формата или с номером
+   * впереди головы — SYNC_CURSOR_INVALID: клиент начинает заново.
+   */
+  static parseSyncCursor(cursor) {
+    const match = SYNC_CURSOR_PARSE_RE.exec(String(cursor));
+    if (!match) throw syncCursorError();
+    const { lastSeq, epoch } = getSyncState();
+    const seq = Number(match[2]);
+    if (match[1] !== epoch || seq > lastSeq) throw syncCursorError();
+    return seq;
   }
 
   /**
@@ -807,16 +843,11 @@ class MessageService {
     const db = getDatabase();
     const me = Number(userId);
     const capped = Math.min(Math.max(Number(limit) || SYNC_DEFAULT_LIMIT, 1), SYNC_MAX_LIMIT);
-    const from = Number(since);
 
     // Всё синхронно до attachSenders: голова и выборка читаются без
     // промежуточных записей, поэтому next_cursor = голова ничего не пропустит.
-    const head = this.syncHead();
-    if (from > head) {
-      const err = new Error('Курсор синхронизации недействителен — загрузите переписку заново');
-      err.code = 'SYNC_CURSOR_INVALID';
-      throw err;
-    }
+    const from = this.parseSyncCursor(since);
+    const { lastSeq: head, epoch } = getSyncState();
 
     const rows = db
       .prepare(`
@@ -840,7 +871,7 @@ class MessageService {
 
     return {
       messages: await this.attachSenders(page),
-      next_cursor: String(nextCursor),
+      next_cursor: formatSyncCursor(epoch, nextCursor),
       has_more: hasMore
     };
   }

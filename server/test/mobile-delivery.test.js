@@ -64,6 +64,9 @@ test.before(async () => {
   // Канал alice + bob; закрытый канал carol + dave — alice его не видит.
   const team = MessageService.createChannel('Команда', '', 'public', people.alice.id);
   people.teamId = Number(team.id);
+  const admin = await UserService.getUserByUsername('admin');
+  await UserService.setMustChangePassword(admin.id, false);
+  people.admin = { id: admin.id, token: AuthService.generateToken(await UserService.getUserById(admin.id)) };
   const secret = MessageService.createChannel('Тайный', '', 'private', people.carol.id);
   people.secretId = Number(secret.id);
   const now = new Date().toISOString();
@@ -142,6 +145,11 @@ async function waitFor(client, predicate, timeoutMs = 3000) {
 }
 
 const send = (name, payload) => sockets[name].sock.send(JSON.stringify(payload));
+// Курсор синхронизации: «<эпоха>.<номер изменения>». Клиенту он непрозрачен;
+// тесты разбирают его, только чтобы проверить свойства сервера.
+const CURSOR_RE = /^[0-9a-f]{16}\.\d+$/;
+const cursorSeq = (cursor) => Number(String(cursor).split('.')[1]);
+const cursorEpoch = (cursor) => String(cursor).split('.')[0];
 const countRows = (where, ...params) => Number(chat.prepare(`SELECT COUNT(*) AS n FROM messages WHERE ${where}`).get(...params).n);
 
 // ══ S1. Идемпотентная отправка ═══════════════════════════════════════════
@@ -333,7 +341,7 @@ test('S2 sync: без since — пустая выборка и курсор «г
   assert.strictEqual(boot.status, 200, boot.text);
   assert.deepStrictEqual(boot.json.messages, []);
   assert.strictEqual(boot.json.has_more, false);
-  assert.match(boot.json.next_cursor, /^\d+$/);
+  assert.match(boot.json.next_cursor, CURSOR_RE);
   const cursor = boot.json.next_cursor;
 
   const kept = await api('POST', `/api/messages/direct/${people.frank.id}`, { token: people.grace.token, body: { text: 'Новое' } });
@@ -359,7 +367,8 @@ test('S2 sync: без since — пустая выборка и курсор «г
     assert.ok('delivery_status' in m && 'client_msg_id' in m && !('change_seq' in m));
   }
   assert.strictEqual(res.json.has_more, false);
-  assert.ok(Number(res.json.next_cursor) > Number(cursor));
+  assert.ok(cursorSeq(res.json.next_cursor) > cursorSeq(cursor));
+  assert.strictEqual(cursorEpoch(res.json.next_cursor), cursorEpoch(cursor));
 
   const after = await api('GET', `/api/sync?since=${res.json.next_cursor}`, { token: people.frank.token });
   assert.deepStrictEqual(after.json.messages, []);
@@ -411,25 +420,60 @@ test('S2 sync: чужие личные переписки и каналы без
   assert.ok(!JSON.stringify(res.json).includes('Тайный канал') && !JSON.stringify(res.json).includes('Чужая личка'));
 });
 
-test('S2 sync: проверка курсора и предела; без токена 401; курсор из будущего — 410', async () => {
-  for (const bad of ['abc', '-1', '1.5', '1e3', '1'.repeat(16), '']) {
-    const r = await api('GET', `/api/sync?since=${bad}`, { token: people.alice.token });
+test('S2 sync: проверка курсора и предела; без токена 401; чужая эпоха, мусор и курсор из будущего — 410', async () => {
+  const head = (await api('GET', '/api/sync', { token: people.alice.token })).json.next_cursor;
+  const epoch = cursorEpoch(head);
+
+  // Не похоже на курсор вообще (пусто, недопустимые символы, длиннее 64) — 400.
+  for (const bad of ['', 'a b', '<x>', 'x'.repeat(65)]) {
+    const r = await api('GET', `/api/sync?since=${encodeURIComponent(bad)}`, { token: people.alice.token });
     assert.strictEqual(r.status, 400, `since=${JSON.stringify(bad)} → ${r.status}`);
   }
+  // Похоже, но не наш: старый формат, чужая эпоха (база восстановлена из
+  // копии), номер впереди головы — 410, клиент начинает заново.
+  const otherEpoch = epoch === '0123456789abcdef' ? 'fedcba9876543210' : '0123456789abcdef';
+  for (const stale of ['123', 'abc', '1.5', `${otherEpoch}.${cursorSeq(head)}`, `${otherEpoch}.0`, `${epoch}.${cursorSeq(head) + 1000}`, `${epoch}.x`]) {
+    const r = await api('GET', `/api/sync?since=${encodeURIComponent(stale)}`, { token: people.alice.token });
+    assert.strictEqual(r.status, 410, `since=${stale} → ${r.status} ${r.text}`);
+    assert.strictEqual(r.json.code, 'SYNC_CURSOR_INVALID');
+  }
+
   for (const bad of ['0', '-5', 'x']) {
-    const r = await api('GET', `/api/sync?since=0&limit=${bad}`, { token: people.alice.token });
+    const r = await api('GET', `/api/sync?since=${epoch}.0&limit=${bad}`, { token: people.alice.token });
     assert.strictEqual(r.status, 400, `limit=${bad}`);
   }
-  const big = await api('GET', '/api/sync?since=0&limit=100000', { token: people.alice.token });
+  const big = await api('GET', `/api/sync?since=${epoch}.0&limit=100000`, { token: people.alice.token });
   assert.strictEqual(big.status, 200);
   assert.ok(big.json.messages.length <= 200, 'предел страницы — 200');
 
-  const anon = await api('GET', '/api/sync?since=0');
+  const anon = await api('GET', `/api/sync?since=${epoch}.0`);
   assert.strictEqual(anon.status, 401);
+});
 
-  const future = await api('GET', '/api/sync?since=999999999', { token: people.alice.token });
-  assert.strictEqual(future.status, 410);
-  assert.strictEqual(future.json.code, 'SYNC_CURSOR_INVALID');
+test('S2 sync: удаление канала с самыми свежими изменениями не откатывает курсор — ничего не теряется', async () => {
+  // Канал, в котором окажутся самые большие номера изменений; затем его
+  // удаляет администратор (сообщения стираются физически).
+  const doomed = MessageService.createChannel('Удаляемый', '', 'public', people.alice.id);
+  const K = 4;
+  for (let i = 0; i < K; i += 1) {
+    const r = await api('POST', `/api/messages/channels/${doomed.id}`, { token: people.alice.token, body: { text: `в удаляемый канал ${i}` } });
+    assert.strictEqual(r.status, 201);
+  }
+  const cursor = (await api('GET', '/api/sync', { token: people.alice.token })).json.next_cursor;
+
+  const del = await api('DELETE', `/api/admin/channels/${doomed.id}`, { token: people.admin.token });
+  assert.strictEqual(del.status, 200, del.text);
+
+  const sent = [];
+  for (let i = 0; i <= K; i += 1) {
+    const r = await api('POST', `/api/messages/direct/${people.bob.id}`, { token: people.alice.token, body: { text: `после удаления канала ${i}` } });
+    sent.push(r.json.id);
+  }
+  const res = await api('GET', `/api/sync?since=${cursor}&limit=200`, { token: people.alice.token });
+  assert.strictEqual(res.status, 200, res.text);
+  const got = res.json.messages.map((m) => m.id);
+  for (const id of sent) assert.ok(got.includes(id), `сообщение ${id} после удаления канала потеряно синхронизацией`);
+  assert.ok(cursorSeq(res.json.next_cursor) > cursorSeq(cursor));
 });
 
 test('S2 sync: прочтение собеседником возвращает сообщение в выборку автора со статусом read', async () => {
@@ -512,7 +556,7 @@ test('S3: REST-отправка получателю в сети — «дост�
 test('S2 sync: предел частоты — 429 с Retry-After', async () => {
   let limited = null;
   for (let i = 0; i < 80 && !limited; i += 1) {
-    const r = await api('GET', '/api/sync?since=0&limit=1', { token: people.grace.token });
+    const r = await api('GET', '/api/sync?limit=1', { token: people.grace.token });
     if (r.status === 429) limited = r;
     else assert.strictEqual(r.status, 200);
   }

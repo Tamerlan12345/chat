@@ -3,7 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { pipeline } = require('node:stream/promises');
 const { DatabaseSync } = require('node:sqlite');
-const { getDatabase } = require('../db');
+const { getDatabase, rotateSyncEpoch } = require('../db');
 const { identity } = require('../db/identity');
 const config = require('../config');
 
@@ -132,6 +132,9 @@ class BackupService {
     const chatPath = path.join(config.BACKUPS_DIR, `mychat-backup-${stamp}.db`);
     try {
       getDatabase().prepare('VACUUM INTO ?').run(chatPath);
+      // Своя эпоха синхронизации у копии: курсоры, выданные рабочей базой,
+      // к восстановленной из копии не подойдут (см. db/index.js rotateSyncEpoch).
+      rotateSyncEpoch(chatPath);
       await fs.promises.chmod(chatPath, 0o600).catch(() => {});
       checkSqliteIntegrity(chatPath);
       files.push(await finalize(chatPath));

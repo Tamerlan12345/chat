@@ -1384,12 +1384,14 @@ router.get('/messages/channels/:targetId', requireAuth, route(async (req, res) =
 router.post('/messages/channels/:targetId', requireAuth, route((req, res) => sendViaRest(req, res, 'channel')));
 
 // ── Синхронизация после переподключения (мобильные клиенты) ──
-// Курсор — номер изменения (строка из цифр, не время). Без since — только
+// Курсор — непрозрачная строка «<эпоха>.<номер изменения>» (не время). Не
+// похожая на курсор строка — 400; похожая, но не этой базы или устаревшая —
+// 410 (MessageService.parseSyncCursor). Без since — только
 // текущая голова: с неё клиент начинает, загрузив страницы переписок обычным
 // путём. Предел частоты — как у поиска: обход длинного пропуска — это десятки
 // страниц, а не тысячи запросов в минуту.
 const SYNC_RATE_LIMIT = { maxAttempts: 60, windowMs: 60000 };
-const SYNC_CURSOR_RE = /^\d{1,15}$/;
+const SYNC_CURSOR_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 router.get('/sync', requireAuth, route(async (req, res) => {
   if (!checkRateLimit(`sync:${req.user.id}`, SYNC_RATE_LIMIT)) {
@@ -1398,7 +1400,7 @@ router.get('/sync', requireAuth, route(async (req, res) => {
   }
   const { since, limit } = req.query;
   if (since !== undefined && (typeof since !== 'string' || !SYNC_CURSOR_RE.test(since))) {
-    return res.status(400).json({ error: 'since — курсор из next_cursor (строка из цифр)' });
+    return res.status(400).json({ error: 'since — курсор из next_cursor (непрозрачная строка)' });
   }
   let pageSize = MessageService.SYNC_DEFAULT_LIMIT;
   if (limit !== undefined) {
@@ -1408,7 +1410,7 @@ router.get('/sync', requireAuth, route(async (req, res) => {
     pageSize = Number(limit);
   }
   if (since === undefined) {
-    return res.json({ messages: [], next_cursor: String(MessageService.syncHead()), has_more: false });
+    return res.json({ messages: [], next_cursor: MessageService.syncHeadCursor(), has_more: false });
   }
   try {
     res.json(await MessageService.syncSince(req.user.id, since, pageSize));

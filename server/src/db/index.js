@@ -1,4 +1,5 @@
 const { DatabaseSync } = require('node:sqlite');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
@@ -110,6 +111,18 @@ const TABLES = {
       old_metadata_json TEXT,
       actor_id INTEGER NOT NULL,
       created_at TEXT NOT NULL
+    )`,
+  // Счётчик изменений для /api/sync — отдельно от строк messages. Номер,
+  // выведенный из MAX(change_seq) живых строк, откатывался бы назад после
+  // физического удаления (удаление канала, SQL-консоль), и уже выданные
+  // клиентам номера достались бы новым изменениям — клиент их бы не увидел.
+  // epoch — случайная метка этой базы: входит в курсор, и курсор чужой базы
+  // (или резервной копии, у которой эпоха своя) сервер не примет.
+  sync_state: `
+    CREATE TABLE IF NOT EXISTS sync_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_seq INTEGER NOT NULL,
+      epoch TEXT NOT NULL
     )`
 };
 
@@ -146,10 +159,66 @@ function migrateMessages(db) {
   for (const [name, type] of MESSAGE_COLUMNS_ADDED) {
     if (!present.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
   }
+
+  const maxSeq = () => Number(db.prepare('SELECT COALESCE(MAX(change_seq), 0) AS m FROM messages').get().m);
+  // Счётчик заводится один раз — по наибольшему уже выданному номеру.
+  db.prepare('INSERT OR IGNORE INTO sync_state (id, last_seq, epoch) VALUES (1, ?, ?)').run(maxSeq(), newSyncEpoch());
+  // Счётчик никогда не ниже выданного (база собрана руками, перенесены строки).
+  db.prepare('UPDATE sync_state SET last_seq = MAX(last_seq, ?) WHERE id = 1').run(maxSeq());
+
   const pending = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE change_seq IS NULL').get();
   if (Number(pending?.n || 0) > 0) {
-    const max = Number(db.prepare('SELECT COALESCE(MAX(change_seq), 0) AS m FROM messages').get().m);
-    db.prepare('UPDATE messages SET change_seq = id + ? WHERE change_seq IS NULL').run(max);
+    const base = Number(db.prepare('SELECT last_seq FROM sync_state WHERE id = 1').get().last_seq);
+    db.prepare('UPDATE messages SET change_seq = id + ? WHERE change_seq IS NULL').run(base);
+    db.prepare('UPDATE sync_state SET last_seq = MAX(last_seq, ?) WHERE id = 1').run(maxSeq());
+  }
+}
+
+function newSyncEpoch() {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+/**
+ * Выполняет запись, которой нужен номер изменения: номер берётся из
+ * sync_state (только растёт) и запись делается в той же точке сохранения —
+ * не удалась запись, не расходуется и номер. write(seq) получает номер.
+ */
+function withChangeSeq(db, write) {
+  db.exec('SAVEPOINT change_seq');
+  try {
+    const seq = Number(
+      db.prepare('UPDATE sync_state SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq').get().last_seq
+    );
+    const result = write(seq);
+    db.exec('RELEASE change_seq');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK TO change_seq');
+    db.exec('RELEASE change_seq');
+    throw err;
+  }
+}
+
+/** { lastSeq, epoch } — голова последовательности изменений и эпоха базы. */
+function getSyncState(db = getDatabase()) {
+  const row = db.prepare('SELECT last_seq, epoch FROM sync_state WHERE id = 1').get();
+  return { lastSeq: Number(row.last_seq), epoch: String(row.epoch) };
+}
+
+/**
+ * Новая эпоха в файле резервной копии (сразу после VACUUM INTO). Копия —
+ * снимок прошлого: восстановленная из неё база выдала бы заново номера,
+ * которые клиенты уже видели. С другой эпохой их курсоры не примутся
+ * (HTTP 410), и клиенты синхронизируются с нуля.
+ */
+function rotateSyncEpoch(filePath) {
+  const db = new DatabaseSync(filePath);
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'").get()) {
+      db.prepare('UPDATE sync_state SET epoch = ? WHERE id = 1').run(newSyncEpoch());
+    }
+  } finally {
+    db.close();
   }
 }
 
@@ -359,6 +428,9 @@ function seedChatDefaults(db, ownerId = null) {
 module.exports = {
   getDatabase,
   closeDatabase,
+  withChangeSeq,
+  getSyncState,
+  rotateSyncEpoch,
   finalizeIdentitySplit,
   seedChatDefaults,
   TABLES_REFERENCING_USERS,
