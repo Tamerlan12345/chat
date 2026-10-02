@@ -35,5 +35,35 @@ ADB="$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe"
 mkdir -p build-evidence && "$ADB" -s emulator-5554 exec-out screencap -p > build-evidence/screen.png
 ```
 
-Debug builds allow cleartext HTTP only to local hosts (`http://10.0.2.2:2004/api`); release is HTTPS/WSS only.
+## Server
+
+The server is fixed at build time; the app has no server field and no runtime override.
+
+- **Release:** always `https://centychat-production.up.railway.app` (`BuildConfig.SERVER_URL`, and
+  `ServerConfig` ignores the build value outside debug as a second guard). HTTPS/WSS only, system
+  trust only, no network security config.
+- **Debug:** the local HTTPS dev stand `https://10.0.2.2:8443` by default, never production, so
+  connected tests and stray debug installs cannot send dev credentials to the real server.
+  `-Pcentychat.serverUrl=https://host[:port]` overrides it (pass the production URL explicitly to
+  point a debug build there). Stored credentials
+  issued by a different server are wiped on start, so switching a debug build between servers
+  signs you out instead of sending a token to the wrong host.
+
+### Local HTTPS dev stand (debug only)
+
+```bash
+(cd server && npm ci)
+SERVER_PORT=2014 node mobile/dev/stand.mjs     # 2004 may be taken by a local server; see mobile/dev/README.md
+cd mobile/android
+JAVA_HOME=/c/tmp/jdk17/jdk-17.0.20.1+1 GRADLE_USER_HOME=/c/tmp/gradle-user-home   ./gradlew.bat --project-cache-dir /c/tmp/m-android-project-cache assembleDebug   # the stand is the debug default
+```
+
+The stand creates its CA at `mobile/dev/certs/dev-ca.crt` (git-ignored). When that file exists,
+the debug build's `generateDebugDevCaResources` task copies it into a generated resource overlay
+(`raw/centychat_dev_ca`) together with a copy of `src/debug/res/xml/debug_network_security_config.xml`
+that adds it as a trust anchor for the local hosts only. Nothing is copied into `src/`, and
+release builds never see it. Without the file the checked-in debug config applies. Sign in as
+`alice` / `Alice-Dev-Stand-5271` (see `mobile/dev/README.md`).
+
+Debug builds also allow cleartext HTTP to local hosts, but bearer tokens are only ever sent over HTTPS.
 Screenshots go to `build-evidence/` (git-ignored).

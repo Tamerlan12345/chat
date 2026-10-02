@@ -16,7 +16,9 @@ RUN npm run build
 FROM node:24-alpine AS server-deps
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
-RUN npm ci --omit=dev
+# --ignore-scripts: ни одной зависимости сервера скрипт установки не нужен
+# (sharp берёт готовую libvips для musl из @img/sharp-linuxmusl-x64).
+RUN npm ci --omit=dev --ignore-scripts
 
 # ── Stage 3: minimal runtime image ──
 FROM node:24-alpine AS runtime

@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 class ApiClientSecureStorageFailureTest {
 
@@ -53,7 +54,7 @@ class ApiClientSecureStorageFailureTest {
 
     private fun sessionManagerWhoseNextWriteFails(): SessionManager = SessionManager(
         prefs = FailingCommitSharedPreferences(),
-        isDebuggableBuild = false
+        serverEndpoint = TestSessions.CHAT_EXAMPLE
     )
 
     private fun refreshResponseClient(): OkHttpClient = responseClient {

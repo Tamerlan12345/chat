@@ -128,7 +128,24 @@ data class Message(
     val fileOriginalName: String? = null,
 
     @SerialName("delivery_status")
-    val deliveryStatus: DeliveryStatus? = null
+    val deliveryStatus: DeliveryStatus? = null,
+
+    /** Idempotency key chosen by the sending client; null for messages sent without one. */
+    @SerialName("client_msg_id")
+    val clientMsgId: String? = null
+)
+
+/** One page of `GET /api/sync`. [nextCursor] is opaque and must be sent back unchanged. */
+@Serializable
+data class SyncPage(
+    @SerialName("messages")
+    val messages: List<Message>,
+
+    @SerialName("next_cursor")
+    val nextCursor: String,
+
+    @SerialName("has_more")
+    val hasMore: Boolean
 )
 
 @Serializable

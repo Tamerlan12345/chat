@@ -1,0 +1,195 @@
+{
+  "name": "47-http-stale-results-and-flush-online",
+  "description": "Ответы REST на устаревшую попытку (503, 409 для attempt 1, пока в полёте attempt 2) игнорируются. background_flush при открытом сокете ничего не шлёт по HTTP — запись после паузы уходит по WS. Ответ на актуальную попытку (409) — отказ.",
+  "covers": [
+    "T15",
+    "T19",
+    "T18",
+    "T37",
+    "T04"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000066-0000-4000-8000-000000000066",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Через REST, вторая попытка",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": "http",
+        "ack_deadline": 40000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000067-0000-4000-8000-000000000067",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Ждёт паузу",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": 25000,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": 25000,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "http_send_result",
+      "now": 20000,
+      "client_msg_id": "a0000066-0000-4000-8000-000000000066",
+      "attempt": 1,
+      "status": 503,
+      "body": null
+    },
+    {
+      "type": "http_send_result",
+      "now": 20001,
+      "client_msg_id": "a0000066-0000-4000-8000-000000000066",
+      "attempt": 1,
+      "status": 409,
+      "body": {
+        "error": "Этот client_msg_id уже использован для другой переписки",
+        "code": "CLIENT_MSG_ID_CONFLICT"
+      }
+    },
+    {
+      "type": "background_flush",
+      "now": 25000
+    },
+    {
+      "type": "http_send_result",
+      "now": 26000,
+      "client_msg_id": "a0000066-0000-4000-8000-000000000066",
+      "attempt": 2,
+      "status": 409,
+      "body": {
+        "error": "Этот client_msg_id уже использован для другой переписки",
+        "code": "CLIENT_MSG_ID_CONFLICT"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Ждёт паузу",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000067-0000-4000-8000-000000000067"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 35000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000067-0000-4000-8000-000000000067",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000066-0000-4000-8000-000000000066",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Через REST, вторая попытка",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": "CLIENT_MSG_ID_CONFLICT",
+          "message": "Этот client_msg_id уже использован для другой переписки"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000067-0000-4000-8000-000000000067",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Ждёт паузу",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 35000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": null
+  }
+}

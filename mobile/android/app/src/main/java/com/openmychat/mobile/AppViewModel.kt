@@ -3,6 +3,8 @@ package com.openmychat.mobile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.WsEvent
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
+import com.openmychat.mobile.features.auth.PASSWORD_CHANGE_GENERIC_ERROR
 import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
@@ -34,7 +36,6 @@ class AppViewModel @Inject constructor(
 ) : ViewModel() {
 
     val routeStates: Flow<AuthenticatedRouteState> get() = sessionRepository.routeStates
-    val hasConfiguredServer: Boolean get() = sessionRepository.hasConfiguredServer
     fun routeState(): AuthenticatedRouteState = sessionRepository.routeState()
     fun acceptsIncomingCall(): Boolean = SessionRouteGuard.acceptsIncomingCall(routeState())
 
@@ -65,8 +66,10 @@ class AppViewModel @Inject constructor(
                 val resp = authRepository.changePassword(oldPassword, newPassword)
                 if (resp.success) PasswordChangeUiState.Visible()
                 else PasswordChangeUiState.Visible(error = resp.message.ifBlank { "Ошибка смены пароля" })
-            } catch (e: Exception) {
-                PasswordChangeUiState.Visible(error = e.message ?: "Ошибка смены пароля")
+            } catch (e: SecureStorageUnavailableException) {
+                PasswordChangeUiState.Visible(error = e.message ?: PASSWORD_CHANGE_GENERIC_ERROR)
+            } catch (_: Exception) {
+                PasswordChangeUiState.Visible(error = PASSWORD_CHANGE_GENERIC_ERROR)
             }
         }
     }

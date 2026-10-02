@@ -26,7 +26,7 @@ const CAPTURE = pathToFileURL(path.join(REPO, 'mobile/dev/capture-fixtures.mjs')
 const REQUIRED_WS_EVENTS = [
   'auth_success', 'auth_error', 'server_disconnect',
   'new_message', 'direct_message', 'channel_message',
-  'message_status_updated', 'messages_read', 'message_updated', 'message_deleted',
+  'message_status_updated', 'messages_read', 'conversation_read', 'message_updated', 'message_deleted', 'message_cancelled',
   'user_typing', 'user_status_changed', 'user_created', 'user_updated',
   'channel_created', 'channel_deleted',
   'new_announcement', 'announcement_acknowledged',
@@ -48,10 +48,19 @@ const REQUIRED_HTTP = [
   // надёжная доставка (задача 5): идемпотентная отправка, страница вперёд, дельта-синхронизация
   'http/messages.send-direct-idempotent.json', 'http/messages.send-direct-duplicate.json',
   'http/messages.send-client-msg-id-invalid.json', 'http/messages.send-client-msg-id-conflict.json',
-  'http/messages.after-page.json',
+  'http/messages.after-page.json', 'http/messages.send-cancelled.json',
   'http/sync.bootstrap.json', 'http/sync.page.json', 'http/sync.cursor-invalid.json',
   'http/files.policy.json', 'http/files.upload.json',
-  'http/announcements.list.json'
+  'http/announcements.list.json',
+  'http/devices.push-token-register.json', 'http/devices.push-token-invalid.json', 'http/devices.push-token-delete.json'
+];
+
+// Что уходит через поставщиков push (задача 18): по форме на сообщение и звонок.
+const REQUIRED_PUSH = [
+  'push/fcm.message.direct.json', 'push/fcm.message.channel.json', 'push/fcm.call.json',
+  'push/apns.message.direct.json', 'push/apns.message.channel.json', 'push/apns.call.json',
+  // тихий «read» — снять уведомления, прочитанные на другом устройстве (multi-device.md §6)
+  'push/fcm.read.json', 'push/apns.read.json'
 ];
 
 function walk(dir, base = dir) {
@@ -64,9 +73,13 @@ function walk(dir, base = dir) {
   return out.sort();
 }
 
+// reducers/ — табличные векторы клиентского редьюсера доставки (delivery-state.md),
+// notify/ — векторы решения об уведомлении (multi-device.md); их пишут руками,
+// а не снимают с сервера; проверяют их mobile-delivery-reducer.test.js и
+// notify-decision.test.js.
 function committedFiles() {
   return fs.existsSync(FIXTURES)
-    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json')
+    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json' && !f.startsWith('reducers/') && !f.startsWith('notify/'))
     : [];
 }
 
@@ -93,15 +106,32 @@ test('every required HTTP fixture is committed', () => {
   for (const f of REQUIRED_HTTP) assert.ok(files.includes(f), `missing ${f}`);
 });
 
+test('every required push payload fixture is committed and carries ids only', () => {
+  const files = committedFiles();
+  for (const f of REQUIRED_PUSH) {
+    assert.ok(files.includes(f), `missing ${f}`);
+    const value = JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'utf8'));
+    const data = f.startsWith('push/fcm.') ? value.message.data : value.payload;
+    const { aps, ...ids } = data;
+    const allowed = ids.type === 'call' ? ['type', 'callerId', 'callId']
+      : ids.type === 'read' ? ['type', 'conversationType', 'targetId']
+        : ['type', 'conversationType', 'targetId', 'messageId'];
+    for (const k of Object.keys(ids)) assert.ok(allowed.includes(k), `${f}: unexpected field ${k} (only ids may pass through Google/Apple)`);
+    if (aps && ids.type === 'read') assert.deepStrictEqual(aps, { 'content-available': 1 }, `${f}: read is silent (no alert, no sound)`);
+    else if (aps) assert.deepStrictEqual(aps.alert, { body: 'Новое сообщение' }, `${f}: alert must be the generic placeholder`);
+  }
+});
+
 test('manifest.json describes exactly the committed fixtures', () => {
   const manifestPath = path.join(FIXTURES, 'manifest.json');
   assert.ok(fs.existsSync(manifestPath), 'manifest.json is missing');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   assert.deepStrictEqual(Object.keys(manifest).sort(), committedFiles());
   for (const [file, meta] of Object.entries(manifest)) {
-    assert.ok(meta.kind === 'http' || meta.kind === 'ws', `${file}: kind`);
+    assert.ok(['http', 'ws', 'push'].includes(meta.kind), `${file}: kind`);
     assert.ok(typeof meta.description === 'string' && meta.description, `${file}: description`);
     if (meta.kind === 'http') assert.ok(meta.method && meta.path && meta.status, `${file}: method/path/status`);
+    else if (meta.kind === 'push') assert.ok(['fcm', 'apns'].includes(meta.provider) && meta.trigger, `${file}: provider/trigger`);
     else assert.ok(meta.event && meta.direction === 'server->client', `${file}: event/direction`);
   }
 });

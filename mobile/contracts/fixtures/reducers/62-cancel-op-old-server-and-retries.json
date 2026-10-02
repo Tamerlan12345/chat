@@ -1,0 +1,194 @@
+{
+  "name": "62-cancel-op-old-server-and-retries",
+  "description": "Старый сервер молча игнорирует cancel_message: операция cancel ждёт ACK_TIMEOUT_MS, повторяется с паузой backoff и после пятой неудачи снимается БЕЗ user_error (запись решается синхронизацией, как раньше). Новый сервер: error cancel_message RATE_LIMITED — пауза retry_after_ms без неудачи; retryable INTERNAL_ERROR — неудача с паузой backoff.",
+  "covers": [
+    "T48",
+    "T39"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000241-0000-4000-8000-000000000241",
+        "text": null,
+        "state": "sending",
+        "attempts": 5,
+        "failures": 4,
+        "ack_deadline": 20000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000242-0000-4000-8000-000000000242",
+        "text": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      }
+    ],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": [
+      "a0000241-0000-4000-8000-000000000241"
+    ]
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 19000
+    },
+    {
+      "type": "ws",
+      "now": 19100,
+      "frame": {
+        "type": "error",
+        "context": "cancel_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "client_msg_id": "a0000242-0000-4000-8000-000000000242",
+        "retry_after_ms": 300
+      }
+    },
+    {
+      "type": "op_timeout",
+      "now": 20000,
+      "client_msg_id": "a0000241-0000-4000-8000-000000000241",
+      "attempt": 5
+    },
+    {
+      "type": "tick",
+      "now": 20000
+    },
+    {
+      "type": "ws",
+      "now": 20100,
+      "frame": {
+        "type": "error",
+        "context": "cancel_message",
+        "message": "Не удалось обработать запрос — повторите позже",
+        "code": "INTERNAL_ERROR",
+        "retryable": true,
+        "client_msg_id": "a0000242-0000-4000-8000-000000000242"
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000242-0000-4000-8000-000000000242"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 29000,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000242-0000-4000-8000-000000000242",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 19400,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "cancel_message",
+          "client_msg_id": "a0000242-0000-4000-8000-000000000242"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 30000,
+        "event": {
+          "type": "op_timeout",
+          "client_msg_id": "a0000242-0000-4000-8000-000000000242",
+          "attempt": 2
+        }
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 21100,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [
+      {
+        "op": "cancel",
+        "message_id": null,
+        "client_msg_id": "a0000242-0000-4000-8000-000000000242",
+        "text": null,
+        "state": "queued",
+        "attempts": 2,
+        "failures": 1,
+        "ack_deadline": null,
+        "next_attempt_at": 21100
+      }
+    ],
+    "cancelled": [
+      "a0000241-0000-4000-8000-000000000241"
+    ],
+    "wake_at": 21100
+  }
+}

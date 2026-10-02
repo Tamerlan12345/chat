@@ -10,15 +10,14 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 import java.util.concurrent.atomic.AtomicInteger
 
 class ApiClientLogoutStorageTest {
 
     @Test
     fun logoutFailsWhenSecureSessionCannotBeCleared() = runBlocking {
-        val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false)
-        val endpoint = sessionManager.validateServerEndpoint("https://chat.example").getOrThrow()
-        sessionManager.useServerEndpointForVerification(endpoint)
+        val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
         val requests = AtomicInteger(0)
         val apiClient = ApiClient(sessionManager, successfulLogoutClient(requests))
 

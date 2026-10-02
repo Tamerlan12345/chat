@@ -7,9 +7,6 @@ import java.util.UUID
 @Serializable
 sealed interface NavKey : androidx.navigation3.runtime.NavKey {
     @Serializable
-    data object ServerConnect : NavKey
-
-    @Serializable
     data object Login : NavKey
 
     @Serializable
@@ -51,4 +48,4 @@ sealed interface NavKey : androidx.navigation3.runtime.NavKey {
 val TopLevelRoutes: List<NavKey> = listOf(NavKey.Conversations, NavKey.Announcements, NavKey.Profile)
 
 internal val NavKey.isAuthDestination: Boolean
-    get() = this is NavKey.ServerConnect || this is NavKey.Login
+    get() = this is NavKey.Login

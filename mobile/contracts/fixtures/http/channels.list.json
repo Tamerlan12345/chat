@@ -11,6 +11,7 @@
     "members_count": 3,
     "unread_count": 0,
     "last_message_text": "dev-stand-notes.txt",
+    "last_message_id": 6,
     "last_message_time": "2026-10-02T09:00:02.000Z"
   },
   {
@@ -25,6 +26,7 @@
     "members_count": 3,
     "unread_count": 0,
     "last_message_text": null,
+    "last_message_id": null,
     "last_message_time": null
   },
   {
@@ -39,6 +41,7 @@
     "members_count": 3,
     "unread_count": 0,
     "last_message_text": null,
+    "last_message_id": null,
     "last_message_time": null
   }
 ]

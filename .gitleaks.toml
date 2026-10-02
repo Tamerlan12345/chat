@@ -1,0 +1,12 @@
+# gitleaks: the default rules, plus one path allowlist.
+# server/test/helpers/rfc7515-vectors.json holds the example keys published in
+# RFC 7515 Appendix A.2/A.3. They are public known-answer test vectors for JWT
+# signing (server/test/push-providers.test.js), not secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public RFC 7515 JWS test vectors (not secrets)"
+paths = [
+  '''^server/test/helpers/rfc7515-vectors\.json$''',
+]

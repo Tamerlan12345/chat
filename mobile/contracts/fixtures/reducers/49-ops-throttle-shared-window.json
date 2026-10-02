@@ -1,0 +1,864 @@
+{
+  "name": "49-ops-throttle-shared-window",
+  "description": "Правки и удаления делят своё окно частоты — не больше 8 кадров за секунду (у сервера 10/с на тип, лишнее отбрасывается молча). 12 действий в одну миллисекунду: 8 уходят сразу, правка и ещё 3 удаления — по будильнику через секунду. Удаления ждут подтверждения; message_deleted снимает операцию. Задача 18: отправленная правка 308 остаётся в ops в состоянии \"sending\" до подтверждения.",
+  "covers": [
+    "T39",
+    "T26",
+    "T41",
+    "T32",
+    "T54"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 300,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 1",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 301,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 2",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 302,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 3",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 303,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 4",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 304,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 5",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 305,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 6",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:05.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 306,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 7",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 307,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 8",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:07.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 308,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 9",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:08.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 309,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 10",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:09.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 310,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 11",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:10.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 311,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 12",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:11.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 300
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 301
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 302
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 303
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 304
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 305
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 306
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 307
+    },
+    {
+      "type": "edit",
+      "now": 1000,
+      "message_id": 308,
+      "text": "Исправлено"
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 309
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 310
+    },
+    {
+      "type": "delete",
+      "now": 1000,
+      "message_id": 311
+    },
+    {
+      "type": "tick",
+      "now": 2000
+    },
+    {
+      "type": "ws",
+      "now": 2100,
+      "frame": {
+        "type": "message_deleted",
+        "messageId": 300,
+        "conversationType": "direct",
+        "targetId": 3
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 300
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 300,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 301
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 301,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 302
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 302,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 303
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 303,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 304
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 304,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 305
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 305,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 306
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 306,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 307
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 307,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 2000,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 308,
+          "text": "Исправлено"
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 309
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 309,
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 310
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 310,
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "delete_message",
+          "messageId": 311
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "op_timeout",
+          "message_id": 311,
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "ops": [
+      {
+        "op": "delete",
+        "message_id": 301,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 302,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 303,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 304,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 305,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 306,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 307,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 11000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "edit",
+        "message_id": 308,
+        "client_msg_id": null,
+        "text": "Исправлено",
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": null,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 309,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 12000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 310,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 12000,
+        "next_attempt_at": null
+      },
+      {
+        "op": "delete",
+        "message_id": 311,
+        "client_msg_id": null,
+        "text": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "ack_deadline": 12000,
+        "next_attempt_at": null
+      }
+    ],
+    "opsLog": [
+      2000,
+      2000,
+      2000,
+      2000
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 300,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 1,
+          "status": "sent"
+        },
+        {
+          "id": 301,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 2",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 302,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 3",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:02.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 303,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 4",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:03.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 304,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 5",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:04.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 305,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 6",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:05.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 306,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 7",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:06.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 307,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 8",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:07.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 308,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 9",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:08.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 309,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 10",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:09.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 310,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 11",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:10.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 311,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Сообщение 12",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:11.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "wake_at": null
+  }
+}

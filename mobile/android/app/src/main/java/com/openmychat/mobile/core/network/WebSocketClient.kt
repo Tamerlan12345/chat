@@ -92,8 +92,8 @@ class WebSocketClient(
             return
         }
 
-        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull()
-        if (endpoint == null || !endpoint.isSecure) {
+        val endpoint = sessionManager.serverEndpoint
+        if (!endpoint.isSecure) {
             isConnecting.set(false)
             _connectionState.value = ConnectionState.Disconnected
             return
@@ -225,171 +225,27 @@ class WebSocketClient(
 
     private fun handleTextMessage(text: String) {
         try {
-            val root = json.parseToJsonElement(text).jsonObject
-            val type = root["type"]?.jsonPrimitive?.content ?: return
-
-            when (type) {
-                "auth_success" -> {
-                    val userObj = root["user"]
-                    if (userObj != null) {
-                        val user = json.decodeFromJsonElement<User>(userObj)
-                        sessionManager.currentUser = user
-                        reconnectAttempts = 0
-                        _connectionState.value = ConnectionState.Connected
-                        _events.tryEmit(WsEvent.AuthSuccess(user))
-                    }
+            val event = (WsEventParser.parse(text) as? WsFrame.Event)?.event ?: return
+            when (event) {
+                is WsEvent.AuthSuccess -> {
+                    sessionManager.currentUser = event.user
+                    reconnectAttempts = 0
+                    _connectionState.value = ConnectionState.Connected
+                    _events.tryEmit(event)
                 }
-                "auth_error" -> {
-                    val code = root["code"]?.jsonPrimitive?.content ?: "UNKNOWN"
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Auth error"
-                    if (code == "MUST_CHANGE_PASSWORD") {
+                is WsEvent.AuthError -> {
+                    if (event.code == "MUST_CHANGE_PASSWORD") {
                         sessionManager.mustChangePassword = true
                     }
-                    handleAuthError(code, message)
+                    handleAuthError(event.code, event.message)
                 }
-                "wake_state" -> {
-                    val targetUserId = root["targetUserId"]?.jsonPrimitive?.longOrNull
-                    val retryAt = root["retryAt"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.WakeState(targetUserId, retryAt))
-                }
-                "server_disconnect" -> {
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Disconnected by server"
-                    _events.tryEmit(WsEvent.ServerDisconnect(reason))
-                }
-                "new_message", "direct_message", "channel_message" -> {
-                    val messageObj = root["message"]
-                    if (messageObj != null) {
-                        val message = json.decodeFromJsonElement<Message>(messageObj)
-                        val firstDelivery = synchronized(recentMessageIds) {
-                            recentMessageIds.put(message.id, Unit) == null
-                        }
-                        if (firstDelivery) _events.tryEmit(WsEvent.NewMessage(message))
+                is WsEvent.NewMessage -> {
+                    val firstDelivery = synchronized(recentMessageIds) {
+                        recentMessageIds.put(event.message.id, Unit) == null
                     }
+                    if (firstDelivery) _events.tryEmit(event)
                 }
-                "message_status_updated" -> {
-                    val messageId = root["messageId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val status = root["status"]?.jsonPrimitive?.content ?: "delivered"
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val timestamp = root["timestamp"]?.jsonPrimitive?.content ?: ""
-                    _events.tryEmit(WsEvent.MessageStatusUpdated(messageId, status, userId, timestamp))
-                }
-                "messages_read" -> {
-                    val byUserId = root["byUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val messageIds = root["messageIds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull } ?: emptyList()
-                    _events.tryEmit(WsEvent.MessagesRead(byUserId, messageIds))
-                }
-                "message_updated" -> {
-                    val messageObj = root["message"]?.jsonObject
-                    if (messageObj != null) {
-                        val id = messageObj["id"]?.jsonPrimitive?.longOrNull ?: 0L
-                        val newText = messageObj["text"]?.jsonPrimitive?.content ?: ""
-                        val updatedAt = messageObj["updated_at"]?.jsonPrimitive?.content ?: ""
-                        _events.tryEmit(WsEvent.MessageUpdated(id, newText, updatedAt))
-                    }
-                }
-                "message_deleted" -> {
-                    val messageId = root["messageId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val conversationType = root["conversationType"]?.jsonPrimitive?.content ?: "direct"
-                    val targetId = root["targetId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.MessageDeleted(messageId, conversationType, targetId))
-                }
-                "user_typing" -> {
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val userName = root["userName"]?.jsonPrimitive?.content ?: ""
-                    val conversationType = root["conversationType"]?.jsonPrimitive?.content ?: "direct"
-                    val targetId = root["targetId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val isTyping = root["isTyping"]?.jsonPrimitive?.booleanOrNull ?: false
-                    _events.tryEmit(WsEvent.UserTyping(userId, userName, conversationType, targetId, isTyping))
-                }
-                "user_status_changed" -> {
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull
-                        ?: root["user_id"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val statusStr = root["status"]?.jsonPrimitive?.content
-                    val customStatus = root["customStatus"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.UserStatusChanged(userId, UserStatus.fromValue(statusStr), customStatus))
-                }
-                "channel_created" -> {
-                    val channelObj = root["channel"]
-                    if (channelObj != null) {
-                        val channel = json.decodeFromJsonElement<Channel>(channelObj)
-                        _events.tryEmit(WsEvent.ChannelCreated(channel))
-                    }
-                }
-                "channel_deleted" -> {
-                    val channelId = root["channelId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.ChannelDeleted(channelId))
-                }
-                "new_announcement" -> {
-                    val annObj = root["announcement"]
-                    if (annObj != null) {
-                        val announcement = json.decodeFromJsonElement<Announcement>(annObj)
-                        _events.tryEmit(WsEvent.NewAnnouncement(announcement))
-                    }
-                }
-                "announcement_acknowledged" -> {
-                    val annId = root["announcementId"]?.jsonPrimitive?.content ?: ""
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val userName = root["userName"]?.jsonPrimitive?.content ?: ""
-                    _events.tryEmit(WsEvent.AnnouncementAcknowledged(annId, userId, userName))
-                }
-                "call_offer" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: "Коллега"
-                    _events.tryEmit(WsEvent.CallOffer(target, sender, senderName))
-                }
-                "call_answer" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: "Коллега"
-                    _events.tryEmit(WsEvent.CallAnswer(target, sender, senderName))
-                }
-                "call_rejected" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: ""
-                    val reason = root["reason"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.CallRejected(target, sender, senderName, reason))
-                }
-                "call_end" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: ""
-                    val reason = root["reason"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.CallEnd(target, sender, senderName, reason))
-                }
-                "call_denied" -> {
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Звонок запрещен"
-                    _events.tryEmit(WsEvent.CallDenied(reason))
-                }
-                "call_unavailable" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Абонент недоступен"
-                    _events.tryEmit(WsEvent.CallUnavailable(target, reason))
-                }
-                "wake_ring" -> {
-                    val fromUserId = root["fromUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val fromName = root["fromName"]?.jsonPrimitive?.content ?: "Коллега"
-                    val at = root["at"]?.jsonPrimitive?.longOrNull ?: System.currentTimeMillis()
-                    _events.tryEmit(WsEvent.WakeRing(fromUserId, fromName, at))
-                }
-                "wake_sent" -> {
-                    val targetUserId = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val at = root["at"]?.jsonPrimitive?.longOrNull ?: System.currentTimeMillis()
-                    val retryAt = root["retryAt"]?.jsonPrimitive?.longOrNull ?: (at + 60000L)
-                    _events.tryEmit(WsEvent.WakeSent(targetUserId, at, retryAt))
-                }
-                "wake_error" -> {
-                    val code = root["code"]?.jsonPrimitive?.content ?: "error"
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Не удалось отправить побудку"
-                    _events.tryEmit(WsEvent.WakeError(code, message))
-                }
-                "error" -> {
-                    val context = root["context"]?.jsonPrimitive?.content
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Server error"
-                    val origText = root["text"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.GenericError(context, message, origText))
-                }
+                else -> _events.tryEmit(event)
             }
         } catch (_: Exception) {}
     }

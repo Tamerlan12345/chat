@@ -20,6 +20,21 @@ if (!projectDir.absolutePath.all { it.code < 128 }) {
     )
 }
 
+// The production server. Release builds always use it: there is no server field, no runtime
+// override and no build property that reaches the release build type.
+val productionServerUrl = "https://centychat-production.up.railway.app"
+
+// Debug builds talk to the local HTTPS dev stand (mobile/dev/README.md) through the emulator's alias
+// for the host, never to production by default: a connected test or a stray debug install must not
+// send dev credentials to the real server. `-Pcentychat.serverUrl=https://host[:port]` overrides it
+// (production only when asked for explicitly). Only a bare scheme://host[:port] is accepted.
+val devStandServerUrl = "https://10.0.2.2:8443"
+val debugServerUrl: String = providers.gradleProperty("centychat.serverUrl").orNull
+    ?.trim()?.removeSuffix("/")?.takeIf { it.isNotEmpty() } ?: devStandServerUrl
+require(Regex("""https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?""").matches(debugServerUrl)) {
+    "centychat.serverUrl must look like https://host[:port], got '$debugServerUrl'"
+}
+
 android {
     namespace = "com.openmychat.mobile"
     compileSdk = 36
@@ -40,10 +55,12 @@ android {
     buildTypes {
         debug {
             isDebuggable = true
+            buildConfigField("String", "SERVER_URL", "\"$debugServerUrl\"")
         }
 
         release {
             isMinifyEnabled = true
+            buildConfigField("String", "SERVER_URL", "\"$productionServerUrl\"")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -56,6 +73,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -76,6 +94,9 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // XML window theme (DayNight, no white flash before Compose draws) and the SplashScreen API.
+    implementation(libs.google.material)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -96,7 +117,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
 
@@ -116,4 +138,72 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+// ContractFixturesTest reads mobile/contracts/fixtures at test time; rerun the tests when they change.
+tasks.withType<Test>().configureEach {
+    inputs.dir(rootDir.resolve("../contracts/fixtures"))
+        .withPropertyName("contractFixtures")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+/**
+ * Debug builds only: trust the local dev stand's CA (mobile/dev/certs/dev-ca.crt, created by
+ * `node mobile/dev/stand.mjs` and git-ignored) for the local development hosts.
+ *
+ * When the CA file exists, this writes a generated resource overlay with the certificate as
+ * `raw/centychat_dev_ca` and a copy of src/debug/res/xml/debug_network_security_config.xml whose
+ * marker comment is replaced by trust anchors (system + dev CA). Without the file nothing is
+ * generated and the checked-in config applies. The certificate never enters the source tree and
+ * the release build type is never touched.
+ */
+abstract class DevCaResourcesTask : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val devCa: ConfigurableFileCollection
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val baseConfig: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val ca = devCa.files.firstOrNull { it.isFile } ?: return
+        val pem = ca.readText()
+        check("-----BEGIN CERTIFICATE-----" in pem && "PRIVATE KEY" !in pem) {
+            "$ca must be a PEM certificate without any private key"
+        }
+        val marker = "<!-- dev-ca-trust-anchors -->"
+        val base = baseConfig.get().asFile.readText()
+        check(marker in base) { "debug_network_security_config.xml lost its $marker marker" }
+        File(out, "raw").mkdirs()
+        File(out, "raw/centychat_dev_ca.pem").writeText(pem)
+        File(out, "xml").mkdirs()
+        File(out, "xml/debug_network_security_config.xml").writeText(
+            base.replace(
+                marker,
+                """<trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/centychat_dev_ca" />
+        </trust-anchors>"""
+            )
+        )
+    }
+}
+
+val generateDebugDevCaResources = tasks.register<DevCaResourcesTask>("generateDebugDevCaResources") {
+    devCa.from(rootDir.resolve("../dev/certs/dev-ca.crt"))
+    baseConfig.set(layout.projectDirectory.file("src/debug/res/xml/debug_network_security_config.xml"))
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(generateDebugDevCaResources, DevCaResourcesTask::outputDir)
+    }
 }

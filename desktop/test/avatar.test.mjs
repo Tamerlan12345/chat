@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { initialsOf, avatarColor, greetingName } from '../src/renderer/src/lib/avatar.mjs';
+import { initialsOf, avatarColor, greetingName, avatarSrc } from '../src/renderer/src/lib/avatar.mjs';
 
 // Одного и того же человека интерфейс рисовал тремя способами: в списке
 // диалогов — значок фотоаппарата, в переписке — кружок с инициалами, во
@@ -47,4 +47,31 @@ test('служебную запись не называют «системы»',
 
 test('запись из одного слова остаётся как есть', () => {
   assert.strictEqual(greetingName('Администратор'), 'Администратор');
+});
+
+// Задача 20: сервер отдаёт настольному клиенту фото, как и раньше, строкой
+// data URL; другим клиентам — адресом /api/users/<id>/avatar?v=…, который без
+// заголовка авторизации не открыть. Если такой адрес всё же дошёл до
+// настольного интерфейса (страница открыта в браузере), показываются
+// инициалы — без запроса, который заведомо получит 401.
+
+test('фото data URL (как сохраняет настольный клиент) показывается как есть', () => {
+  const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
+  assert.strictEqual(avatarSrc(photo), photo);
+  assert.strictEqual(avatarSrc('data:image/png;base64,iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=');
+});
+
+test('адрес аватара на сервере без авторизации не грузится — инициалы', () => {
+  assert.strictEqual(avatarSrc('/api/users/5/avatar?v=0123456789abcdef'), null);
+  assert.strictEqual(avatarSrc('api/users/5/avatar'), null);
+});
+
+test('пустое значение и чужие схемы — инициалы; прежние ссылки http(s) — как раньше', () => {
+  assert.strictEqual(avatarSrc(null), null);
+  assert.strictEqual(avatarSrc(''), null);
+  assert.strictEqual(avatarSrc(undefined), null);
+  assert.strictEqual(avatarSrc('javascript:alert(1)'), null);
+  assert.strictEqual(avatarSrc('data:text/html;base64,PHNjcmlwdD4='), null);
+  assert.strictEqual(avatarSrc('https://old.example/photo.png'), 'https://old.example/photo.png');
+  assert.strictEqual(avatarSrc('blob:http://localhost/abc'), 'blob:http://localhost/abc');
 });

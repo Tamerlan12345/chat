@@ -1,0 +1,48 @@
+{
+  "name": "10-channel-viewing-same",
+  "description": "Канал 7 открыт на iPhone на переднем плане — никому ничего.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "channel",
+      "targetId": 7,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      },
+      {
+        "id": "iphone",
+        "deviceId": "ios-91c2",
+        "presence": "online",
+        "viewing": {
+          "conversationType": "channel",
+          "targetId": 7
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "ios-91c2"
+      },
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "viewing",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "desk",
+      "iphone"
+    ]
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "name": "02-enqueue-offline-stays-queued",
+  "description": "Без сокета запись остаётся queued (надёжно записана, композер очищен). Вложение и пустой текст у image допустимы; reply_to_id и metadata сохраняются.",
+  "covers": [
+    "T01"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000002-0000-4000-8000-000000000002",
+      "conversation": "channel:3",
+      "text": "Отчёт за квартал",
+      "msgType": "file",
+      "reply_to_id": 9,
+      "metadata": {
+        "file_id": 42
+      }
+    },
+    {
+      "type": "enqueue",
+      "now": 1001,
+      "client_msg_id": "a0000003-0000-4000-8000-000000000003",
+      "conversation": "direct:3",
+      "text": "",
+      "msgType": "image",
+      "reply_to_id": null,
+      "metadata": {
+        "file_id": 43
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "channel:3"
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "direct:3"
+      }
+    ]
+  ],
+  "expectedState": {
+    "connection": "offline",
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000002-0000-4000-8000-000000000002",
+        "conversation": "channel:3",
+        "seq": 1,
+        "text": "Отчёт за квартал",
+        "msgType": "file",
+        "reply_to_id": 9,
+        "metadata": {
+          "file_id": 42
+        },
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000003-0000-4000-8000-000000000003",
+        "conversation": "direct:3",
+        "seq": 2,
+        "text": "",
+        "msgType": "image",
+        "reply_to_id": null,
+        "metadata": {
+          "file_id": 43
+        },
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "sendLog": []
+  }
+}

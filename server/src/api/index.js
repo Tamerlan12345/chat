@@ -12,6 +12,10 @@ const DbStudioService = require('../services/db-studio.service');
 const FileService = require('../services/file.service');
 const FilePolicyService = require('../services/file-policy.service');
 const createFilePolicyRouter = require('../files/policy-router');
+const { parseRange, etagListMatches, ifRangeAllows } = require('../files/http-range');
+const Images = require('../media/images');
+const Thumbnails = require('../media/thumbnails');
+const Avatars = require('../media/avatars');
 const DeviceService = require('../services/device.service');
 const OrgParserService = require('../services/org-parser.service');
 const { checkRateLimit, isRateLimited, peekCount, registerFailure, resetLimit } = require('../services/rate-limiter');
@@ -26,8 +30,21 @@ const wsServer = require('../ws/server');
 const config = require('../config');
 
 const router = express.Router();
+
+// Аватары ссылкой (задача 20): клиенту, приславшему X-Avatar-Format: url,
+// data URL фотографий в ответах заменяются адресами /api/users/<id>/avatar?v=…
+// (старые ссылки — null). Остальным — прежняя форма. См. src/media/avatars.js.
+router.use((req, res, next) => {
+  if (Avatars.wantsAvatarUrls(req.headers)) {
+    const send = res.json.bind(res);
+    res.json = (body) => send(Avatars.shapeAvatars(body));
+  }
+  next();
+});
 const SecurityMonitor = require('../services/security-monitor.service');
 const BackupService = require('../services/backup.service');
+const PushService = require('../push/push.service');
+const PushTokens = require('../push/token-store');
 
 // Публичный STUN Google — прежнее поведение, пока администратор не задал свой
 // список. Пустой список в настройке — только локальная сеть.
@@ -403,6 +420,8 @@ router.post('/auth/device/unbind', requireAuth, route(async (req, res) => {
   if (result.unbound) {
     AuditService.log({ userId: req.user.id, action: 'device_secret_unbound', ip: getClientIp(req), details: { deviceId: String(device_id) } });
   }
+  // Устройство отвязано — его push-уведомления этому сотруднику тоже.
+  if (typeof device_id === 'string' && device_id) PushTokens.removeForDevice({ deviceId: device_id, userId: req.user.id });
   res.json({ ok: true });
 }));
 
@@ -420,6 +439,77 @@ router.post('/auth/device/claim', requireAuth, route(async (req, res) => {
     AuditService.log({ userId: req.user.id, action: 'device_secret_claimed', ip: getClientIp(req), details: { deviceId: String(device_id) } });
   }
   res.json(result);
+}));
+
+// ── Push-уведомления мобильных устройств (задача 18) ──
+// Устройство сообщает свой токен FCM/APNs; сервер шлёт через Google/Apple
+// только идентификаторы (mobile/contracts/push.md). Токен привязан к
+// сотруднику, сеансу (jti, поколение, время входа) и, если назван, устройству.
+const PUSH_TOKEN_LIMIT = { maxAttempts: 30, windowMs: 60000 };
+const FCM_TOKEN_RE = /^[A-Za-z0-9_:.-]{20,4096}$/;
+const APNS_TOKEN_RE = /^[0-9a-fA-F]{64,200}$/;
+const APP_VERSION_RE = /^[0-9A-Za-z._+-]{1,32}$/;
+const DEVICE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function pushTokenError(res, code, error) {
+  return res.status(400).json({ error, code });
+}
+
+function pushTokenRateLimited(req, res) {
+  if (checkRateLimit(`push-token:${req.user.id}`, PUSH_TOKEN_LIMIT)) return false;
+  res.set('Retry-After', '60');
+  res.status(429).json({ error: 'Слишком много запросов. Повторите через минуту.', code: 'RATE_LIMITED' });
+  return true;
+}
+
+router.post('/devices/push-token', requireAuth, route(async (req, res) => {
+  if (pushTokenRateLimited(req, res)) return;
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const platform = body.platform;
+  if (platform !== 'ios' && platform !== 'android') return pushTokenError(res, 'INVALID_PLATFORM', 'platform — "ios" или "android"');
+  const kind = body.kind === undefined ? 'alert' : body.kind;
+  if (!PushTokens.KINDS.has(kind) || (platform === 'android' && kind !== 'alert')) {
+    return pushTokenError(res, 'INVALID_KIND', 'kind — "alert" (или "voip" для PushKit на iOS)');
+  }
+  const token = body.token;
+  const tokenRe = platform === 'ios' ? APNS_TOKEN_RE : FCM_TOKEN_RE;
+  if (typeof token !== 'string' || !tokenRe.test(token)) return pushTokenError(res, 'INVALID_TOKEN', 'Недопустимый токен устройства');
+  const environment = body.environment === undefined && platform === 'android' ? 'production' : body.environment;
+  if (!PushTokens.ENVIRONMENTS.has(environment)) return pushTokenError(res, 'INVALID_ENVIRONMENT', 'environment — "sandbox" или "production"');
+  const appVersion = body.app_version === undefined || body.app_version === null ? null : body.app_version;
+  if (appVersion !== null && (typeof appVersion !== 'string' || !APP_VERSION_RE.test(appVersion))) {
+    return pushTokenError(res, 'INVALID_APP_VERSION', 'Недопустимая версия приложения');
+  }
+  const deviceId = body.device_id === undefined || body.device_id === null ? null : body.device_id;
+  if (deviceId !== null && (typeof deviceId !== 'string' || !DEVICE_ID_RE.test(deviceId))) {
+    return pushTokenError(res, 'INVALID_DEVICE_ID', 'Недопустимый device_id');
+  }
+
+  const payload = req.tokenPayload || {};
+  const { previousUserId } = PushTokens.register({
+    userId: req.user.id,
+    token,
+    platform,
+    kind,
+    environment,
+    deviceId,
+    appVersion,
+    session: { jti: payload.jti || null, tokenVersion: Number(payload.tv || 1), authTime: payload.auth_time }
+  });
+  // Токен перешёл от другого сотрудника (тот же телефон, другой вход) — след
+  // в журнале; сам токен в журнал не пишется.
+  if (previousUserId !== null) {
+    AuditService.log({ userId: req.user.id, action: 'push_token_rebound', ip: getClientIp(req), details: { previousUserId, platform, kind } });
+  }
+  res.json({ registered: true, push_enabled: PushService.enabled });
+}));
+
+router.delete('/devices/push-token', requireAuth, route(async (req, res) => {
+  if (pushTokenRateLimited(req, res)) return;
+  const token = req.body?.token;
+  if (typeof token !== 'string' || token.length < 1 || token.length > 4096) return pushTokenError(res, 'INVALID_TOKEN', 'Укажите token');
+  // Чужой и несуществующий токен неразличимы: ответ один и тот же.
+  res.json({ removed: PushTokens.remove(req.user.id, token) });
 }));
 
 // ── 1. AUTH ──
@@ -562,6 +652,9 @@ router.post('/auth/refresh', requireAuth, route(async (req, res) => {
   }
   const token = await AuthService.refreshToken(req.user, req.tokenPayload);
   wsServer.replaceSocketToken(req.rawToken, token);
+  // Токены push, зарегистрированные этим сеансом, переходят на новый токен
+  // сеанса — иначе выход после продления их бы не нашёл.
+  PushTokens.rebindSession(req.user.id, req.tokenPayload.jti, AuthService.verifyToken(token)?.jti);
   // Продление лишь ОБНОВЛЯЕТ уже знакомый адрес, но не заводит новый: иначе
   // украденный живой токен посадил бы в «знакомые» адрес атакующего (I-2).
   require('../services/trusted-sources.service').recordAsync(req.user.id, rateLimitIpKey(getClientIp(req)), { allowCreate: false });
@@ -589,6 +682,14 @@ router.post('/auth/logout', requireAuth, route(async (req, res) => {
     }
   }
 
+  // Push-уведомления этого сеанса (и названного устройства) больше не нужны:
+  // вышедший сотрудник не должен получать их на этот телефон.
+  PushTokens.removeForLogout({
+    userId: req.user.id,
+    jti: req.tokenPayload.jti || null,
+    deviceId: typeof device_id === 'string' && device_id ? device_id : null
+  });
+
   AuditService.log({ userId: req.user.id, action: 'logout', ip: getClientIp(req) });
   wsServer.disconnectSocketsWithToken(req.rawToken, 'Выход из системы');
   res.json({ success: true });
@@ -601,6 +702,79 @@ router.get('/auth/me', requireAuth, (req, res) => {
 // ── 2. USERS ──
 router.get('/users', requireAuth, route(async (req, res) => {
   res.json(await UserService.getAllUsers());
+}));
+
+// ── Аватары (задача 20) ──
+// Загрузка — картинка в поле формы «file», до 5 МБ. Хранится только
+// перекодированная копия (JPEG ≤256 px, без EXIF) — тем же data URL в
+// users.avatar_url, что и у фото из настольного клиента, чтобы тот видел её
+// как раньше.
+const AVATAR_UPLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
+const AVATAR_RATE_LIMIT = { maxAttempts: 10, windowMs: 60000 };
+const avatarUploader = multer({ dest: UPLOAD_TMP_DIR, limits: { fileSize: AVATAR_UPLOAD_LIMIT_BYTES, files: 1, fields: 0 } });
+
+function acceptAvatar(req, res, next) {
+  if (!checkRateLimit(`avatar:${req.user.id}`, AVATAR_RATE_LIMIT)) {
+    res.set('Retry-After', '60');
+    return res.status(429).json({ error: 'Слишком часто. Повторите через минуту.', code: 'RATE_LIMITED' });
+  }
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > AVATAR_UPLOAD_LIMIT_BYTES + FORM_OVERHEAD_BYTES) {
+    res.set('Connection', 'close');
+    return res.status(413).json({ error: 'Фотография больше 5 МБ', code: 'IMAGE_TOO_LARGE' });
+  }
+  // Временный файл не переживает запрос, чем бы тот ни кончился.
+  const cleanup = () => { if (req.file?.path) fs.rm(req.file.path, { force: true }, () => {}); };
+  res.on('finish', cleanup);
+  res.on('close', cleanup);
+  avatarUploader.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    res.status(tooLarge ? 413 : 400).json({
+      error: tooLarge ? 'Фотография больше 5 МБ' : 'Фотография не принята',
+      code: tooLarge ? 'IMAGE_TOO_LARGE' : 'BAD_REQUEST'
+    });
+  });
+}
+
+router.put('/users/avatar', requireAuth, acceptAvatar, route(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Фотография не прикреплена', code: 'BAD_REQUEST' });
+  let jpeg;
+  try {
+    jpeg = await Images.normalizeAvatar(req.file.path);
+  } catch (err) {
+    if (err instanceof Images.ImageError) {
+      if (err.status === 503) res.set('Retry-After', String(jitterSeconds(5)));
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+  res.json(await UserService.setAvatar(req.user.id, Images.toDataUrl(jpeg)));
+}));
+
+router.delete('/users/avatar', requireAuth, route(async (req, res) => {
+  res.json(await UserService.setAvatar(req.user.id, null));
+}));
+
+// Фото коллеги видно любому вошедшему — как и в справочнике сотрудников.
+// Отдаётся всегда перекодированным (квадрат 96 или 256 px), из кэша на диске.
+router.get('/users/:id/avatar', requireAuth, route(async (req, res) => {
+  const size = req.query.size === undefined ? 'm' : req.query.size;
+  if (typeof size !== 'string' || !Object.hasOwn(Images.AVATAR_SIZES, size)) {
+    return res.status(400).json({ error: 'size — s или m', code: 'BAD_REQUEST' });
+  }
+  const id = Number(req.params.id);
+  const row = Number.isSafeInteger(id) && id > 0
+    ? await identity().get('SELECT avatar_url FROM users WHERE id = $1', [id])
+    : null;
+  const avatar = row ? await Avatars.getAvatarFile(id, row.avatar_url, size) : null;
+  if (!avatar) return res.status(404).json({ error: 'Фотографии нет', code: 'NO_AVATAR' });
+  res.setHeader('ETag', avatar.etag);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  if (etagListMatches(req.headers['if-none-match'], avatar.etag)) return res.status(304).end();
+  res.type('image/jpeg');
+  res.sendFile(avatar.path, { lastModified: false, etag: false, dotfiles: 'allow', headers: { 'Cache-Control': 'private, max-age=86400' } });
 }));
 
 router.get('/users/:id', requireAuth, route(async (req, res) => {
@@ -769,6 +943,7 @@ router.delete('/admin/users/:id', requireAuth, requireAdminOrScopedAdmin, route(
       details: { targetUserId: Number(req.params.id) }
     });
     wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    wsServer.forgetPushedChats(Number(req.params.id));
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json({ success: true, user: updated });
   } catch (err) {
@@ -780,7 +955,10 @@ router.post('/admin/users/:id/toggle-active', requireAuth, requireAdmin, route(a
   try {
     const updated = await UserService.toggleUserActive(Number(req.params.id));
     AuditService.log({ userId: req.user.id, action: updated.is_active ? 'user_activated' : 'user_deactivated', ip: getClientIp(req), details: { targetUserId: Number(req.params.id) } });
-    if (!updated.is_active) wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+    if (!updated.is_active) {
+      wsServer.disconnectUser(Number(req.params.id), 'Учётная запись отключена администратором');
+      wsServer.forgetPushedChats(Number(req.params.id));
+    }
     wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser(updated) });
     res.json(updated);
   } catch (err) {
@@ -1019,6 +1197,7 @@ router.delete('/admin/channels/:id', requireAuth, requireAdmin, (req, res) => {
     db.prepare("DELETE FROM messages WHERE conversation_type = 'channel' AND target_id = ?").run(channelId);
     db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channelId);
     db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+    wsServer.forgetPushedChatForAll(`channel:${channelId}`);
 
     wsServer.broadcast({ type: 'channel_deleted', channelId });
     res.json({ success: true });
@@ -1294,13 +1473,17 @@ function parseAfterId(raw) {
 
 const AFTER_ID_ERROR = 'afterId — неотрицательное целое (id последнего известного сообщения)';
 
-// Отказ отправки: известные коды client_msg_id — машинным полем code (409 для
-// повтора ключа в другой переписке), остальное — как раньше.
+// Отказ отправки — всегда с машинным code (G3): 409 — ключ занят другой
+// перепиской (CLIENT_MSG_ID_CONFLICT) или отозван автором (CANCELLED), 403 —
+// не участник канала, 400 — прочие отказы проверок. Внутренний сбой (база,
+// сеть) — 503 INTERNAL_ERROR без подробностей: временный, повтор тем же
+// client_msg_id безопасен.
 function sendErrorResponse(res, err) {
-  if (err.message === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: 'Вы не участник этого канала' });
-  if (err.code === 'CLIENT_MSG_ID_CONFLICT') return res.status(409).json({ error: err.message, code: err.code });
-  if (err.code === 'INVALID_CLIENT_MSG_ID') return res.status(400).json({ error: err.message, code: err.code });
-  return res.status(400).json({ error: err.message });
+  const { code, retryable, message } = MessageService.describeError(err);
+  if (retryable) return res.status(503).json({ error: message, code });
+  if (code === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: message, code });
+  if (code === 'CLIENT_MSG_ID_CONFLICT' || code === 'CANCELLED') return res.status(409).json({ error: message, code });
+  return res.status(400).json({ error: message, code });
 }
 
 router.get('/messages', requireAuth, route(async (req, res) => {
@@ -1352,9 +1535,15 @@ async function sendViaRest(req, res, conversationType) {
       type: type || 'text',
       replyToId: reply_to_id || null,
       metadata,
-      clientMsgId: client_msg_id
+      clientMsgId: client_msg_id,
+      senderProfile: req.user
     });
-    wsServer.publishNewMessage(message, { duplicate });
+    // Сообщение уже сохранено: сбой рассылки не превращает ответ в отказ (G3).
+    try {
+      wsServer.publishNewMessage(message, { duplicate });
+    } catch (err) {
+      console.error('[API] рассылка сохранённого сообщения не удалась:', err.message);
+    }
     res.status(duplicate ? 200 : 201).json(message);
   } catch (err) {
     sendErrorResponse(res, err);
@@ -1869,6 +2058,15 @@ router.get('/files/policy', requireAuth, route(async (req, res) => {
   res.json({ enabled: policy.enabled, allowed });
 }));
 
+// Метка содержимого вложения: SHA-256, посчитанный при загрузке (файл после
+// этого не меняется). У старых записей без хеша — размер и время изменения.
+function downloadEtag(file, size) {
+  if (/^[0-9a-f]{64}$/.test(String(file.sha256 || ''))) return `"${file.sha256}"`;
+  let mtime = 0;
+  try { mtime = Math.floor(fs.statSync(file.path).mtimeMs); } catch { /* метка без времени */ }
+  return `"${size.toString(16).padStart(8, '0')}${mtime.toString(16).padStart(12, '0')}"`;
+}
+
 router.get('/files/download/:id', requireAuth, (req, res) => {
   const file = FileService.getFileById(req.params.id);
   if (!file || !fs.existsSync(file.path)) {
@@ -1887,14 +2085,48 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   res.setHeader('Content-Type', safeDownloadType(file.mime_type));
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // no-store остаётся: вложение не должно оседать в кэше браузера или
+  // Electron. Метка ETag нужна клиентам со своим кэшем (мобильные): они сами
+  // присылают If-None-Match и получают 304 без тела.
   res.setHeader('Cache-Control', 'private, no-store');
+
+  // Докачка (задача 20): один диапазон байт — 206, всё прочее в Range — 416.
+  // Доступ уже проверен выше: диапазон отдаётся тем же, кому и весь файл.
+  let size;
+  try {
+    size = fs.statSync(file.path).size;
+  } catch {
+    return res.status(404).send('Файл не найден');
+  }
+  const etag = downloadEtag(file, size);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('ETag', etag);
+  if (etagListMatches(req.headers['if-none-match'], etag)) {
+    res.removeHeader('Content-Disposition');
+    return res.status(304).end();
+  }
+  // If-Range проверяется раньше Range (RFC 9110 §13.2.2): не совпал — Range
+  // не рассматривается вовсе, отдаётся весь файл, даже если Range неверен.
+  const range = ifRangeAllows(req.headers['if-range'], etag) ? parseRange(req.headers.range, size) : null;
+  if (range?.invalid) {
+    res.removeHeader('Content-Disposition');
+    res.setHeader('Content-Range', `bytes */${size}`);
+    return res.status(416).end();
+  }
+  if (range) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+    res.setHeader('Content-Length', String(range.end - range.start + 1));
+  } else {
+    res.setHeader('Content-Length', String(size));
+  }
   // Обрыв соединения закрывает поток чтения (иначе дескриптор подтекал бы на
   // каждом прерванном скачивании), а ошибка чтения (файл исчез между проверкой
   // и открытием, исчерпаны дескрипторы) не роняет процесс, а отвечает 500 (M3).
   // stream.pipeline здесь не подходит: при ошибке источника он разрушает res
   // до того, как удастся отдать понятный 500. Поэтому — ручной pipe плюс явное
   // закрытие потока на 'close' соединения.
-  const src = fs.createReadStream(file.path);
+  const src = fs.createReadStream(file.path, range ? { start: range.start, end: range.end } : undefined);
   const closeSrc = () => src.destroy();
   res.on('close', closeSrc);
   src.on('error', (err) => {
@@ -1902,6 +2134,8 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
     src.destroy();
     if (!res.headersSent) {
       res.removeHeader('Content-Disposition');
+      res.removeHeader('Content-Length');
+      res.removeHeader('Content-Range');
       res.type('json').status(500).json({ error: 'Внутренняя ошибка сервера' });
     } else {
       res.destroy();
@@ -1909,6 +2143,54 @@ router.get('/files/download/:id', requireAuth, (req, res) => {
   });
   src.pipe(res);
 });
+
+// Миниатюра картинки-вложения (задача 20). Доступ — ровно тот же, что у
+// скачивания (и в том же порядке: 404, затем 403). Тип картинки — по
+// сигнатуре файла, не по MIME из базы; миниатюра отрисовывается один раз и
+// дальше отдаётся из кэша на диске.
+router.get('/files/thumb/:id', requireAuth, route(async (req, res) => {
+  const file = FileService.getFileById(req.params.id);
+  if (!file || !fs.existsSync(file.path)) {
+    return res.status(404).json({ error: 'Файл не найден' });
+  }
+  if (!FileService.canUserAccessFile(req.user.id, req.params.id)) {
+    return res.status(403).json({ error: 'Доступ запрещен: файл вне ваших диалогов и каналов' });
+  }
+  const size = req.query.size === undefined ? 's' : req.query.size;
+  const format = req.query.format === undefined ? 'webp' : req.query.format;
+  if (typeof size !== 'string' || !Object.hasOwn(Images.THUMB_SIZES, size) || (format !== 'webp' && format !== 'jpeg')) {
+    return res.status(400).json({ error: 'size — s или m; format — webp или jpeg', code: 'BAD_REQUEST' });
+  }
+  let thumb;
+  try {
+    // Отрисовка (промах кэша) — не больше THUMB_RENDERS_PER_MINUTE в минуту
+    // на сотрудника: готовые миниатюры из кэша пределом не ограничены.
+    const admitRender = () => checkRateLimit(`thumb-render:${req.user.id}`, {
+      maxAttempts: Number(process.env.THUMB_RENDERS_PER_MINUTE) > 0 ? Number(process.env.THUMB_RENDERS_PER_MINUTE) : 60,
+      windowMs: 60000
+    });
+    thumb = await Thumbnails.getThumbnail(file, { size, format, admitRender });
+  } catch (err) {
+    if (err instanceof Images.ImageError) {
+      if (err.status === 503) res.set('Retry-After', String(jitterSeconds(5)));
+      if (err.status === 429) res.set('Retry-After', '60');
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+  if (thumb.rendered?.source) {
+    FileService.recordImageInfo(file.id, { ...thumb.rendered.source, dominantColor: thumb.rendered.color });
+  }
+  res.setHeader('ETag', thumb.etag);
+  // Не immutable: после восстановления базы id файла может достаться другому
+  // вложению — клиент перепроверяет кэш по ETag (в нём ключ содержимого) и
+  // получает 304, пока миниатюра та же.
+  res.setHeader('Cache-Control', 'private, no-cache');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  if (etagListMatches(req.headers['if-none-match'], thumb.etag)) return res.status(304).end();
+  res.type(thumb.contentType);
+  res.sendFile(thumb.path, { headers: { 'Cache-Control': 'private, no-cache' }, lastModified: false, etag: false, dotfiles: 'allow' });
+}));
 
 router.get('/files/recent', requireAuth, route(async (req, res) => {
   res.json(await FileService.getRecentFiles(req.user.id));
@@ -2043,7 +2325,9 @@ router.post('/admin/devices/unbind', requireAuth, requireAdminOrScopedAdmin, rou
     if (owner) await assertWithinAdminScope(req.user, { targetUserId: Number(owner.user_id) });
     else if (!isSuperAdmin(req.user)) throw new Error('Устройство не найдено');
     AuditService.log({ userId: req.user.id, action: 'device_unbound', ip: getClientIp(req), details: { deviceId: String(req.body?.device_id), targetUserId: owner?.user_id ?? null } });
-    res.json(await DeviceService.unbindDevice(req.body?.device_id));
+    const result = await DeviceService.unbindDevice(req.body?.device_id);
+    if (req.body?.device_id) PushTokens.removeForDevice({ deviceId: String(req.body.device_id) });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

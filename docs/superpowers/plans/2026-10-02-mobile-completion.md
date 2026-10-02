@@ -247,6 +247,17 @@ Worktree `m-ios`. Depends on Task 6.
 - `#Preview` for every screen with mock repositories.
 - Extend `ScreenshotTourTests` to capture every screen light/dark and at an accessibility text size.
 - Acceptance: green CI; screenshots attached; report lists before/after per screen.
+- **Extended 2026-10-02:** also implement the design brief section «UI layer v2» in full on iOS:
+  - the "message lands" focal sequence;
+  - the zoom/matched transition inbox → chat;
+  - keyboard glued via `safeAreaInset` + `.scrollDismissesKeyboard(.interactively)`;
+  - the four-plane depth model with system materials;
+  - all 15 visual components with `#Preview`, including the spot illustrations as SwiftUI `Shape`s;
+  - the delight moments and Reduce Motion fallbacks.
+  
+  Record the simulator videos listed in the brief in CI.
+- **Extended 2026-10-02 (2):** also implement «People surface + universal search» and the «Anti-"AI-generated" polish pass» sections on iOS (native `.searchable`, segmented Picker, inset grouped lists, `.navigationTransition(.zoom)`).
+
 
 ### Task 8: Android — toolchain, Navigation 3, DI, lifecycle fixes (F0/F1)
 
@@ -321,5 +332,156 @@ Worktree `m-integration`. Depends on Task 5 (`client_msg_id`, `/api/sync`, deliv
 - A server-side test (`server/test/mobile-delivery-reducer.test.js`, added to the explicit test list) runs every vector against the reference reducer, so vectors are self-consistent. Both platforms will later run the same vectors against their own reducers.
 - Acceptance: `cd server && npm test` green; README in `fixtures/reducers/` explains the vector format and that iOS/Android must run all of them.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7; Android 2 → 8 → 12 → 9; Integration 3 → 4 → 5; QA 10 after all.
+### Task 16: Integration — close server delivery gaps G1–G4, G7–G9 (additive)
+
+Worktree `m-integration`. Depends on Task 13. Source: `mobile/contracts/delivery-state.md` §10.
+- G1: process WS frames of one socket sequentially (per-socket promise queue), so storage order = send order; keep other sockets concurrent. Test two rapid `send_message` frames get ascending ids.
+- G2: when a frame is rate-limited, reply `error {context, code:"RATE_LIMITED", retry_after_ms, client_msg_id?|messageId?}` instead of silence (still dropping the frame).
+- G3: every `send_message` refusal carries `code` and `retryable` (bool); refusals happen only before the INSERT where possible; a failure after INSERT echoes the stored message instead of an error.
+- G4: `edit_message`/`delete_message` errors carry `messageId` and `code` (`EDIT_WINDOW_EXPIRED`, `DELETE_WINDOW_EXPIRED`, `NOT_OWNER`, `NOT_FOUND`, …); deleting an already-deleted message returns the tombstone (idempotent success).
+- G7: `last_message_id` in `GET /api/channels`.
+- G8: `updated_at` in `message_deleted`.
+- G9: `cancel_message {client_msg_id}` — server remembers the cancelled key per sender (bounded TTL, e.g. 24 h); a later send with that key is refused with `code:"CANCELLED"`; if already stored, the server deletes it and broadcasts `message_deleted`.
+- Desktop must keep working unchanged (error frames are read only for `message`/`text` there — keep those fields).
+- Update `ws-protocol.md`, `delivery-state.md` (use the new signals when present; keep the old fallbacks), the reference reducer, vectors (new vectors for each signal; all existing vectors still pass), fixtures (`--write`), and the Task 13 deferred minors (persisted cancelled-key set; hide messages with a pending delete op).
+- TDD; full `npm test` green.
+
+### Task 18: Integration — server push notifications (ids only) + Task 16 follow-ups
+
+Worktree `m-integration`. Depends on Task 16. The owner confirmed that the push payload carries only ids: no message text and no sender name may pass through Google or Apple.
+
+**Push token API**
+- `POST /api/devices/push-token {platform: "ios"|"android", token, environment: "sandbox"|"production", app_version}` registers a token. It is idempotent, and the token is bound to the session's user and device.
+- `DELETE /api/devices/push-token {token}` removes a token. Tokens are also removed on logout and on `/auth/device/unbind`.
+- Validation and rate limits apply. One user may hold at most N tokens.
+
+**What is pushed**
+- A new direct or channel message is pushed to recipients' tokens when none of that user's devices is connected on WS. Muted/DND users get no push; follow the existing DND semantics.
+- Incoming call offers produce high-priority/VoIP-class pushes. iOS uses a PushKit VoIP topic (`<bundle>.voip`); Android uses FCM high priority with `ttl` 30 s.
+- Message payload: `{type:"message", conversationType, targetId, messageId}`.
+- Call payload: `{type:"call", callerId, callId?}`.
+- APNs alerts use `mutable-content: 1` with a generic localised placeholder («Новое сообщение»). The app's Notification Service Extension later fetches the real text from our server; that is a platform task.
+
+**Providers**
+- FCM HTTP v1 uses a service-account JSON from env/secret file, with OAuth token caching.
+- APNs uses HTTP/2 with token-based (.p8) auth.
+- Both sit behind a `PushProvider` interface. Push is disabled with a clear log line when it isn't configured.
+- Invalid tokens (FCM `UNREGISTERED`, APNs 410/`BadDeviceToken`) are pruned. Retries use backoff, and a queue keeps the request path from blocking.
+- Env names and setup steps are documented in `.env.example` and `mobile/dev/README.md`. No credentials are committed.
+
+**Contract**
+- `openapi.yaml`.
+- A new `mobile/contracts/push.md` covering payloads, collapse keys, priority, TTL, and the behaviour when the app is foreground vs background.
+- New fixtures.
+
+**Tests** use fake providers and cover: offline recipient gets a push; online recipient gets none; DND gets none; invalid-token pruning; payload contains no text; other users' tokens are inaccessible.
+
+**Task 16 follow-ups** (from the review):
+- a stale rate-limited edit must not revert a newer edit;
+- clamp `retry_after_ms` to ≤30000 in the reducer;
+- `snapshotTotals` ignores tombstones;
+- apply the frame timeout only on the queued path;
+- the history row uses the post-await `current` text in delete/edit;
+- doc wording fixes;
+- tests for the 3 untested branches.
+
+### Task 19: Integration — call-push hardening follow-ups
+
+Worktree `m-integration`. Depends on Task 18. Close the Task 18 re-review minors before mobile clients implement `push.md` §3:
+1. A duplicate `call_answer` while the pair is already active must not get `call_end`. It is ignored or acknowledged idempotently, and the contract states this.
+2. `pushCallUndeliverable` matches the job's `offerAt`, so a stale failure can't cancel a fresh re-offer.
+3. After a legitimate `/auth/refresh`, delivery retries follow `rebindSession` (old → new jti) instead of being dropped.
+4. Close the `call_offer` / `canRing` await race with caller `call_end`, e.g. by re-checking the offer after the await or by serialising call frames per pair.
+5. Consume tombstones once delivered to a socket, or document why they are not.
+6. When the queue is full at `notifyCall`, the caller gets `call_unavailable`.
+7. Add tests for the `connection_lost` and `timeout` tombstone reasons.
+8. Desktop: map server call `reason` codes (`no_call`, `unavailable`, `cancelled`, `timeout`, `connection_lost`) to Russian text in `desktop/src/renderer/src/lib/call-signal.mjs` (or the panel) instead of showing the raw code. For this task, Integration may edit those two desktop files only, with a desktop unit test.
+
+TDD; full `npm test` and the desktop test for the touched file must be green.
+
+### Task 20: Integration — mobile media (Range, thumbnails, avatar URLs) + call follow-ups
+
+Worktree `m-integration`. Depends on Task 19. Additive and desktop compatible.
+
+**Media (S5)**
+- `GET /api/files/download/:id` supports `Range` (206, `Accept-Ranges`, `Content-Range`, 416), plus `ETag` and `If-None-Match` (304). Authorization is unchanged.
+- Image thumbnails at `GET /api/files/thumb/:id?size=s|m`, with sizes ~160/~480 px, WebP or JPEG.
+  - Thumbnails are generated lazily and cached on disk, with bounded size and decode limits so they can't be used as a decompression bomb.
+  - The server checks the image's magic bytes and does not trust the MIME type.
+  - Use a pure-JS or zero-native approach, or the image library the server already has. If any dependency is needed, record and justify it under supply-chain review.
+  - Thumbnails also follow the same per-file authorization as downloads.
+- `width`/`height` and a small dominant colour (`#rrggbb`) for images in the message attachment metadata. The mobile `AttachmentTile` placeholder uses them.
+- Avatars:
+  - New endpoints `PUT /api/users/avatar` (multipart, image only, size cap, re-encoded and stripped of EXIF) and `GET /api/users/:id/avatar?size=` (cacheable, ETag).
+  - User objects gain an `avatar_url`.
+  - Profile/user payloads stop embedding data-URL avatars by default. Keep a compat path for desktop: check `desktop/` usage and either keep the field for desktop or update the desktop renderer. Integration may touch only the desktop avatar files, with a test.
+
+**Calls**
+- A `call_answer` is idempotent only for the socket that answered. An answer from another socket of the same user gets `call_end` (`answered_elsewhere`), so two devices never both stream audio.
+- Audio relay binds to the answering socket.
+- Monotonic `offerSeq` replaces matching by the `offer.at` timestamp.
+- Map the new reason to Russian text on the desktop.
+
+**Contract and tests**
+- Update `openapi.yaml`, `ws-protocol.md`, `push.md` and fixtures (`--write`).
+- TDD throughout. Server and desktop suites green.
+
+### Task 21: Android — «Сотрудники» tab, person card, universal search, button system
+
+Worktree `m-android`. Depends on Task 17.
+
+Implement the design brief section «People surface + universal search» in full on Android:
+- 4-tab navigation;
+- the «Сотрудники» screen with «Все» (A–Я sections) and «Отделы» (org tree);
+- the «В сети» filter and the summary line;
+- the person card with the shared element, the action row and the info group (phone/email intents);
+- universal search in «Чаты» (people / channels / messages, recents, jump to message with highlight);
+- the transition order;
+- the system-wide button styles from «Buttons».
+
+Data comes from the existing endpoints only: `/api/users`, `/api/org/tree`, `/api/users/:id`, `/api/messages/search`, with a cached people list. The ranking and normalisation rules are pure functions with unit tests.
+
+Acceptance:
+- Compose UI tests for search ranking display, card actions (including the disabled call state) and tab state retention.
+- Screen recordings against the dev stand of: people tab → search → card → «Написать» → back chain; universal search → message jump.
+- Screenshots in light, dark and font 2.0.
+
+### Task 23: Android — anti-"AI-generated" polish pass across all screens
+
+Worktree `m-android`. Depends on Task 21.
+
+Apply the design brief section «Anti-"AI-generated" polish pass» to every screen:
+- borders only where specified;
+- the spacing rhythm;
+- three type steps per row;
+- empty states with next-step actions;
+- copy naming its objects;
+- badge rules;
+- the chat refinements (group contour, quiet date pills, baseline time, filled composer);
+- grouped native lists in Profile/Announcements;
+- announcement importance dot (no left border).
+
+Functionality must not change. Provide before/after screenshots of every screen in light, dark and font 2.0, followed by an independent design finish-review.
+
+### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
+
+Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
+- motion thesis, with the "message lands" focal sequence and shared-element inbox → chat via Navigation 3 + `SharedTransitionLayout`;
+- keyboard glued to the composer with animated IME insets, `reverseLayout`, `imeNestedScroll` interactive dismiss, and a growing composer;
+- the four-plane depth model with lift-on-scroll top bars;
+- all 15 visual components, as a `ui/components` library with Compose previews, including authored vector spot illustrations as `ImageVector`s;
+- the delight moments;
+- Reduce-motion fallbacks.
+
+Acceptance: the screen recordings listed in the brief, captured on `emulator-5554` against the dev stand, plus Compose UI tests for SwipeToReply threshold, ContextMenu actions, JumpToLatestPill visibility rule, and ConnectionBanner states. Android command + androidTest green.
+
+### Task 14: iOS — Wave 2 messaging core (outbox, realtime, chat)
+
+Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/delivery-state.md` on iOS: a Swift reducer that passes every vector in `mobile/contracts/fixtures/reducers/` (table-driven XCTest reading the JSON), a SwiftData-backed durable outbox + conversation cache, an effects executor (WS send, HTTP flush, timers, persist barrier, sync chain via `/api/sync`, 410 resync), reconnect algorithm, composer cleared only after durable enqueue, visible queued/sending/sent/delivered/read/failed states with retry/cancel per the design brief's motion grammar, history pagination (`beforeId`), and chat polish (reply, edit/delete confirmation). Screenshots of offline send → reconnect in CI against the dev stand.
+
+### Task 15: Android — Wave 2 messaging core (outbox, realtime, chat)
+
+Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
+
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 21 → 23 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19 → 20; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.

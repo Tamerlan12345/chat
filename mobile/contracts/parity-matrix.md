@@ -38,14 +38,14 @@
 | **Direct Messaging** | Личная переписка, статусы `delivered`/`read`. | ◐ | ◐ | D1 (потеря при разрыве, нет outbox), D2 (iOS: открытый чат без realtime), D3 (двойной `new_message`+`direct_message` → двойной unread), D4. |
 | **Channel Messaging** | Каналы, счётчики непрочитанного. | ◐ | ◐ | Те же D1–D4. |
 | **Create chat / channel** | Новый личный чат, создание канала. | ✗ | ✗ | D6: iOS — сломан sheet; Android — отсутствует. |
-| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер готов (задача 5): `GET /api/sync` по курсору и `afterId`; алгоритм — ws-protocol §6.3 «Алгоритм переподключения клиента». Клиенты — волна 2. |
+| **Reconnect resync + индикатор** | Пересинхронизация после реконнекта, индикатор соединения. | ✗ | ✗ | D4. Сервер готов (задача 5): `GET /api/sync` по курсору и `afterId`; алгоритм — ws-protocol §6.3 «Алгоритм переподключения клиента». Клиентская модель — `delivery-state.md` (задача 13), реализация клиентами — волна 2. |
 | **Message Editing** | Правка в окне `message_edit_window_minutes`. | ✗ | ? | D2: на iOS обработчики `updateMessage*` — заглушки. |
 | **Message Deleting** | Удаление в окне `message_delete_window_minutes`. | ✗ | ? | D2 (iOS); Android не проверялся. |
 | **Typing Indicator** | «печатает…», автосброс. | ✗ | ? | D2 (iOS: realtime открытого чата). |
 | **Presence & DND** | `online`/`away`/`dnd`. | ◐ | ◐ | Живого прогона нет. |
 | **Wake (Побудка)** | Приём с вибрацией/звуком, кулдаун 60 с. | ◐ | ◐ | Только foreground (D10). |
 | **Voice Calls (Signalling)** | `call_offer/answer/rejected/end`. | ◐ | ✗ | D7 (Android: повторный звонок сразу закрывается, «назад» не завершает звонок — ViewModel привязаны к Activity). D10: только foreground. |
-| **Background / incoming call** | CallKit / foreground service / push. | ✗ | ✗ | D10; на сервере нет push (APNs/FCM). |
+| **Background / incoming call** | CallKit / foreground service / push. | ✗ | ✗ | D10. Сервер: push готов (задача 18, `push.md`: FCM/APNs, PushKit VoIP, только id, вызов ждёт и доставляется при подключении); клиенты — не реализовано. |
 | **Audio Relay (WebSocket)** | PCM 16 кГц через WS binary. | ◐ | ◐ | iOS: код ~900 строк ни разу не компилировался; D15 — возможный краш Swift 6 в аудиоколбэках (`installTap`/`scheduleBuffer` из @MainActor). |
 | **Silence Suppression / Jitter Buffer** | `SILENCE_THRESHOLD`, 60/250 мс. | ◐ | ◐ | Юнит-логика есть; в связке с живым звонком не проверена. |
 | **Announcements** | Список, бейджи, «Ознакомлен». | ◐ | ◐ | Живого прогона нет. |

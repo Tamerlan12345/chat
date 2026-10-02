@@ -1,0 +1,42 @@
+{
+  "name": "08-own-message",
+  "description": "Своё сообщение (эхо на другие свои устройства) никогда не уведомляет.",
+  "decision": "message",
+  "input": {
+    "recipientId": 5,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      },
+      {
+        "id": "phone",
+        "deviceId": "ios-91c2",
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "ios-91c2"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "own",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "desk",
+      "phone"
+    ]
+  }
+}

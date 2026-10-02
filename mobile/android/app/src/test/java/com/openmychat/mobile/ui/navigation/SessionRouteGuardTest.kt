@@ -21,8 +21,7 @@ class SessionRouteGuardTest {
             NavKey.Login,
             SessionRouteGuard.destinationAfterSessionLoss(
                 currentDestination = NavKey.Conversations,
-                session = revokedSession,
-                hasConfiguredServer = true
+                session = revokedSession
             )
         )
         assertFalse(SessionRouteGuard.acceptsIncomingCall(revokedSession))
@@ -41,8 +40,7 @@ class SessionRouteGuardTest {
             null,
             SessionRouteGuard.destinationAfterSessionLoss(
                 currentDestination = NavKey.Chat("direct", 42, "Alice"),
-                session = activeSession,
-                hasConfiguredServer = true
+                session = activeSession
             )
         )
         assertTrue(SessionRouteGuard.acceptsIncomingCall(activeSession))
@@ -60,8 +58,7 @@ class SessionRouteGuardTest {
             NavKey.Login,
             SessionRouteGuard.destinationForNavigation(
                 requestedDestination = NavKey.Call(peerId = 42, peerName = "Alice"),
-                session = unavailableSession,
-                hasConfiguredServer = true
+                session = unavailableSession
             )
         )
     }

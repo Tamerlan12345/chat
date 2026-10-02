@@ -7,7 +7,6 @@ import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.ChangePasswordRequest
 import com.openmychat.mobile.data.model.ChangePasswordResponse
 import com.openmychat.mobile.data.model.DeviceClaimRequest
-import com.openmychat.mobile.data.model.HealthStatus
 import com.openmychat.mobile.data.model.KnockRequest
 import com.openmychat.mobile.data.model.LoginRequest
 import kotlinx.coroutines.flow.StateFlow
@@ -15,27 +14,23 @@ import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 
-sealed interface ServerConnectResult {
-    val health: HealthStatus
-    val knockStatus: String?
-
-    /** The device was already paired; an authenticated session has been stored. */
-    data class Paired(override val health: HealthStatus, override val knockStatus: String?) : ServerConnectResult
-
-    /** The server is reachable and stored, but the user still has to sign in. */
-    data class LoginRequired(override val health: HealthStatus, override val knockStatus: String?) : ServerConnectResult
-}
-
 enum class LoginResult { SUCCESS, MUST_CHANGE_PASSWORD }
 
 interface AuthRepository {
-    val serverUrl: String
     val mustChangePassword: StateFlow<Boolean>
     val isPasswordChangeForced: Boolean
     val hasSessionToken: Boolean
 
-    /** Verifies and stores the endpoint; restores the previous endpoint and rethrows on failure. */
-    suspend fun connect(rawUrl: String): ServerConnectResult
+    /**
+     * Announces this device to the build-time server (`/auth/knock`), as the old server-setup step
+     * did. Returns true only when the server answered "paired" and the session it issued was stored.
+     * Without a device secret stored by an earlier claim nothing is sent: such a knock can never pair,
+     * but the server would still record a pending device, notify admins and count a failed knock.
+     */
+    suspend fun knock(): Boolean
+
+    /** `company_name` from the public `/api/settings/info`, unsanitised; null when absent. */
+    suspend fun companyName(): String?
 
     /** Signs in and claims the device. Secure storage failures are rethrown, never swallowed. */
     suspend fun login(username: String, password: String): LoginResult
@@ -52,41 +47,25 @@ class DefaultAuthRepository @Inject constructor(
     private val sessionManager: SessionManager
 ) : AuthRepository {
 
-    override val serverUrl: String get() = sessionManager.serverUrl
     override val mustChangePassword: StateFlow<Boolean> get() = sessionManager.mustChangePasswordFlow
     override val isPasswordChangeForced: Boolean get() = sessionManager.mustChangePassword
     override val hasSessionToken: Boolean get() = sessionManager.token != null
 
-    override suspend fun connect(rawUrl: String): ServerConnectResult {
-        try {
-            val endpoint = sessionManager.validateServerEndpoint(rawUrl).getOrElse { throw it }
-            val health = apiClient.checkHealthAt(endpoint)
-            val knockResp = try {
-                apiClient.knockAt(
-                    endpoint,
-                    KnockRequest(
-                        deviceId = sessionManager.deviceId,
-                        deviceSecret = null,
-                        deviceName = "Android Device"
-                    )
-                )
-            } catch (_: Exception) {
-                null
-            }
-
-            sessionManager.commitVerifiedServerEndpoint(endpoint)
-
-            return if (knockResp?.status == "paired" && knockResp.token != null && knockResp.user != null) {
-                sessionManager.saveAuthSuccess(knockResp.user, knockResp.token)
-                ServerConnectResult.Paired(health, knockResp.status)
-            } else {
-                ServerConnectResult.LoginRequired(health, knockResp?.status)
-            }
-        } catch (error: Exception) {
-            sessionManager.restorePersistedServerEndpoint()
-            throw error
-        }
+    override suspend fun knock(): Boolean {
+        val secret = sessionManager.deviceSecret?.takeIf { it.isNotBlank() } ?: return false
+        val response = apiClient.knock(
+            KnockRequest(
+                deviceId = sessionManager.deviceId,
+                deviceSecret = secret,
+                deviceName = "Android Device"
+            )
+        )
+        if (response.status != "paired" || response.token == null || response.user == null) return false
+        sessionManager.saveAuthSuccess(response.user, response.token)
+        return true
     }
+
+    override suspend fun companyName(): String? = apiClient.fetchServerInfo().companyName
 
     override suspend fun login(username: String, password: String): LoginResult {
         try {

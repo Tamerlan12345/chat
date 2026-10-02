@@ -1,0 +1,197 @@
+{
+  "name": "34-sync-failed-retry",
+  "description": "Неуспех /api/sync: цепочка остановлена, будильник sync_start через Retry-After (или 5 с), outbox повторяется сразу. Каждая новая цепочка получает следующий chain. 401 — без будильника. Без сокета sync_start ничего не делает; результат вне цепочки игнорируется.",
+  "covers": [
+    "T35",
+    "T20",
+    "T38"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": true,
+      "bootstrap": false,
+      "chain": 1
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000054-0000-4000-8000-000000000054",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Синхронизация упала",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "sync_failed",
+      "now": 1000,
+      "chain": 1,
+      "status": 429,
+      "retry_after_ms": 60000
+    },
+    {
+      "type": "sync_failed",
+      "now": 1001,
+      "chain": 1,
+      "status": 500
+    },
+    {
+      "type": "sync_start",
+      "now": 61000
+    },
+    {
+      "type": "sync_failed",
+      "now": 62000,
+      "chain": 2,
+      "status": 503
+    },
+    {
+      "type": "sync_start",
+      "now": 67000
+    },
+    {
+      "type": "sync_failed",
+      "now": 68000,
+      "chain": 3,
+      "status": 401
+    },
+    {
+      "type": "ws_disconnected",
+      "now": 69000
+    },
+    {
+      "type": "sync_start",
+      "now": 70000
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 61000,
+        "event": {
+          "type": "sync_start"
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Синхронизация упала",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000054-0000-4000-8000-000000000054"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000054-0000-4000-8000-000000000054",
+          "attempt": 1
+        }
+      }
+    ],
+    [],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 2
+      }
+    ],
+    [
+      {
+        "type": "schedule",
+        "at": 67000,
+        "event": {
+          "type": "sync_start"
+        }
+      }
+    ],
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 3
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    []
+  ],
+  "expectedState": {
+    "connection": "offline",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 3
+    },
+    "outbox": [
+      {
+        "client_msg_id": "a0000054-0000-4000-8000-000000000054",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Синхронизация упала",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ]
+  }
+}

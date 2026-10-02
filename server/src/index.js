@@ -19,6 +19,9 @@ async function start() {
   await bootstrap();
   await SettingsService.load();
   SettingsService.startAutoRefresh();
+  // Push-уведомления мобильных клиентов: учётные данные FCM/APNs только из
+  // окружения; без них push выключен (одна строка в журнале), остальное — как раньше.
+  require('./push/push.service').configureFromEnv();
 
   server.listen(config.PORT, config.HOST, () => {
     backupScheduler.start();

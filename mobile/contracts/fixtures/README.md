@@ -21,13 +21,19 @@ fixtures/
   http/<область>.<ответ>.json       тело ответа REST, например http/auth.knock-paired.json
   ws/<событие>.json                 кадр сервер -> клиент, как на проводе
   ws/<событие>.<вариант>.json       несколько форм одного события (new_message.direct / .channel)
+  push/<поставщик>.<вид>[.<вариант>].json  что сервер отправляет через FCM/APNs (push.md), например push/fcm.message.direct.json
 ```
 
 - `<событие>` — значение поля `type` кадра, дословно (`new_message`, `call_end`, …); вариант — условие, при котором форма отличается (`connection_lost`, `cooldown`, `invalid_token`).
 - Файл содержит **только тело** (для HTTP — JSON ответа без статуса и заголовков; статус и маршрут — в `manifest.json`).
-- `manifest.json`: для `http` — `method`, `path`, `status`; для `ws` — `event`, `direction` (`server->client`), `trigger` (что сделал клиент/админ, чтобы сервер прислал кадр); у всех — `description` по-русски.
+- `manifest.json`: для `http` — `method`, `path`, `status`; для `ws` — `event`, `direction` (`server->client`), `trigger` (что сделал клиент/админ, чтобы сервер прислал кадр); для `push` — `provider` (`fcm` / `apns`) и `trigger`; у всех — `description` по-русски.
+- `push/fcm.*.json` — тело запроса FCM v1 (на устройстве приходит `message.data`, значения — строки); `push/apns.*.json` — `{headers, payload}` (на устройстве `payload` — `userInfo`, id — числа). Собраны кодом сервера (`server/src/push`), а не руками; токены устройств в них — заглушки.
 
 Полное соответствие «событие → файл» — `../ws-protocol.md` §7.
+
+`notify/` — табличные векторы решения «кому уведомление» (`../multi-device.md` §5, эталон `../reference/notify-decision.mjs`): `{name, description, decision: "message"|"read", input, expected}`; вход — как у функции, `expected` сравнивается глубоким равенством (порядок массивов важен). В `manifest.json` не входят; сервер гоняет их через свой код (`server/test/notify-decision.test.js`), платформы — через свой.
+
+`reducers/` — не ответы сервера, а табличные векторы клиентского редьюсера доставки (`../delivery-state.md`); в `manifest.json` не входят, декодирующие тесты их пропускают, `capture-fixtures.mjs --write` их не трогает. Формат и обязательный прогон на платформах — `reducers/README.md`.
 
 ## Нормализация (что в фикстурах не настоящее)
 

@@ -520,9 +520,17 @@ test('фотография профиля: новая проверяется, п
     () => UserService.updateProfile(people.petrova.id, { avatar_url: `data:image/png;base64,${'A'.repeat(800 * 1024)}` }),
     /слишком большая/
   );
-  const small = 'data:image/png;base64,iVBORw0KGgo=';
+  // Одна сигнатура PNG без картинки — не фотография (задача 20: фото
+  // перекодируется, и то, что не декодируется, не сохраняется).
+  await assert.rejects(
+    () => UserService.updateProfile(people.petrova.id, { avatar_url: 'data:image/png;base64,iVBORw0KGgo=' }),
+    /изображением/
+  );
+  const png = await require('sharp')({ create: { width: 4, height: 4, channels: 3, background: '#336699' } }).png().toBuffer();
+  const small = `data:image/png;base64,${png.toString('base64')}`;
   const updated = await UserService.updateProfile(people.petrova.id, { avatar_url: small });
-  assert.strictEqual(updated.avatar_url, small);
+  // Сохраняется перекодированная копия — тем же data URL (JPEG без метаданных).
+  assert.match(updated.avatar_url, /^data:image\/jpeg;base64,/);
 });
 
 // ── Общие каналы ────────────────────────────────────────────────────────────

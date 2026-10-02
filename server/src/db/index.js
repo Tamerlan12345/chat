@@ -96,7 +96,10 @@ const TABLES = {
       mime_type TEXT,
       sha256 TEXT,
       path TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      dominant_color TEXT
     )`,
   // История правок и удалений: единственное место, где остаётся исходный
   // текст и метаданные после того, как сообщение в messages уже заменено
@@ -123,6 +126,36 @@ const TABLES = {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       last_seq INTEGER NOT NULL,
       epoch TEXT NOT NULL
+    )`,
+  // Отозванные автором ключи отправки (cancel_message): отправка с таким
+  // ключом отклоняется (CANCELLED). Живут сутки и не больше тысячи на
+  // отправителя (MessageService.recordCancelled) — в базе, а не в памяти,
+  // чтобы отзыв пережил перезапуск сервера.
+  cancelled_client_msgs: `
+    CREATE TABLE IF NOT EXISTS cancelled_client_msgs (
+      sender_id INTEGER NOT NULL,
+      client_msg_id TEXT NOT NULL,
+      cancelled_at INTEGER NOT NULL, -- epoch мс
+      PRIMARY KEY (sender_id, client_msg_id)
+    )`,
+  // Токены push-уведомлений мобильных устройств (задача 18). Токен привязан к
+  // сотруднику, устройству и сеансу, который его зарегистрировал: выход,
+  // отвязка устройства, смена пароля — и уведомления на это устройство больше
+  // не уходят (src/push/token-store.js). Через Google/Apple идут только id.
+  push_tokens: `
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      platform TEXT NOT NULL,          -- 'ios' | 'android'
+      kind TEXT NOT NULL,              -- 'alert' | 'voip' (PushKit, только iOS)
+      environment TEXT NOT NULL,       -- 'sandbox' | 'production' (узел APNs)
+      device_id TEXT,
+      session_jti TEXT,                -- jti токена сеанса, переносится при продлении
+      token_version INTEGER,           -- поколение токенов сотрудника на момент регистрации
+      auth_time INTEGER,               -- время входа сеанса (SESSION_MAX_DAYS)
+      app_version TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )`
 };
 
@@ -135,7 +168,11 @@ const INDEXES = [
   // в пределах отправителя. Чужой id не совпадёт с вашим ни при каком угадывании.
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg ON messages(sender_id, client_msg_id) WHERE client_msg_id IS NOT NULL`,
   // Курсор синхронизации: каждое изменение строки получает следующий номер.
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`,
+  `CREATE INDEX IF NOT EXISTS idx_cancelled_client_msgs_at ON cancelled_client_msgs(cancelled_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_device ON push_tokens(device_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_session ON push_tokens(session_jti)`
 ];
 
 // Колонки, добавленные к messages уже после первых установок. CREATE TABLE IF
@@ -171,6 +208,22 @@ function migrateMessages(db) {
     const base = Number(db.prepare('SELECT last_seq FROM sync_state WHERE id = 1').get().last_seq);
     db.prepare('UPDATE messages SET change_seq = id + ? WHERE change_seq IS NULL').run(base);
     db.prepare('UPDATE sync_state SET last_seq = MAX(last_seq, ?) WHERE id = 1').run(maxSeq());
+  }
+}
+
+// Размеры и преобладающий цвет картинки-вложения (задача 20): мобильный
+// клиент рисует по ним заглушку нужной формы, пока грузится миниатюра. У
+// старых вложений пусто — заполняется при первой миниатюре.
+const FILE_COLUMNS_ADDED = [
+  ['width', 'INTEGER'],
+  ['height', 'INTEGER'],
+  ['dominant_color', 'TEXT']
+];
+
+function migrateFiles(db) {
+  const present = new Set(db.prepare('PRAGMA table_info(files)').all().map((c) => c.name));
+  for (const [name, type] of FILE_COLUMNS_ADDED) {
+    if (!present.has(name)) db.exec(`ALTER TABLE files ADD COLUMN ${name} ${type}`);
   }
 }
 
@@ -250,6 +303,7 @@ function closeDatabase() {
 function initSchema(db) {
   for (const ddl of Object.values(TABLES)) db.exec(ddl);
   migrateMessages(db);
+  migrateFiles(db);
   for (const ddl of INDEXES) db.exec(ddl);
 }
 

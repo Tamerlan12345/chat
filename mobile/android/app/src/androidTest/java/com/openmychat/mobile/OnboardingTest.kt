@@ -2,14 +2,12 @@ package com.openmychat.mobile
 
 import android.Manifest
 import android.os.Build
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTextInput
 import androidx.test.rule.GrantPermissionRule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -37,24 +35,12 @@ class OnboardingTest {
             GrantPermissionRule.grant()
         }
 
+    /** The server is fixed at build time: the first screen is login, with no way to pick a server. */
     @Test
-    fun firstLaunchAsksForTheServerAndRejectsPlainHttpToAPublicHost() {
-        composeRule.onNodeWithText("Подключение к серверу").assertIsDisplayed()
-        composeRule.onNodeWithText("Подключиться").assertIsNotEnabled()
+    fun firstLaunchGoesStraightToLoginWithoutAnyServerSetup() {
+        composeRule.onNode(hasText("Войти") and hasClickAction()).assertIsDisplayed().assertIsNotEnabled()
 
-        composeRule.onNode(hasSetTextAction()).performTextInput("http://chat.example.com")
-        composeRule.onNodeWithText("Подключиться").assertIsEnabled().performClick()
-
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTextCount("Используйте HTTPS", substring = true) > 0
-        }
-        // Validation failed before any request: still on server setup, no navigation to login.
-        composeRule.onNodeWithText("Подключение к серверу").assertIsDisplayed()
+        composeRule.onAllNodes(hasText("сервер", substring = true, ignoreCase = true)).assertCountEquals(0)
+        composeRule.onAllNodes(hasText("Подключ", substring = true, ignoreCase = true)).assertCountEquals(0)
     }
-
-    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.onAllNodesWithTextCount(
-        text: String,
-        substring: Boolean
-    ): Int = onAllNodes(androidx.compose.ui.test.hasText(text, substring = substring))
-        .fetchSemanticsNodes().size
 }

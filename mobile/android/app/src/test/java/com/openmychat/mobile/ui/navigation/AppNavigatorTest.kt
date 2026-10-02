@@ -79,13 +79,22 @@ class AppNavigatorTest {
     }
 
     @Test
+    fun firstLaunchGoesStraightToLogin() {
+        val navigator = AppNavigator(AppNavigationState.signedOut())
+
+        assertTrue(navigator.state.isAuthFlow)
+        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
+        assertFalse("Login is the root of the sign-in flow", navigator.goBack())
+    }
+
+    @Test
     fun logoutClearsEveryStackToLogin() {
         val navigator = authenticatedNavigator()
         navigator.navigate(chatWithAlice)
         navigator.navigate(NavKey.Call(peerId = 7, peerName = "Alice"))
         navigator.navigate(NavKey.Profile)
 
-        navigator.onLoggedOut(hasConfiguredServer = true)
+        navigator.onLoggedOut()
 
         assertTrue(navigator.state.isAuthFlow)
         assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
@@ -100,19 +109,10 @@ class AppNavigatorTest {
     }
 
     @Test
-    fun logoutWithoutConfiguredServerReturnsToServerSetup() {
-        val navigator = authenticatedNavigator()
-
-        navigator.onLoggedOut(hasConfiguredServer = false)
-
-        assertEquals(listOf(NavKey.ServerConnect), navigator.state.visibleKeys)
-    }
-
-    @Test
     fun signingInLeavesTheAuthFlowWithoutABackPathToLogin() {
-        val navigator = AppNavigator(AppNavigationState.unauthenticated(hasConfiguredServer = false))
+        val navigator = AppNavigator(AppNavigationState.signedOut())
         navigator.navigate(NavKey.Login)
-        assertEquals(listOf(NavKey.ServerConnect, NavKey.Login), navigator.state.visibleKeys)
+        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
 
         navigator.navigate(NavKey.Conversations)
 
@@ -120,16 +120,6 @@ class AppNavigatorTest {
         assertTrue(navigator.state.authBackStack.isEmpty())
         assertEquals(listOf(NavKey.Conversations), navigator.state.visibleKeys)
         assertFalse(navigator.goBack())
-    }
-
-    @Test
-    fun returningToServerSetupFromLoginPopsInsteadOfPushing() {
-        val navigator = AppNavigator(AppNavigationState.unauthenticated(hasConfiguredServer = true))
-
-        navigator.navigate(NavKey.ServerConnect)
-        navigator.navigate(NavKey.Login)
-
-        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
     }
 
     @Test
@@ -157,24 +147,24 @@ class AppNavigatorTest {
         navigator.navigate(chatWithAlice)
         val lostSession = AuthenticatedRouteState("token", hasCurrentUser = true, SessionStorageState.UNAVAILABLE)
 
-        navigator.syncWithSession(lostSession, hasConfiguredServer = true)
+        navigator.syncWithSession(lostSession)
 
         assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
     }
 
     @Test
     fun restoredAuthStackIsDroppedWhenTheSessionIsValid() {
-        val navigator = AppNavigator(AppNavigationState.unauthenticated(hasConfiguredServer = true))
+        val navigator = AppNavigator(AppNavigationState.signedOut())
         val validSession = AuthenticatedRouteState("token", hasCurrentUser = true, SessionStorageState.AVAILABLE)
 
-        navigator.syncWithSession(validSession, hasConfiguredServer = true)
+        navigator.syncWithSession(validSession)
 
         assertEquals(listOf(NavKey.Conversations), navigator.state.visibleKeys)
     }
 
     @Test
     fun protectedDestinationsCannotBePushedIntoTheAuthFlow() {
-        val navigator = AppNavigator(AppNavigationState.unauthenticated(hasConfiguredServer = true))
+        val navigator = AppNavigator(AppNavigationState.signedOut())
 
         navigator.navigate(chatWithAlice)
 
@@ -191,7 +181,7 @@ class AppNavigatorTest {
         val validSession = AuthenticatedRouteState("token", hasCurrentUser = true, SessionStorageState.AVAILABLE)
 
         // A restored Call key would re-send call_offer or show a phantom ringing screen.
-        navigator.syncWithSession(validSession, hasConfiguredServer = true)
+        navigator.syncWithSession(validSession)
 
         assertFalse(navigator.hasActiveCall)
         assertEquals(listOf(NavKey.Conversations, chatWithAlice), navigator.state.topLevelBackStacks.getValue(NavKey.Conversations).toList())

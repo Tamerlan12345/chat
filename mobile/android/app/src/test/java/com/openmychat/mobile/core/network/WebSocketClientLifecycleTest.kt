@@ -11,6 +11,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 import java.util.concurrent.atomic.AtomicInteger
 
 class WebSocketClientLifecycleTest {
@@ -38,14 +39,11 @@ class WebSocketClientLifecycleTest {
     private fun sessionManagerWithAuthenticatedServer(): SessionManager {
         val constructor = SessionManager::class.java.declaredConstructors.single { candidate ->
             candidate.parameterTypes.contentEquals(
-                arrayOf(SharedPreferences::class.java, Boolean::class.javaPrimitiveType)
+                arrayOf(SharedPreferences::class.java, ValidatedEndpoint::class.java)
             )
         }
         constructor.isAccessible = true
-        val sessionManager = constructor.newInstance(AvailableSharedPreferences(), false) as SessionManager
-        sessionManager.commitVerifiedServerEndpoint(
-            sessionManager.validateServerEndpoint("https://chat.example").getOrThrow()
-        )
+        val sessionManager = constructor.newInstance(AvailableSharedPreferences(), TestSessions.CHAT_EXAMPLE) as SessionManager
         sessionManager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token")
         return sessionManager
     }

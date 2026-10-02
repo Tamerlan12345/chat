@@ -90,12 +90,40 @@
     "path": "/api/conversations/direct",
     "status": 200
   },
+  "http/devices.push-token-delete.json": {
+    "kind": "http",
+    "description": "Удаление своего токена: { removed }. Чужой и несуществующий токен — тот же ответ { removed: false }.",
+    "method": "DELETE",
+    "path": "/api/devices/push-token",
+    "status": 200
+  },
+  "http/devices.push-token-invalid.json": {
+    "kind": "http",
+    "description": "Отказ регистрации: HTTP 400 и { error, code } (INVALID_PLATFORM, INVALID_TOKEN, INVALID_ENVIRONMENT, INVALID_KIND, INVALID_APP_VERSION, INVALID_DEVICE_ID).",
+    "method": "POST",
+    "path": "/api/devices/push-token",
+    "status": 400
+  },
+  "http/devices.push-token-register.json": {
+    "kind": "http",
+    "description": "Регистрация токена push устройства (идемпотентно): { registered, push_enabled }. push_enabled = false — у сервера нет учётных данных FCM/APNs, уведомлений не будет.",
+    "method": "POST",
+    "path": "/api/devices/push-token",
+    "status": 200
+  },
   "http/files.policy.json": {
     "kind": "http",
     "description": "Политика вложений: { enabled, allowed } (расширения в нижнем регистре, БЕЗ точки).",
     "method": "GET",
     "path": "/api/files/policy",
     "status": 200
+  },
+  "http/files.upload-image.json": {
+    "kind": "http",
+    "description": "Загрузка картинки: width/height (с учётом поворота по EXIF) и dominantColor посчитаны сервером по сигнатуре файла; у не-картинок — null.",
+    "method": "POST",
+    "path": "/api/files/upload",
+    "status": 201
   },
   "http/files.upload.json": {
     "kind": "http",
@@ -124,6 +152,13 @@
     "method": "GET",
     "path": "/api/messages/direct/{id}",
     "status": 200
+  },
+  "http/messages.send-cancelled.json": {
+    "kind": "http",
+    "description": "REST-отправка с отозванным client_msg_id: HTTP 409, { error, code: \"CANCELLED\" }.",
+    "method": "POST",
+    "path": "/api/messages/direct/{id}",
+    "status": 409
   },
   "http/messages.send-client-msg-id-conflict.json": {
     "kind": "http",
@@ -181,6 +216,27 @@
     "path": "/api/sync",
     "status": 200
   },
+  "http/users.avatar-not-image.json": {
+    "kind": "http",
+    "description": "Фото не картинка JPEG/PNG/GIF/WebP по сигнатуре: 415 { error, code: NOT_AN_IMAGE }.",
+    "method": "PUT",
+    "path": "/api/users/avatar",
+    "status": 415
+  },
+  "http/users.avatar-upload.json": {
+    "kind": "http",
+    "description": "PUT /users/avatar (multipart, поле file): профиль, avatar_url — адрес /api/users/{id}/avatar?v=<версия>, а не data URL.",
+    "method": "PUT",
+    "path": "/api/users/avatar",
+    "status": 200
+  },
+  "http/users.get-with-avatar.json": {
+    "kind": "http",
+    "description": "Карточка коллеги с фото: avatar_url — адрес фото (загружать с Authorization).",
+    "method": "GET",
+    "path": "/api/users/{id}",
+    "status": 200
+  },
   "http/users.get.json": {
     "kind": "http",
     "description": "Профиль одного сотрудника.",
@@ -194,6 +250,54 @@
     "method": "GET",
     "path": "/api/users",
     "status": 200
+  },
+  "push/apns.call.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "VoIP-уведомление PushKit о входящем звонке: topic <bundle>.voip, push-type voip, срок 30 с; payload { type: \"call\", callerId }.",
+    "trigger": "call_offer сотруднику без сокета"
+  },
+  "push/apns.message.channel.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Уведомление APNs о сообщении в канале.",
+    "trigger": "сообщение в канале, у участника нет сокета"
+  },
+  "push/apns.message.direct.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.",
+    "trigger": "личное сообщение alice → bob, у bob нет сокета"
+  },
+  "push/apns.read.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Тихий background-push «read»: apns-push-type background, apns-priority 5, aps { content-available: 1 } без alert, apns-collapse-id r-<conversationType>-<targetId>; id — числа. Apple доставку не гарантирует — снятие «как получится».",
+    "trigger": "mark_read на компьютере; iPhone без сокета на переднем плане раньше получил push о сообщении этой переписки"
+  },
+  "push/fcm.call.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о входящем звонке: высокий приоритет, ttl 30 с; data { type: \"call\", callerId }.",
+    "trigger": "call_offer сотруднику без сокета"
+  },
+  "push/fcm.message.channel.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о сообщении в канале: targetId — id канала.",
+    "trigger": "сообщение в канале, у участника нет сокета"
+  },
+  "push/fcm.message.direct.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тело запроса FCM v1 о личном сообщении. Приложение получает message.data (все значения — строки): targetId — собеседник (автор), messageId — id сообщения. Текста и имени нет — приложение берёт их с сервера.",
+    "trigger": "личное сообщение alice → bob, у bob нет сокета"
+  },
+  "push/fcm.read.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тихий data-push «read» (multi-device.md §6): переписку прочитали на другом устройстве — снять показанные уведомления. data { type: \"read\", conversationType, targetId } (targetId — как у сообщения), android.priority NORMAL, collapse_key r-<conversationType>-<targetId>. Уведомление не показывать.",
+    "trigger": "mark_read на компьютере; телефону без сокета на переднем плане раньше уходил push о сообщении этой переписки"
   },
   "ws/announcement_acknowledged.json": {
     "kind": "ws",
@@ -251,6 +355,13 @@
     "direction": "server->client",
     "trigger": "call_offer без права can_call"
   },
+  "ws/call_end.answered_elsewhere.json": {
+    "kind": "ws",
+    "description": "На звонок ответило другое устройство того же сотрудника: остальным его сокетам — call_end (senderId — звонящий, reason \"answered_elsewhere\"); тот же кадр — в ответ на call_answer с другого устройства во время разговора и устройству, вошедшему во время разговора.",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "call_answer с другого сокета bob"
+  },
   "ws/call_end.connection_lost.json": {
     "kind": "ws",
     "description": "Собеседник пропал: кадр БЕЗ targetUserId, reason = \"connection_lost\".",
@@ -264,6 +375,13 @@
     "event": "call_end",
     "direction": "server->client",
     "trigger": "call_end alice → bob"
+  },
+  "ws/call_end.no_call.json": {
+    "kind": "ws",
+    "description": "Ответ на вызов, которого нет: отвечающему call_end (senderId — тот, кому отвечали; reason \"no_call\"). Тот же кадр с reason \"cancelled\" | \"connection_lost\" | \"timeout\" | \"unavailable\" приходит телефону, разбуженному push о звонке, если вызов закончился до его подключения (push.md §3).",
+    "event": "call_end",
+    "direction": "server->client",
+    "trigger": "call_answer без ждущего вызова"
   },
   "ws/call_offer.json": {
     "kind": "ws",
@@ -314,12 +432,40 @@
     "direction": "server->client",
     "trigger": "send_message conversationType=channel"
   },
+  "ws/conversation_read.channel.json": {
+    "kind": "ws",
+    "description": "Вы прочитали канал на другом своём устройстве: lastReadId — новая позиция прочтения (id последнего сообщения канала), messageIds нет.",
+    "event": "conversation_read",
+    "direction": "server->client",
+    "trigger": "mark_read conversationType=channel с другого сокета того же сотрудника"
+  },
+  "ws/conversation_read.direct.json": {
+    "kind": "ws",
+    "description": "Вы прочитали личный диалог на ДРУГОМ своём устройстве: снять непрочитанное и показанные уведомления этой переписки. targetId — собеседник (с вашей точки зрения), messageIds — вновь прочитанные входящие, byUserId — вы, at — время (ISO). Отметившему сокету не приходит; приходит только когда что-то действительно прочитано.",
+    "event": "conversation_read",
+    "direction": "server->client",
+    "trigger": "mark_read conversationType=direct с другого сокета того же сотрудника"
+  },
   "ws/direct_message.json": {
     "kind": "ws",
     "description": "Новое личное сообщение (отправителю и получателю). Всегда сопровождается new_message с той же записью.",
     "event": "direct_message",
     "direction": "server->client",
     "trigger": "send_message conversationType=direct"
+  },
+  "ws/error.cancel_message.json": {
+    "kind": "ws",
+    "description": "Отзыв не удался: сообщение сохранено, а удалять его уже нельзя (окно удаления): context = \"cancel_message\", code (здесь DELETE_WINDOW_EXPIRED), retryable = false, client_msg_id и messageId. Ключ всё равно помечен отозванным.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "cancel_message при выключенном удалении"
+  },
+  "ws/error.cancelled.json": {
+    "kind": "ws",
+    "description": "Отправка с ключом, который автор отозвал (cancel_message): code = \"CANCELLED\", retryable = false. Сообщение не сохранено.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message с отозванным client_msg_id"
   },
   "ws/error.client_msg_id_conflict.json": {
     "kind": "ws",
@@ -328,9 +474,16 @@
     "direction": "server->client",
     "trigger": "send_message с client_msg_id, уже использованным для личного диалога"
   },
+  "ws/error.delete_message.json": {
+    "kind": "ws",
+    "description": "Ошибка удаления: context = \"delete_message\", code (здесь NOT_OWNER), retryable и messageId из запроса.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "delete_message чужого сообщения"
+  },
   "ws/error.edit_message.json": {
     "kind": "ws",
-    "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины.",
+    "description": "Ошибка правки: context = \"edit_message\", message — русский текст причины, code (здесь NOT_OWNER) и retryable, messageId и text из запроса.",
     "event": "error",
     "direction": "server->client",
     "trigger": "edit_message чужого сообщения"
@@ -341,6 +494,13 @@
     "event": "error",
     "direction": "server->client",
     "trigger": "send_message с недопустимым client_msg_id"
+  },
+  "ws/error.rate_limited.json": {
+    "kind": "ws",
+    "description": "Кадр отброшен пределом частоты сокета (G2): code = \"RATE_LIMITED\", retryable = true, retry_after_ms — через сколько мс повторить (значение в фикстуре нормализовано), и client_msg_id (send/cancel) или messageId (edit/delete) отброшенного кадра. Кадр НЕ обработан. Ответов — не больше 10 в секунду на сокет; сверх того кадр отбрасывается молча.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "больше 10 send_message за секунду с одного сокета"
   },
   "ws/error.send_message.json": {
     "kind": "ws",
@@ -356,6 +516,20 @@
     "direction": "server->client",
     "trigger": "ice_candidate bob → alice внутри вызова"
   },
+  "ws/message_cancelled.json": {
+    "kind": "ws",
+    "description": "Ответ на cancel_message: ключ отозван; messageId = null — сообщение с этим ключом не сохранено и уже не сохранится (отправка с ним — error CANCELLED). Ключ помнится сутки.",
+    "event": "message_cancelled",
+    "direction": "server->client",
+    "trigger": "cancel_message с ещё не отправленным ключом"
+  },
+  "ws/message_cancelled.stored.json": {
+    "kind": "ws",
+    "description": "Ответ на cancel_message, когда сообщение уже было сохранено: messageId — его id; сервер удалил его (окно удаления действует) и разослал участникам message_deleted.",
+    "event": "message_cancelled",
+    "direction": "server->client",
+    "trigger": "cancel_message ключа уже сохранённого сообщения"
+  },
   "ws/message_deleted.channel.json": {
     "kind": "ws",
     "description": "Сообщение удалено в канале.",
@@ -365,10 +539,17 @@
   },
   "ws/message_deleted.direct.json": {
     "kind": "ws",
-    "description": "Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы.",
+    "description": "Сообщение удалено в личном диалоге. Записи сообщения нет — только идентификаторы и updated_at (время удаления).",
     "event": "message_deleted",
     "direction": "server->client",
     "trigger": "delete_message (direct)"
+  },
+  "ws/message_deleted.repeat.json": {
+    "kind": "ws",
+    "description": "Повтор удаления уже удалённого: то же надгробие (тот же updated_at) только запросившему сокету, без ошибки и без повторной рассылки.",
+    "event": "message_deleted",
+    "direction": "server->client",
+    "trigger": "повторный delete_message того же сообщения"
   },
   "ws/message_status_updated.json": {
     "kind": "ws",

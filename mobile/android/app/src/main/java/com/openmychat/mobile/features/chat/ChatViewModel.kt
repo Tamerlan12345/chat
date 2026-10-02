@@ -2,12 +2,14 @@ package com.openmychat.mobile.features.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.core.util.MessageWindowValidator
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.MessageType
+import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.data.repository.ChatRepository
@@ -39,7 +41,8 @@ class ChatViewModel @AssistedInject constructor(
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
     private val sessionRepository: SessionRepository,
-    private val activeConversations: ActiveConversationRegistry
+    private val activeConversations: ActiveConversationRegistry,
+    private val historyCache: ChatHistoryCache
 ) : ViewModel() {
 
     @AssistedFactory
@@ -50,11 +53,23 @@ class ChatViewModel @AssistedInject constructor(
     private val _uiState = MutableStateFlow<ChatUiState>(ChatUiState.Loading)
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    /** Realtime link status for the connection banner. */
+    val connectionState: StateFlow<ConnectionState> = realtimeRepository.connectionState
+
+    /** Live presence of the peer in a direct chat; null until the server reports a change. */
+    private val _peerStatus = MutableStateFlow<UserStatus?>(null)
+    val peerStatus: StateFlow<UserStatus?> = _peerStatus.asStateFlow()
+
     private val _typingUser = MutableStateFlow<String?>(null)
     val typingUser: StateFlow<String?> = _typingUser.asStateFlow()
 
     private val _wakeCooldownSeconds = MutableStateFlow(0)
     val wakeCooldownSeconds: StateFlow<Int> = _wakeCooldownSeconds.asStateFlow()
+
+    private val _refreshFailed = MutableStateFlow(false)
+
+    /** The server history could not be loaded while a cached one is shown. */
+    val refreshFailed: StateFlow<Boolean> = _refreshFailed.asStateFlow()
 
     private val _editingMessage = MutableStateFlow<Message?>(null)
     val editingMessage: StateFlow<Message?> = _editingMessage.asStateFlow()
@@ -73,6 +88,11 @@ class ChatViewModel @AssistedInject constructor(
         get() = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty()
 
     init {
+        // A chat opened before shows its last history at once and refreshes underneath.
+        historyCache.get(currentUserId, conversation)?.let { _uiState.value = ChatUiState.Content(it) }
+        viewModelScope.launch {
+            _uiState.collect { state -> if (state is ChatUiState.Content) historyCache.put(currentUserId, conversation, state.messages) }
+        }
         loadMessages()
         observeWebSocketEvents()
     }
@@ -97,15 +117,20 @@ class ChatViewModel @AssistedInject constructor(
     fun loadMessages() {
         viewModelScope.launch {
             if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
+            // What was already shown (a cached history) is replaced by the server, not merged.
+            val shownBefore = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty().mapTo(HashSet()) { it.id }
+            _refreshFailed.value = false
             try {
                 val history = chatRepository.messages(conversationType, targetId)
                 _uiState.update { state ->
                     // Keep realtime messages that arrived while the history request was in flight.
                     val live = (state as? ChatUiState.Content)?.messages.orEmpty()
                     val historyIds = history.mapTo(HashSet()) { it.id }
-                    ChatUiState.Content(history + live.filter { it.id !in historyIds })
+                    ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
                 }
             } catch (e: Exception) {
+                // A cached history stays on screen; the screen says it could not be refreshed.
+                if (_uiState.value is ChatUiState.Content) _refreshFailed.value = true
                 if (_uiState.value !is ChatUiState.Content) {
                     _uiState.value = ChatUiState.Error(e.message ?: "Не удалось загрузить сообщения")
                 }
@@ -202,6 +227,11 @@ class ChatViewModel @AssistedInject constructor(
                             } else {
                                 _typingUser.value = null
                             }
+                        }
+                    }
+                    is WsEvent.UserStatusChanged -> {
+                        if (conversationType == ConversationType.DIRECT && event.userId == targetId) {
+                            _peerStatus.value = event.status
                         }
                     }
                     is WsEvent.WakeSent -> {

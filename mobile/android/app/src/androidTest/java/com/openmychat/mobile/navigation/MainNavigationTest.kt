@@ -10,6 +10,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -34,7 +35,7 @@ import java.io.File
 import javax.inject.Inject
 
 /**
- * Signed-in navigation on a device. The server endpoint is unreachable on purpose: screens show
+ * Signed-in navigation on a device. The test server endpoint is unreachable on purpose: screens show
  * their error states, while tabs, back handling and logout must still work.
  */
 @HiltAndroidTest
@@ -61,9 +62,6 @@ class MainNavigationTest {
     @Before
     fun signInAndLaunch() {
         hiltRule.inject()
-        sessionManager.commitVerifiedServerEndpoint(
-            sessionManager.validateServerEndpoint("https://127.0.0.1:9").getOrThrow()
-        )
         sessionManager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Алиса Тестова"), "token")
         scenario = ActivityScenario.launch(MainActivity::class.java)
     }
@@ -77,29 +75,29 @@ class MainNavigationTest {
 
     @Test
     fun tabsBackAndLogout() {
-        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
+        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
         composeRule.waitForIdle()
         saveScreenshot("main-conversations")
 
         tab("Профиль").performClick()
-        composeRule.onNodeWithText("Статус присутствия").assertIsDisplayed()
+        composeRule.onNodeWithText("Учётная запись").assertIsDisplayed()
         tab("Профиль").assertIsSelected()
         saveScreenshot("main-profile")
 
         tab("Объявления").performClick()
-        composeRule.onNodeWithText("Объявления компании").assertIsDisplayed()
+        composeRule.onNode(hasText("Объявления") and !hasClickAction()).assertIsDisplayed()
 
         // Back from a secondary tab returns to the start tab instead of leaving the app.
         Espresso.pressBack()
-        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
-        tab("Сообщения").assertIsSelected()
+        composeRule.onNodeWithText("Поиск по имени").assertIsDisplayed()
+        tab("Чаты").assertIsSelected()
 
         tab("Профиль").performClick()
-        composeRule.onNodeWithText("Выйти из учетной записи").performScrollTo().performClick()
-        composeRule.onNode(hasText("Выйти") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Выйти") and hasClickAction()).performScrollTo().performClick()
+        composeRule.onNodeWithTag("confirm").performClick()
 
         composeRule.waitUntil(5_000) {
-            composeRule.onAllNodes(hasText("Вход в CentyChat")).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodes(hasText("Войти") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
         assertNull(sessionManager.token)
         saveScreenshot("after-logout")
