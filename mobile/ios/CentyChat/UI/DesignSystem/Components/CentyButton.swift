@@ -8,7 +8,7 @@ public struct CentyButton: View {
         case destructive
     }
     
-    public let title: String
+    public let title: LocalizedStringKey
     public var icon: String? = nil
     public var variant: Variant = .primary
     public var isLoading: Bool = false
@@ -16,7 +16,7 @@ public struct CentyButton: View {
     public let action: () -> Void
     
     public init(
-        title: String,
+        title: LocalizedStringKey,
         icon: String? = nil,
         variant: Variant = .primary,
         isLoading: Bool = false,

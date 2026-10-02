@@ -9,10 +9,10 @@ public enum UserStatus: String, Codable, Sendable, CaseIterable {
     
     public var displayName: String {
         switch self {
-        case .online: return "В сети"
-        case .away: return "Отошел"
-        case .dnd: return "Не беспокоить"
-        case .offline: return "Не в сети"
+        case .online: return String(localized: "В сети")
+        case .away: return String(localized: "Отошел")
+        case .dnd: return String(localized: "Не беспокоить")
+        case .offline: return String(localized: "Не в сети")
         }
     }
 }

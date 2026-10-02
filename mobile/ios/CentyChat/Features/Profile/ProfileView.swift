@@ -26,7 +26,7 @@ public struct ProfileView: View {
                                 Text(user.fullName)
                                     .font(.title3.weight(.bold))
 
-                                Text(user.jobTitle ?? user.roleName ?? "Сотрудник")
+                                Text(user.jobTitle ?? user.roleName ?? String(localized: "Сотрудник"))
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
 

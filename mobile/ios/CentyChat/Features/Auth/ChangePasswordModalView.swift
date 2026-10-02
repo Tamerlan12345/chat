@@ -121,12 +121,12 @@ public struct ChangePasswordModalView: View {
 
     private func performPasswordChange() async {
         guard newPassword == confirmPassword else {
-            errorMessage = "Пароли не совпадают"
+            errorMessage = String(localized: "Пароли не совпадают")
             CentyHaptics.error()
             return
         }
         guard newPassword.count >= 8 else {
-            errorMessage = "Новый пароль должен содержать не менее 8 символов"
+            errorMessage = String(localized: "Новый пароль должен содержать не менее 8 символов")
             CentyHaptics.error()
             return
         }

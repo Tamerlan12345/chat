@@ -22,13 +22,13 @@ public enum CallState: String, Codable, Sendable, Equatable {
     
     public var descriptionRu: String {
         switch self {
-        case .idle: return "Готов к вызову"
-        case .calling: return "Вызов..."
-        case .ringing: return "Входящий звонок..."
-        case .connecting: return "Соединение..."
-        case .active: return "Идет разговор"
-        case .ended: return "Звонок завершен"
-        case .failed: return "Вызов не удался"
+        case .idle: return String(localized: "Готов к вызову")
+        case .calling: return String(localized: "Вызов...")
+        case .ringing: return String(localized: "Входящий звонок...")
+        case .connecting: return String(localized: "Соединение...")
+        case .active: return String(localized: "Идет разговор")
+        case .ended: return String(localized: "Звонок завершен")
+        case .failed: return String(localized: "Вызов не удался")
         }
     }
 }

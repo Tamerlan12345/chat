@@ -37,11 +37,11 @@ public enum KeychainManagerError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidValue:
-            return "Secure storage received an invalid value."
+            return String(localized: "Защищённое хранилище получило недопустимое значение.")
         case .updateFailed, .addFailed:
-            return "Unable to securely save session data on this device."
+            return String(localized: "Не удалось надёжно сохранить данные сессии на этом устройстве.")
         case .deleteFailed:
-            return "Unable to securely remove session data on this device."
+            return String(localized: "Не удалось надёжно удалить данные сессии с этого устройства.")
         }
     }
 }

@@ -153,7 +153,7 @@ public enum WSServerEvent: Sendable {
             
         case "auth_error":
             let code = json["code"] as? String ?? "UNKNOWN"
-            let message = json["message"] as? String ?? "Ошибка авторизации"
+            let message = json["message"] as? String ?? String(localized: "Ошибка авторизации")
             return .authError(code: code, message: message)
             
         case "wake_state":
@@ -163,7 +163,7 @@ public enum WSServerEvent: Sendable {
             return .wakeState(targetUserId: targetUserId, at: at, retryAt: retryAt)
             
         case "server_disconnect":
-            let reason = json["reason"] as? String ?? "Отключено сервером"
+            let reason = json["reason"] as? String ?? String(localized: "Отключено сервером")
             return .serverDisconnect(reason: reason)
             
         case "new_message", "direct_message", "channel_message":
@@ -289,12 +289,12 @@ public enum WSServerEvent: Sendable {
             return .callEnd(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_denied":
-            let reason = json["reason"] as? String ?? "Звонок запрещен политикой"
+            let reason = json["reason"] as? String ?? String(localized: "Звонок запрещен политикой")
             return .callDenied(reason: reason)
             
         case "call_unavailable":
             let tId = (json["targetUserId"] as? NSNumber)?.int64Value ?? 0
-            let reason = json["reason"] as? String ?? "Собеседник недоступен"
+            let reason = json["reason"] as? String ?? String(localized: "Собеседник недоступен")
             return .callUnavailable(targetUserId: tId, reason: reason)
             
         case "wake_ring":

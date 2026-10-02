@@ -49,7 +49,7 @@ public struct ChannelRowView: View {
                 }
                 
                 HStack {
-                    Text(channel.lastMessageText ?? (channel.topic ?? "Канал"))
+                    Text(channel.lastMessageText ?? channel.topic ?? String(localized: "Канал"))
                         .font(.subheadline)
                         .foregroundColor(channel.unreadCount > 0 ? .primary : .secondary)
                         .lineLimit(1)

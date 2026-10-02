@@ -103,7 +103,7 @@ public struct MessageBubbleView: View {
                                 Image(systemName: "doc.fill")
                                     .font(.title3)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(message.fileOriginalName ?? meta.fileName ?? "Документ")
+                                    Text(message.fileOriginalName ?? meta.fileName ?? String(localized: "Документ"))
                                         .font(.subheadline.weight(.medium))
                                         .lineLimit(1)
                                     if let size = meta.fileSize {

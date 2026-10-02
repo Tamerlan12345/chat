@@ -175,7 +175,7 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         }
         
         self.senderUsername = try container.decodeIfPresent(String.self, forKey: .senderUsername)
-        self.senderName = try container.decodeIfPresent(String.self, forKey: .senderName) ?? "Пользователь"
+        self.senderName = try container.decodeIfPresent(String.self, forKey: .senderName) ?? String(localized: "Пользователь")
         self.senderAvatar = try container.decodeIfPresent(String.self, forKey: .senderAvatar)
         self.senderDepartment = try container.decodeIfPresent(String.self, forKey: .senderDepartment)
         self.fileOriginalName = try container.decodeIfPresent(String.self, forKey: .fileOriginalName)

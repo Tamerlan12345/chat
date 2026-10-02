@@ -6,8 +6,8 @@ public enum ChatListTab: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .direct: return "Личные"
-        case .channels: return "Каналы"
+        case .direct: return String(localized: "Личные")
+        case .channels: return String(localized: "Каналы")
         }
     }
 }
@@ -33,11 +33,11 @@ public struct ChatListView: View {
     }
 
     private var directTabTitle: String {
-        totalDirectUnread > 0 ? "Личные (\(totalDirectUnread))" : "Личные"
+        totalDirectUnread > 0 ? String(localized: "Личные (\(totalDirectUnread))") : String(localized: "Личные")
     }
 
     private var channelsTabTitle: String {
-        totalChannelUnread > 0 ? "Каналы (\(totalChannelUnread))" : "Каналы"
+        totalChannelUnread > 0 ? String(localized: "Каналы (\(totalChannelUnread))") : String(localized: "Каналы")
     }
 
     private var filteredConversations: [DirectConversation] {
