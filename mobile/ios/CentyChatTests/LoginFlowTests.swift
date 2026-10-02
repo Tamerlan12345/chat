@@ -252,17 +252,23 @@ final class SessionLoginTests: XCTestCase {
         let started = await eventually { app.session.isSigningIn }
         XCTAssertTrue(started)
 
-        do {
-            _ = try await app.session.login(username: "alice", password: "secret")
-            XCTFail("A second login while one is in flight must be refused")
-        } catch SessionError.loginInProgress {
-            // Expected.
+        // Run the second attempt concurrently so a missing guard fails instead of deadlocking.
+        let second = Task { @MainActor in
+            try await app.session.login(username: "alice", password: "secret")
         }
+        await settle()
         await gate.open()
         let outcome = try await first.value
+        let secondResult = await second.result
 
         XCTAssertEqual(outcome, .authenticated)
-        XCTAssertEqual(app.auth.state.value.loginCount, 1)
+        switch secondResult {
+        case .failure(SessionError.loginInProgress):
+            break
+        default:
+            XCTFail("A second login while one is in flight must be refused, got \(secondResult)")
+        }
+        XCTAssertEqual(app.auth.state.value.loginCount, 1, "Only one login request may be sent")
         XCTAssertFalse(app.session.isSigningIn)
     }
 
