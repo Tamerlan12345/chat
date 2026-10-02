@@ -38,7 +38,8 @@ object WsEventParser {
     }
 
     /** Server frames the client receives but does not use (binary PCM relay, no live roster). */
-    private val ignoredTypes = setOf("ice_candidate", "user_created", "user_updated")
+    // message_cancelled: echo of cancel_message, which Android does not send yet (the send queue maps it, Task 15).
+    private val ignoredTypes = setOf("ice_candidate", "user_created", "user_updated", "message_cancelled")
 
     fun parse(text: String): WsFrame {
         val root = json.parseToJsonElement(text).jsonObject
