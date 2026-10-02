@@ -52,7 +52,14 @@ public final class ChatStore: RealtimeEventHandling {
     }
 
     /// The app moved between foreground and background while the screen may be shown.
+    /// Coming back to an open chat marks what arrived meanwhile as read.
     public func sceneActivityChanged(isActive: Bool) async {
+        let wasVisible = presence.isVisible
+        presence.sceneIsActive = isActive
+        applyPresence()
+        if presence.isVisible && !wasVisible {
+            await markAsRead()
+        }
     }
 
     /// While visible, incoming messages are marked read instead of raising the unread counter.
@@ -255,7 +262,7 @@ struct ChatScreenPresence: Equatable {
     var appeared = false
     var sceneIsActive = true
 
-    var isVisible: Bool { appeared }
+    var isVisible: Bool { appeared && sceneIsActive }
 }
 
 /// Creates and caches one `ChatStore` per conversation for the current session
