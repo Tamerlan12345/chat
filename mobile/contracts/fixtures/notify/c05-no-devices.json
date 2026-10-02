@@ -1,0 +1,20 @@
+{
+  "name": "c05-no-devices",
+  "description": "Ни сокетов, ни устройств с push — недоступен (call_unavailable).",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [],
+    "pushDevices": []
+  },
+  "expected": {
+    "reason": "unreachable",
+    "push": [],
+    "ring": [],
+    "quiet": []
+  }
+}

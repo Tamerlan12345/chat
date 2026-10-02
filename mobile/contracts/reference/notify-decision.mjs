@@ -7,6 +7,7 @@
 //
 //   decideMessageNotification(input) -> { reason, push, banner, quiet }
 //   decideReadDismissal(input)       -> { push }
+//   decideCallNotification(input)    -> { reason, push, ring, quiet }
 //
 // Input (one recipient):
 //   recipientId  — the user the decision is for;
@@ -24,6 +25,12 @@
 //   banner — socket ids whose client shows an in-app banner (frame notify=true);
 //   quiet  — socket ids that get the frame without a banner (notify=false).
 // Order: push follows pushDevices, banner/quiet follow sockets.
+//
+// Calls (§7): input has call: { callerId } instead of message; pushDevices are
+// the devices able to ring (Android FCM, iOS PushKit VoIP). reason — 'own' |
+// 'dnd' | 'unreachable' | null; ring — sockets that ring on the call_offer
+// frame; quiet — sockets that get the frame but are woken by push; viewing
+// never silences a call.
 
 // ── BEGIN SHARED CORE ──
 const ONLINE = 'online';
@@ -76,6 +83,29 @@ function decideReadDismissal({ sockets = [], pushDevices = [] }) {
   const online = onlineDeviceIds(sockets);
   return { push: pushDevices.filter((d) => !online.has(d.id)).map((d) => d.id) };
 }
+// Входящий звонок (multi-device.md §7): звонит всегда — открытый чат его не
+// глушит. Кадр call_offer получают все сокеты вызываемого; ring — сокеты,
+// которые звонят по нему сами (на переднем плане или в фоне на устройстве без
+// push), quiet — сокеты в фоне на устройстве с push: их будит push, кадр —
+// данные для ответа. push — устройства без сокета на переднем плане, даже
+// если другие устройства на связи. reason 'unreachable' — ни один сокет не
+// зазвонит и разбудить нечего (вызывающему call_unavailable).
+function decideCallNotification({ recipientId, dnd = false, call, sockets = [], pushDevices = [] }) {
+  const silent = (reason) => ({ reason, push: [], ring: [], quiet: sockets.map((s) => s.id) });
+  if (Number(call.callerId) === Number(recipientId)) return silent('own');
+  if (dnd) return silent('dnd');
+  const withPush = new Set(pushDevices.map((d) => d.id));
+  const online = onlineDeviceIds(sockets);
+  const ring = [];
+  const quiet = [];
+  for (const s of sockets) {
+    if (s.presence === ONLINE || !(s.deviceId && withPush.has(s.deviceId))) ring.push(s.id);
+    else quiet.push(s.id);
+  }
+  const push = pushDevices.filter((d) => !online.has(d.id)).map((d) => d.id);
+  if (!ring.length && !push.length) return { reason: 'unreachable', push, ring, quiet };
+  return { reason: null, push, ring, quiet };
+}
 // ── END SHARED CORE ──
 
-export { chatOf, isViewing, decideMessageNotification, decideReadDismissal };
+export { chatOf, isViewing, decideMessageNotification, decideReadDismissal, decideCallNotification };

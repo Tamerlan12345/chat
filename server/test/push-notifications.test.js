@@ -745,12 +745,12 @@ test('Т19-3: повтор доставки после продления сеа
 
 test('Т19-4: вызывающий сбросил или отключился, пока сервер проверял вызов, — вызов не встаёт, телефон не будится', async () => {
   await android('bob', 162);
-  const originalCanRing = push.canRing;
+  const originalCallDevices = push.callDevices;
   const originalFresh = wsServer.freshUser;
   try {
     // (а) push: сброс во время проверки устройств.
     let checking = gate();
-    push.canRing = async (id) => { await checking.promise; return originalCanRing.call(push, id); };
+    push.callDevices = async (id) => { await checking.promise; return originalCallDevices.call(push, id); };
     let a = await connect('alice');
     offerTo(a, 'bob');
     await sleep(40);
@@ -774,7 +774,7 @@ test('Т19-4: вызывающий сбросил или отключился, �
     await push.idle();
     assert.strictEqual(fcm.calls.length, 0, 'отключившийся не будит телефон');
     assert.ok(!wsServer.pendingOffers.has(people.alice.id));
-    push.canRing = originalCanRing;
+    push.callDevices = originalCallDevices;
 
     // (в) вызываемый в сети: сброс во время проверки сеанса вызывающего.
     const b = await connect('bob');
@@ -790,7 +790,7 @@ test('Т19-4: вызывающий сбросил или отключился, �
     assert.ok(!b.inbox.some((m) => m.type === 'call_offer'), 'после сброса вызываемому не звонит');
     assert.ok(!wsServer.pendingOffers.has(people.alice.id));
   } finally {
-    push.canRing = originalCanRing;
+    push.callDevices = originalCallDevices;
     wsServer.freshUser = originalFresh;
   }
   await disconnect('bob');

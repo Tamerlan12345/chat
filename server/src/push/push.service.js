@@ -16,11 +16,14 @@ const { loadPushConfig, describePushConfig } = require('./config');
 // сотруднику, сеанс — закончиться выходом, сменой пароля или отключением.
 // Что: только id (payload.js).
 //
-// Звонок живёт, пока жив вызов (pendingOffers сервера сокетов): вызывающий
-// сбросил — недоставленные уведомления и повторы снимаются; окно звонка (30 с
-// от вызова) задаёт и срок у поставщика, и предел повторов. Не удалось
-// разбудить ни одно устройство — WsServer сообщает вызывающему
-// call_unavailable (callUndeliverable).
+// Звонок — по тому же правилу, что сообщения (multi-device.md §7,
+// decideCallNotification): push устройствам вызываемого без сокета на переднем
+// плане, даже если другие его устройства на связи. Звонок живёт, пока жив
+// вызов (pendingOffers сервера сокетов): вызывающий сбросил или ответило
+// другое устройство — недоставленные уведомления и повторы снимаются; окно
+// звонка (30 с от вызова) задаёт и срок у поставщика, и предел повторов. Не
+// удалось разбудить ни одно устройство, а по сокету не звонит никто — WsServer
+// сообщает вызывающему call_unavailable (callUndeliverable).
 
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
 const DROP_WARN_INTERVAL_MS = 60 * 1000;
@@ -35,8 +38,9 @@ const messageCapable = (row) => row.platform === 'android' || row.kind === 'aler
 const deviceKeyOf = (row) => row.device_id || `#${row.token}`;
 
 const NO_PRESENCE = {
-  isOnline: () => false,
   isDnd: () => false,
+  // Без сервера сокетов сокетов нет: звонок — на все устройства.
+  callPushTargets: (userId, callerId, devices) => devices.map((d) => d.id),
   // Без сервера сокетов сокетов нет — push на все устройства.
   messagePushTargets: (userId, payload, devices) => devices.map((d) => d.id),
   messageJobCurrent: () => true,
@@ -157,8 +161,27 @@ class PushService {
 
   /** Есть ли у сотрудника живое устройство, которое можно разбудить звонком. */
   async canRing(userId) {
-    if (!this.enabled) return false;
-    return (await this.liveRows(Number(userId), callCapable)).length > 0;
+    return (await this.callDevices(userId)).length > 0;
+  }
+
+  /**
+   * Живые устройства сотрудника, которые будит звонок (Android FCM, iOS VoIP):
+   * [{ id }] для decideCallNotification. Проверяет сеанс каждого токена.
+   */
+  async callDevices(userId) {
+    if (!this.enabled) return [];
+    const ids = [...new Set((await this.liveRows(Number(userId), callCapable)).map(deviceKeyOf))];
+    return ids.map((id) => ({ id }));
+  }
+
+  /** То же по таблице токенов, без проверки сеанса и без ожидания (перепроверки). */
+  callDevicesSync(userId) {
+    if (!this.enabled) return [];
+    const ids = new Set();
+    for (const row of PushTokens.forUser(Number(userId))) {
+      if (callCapable(row) && this.providerFor(row)) ids.add(deviceKeyOf(row));
+    }
+    return [...ids].map((id) => ({ id }));
   }
 
   // ── Постановка ─────────────────────────────────────────────────────────────
@@ -209,7 +232,8 @@ class PushService {
   }
 
   /**
-   * Входящий звонок сотруднику без сокета; offerAt — время вызова (окно звонка
+   * Входящий звонок: устройствам вызываемого без сокета на переднем плане
+   * (решение — в fanOut и перед каждой попыткой); offerAt — время вызова (окно звонка
    * считается от него), offerSeq — номер вызова: по нему, а не по времени,
    * доставка узнаёт «свой» вызов (задача 20).
    */
@@ -325,8 +349,9 @@ class PushService {
       if (job.type !== 'token') return true;
       return this.presence.readPushTargets(job.userId, [{ id: job.deviceKey }]).length > 0;
     }
-    if (this.presence.isOnline(job.userId)) return false;
     if (this.presence.isDnd(job.userId)) return false;
+    // Устройство вышло на связь на переднем плане — звонит по сокету.
+    if (job.type === 'token' && !this.callTargets(job, [{ id: job.deviceKey }]).length) return false;
     if (job.call) {
       const offer = this.presence.callOffer(job.call.callerId, job.call.calleeId);
       if (!offer) return false;
@@ -335,6 +360,15 @@ class PushService {
       if (Date.now() >= job.call.expiresAt) return false;
     }
     return true;
+  }
+
+  callTargets(job, devices) {
+    try {
+      return this.presence.callPushTargets(job.userId, job.call?.callerId, devices);
+    } catch (err) {
+      console.warn('[Push] решение о звонке не принято — будим все устройства:', err.message);
+      return devices.map((d) => d.id);
+    }
   }
 
   async run(job) {
@@ -349,9 +383,15 @@ class PushService {
 
   async fanOut(job) {
     let rows = await this.liveRows(job.userId, job.kind === 'call' ? callCapable : messageCapable);
-    if (job.kind === 'call' && !rows.length) {
-      this.settle(job, 'lost');
-      return;
+    if (job.kind === 'call') {
+      // Устройства с сокетом на переднем плане звонят по кадру — push остальным.
+      const targets = new Set(this.callTargets(job, [...new Set(rows.map(deviceKeyOf))].map((id) => ({ id }))));
+      rows = rows.filter((row) => targets.has(deviceKeyOf(row)));
+      if (!rows.length) {
+        // Будить некого: звонит ли кто-то по сокету — решает WsServer.
+        this.settle(job, 'lost');
+        return;
+      }
     }
     if (job.kind === 'message' || job.kind === 'read') {
       // Устройство с сокетом на переднем плане увидит всё по сокету (баннер

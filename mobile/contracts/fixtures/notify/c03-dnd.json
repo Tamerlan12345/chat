@@ -1,0 +1,33 @@
+{
+  "name": "c03-dnd",
+  "description": "«Не беспокоить» — ни звонка, ни push (сервер отвечает вызывающему call_unavailable).",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": true,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "dnd",
+    "push": [],
+    "ring": [],
+    "quiet": [
+      "desk"
+    ]
+  }
+}
