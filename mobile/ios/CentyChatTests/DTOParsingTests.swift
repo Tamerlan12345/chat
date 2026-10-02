@@ -257,7 +257,7 @@ final class KeychainFailClosedTests: XCTestCase {
         let keychain = KeychainManager(testStore: store)
         try keychain.saveServerURL("https://chat.example.com")
         let client = APIClient(session: makeSession(), keychain: keychain)
-        let session = await makeSessionStore(client: client, keychain: keychain)
+        let session = await Self.makeSessionStore(client: client, keychain: keychain)
 
         do {
             _ = try await session.login(username: "qa", password: "password")
@@ -279,7 +279,7 @@ final class KeychainFailClosedTests: XCTestCase {
         try keychain.saveServerURL("https://chat.example.com")
         try keychain.saveAuthToken("persisted-token")
         let client = APIClient(session: makeSession(), keychain: keychain)
-        let session = await makeSessionStore(client: client, keychain: keychain)
+        let session = await Self.makeSessionStore(client: client, keychain: keychain)
         await MainActor.run { session.isAuthenticated = true }
 
         await session.logout()
@@ -297,7 +297,7 @@ final class KeychainFailClosedTests: XCTestCase {
     }
 
     @MainActor
-    private func makeSessionStore(client: APIClient, keychain: KeychainManager) -> SessionStore {
+    private static func makeSessionStore(client: APIClient, keychain: KeychainManager) -> SessionStore {
         SessionStore(
             auth: LiveAuthRepository(client: client, keychain: keychain),
             server: LiveServerRepository(client: client, keychain: keychain),
