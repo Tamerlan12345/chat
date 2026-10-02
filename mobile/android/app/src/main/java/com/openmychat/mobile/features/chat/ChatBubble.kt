@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,10 +24,13 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -58,9 +62,12 @@ import kotlinx.coroutines.launch
 /**
  * One message row: the grouped bubble, its entrance, swipe-to-reply and the long-press lift.
  *
- * "The message lands": a fresh own bubble rises out of the composer (24dp, scale 0.96 → 1 from its
- * bottom-end corner, 240 ms decelerate), then its delivery glyph draws in. A fresh incoming bubble
- * fades and rises 8dp. Reduce motion: a fade. Values are read in the layer only.
+ * "The message lands": the composer's text travels into a fresh own bubble ([LandingOverlay]); the
+ * bubble stays hidden under it and appears as it lands, then its delivery glyph draws in. An own
+ * bubble without a flight (sent elsewhere) rises 24dp; a fresh incoming one fades and rises 8dp.
+ * Reduce motion: a fade. Values are read in the layer only.
+ *
+ * Within a group, a bubble overlaps the one above it by its hairline, so the group has one outline.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -71,6 +78,7 @@ internal fun ChatBubbleRow(
     fresh: Boolean,
     actions: ChatActions,
     menuState: MessageMenuState,
+    landing: LandingState,
     onReply: (Message) -> Unit,
     onEdit: (Message) -> Unit,
     onRequestDelete: (Message) -> Unit,
@@ -84,9 +92,11 @@ internal fun ChatBubbleRow(
     val scope = rememberCoroutineScope()
     val failed = item.mark == DeliveryMark.FAILED
 
-    val progress = remember { Animatable(if (fresh) 0f else 1f) }
+    // The bubble that receives the travelling composer text skips its own entrance.
+    val carried = remember(item.key) { fresh && isOwn && !reduce && landing.claim(item.key, message) }
+    val progress = remember { Animatable(if (fresh && !carried) 0f else 1f) }
     LaunchedEffect(Unit) {
-        if (fresh) {
+        if (fresh && !carried) {
             progress.animateTo(
                 1f,
                 when {
@@ -130,6 +140,7 @@ internal fun ChatBubbleRow(
         )
     }
 
+    val latestBubble = rememberUpdatedState(bubble)
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     fun perform(action: MessageAction) {
         when (action) {
@@ -154,17 +165,31 @@ internal fun ChatBubbleRow(
                     bounds = bounds,
                     actions = available,
                     onAction = ::perform,
-                    content = { bubble(Modifier, Modifier) }
+                    // Reads the row's latest bubble, so a status that changes while the menu is
+                    // open shows on the lifted copy too.
+                    content = { latestBubble.value(Modifier, Modifier) }
                 )
             )
         }
     }
     val canReply = !message.isDeleted && !failed
+    val hairline = with(LocalDensity.current) { 1.dp.roundToPx() }
+    val textInset = with(LocalDensity.current) { Offset(12.dp.toPx(), 7.dp.toPx()) }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = if (item.startsGroup) 10.dp else 2.dp),
+            .then(
+                if (item.startsGroup) {
+                    Modifier.padding(top = 10.dp)
+                } else {
+                    // Overlap the bubble above by the hairline: one shared edge, not two.
+                    Modifier.layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        layout(placeable.width, (placeable.height - hairline).coerceAtLeast(0)) { placeable.place(0, -hairline) }
+                    }
+                }
+            ),
         horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start
     ) {
         Box(Modifier.widthIn(max = 320.dp).fillMaxWidth(0.84f), contentAlignment = if (isOwn) Alignment.CenterEnd else Alignment.CenterStart) {
@@ -172,8 +197,9 @@ internal fun ChatBubbleRow(
                 bubble(
                     Modifier.graphicsLayer {
                         val p = progress.value
-                        // Hidden under its own lifted copy while the menu is open.
-                        alpha = if (menuState.isLifted(item.key)) 0f else p
+                        // Hidden under its own lifted copy while the menu is open, and under the
+                        // travelling composer text until it lands.
+                        alpha = if (menuState.isLifted(item.key) || landing.hides(item.key)) 0f else p
                         if (!reduce && p < 1f) {
                             translationY = (1f - p) * rise
                             val scale = if (isOwn) 0.96f + 0.04f * p else 1f
@@ -185,7 +211,10 @@ internal fun ChatBubbleRow(
                     Modifier
                         // Kept for the long press only; onPlaced is cheap where onGloballyPositioned
                         // would dispatch on every scroll frame.
-                        .onPlaced { coordinates[0] = it }
+                        .onPlaced {
+                            coordinates[0] = it
+                            if (carried) landing.aim(item.key, it.positionInRoot() + textInset)
+                        }
                         // A tap opens the same menu as a long press, so TalkBack's click is a real
                         // action; combinedClickable performs the long-press haptic itself.
                         .combinedClickable(
@@ -233,7 +262,7 @@ internal class ChatRowStrings(private val resources: Resources) {
 
 @Composable
 internal fun rememberChatRowStrings(): ChatRowStrings {
-    val resources = LocalContext.current.resources
+    val resources = LocalResources.current
     val configuration = LocalConfiguration.current
     return remember(resources, configuration) { ChatRowStrings(resources) }
 }

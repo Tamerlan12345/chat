@@ -17,6 +17,10 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import androidx.compose.ui.unit.dp
+import androidx.test.platform.app.InstrumentationRegistry
+import android.content.ClipboardManager
 import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
@@ -39,6 +43,7 @@ class ChatUiV2Test {
     private val me = 1L
     private val peer = 2L
     private val sent = mutableListOf<Pair<String, Long?>>()
+    private val edited = mutableListOf<Long>()
 
     private fun message(id: Long, from: Long, text: String = "Сообщение $id", minute: Long = id % 60, status: DeliveryStatus? = null) = Message(
         id = id, conversationType = ConversationType.DIRECT, targetId = if (from == me) peer else me,
@@ -50,6 +55,9 @@ class ChatUiV2Test {
         override fun canDelete(message: Message) = message.senderId == me
         override fun onSend(text: String, replyTo: Message?) {
             sent += text to replyTo?.id
+        }
+        override fun onStartEdit(message: Message) {
+            edited += message.id
         }
     }
 
@@ -150,5 +158,40 @@ class ChatUiV2Test {
         typing = "Боб Тестов"
         compose.waitForIdle()
         compose.onNodeWithTag("typing-bubble").assertIsDisplayed()
+    }
+
+    @Test
+    fun menuActionsDispatch() {
+        show(listOf(message(1, peer), message(2, me, "Скопируй меня")))
+
+        compose.onNodeWithText("Скопируй меня").performTouchInput { longClick() }
+        compose.onNodeWithTag("menu-copy").performClick()
+        compose.waitForIdle()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var copied: String? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            copied = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
+        }
+        assertEquals("Скопируй меня", copied)
+
+        compose.onNodeWithText("Скопируй меня").performTouchInput { longClick() }
+        compose.onNodeWithTag("menu-edit").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(2L), edited)
+
+        compose.onNodeWithText("Скопируй меня").performTouchInput { longClick() }
+        compose.onNodeWithTag("menu-delete").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Удалить сообщение?").assertIsDisplayed()
+    }
+
+    @Test
+    fun swipingABubbleInTheChatOpensTheReplyBanner() {
+        show(listOf(message(1, peer, "Ответь мне"), message(2, me)))
+        compose.onNodeWithText("Ответь мне").performTouchInput {
+            swipe(start = centerRight.copy(x = right - 4f), end = centerRight.copy(x = right - 4f - 160.dp.toPx()), durationMillis = 400)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("reply-banner").assertIsDisplayed()
     }
 }

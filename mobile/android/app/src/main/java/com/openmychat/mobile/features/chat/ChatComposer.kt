@@ -2,7 +2,6 @@ package com.openmychat.mobile.features.chat
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -61,7 +60,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -76,15 +80,12 @@ import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
 import com.openmychat.mobile.ui.theme.CentyTheme
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The composer grows line by line up to six lines, then scrolls inside. */
 object ComposerSizing {
     const val MAX_LINES = 6
-
-    fun visibleLines(lineCount: Int): Int = lineCount.coerceIn(1, MAX_LINES)
-
-    fun scrollsInternally(lineCount: Int): Boolean = lineCount > MAX_LINES
 }
 
 private sealed interface ComposerBanner {
@@ -97,9 +98,10 @@ private sealed interface ComposerBanner {
 /**
  * The composer: an L3 surface glued to the keyboard. It takes the navigation-bar and IME insets
  * itself (`WindowInsets.ime` animates with the keyboard on API 30+), so it moves frame by frame with
- * it. The field grows with a spring from one to six lines and then scrolls; the attach button (when
- * there is one) morphs into send as text appears. On send the text lifts out of the field while its
- * bubble lands in the list.
+ * it. The field grows from one to six lines at once (a new line is never clipped) and shrinks with a
+ * spring, then scrolls; the attach button (when there is one) morphs into send as text appears. On
+ * send the text is handed to [LandingState]: it travels into its bubble while the placeholder comes
+ * back after 120 ms.
  */
 @Composable
 internal fun ChatComposer(
@@ -110,6 +112,7 @@ internal fun ChatComposer(
     onCancelReply: () -> Unit,
     onSent: () -> Unit,
     actions: ChatActions,
+    landing: LandingState? = null,
     onAttach: (() -> Unit)? = null
 ) {
     val tokens = CentyTheme.tokens
@@ -130,24 +133,25 @@ internal fun ChatComposer(
             text = editingMessage?.text.orEmpty()
         }
     }
-    // The sent text lifting out of the field.
-    var ghost by remember { mutableStateOf<String?>(null) }
-    val ghostProgress = remember { Animatable(1f) }
+    // Where the typed text sits, for the landing flight; and the placeholder's return after a send.
+    val textCoordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val placeholder = remember { Animatable(1f) }
 
     val canSend = text.isNotBlank()
     val send = {
         if (canSend) {
             val sent = text
+            val start = textCoordinates[0]?.takeIf { it.isAttached }?.positionInRoot()
+            if (!reduce && editingMessage == null && landing != null && start != null) landing.launch(sent.trim(), start)
             actions.onSend(sent, if (editingMessage == null) replyTo else null)
             text = ""
             onSent()
             haptics.tick()
-            if (!reduce && editingMessage == null) {
-                ghost = sent
+            if (!reduce) {
                 scope.launch {
-                    ghostProgress.snapTo(0f)
-                    ghostProgress.animateTo(1f, tween(CentyMotion.SEND, easing = CentyMotion.EaseOutExpo))
-                    ghost = null
+                    placeholder.snapTo(0f)
+                    delay(CentyMotion.FAST.toLong())
+                    placeholder.animateTo(1f, tween(CentyMotion.FAST, easing = CentyMotion.EaseOut))
                 }
             }
         }
@@ -227,8 +231,8 @@ internal fun ChatComposer(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                // Line by line with a spring; reduce motion steps.
-                                .then(if (reduce) Modifier else Modifier.animateContentSize(CentyMotion.grow()))
+                                // Grows at once, shrinks with a spring; reduce motion steps.
+                                .then(if (reduce) Modifier else Modifier.shrinkSmoothly())
                                 .heightIn(min = 48.dp)
                                 .background(tokens.card, shape)
                                 .border(1.dp, tokens.borderStrong, shape)
@@ -240,24 +244,10 @@ internal fun ChatComposer(
                                     stringResource(R.string.chat_composer_hint),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = tokens.textDim,
-                                    modifier = Modifier.graphicsLayer { alpha = if (ghost != null) ghostProgress.value else 1f }
+                                    modifier = Modifier.graphicsLayer { alpha = placeholder.value }
                                 )
                             }
-                            inner()
-                            ghost?.let { sentText ->
-                                Text(
-                                    sentText,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = tokens.accentText,
-                                    maxLines = ComposerSizing.MAX_LINES,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.graphicsLayer {
-                                        val p = ghostProgress.value
-                                        alpha = 1f - p
-                                        translationY = -24.dp.toPx() * p
-                                    }
-                                )
-                            }
+                            Box(Modifier.onPlaced { textCoordinates[0] = it }) { inner() }
                         }
                     }
                 )
@@ -351,4 +341,28 @@ private fun ComposerBannerRow(icon: ImageVector, title: String, text: String, cl
             Icon(Icons.Outlined.Close, contentDescription = closeLabel)
         }
     }
+}
+
+/**
+ * Height follows the content at once when it grows (a new line is never clipped for a frame) and
+ * eases down with a spring when it shrinks.
+ */
+@Composable
+private fun Modifier.shrinkSmoothly(): Modifier {
+    val height = remember { Animatable(-1f) }
+    val scope = rememberCoroutineScope()
+    return this
+        .clipToBounds()
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val target = placeable.height.toFloat()
+            val current = height.value
+            if (current < 0f || target > current) {
+                scope.launch { height.snapTo(target) }
+            } else if (target < current && height.targetValue != target) {
+                scope.launch { height.animateTo(target, CentyMotion.grow()) }
+            }
+            val shown = if (current < 0f || target >= current) target else current
+            layout(placeable.width, shown.toInt()) { placeable.place(0, 0) }
+        }
 }

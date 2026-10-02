@@ -1,5 +1,7 @@
 package com.openmychat.mobile.features.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -40,6 +43,8 @@ import com.openmychat.mobile.ui.components.rememberHaptics
 import com.openmychat.mobile.ui.components.rememberLift
 import com.openmychat.mobile.ui.components.rememberMessageMenuState
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.theme.CentyMotion
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Everything the chat screen can ask for; defaults keep previews and tests short. */
@@ -174,12 +179,22 @@ fun ChatContent(
     val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
     val menuState = rememberMessageMenuState()
+    val landing = rememberLandingState()
+    // Ids on screen the first time the history showed (an empty chat counts): those stay still,
+    // everything after animates in, including the first message of a new chat.
+    val baseline = remember { HashSet<Long>() }
+    val baselineTaken = remember { BooleanArray(1) }
+    if (!baselineTaken[0] && uiState is ChatUiState.Content) {
+        uiState.messages.mapTo(baseline) { it.id }
+        baselineTaken[0] = true
+    }
     val listState = rememberLazyListState()
     // History passes under the bar whenever there is older content above the viewport.
     val scrolledUnder by remember { derivedStateOf { listState.canScrollForward } }
     val lift = rememberLift(scrolledUnder && uiState is ChatUiState.Content)
 
     MessageMenuHost(menuState, modifier) {
+      Box(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = tokens.canvas,
             // The composer takes the navigation bar and keyboard insets itself, so its surface runs
@@ -209,7 +224,7 @@ fun ChatContent(
                 ConnectionBanner(connectionState)
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (uiState) {
-                        is ChatUiState.Loading -> ChatSkeleton()
+                        is ChatUiState.Loading -> DelayedSkeleton()
                         is ChatUiState.Error -> ErrorState(
                             title = stringResource(R.string.chat_error),
                             onRetry = actions::onRetry
@@ -231,6 +246,8 @@ fun ChatContent(
                                 },
                                 actions = actions,
                                 menuState = menuState,
+                                landing = landing,
+                                baseline = baseline,
                                 onReply = { message ->
                                     actions.onCancelEdit()
                                     replyToId = message.id
@@ -250,10 +267,13 @@ fun ChatContent(
                     replyToIsOwn = replyTo?.senderId == currentUserId,
                     onCancelReply = { replyToId = null },
                     onSent = { replyToId = null },
-                    actions = actions
+                    actions = actions,
+                    landing = landing
                 )
             }
         }
+        LandingOverlay(landing)
+      }
     }
 
     pendingDelete?.let { message ->
@@ -270,4 +290,18 @@ fun ChatContent(
             onDismiss = { pendingDelete = null }
         )
     }
+}
+
+/**
+ * Loading: nothing for the first 300 ms (a cached or fast history replaces it without a flash), then
+ * the skeleton fades in.
+ */
+@Composable
+private fun DelayedSkeleton() {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(300)
+        shown = true
+    }
+    AnimatedVisibility(visible = shown, enter = fadeIn(CentyMotion.base())) { ChatSkeleton() }
 }
