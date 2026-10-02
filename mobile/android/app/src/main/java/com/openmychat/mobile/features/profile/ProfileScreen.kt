@@ -30,14 +30,13 @@ import com.openmychat.mobile.ui.theme.StatusOnline
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
-    onNavigateToConversations: () -> Unit,
-    onNavigateToAnnouncements: () -> Unit,
     onLoggedOut: () -> Unit
 ) {
-    val currentUser by viewModel.currentUser.collectAsState()
-    val customStatusInput by viewModel.customStatusInput.collectAsState()
-    val wakeCooldown by viewModel.wakeCooldown.collectAsState()
-    val isSaving by viewModel.isSaving.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val currentUser = (uiState as? ProfileUiState.Content)?.user
+    val customStatusInput = uiState.customStatusInput
+    val wakeCooldown = uiState.wakeCooldownSeconds
+    val isSaving = uiState.isSaving
     val logoutError by viewModel.logoutError.collectAsState()
     val storageError by viewModel.storageError.collectAsState()
 
@@ -54,28 +53,6 @@ fun ProfileScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToConversations,
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Сообщения") },
-                    label = { Text("Сообщения") }
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToAnnouncements,
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") }
-                )
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* already here */ },
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") }
-                )
-            }
         }
     ) { innerPadding ->
         Column(

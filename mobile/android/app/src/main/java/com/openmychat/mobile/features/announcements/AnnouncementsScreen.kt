@@ -20,14 +20,13 @@ import com.openmychat.mobile.ui.components.PriorityBadge
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnnouncementsScreen(
-    viewModel: AnnouncementsViewModel,
-    onNavigateToConversations: () -> Unit,
-    onNavigateToProfile: () -> Unit
+    viewModel: AnnouncementsViewModel
 ) {
-    val announcements by viewModel.announcements.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val selectedAnnouncement by viewModel.selectedAnnouncement.collectAsState()
-    val isAcknowledging by viewModel.isAcknowledging.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val content = uiState as? AnnouncementsUiState.Content
+    val announcements = content?.announcements.orEmpty()
+    val selectedAnnouncement = content?.selected
+    val isAcknowledging = content?.isAcknowledging == true
 
     Scaffold(
         topBar = {
@@ -42,28 +41,6 @@ fun AnnouncementsScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToConversations,
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Сообщения") },
-                    label = { Text("Сообщения") }
-                )
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* already here */ },
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") }
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToProfile,
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") }
-                )
-            }
         }
     ) { innerPadding ->
         Box(
@@ -72,8 +49,20 @@ fun AnnouncementsScreen(
                 .padding(innerPadding)
                 .consumeWindowInsets(innerPadding)
         ) {
-            if (isLoading && announcements.isEmpty()) {
+            if (uiState is AnnouncementsUiState.Loading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (uiState is AnnouncementsUiState.Error) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = (uiState as AnnouncementsUiState.Error).message,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = { viewModel.loadAnnouncements() }) { Text("Повторить") }
+                }
             } else if (announcements.isEmpty()) {
                 Text(
                     text = "Нет активных объявлений",

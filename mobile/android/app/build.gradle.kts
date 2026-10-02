@@ -1,31 +1,37 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 // The JVM test worker cannot load classes from a build directory whose path
 // contains non-ASCII characters on Windows (sun.jnu.encoding is not UTF-8),
-// so redirect build output to an ASCII-only location in that case.
+// so redirect build output to an ASCII-only location in that case. The folder
+// name carries a hash of the checkout path so parallel worktrees never share
+// (and lock) each other's intermediates.
 if (!projectDir.absolutePath.all { it.code < 128 }) {
+    val checkoutId = rootDir.absolutePath.hashCode().toUInt().toString(16)
     layout.buildDirectory.set(
-        File(System.getProperty("java.io.tmpdir"), "centychat-android-build/${rootProject.name}/app")
+        File(System.getProperty("java.io.tmpdir"), "centychat-android-build/${rootProject.name}-$checkoutId/app")
     )
 }
 
 android {
     namespace = "com.openmychat.mobile"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.openmychat.mobile"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.openmychat.mobile.HiltTestRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -48,13 +54,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
-    }
     buildFeatures {
         compose = true
     }
@@ -62,6 +61,16 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.addAll(
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
+        )
     }
 }
 
@@ -77,7 +86,10 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
-    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.material3.adaptive.navigation.suite)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
@@ -88,9 +100,17 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
 
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.hilt.android.testing)
+    kspAndroidTest(libs.hilt.compiler)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)

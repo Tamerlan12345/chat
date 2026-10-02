@@ -2,6 +2,7 @@ package com.openmychat.mobile.features.call
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -22,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.openmychat.mobile.core.util.DateTimeUtils
-import com.openmychat.mobile.data.model.CallState
 import com.openmychat.mobile.ui.components.CentyAvatar
 import kotlinx.coroutines.delay
 
@@ -31,7 +31,7 @@ fun CallScreen(
     viewModel: CallViewModel,
     onCallFinished: () -> Unit
 ) {
-    val session by viewModel.callSession.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
     var hasAudioPermission by remember {
@@ -46,7 +46,7 @@ fun CallScreen(
         hasAudioPermission = isGranted
         if (!isGranted) {
             viewModel.rejectCall("Доступ к микрофону отклонен")
-        } else if (session.isIncoming && session.state == CallState.RINGING) {
+        } else if (uiState is CallUiState.Incoming) {
             viewModel.acceptCall()
         }
     }
@@ -57,8 +57,12 @@ fun CallScreen(
         }
     }
 
-    LaunchedEffect(session.state) {
-        if (session.state == CallState.ENDED || session.state == CallState.FAILED) {
+    val isEnded = uiState is CallUiState.Ended
+
+    // Back while ringing declines, during a call hangs up; the screen closes once the call ended.
+    BackHandler(enabled = !isEnded) { viewModel.leave() }
+    LaunchedEffect(isEnded) {
+        if (isEnded) {
             delay(1500)
             onCallFinished()
         }
@@ -82,34 +86,31 @@ fun CallScreen(
                 modifier = Modifier.padding(top = 48.dp)
             ) {
                 CentyAvatar(
-                    name = session.peerName,
+                    name = uiState.peerName,
                     size = 110.dp
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = session.peerName,
+                    text = uiState.peerName,
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val statusText = when (session.state) {
-                    CallState.CALLING -> "Исходящий вызов…"
-                    CallState.RINGING -> "Входящий вызов…"
-                    CallState.CONNECTING -> "Соединение…"
-                    CallState.ACTIVE -> DateTimeUtils.formatDuration(session.durationSeconds)
-                    CallState.ENDED -> session.endReason ?: "Вызов завершен"
-                    CallState.FAILED -> session.endReason ?: "Ошибка вызова"
-                    CallState.IDLE -> ""
+                val statusText = when (val state = uiState) {
+                    is CallUiState.Outgoing -> "Исходящий вызов…"
+                    is CallUiState.Incoming -> "Входящий вызов…"
+                    is CallUiState.Active -> DateTimeUtils.formatDuration(state.durationSeconds)
+                    is CallUiState.Ended -> state.reason
                 }
 
                 Text(
                     text = statusText,
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (session.state == CallState.ACTIVE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (uiState is CallUiState.Active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 if (!hasAudioPermission) {
@@ -133,8 +134,8 @@ fun CallScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(bottom = 32.dp)
             ) {
-                when (session.state) {
-                    CallState.RINGING -> {
+                when (uiState) {
+                    is CallUiState.Incoming -> {
                         // Incoming call: Accept & Reject
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -180,7 +181,7 @@ fun CallScreen(
                             }
                         }
                     }
-                    CallState.ACTIVE, CallState.CALLING, CallState.CONNECTING -> {
+                    is CallUiState.Active, is CallUiState.Outgoing -> {
                         // In-Call Controls
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -194,14 +195,14 @@ fun CallScreen(
                                     .size(56.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (session.isMuted) MaterialTheme.colorScheme.primaryContainer
+                                        if (uiState.isMuted) MaterialTheme.colorScheme.primaryContainer
                                         else MaterialTheme.colorScheme.surfaceVariant
                                     )
                             ) {
                                 Icon(
-                                    imageVector = if (session.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                                    imageVector = if (uiState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
                                     contentDescription = "Микрофон",
-                                    tint = if (session.isMuted) MaterialTheme.colorScheme.primary
+                                    tint = if (uiState.isMuted) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -229,20 +230,20 @@ fun CallScreen(
                                     .size(56.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (session.isSpeakerOn) MaterialTheme.colorScheme.primaryContainer
+                                        if (uiState.isSpeakerOn) MaterialTheme.colorScheme.primaryContainer
                                         else MaterialTheme.colorScheme.surfaceVariant
                                     )
                             ) {
                                 Icon(
-                                    imageVector = if (session.isSpeakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeDown,
+                                    imageVector = if (uiState.isSpeakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeDown,
                                     contentDescription = "Динамик",
-                                    tint = if (session.isSpeakerOn) MaterialTheme.colorScheme.primary
+                                    tint = if (uiState.isSpeakerOn) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
-                    else -> {
+                    is CallUiState.Ended -> {
                         // Ended / Failed state
                         Button(
                             onClick = onCallFinished,

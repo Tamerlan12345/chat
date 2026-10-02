@@ -14,47 +14,60 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
+import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
-import com.openmychat.mobile.data.model.ChangePasswordRequest
+import com.openmychat.mobile.data.realtime.RealtimeConnectionManager
 import com.openmychat.mobile.features.auth.ChangePasswordDialog
-import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
-import com.openmychat.mobile.ui.navigation.CentyNavHost
+import com.openmychat.mobile.ui.navigation.AppNavigationState
+import com.openmychat.mobile.ui.navigation.AppNavigator
+import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
-import com.openmychat.mobile.ui.navigation.rememberNavBackStack
+import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
 import com.openmychat.mobile.ui.theme.CentyChatTheme
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val app: CentyChatApp get() = application as CentyChatApp
+    @Inject lateinit var connectionManager: RealtimeConnectionManager
+    @Inject lateinit var callAudio: CallAudio
+
+    private val appViewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        connectionManager.start()
 
         setContent {
             CentyChatTheme {
-                val initialKey = when {
-                    app.sessionManager.token != null && app.sessionManager.currentUser != null -> NavKey.Conversations
-                    app.sessionManager.serverUrl.isNotBlank() -> NavKey.Login
-                    else -> NavKey.ServerConnect
+                val navigationState = rememberAppNavigationState {
+                    if (SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
+                        AppNavigationState.authenticated()
+                    } else {
+                        AppNavigationState.unauthenticated(appViewModel.hasConfiguredServer)
+                    }
                 }
-
-                val backStack = rememberNavBackStack(initialKey = initialKey)
-                val mustChangePassword by app.sessionManager.mustChangePasswordFlow.collectAsState()
-                val coroutineScope = rememberCoroutineScope()
-                var changePasswordLoading by remember { mutableStateOf(false) }
-                var changePasswordError by remember { mutableStateOf<String?>(null) }
+                // A restored stack is re-checked against the session before it is ever rendered.
+                val navigator = remember(navigationState) {
+                    AppNavigator(navigationState).also {
+                        it.syncWithSession(appViewModel.routeState(), appViewModel.hasConfiguredServer)
+                    }
+                }
+                val session by appViewModel.routeStates.collectAsState(initial = appViewModel.routeState())
+                val passwordChange by appViewModel.passwordChange.collectAsState()
 
                 // Runtime permission request for notifications on Android 13+ (API 33+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -73,30 +86,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Observe global WebSocket events (Wake, Calls, Server Disconnects)
-                LaunchedEffect(Unit) {
-                    combine(
-                        app.sessionManager.tokenFlow,
-                        app.sessionManager.currentUserFlow,
-                        app.sessionManager.storageState
-                    ) { token, user, storageState ->
-                        AuthenticatedRouteState(token, user != null, storageState)
-                    }.collectLatest { session ->
-                        if (SessionRouteGuard.hasAuthenticatedSession(session)) {
-                            app.webSocketClient.connect(lifecycleScope)
-                        } else {
-                            app.webSocketClient.disconnect()
-                            SessionRouteGuard.destinationAfterSessionLoss(
-                                currentDestination = backStack.currentKey,
-                                session = session,
-                                hasConfiguredServer = app.sessionManager.serverUrl.isNotBlank()
-                            )?.let(backStack::clearAndSet)
+                // Session loss (logout elsewhere, revoked token, unavailable storage) clears all stacks.
+                LaunchedEffect(navigator) {
+                    appViewModel.routeStates.collect {
+                        // Re-read the live session: combined emissions can be intermediate states.
+                        val current = appViewModel.routeState()
+                        if (!SessionRouteGuard.hasAuthenticatedSession(current) && !navigator.state.isAuthFlow) {
+                            navigator.onLoggedOut(appViewModel.hasConfiguredServer)
                         }
                     }
                 }
 
                 LaunchedEffect(Unit) {
-                    app.webSocketClient.events.collect { event ->
+                    appViewModel.globalEvents.collect { event ->
                         when (event) {
                             is WsEvent.WakeRing -> {
                                 triggerWakeVibration()
@@ -107,28 +109,26 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                             is WsEvent.CallOffer -> {
-                                val session = AuthenticatedRouteState(
-                                    token = app.sessionManager.token,
-                                    hasCurrentUser = app.sessionManager.currentUser != null,
-                                    storageState = app.sessionManager.storageState.value
-                                )
-                                if (SessionRouteGuard.acceptsIncomingCall(session)) {
-                                    backStack.navigate(
-                                        NavKey.Call(
-                                            peerId = event.senderId,
-                                            peerName = event.senderName,
-                                            isIncoming = true
-                                        )
+                                if (appViewModel.acceptsIncomingCall()) {
+                                    val call = NavKey.Call(
+                                        peerId = event.senderId,
+                                        peerName = event.senderName,
+                                        isIncoming = true
                                     )
+                                    if (!navigator.showIncomingCall(call)) {
+                                        appViewModel.rejectBusy(event.senderId)
+                                    }
                                 }
                             }
                             is WsEvent.ServerDisconnect -> {
+                                // The socket reconnects; a revoked token comes back as auth_error and
+                                // is verified over HTTP, which signs out on 401. A still-valid session
+                                // (e.g. a role change) simply continues.
                                 Toast.makeText(
                                     this@MainActivity,
                                     event.reason,
                                     Toast.LENGTH_LONG
                                 ).show()
-                                backStack.clearAndSet(NavKey.Login)
                             }
                             else -> Unit
                         }
@@ -139,38 +139,21 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    CentyNavHost(
-                        backStack = backStack,
-                        apiClient = app.apiClient,
-                        webSocketClient = app.webSocketClient,
-                        sessionManager = app.sessionManager,
-                        audioEngine = app.audioEngine
+                    CentyNavigation(
+                        navigator = navigator,
+                        session = session,
+                        currentSession = appViewModel::routeState,
+                        hasConfiguredServer = { appViewModel.hasConfiguredServer }
                     )
 
                     // Global mandatory blocking password change dialog
-                    if (mustChangePassword && app.sessionManager.token != null) {
+                    val dialog = passwordChange
+                    if (dialog is PasswordChangeUiState.Visible) {
                         ChangePasswordDialog(
-                            isLoading = changePasswordLoading,
-                            errorMessage = changePasswordError,
+                            isLoading = dialog.isLoading,
+                            errorMessage = dialog.error,
                             onDismiss = null, // Undismissable until successfully changed
-                            onSubmit = { oldPass, newPass ->
-                                coroutineScope.launch {
-                                    changePasswordLoading = true
-                                    changePasswordError = null
-                                    try {
-                                        val resp = app.apiClient.changePassword(
-                                            ChangePasswordRequest(oldPassword = oldPass, newPassword = newPass)
-                                        )
-                                        if (!resp.success) {
-                                            changePasswordError = resp.message.ifBlank { "Ошибка смены пароля" }
-                                        }
-                                    } catch (e: Exception) {
-                                        changePasswordError = e.message ?: "Ошибка смены пароля"
-                                    } finally {
-                                        changePasswordLoading = false
-                                    }
-                                }
-                            }
+                            onSubmit = appViewModel::changePassword
                         )
                     }
                 }
@@ -189,22 +172,19 @@ class MainActivity : ComponentActivity() {
             }
 
             if (vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val timings = longArrayOf(0, 250, 150, 250, 150, 400)
-                    val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
-                    val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
-                    vibrator.vibrate(effect)
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 250, 150, 250, 150, 400), -1)
-                }
+                val timings = longArrayOf(0, 250, 150, 250, 150, 400)
+                val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
             }
         } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        app.webSocketClient.disconnect()
-        app.audioEngine.stop()
+        // Recreation (theme, locale) keeps the socket; leaving the app tears it down.
+        if (isFinishing) {
+            connectionManager.stop()
+            callAudio.stop()
+        }
     }
 }

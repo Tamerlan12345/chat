@@ -2,25 +2,85 @@ package com.openmychat.mobile.features.call
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.openmychat.mobile.core.audio.AudioEngine
-import com.openmychat.mobile.core.network.WebSocketClient
+import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.CallSession
 import com.openmychat.mobile.data.model.CallState
+import com.openmychat.mobile.data.repository.RealtimeRepository
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class CallViewModel(
-    val peerId: Long,
-    val peerName: String,
-    val isIncoming: Boolean,
-    private val webSocketClient: WebSocketClient,
-    private val audioEngine: AudioEngine
+/** What the call screen shows; derived from the call session state machine. */
+sealed interface CallUiState {
+    val peerName: String
+    val isMuted: Boolean
+    val isSpeakerOn: Boolean
+
+    data class Incoming(
+        override val peerName: String,
+        override val isMuted: Boolean = false,
+        override val isSpeakerOn: Boolean = false
+    ) : CallUiState
+
+    data class Outgoing(
+        override val peerName: String,
+        override val isMuted: Boolean = false,
+        override val isSpeakerOn: Boolean = false
+    ) : CallUiState
+
+    data class Active(
+        override val peerName: String,
+        val durationSeconds: Long,
+        override val isMuted: Boolean = false,
+        override val isSpeakerOn: Boolean = false
+    ) : CallUiState
+
+    data class Ended(
+        override val peerName: String,
+        val reason: String,
+        override val isMuted: Boolean = false,
+        override val isSpeakerOn: Boolean = false
+    ) : CallUiState
+
+    companion object {
+        fun from(session: CallSession): CallUiState = when (session.state) {
+            CallState.RINGING -> Incoming(session.peerName, session.isMuted, session.isSpeakerOn)
+            CallState.IDLE, CallState.CALLING, CallState.CONNECTING ->
+                Outgoing(session.peerName, session.isMuted, session.isSpeakerOn)
+            CallState.ACTIVE -> Active(session.peerName, session.durationSeconds, session.isMuted, session.isSpeakerOn)
+            CallState.ENDED -> Ended(session.peerName, session.endReason ?: "Вызов завершен", session.isMuted, session.isSpeakerOn)
+            CallState.FAILED -> Ended(session.peerName, session.endReason ?: "Ошибка вызова", session.isMuted, session.isSpeakerOn)
+        }
+    }
+}
+
+@HiltViewModel(assistedFactory = CallViewModel.Factory::class)
+class CallViewModel @AssistedInject constructor(
+    @Assisted("peerId") val peerId: Long,
+    @Assisted("peerName") val peerName: String,
+    @Assisted("isIncoming") val isIncoming: Boolean,
+    private val realtimeRepository: RealtimeRepository,
+    private val callAudio: CallAudio
 ) : ViewModel() {
+
+    @AssistedFactory
+    interface Factory {
+        fun create(
+            @Assisted("peerId") peerId: Long,
+            @Assisted("peerName") peerName: String,
+            @Assisted("isIncoming") isIncoming: Boolean
+        ): CallViewModel
+    }
 
     private val _callSession = MutableStateFlow(
         CallSession(
@@ -30,28 +90,35 @@ class CallViewModel(
             state = if (isIncoming) CallState.RINGING else CallState.CALLING
         )
     )
-    val callSession: StateFlow<CallSession> = _callSession.asStateFlow()
+    val callSession: StateFlow<CallSession> = _callSession
+
+    val uiState: StateFlow<CallUiState> = _callSession
+        .map(CallUiState::from)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, CallUiState.from(_callSession.value))
 
     private var durationJob: Job? = null
+
+    /** This call's microphone sink; the shared audio engine may already serve a newer call. */
+    private val frameCallback: (ShortArray) -> Unit = { samples ->
+        if (_callSession.value.state == CallState.ACTIVE) {
+            realtimeRepository.sendAudioFrame(peerId, samples)
+        }
+    }
+
+    private val ownsAudio: Boolean get() = callAudio.onFrameRecorded === frameCallback
 
     init {
         observeEvents()
         if (!isIncoming) {
-            // Outgoing call: send call_offer
-            webSocketClient.sendCallOffer(peerId)
+            realtimeRepository.sendCallOffer(peerId)
         }
 
-        // Configure audio engine frame forwarding
-        audioEngine.onFrameRecorded = { samples ->
-            if (_callSession.value.state == CallState.ACTIVE) {
-                webSocketClient.sendAudioFrame(peerId, samples)
-            }
-        }
+        callAudio.onFrameRecorded = frameCallback
     }
 
     private fun observeEvents() {
         viewModelScope.launch {
-            webSocketClient.events.collect { event ->
+            realtimeRepository.events.collect { event ->
                 when (event) {
                     is WsEvent.CallAnswer -> {
                         if (event.senderId == peerId || event.targetUserId == peerId) {
@@ -73,38 +140,55 @@ class CallViewModel(
                             endCall(event.reason)
                         }
                     }
-                    is WsEvent.CallDenied -> {
-                        endCall(event.reason)
-                    }
-                    is WsEvent.AudioFrameReceived -> {
-                        if (event.senderId == peerId && _callSession.value.state == CallState.ACTIVE) {
-                            audioEngine.onIncomingAudioFrame(event.pcmSamples)
-                        }
-                    }
+                    is WsEvent.CallDenied -> endCall(event.reason)
                     else -> Unit
+                }
+            }
+        }
+        viewModelScope.launch {
+            realtimeRepository.audioFrames.collect { frame ->
+                if (frame.senderId == peerId && _callSession.value.state == CallState.ACTIVE) {
+                    callAudio.onIncomingAudioFrame(frame.pcmSamples)
                 }
             }
         }
     }
 
+    private val isFinished: Boolean
+        get() = _callSession.value.state == CallState.ENDED || _callSession.value.state == CallState.FAILED
+
+    /**
+     * The user leaves the call screen (system back): a ringing call is declined, anything else is
+     * hung up, so the peer is never left in a call nobody sees.
+     */
+    fun leave() {
+        when {
+            isFinished -> Unit
+            _callSession.value.state == CallState.RINGING -> rejectCall()
+            else -> hangUp()
+        }
+    }
+
     fun acceptCall() {
-        webSocketClient.sendCallAnswer(peerId)
+        realtimeRepository.sendCallAnswer(peerId)
         startActiveCall()
     }
 
     fun rejectCall(reason: String = "Отклонен пользователем") {
-        webSocketClient.sendCallRejected(peerId, reason)
+        realtimeRepository.sendCallRejected(peerId, reason)
         endCall(reason)
     }
 
     fun hangUp() {
-        webSocketClient.sendCallEnd(peerId, "Завершен пользователем")
+        realtimeRepository.sendCallEnd(peerId, "Завершен пользователем")
         endCall("Завершен")
     }
 
     private fun startActiveCall() {
+        // A finished call is terminal: a later call with the same peer has its own entry and ViewModel.
+        if (isFinished || _callSession.value.state == CallState.ACTIVE) return
         _callSession.value = _callSession.value.copy(state = CallState.ACTIVE)
-        audioEngine.start(viewModelScope)
+        callAudio.start(viewModelScope)
 
         durationJob?.cancel()
         durationJob = viewModelScope.launch {
@@ -118,9 +202,10 @@ class CallViewModel(
     }
 
     private fun endCall(reason: String) {
+        if (isFinished) return
         durationJob?.cancel()
         durationJob = null
-        audioEngine.stop()
+        callAudio.stop()
         _callSession.value = _callSession.value.copy(
             state = CallState.ENDED,
             endReason = reason
@@ -129,19 +214,31 @@ class CallViewModel(
 
     fun toggleMute() {
         val newMute = !_callSession.value.isMuted
-        audioEngine.setMute(newMute)
+        callAudio.setMute(newMute)
         _callSession.value = _callSession.value.copy(isMuted = newMute)
     }
 
     fun toggleSpeaker() {
         val newSpeaker = !_callSession.value.isSpeakerOn
-        audioEngine.setSpeakerphone(newSpeaker)
+        callAudio.setSpeakerphone(newSpeaker)
         _callSession.value = _callSession.value.copy(isSpeakerOn = newSpeaker)
     }
 
     override fun onCleared() {
-        super.onCleared()
-        audioEngine.stop()
+        // The entry was popped (back, logout, stack reset) while the call was still running.
+        if (!isFinished) {
+            if (_callSession.value.state == CallState.RINGING) {
+                realtimeRepository.sendCallRejected(peerId, "Отклонен пользователем")
+            } else {
+                realtimeRepository.sendCallEnd(peerId, "Завершен пользователем")
+            }
+        }
+        // A quick call-back creates the next call before this entry is cleared: leave its audio alone.
+        if (ownsAudio) {
+            callAudio.onFrameRecorded = null
+            callAudio.stop()
+        }
         durationJob?.cancel()
+        super.onCleared()
     }
 }

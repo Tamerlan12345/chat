@@ -21,8 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
@@ -35,9 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -61,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.Channel
 import com.openmychat.mobile.data.model.DirectConversation
@@ -71,16 +67,15 @@ import com.openmychat.mobile.ui.components.CentyAvatar
 fun ConversationsScreen(
     viewModel: ConversationsViewModel,
     onOpenDirectChat: (userId: Long, name: String, avatarUrl: String?, status: String?) -> Unit,
-    onOpenChannel: (channelId: Long, name: String) -> Unit,
-    onNavigateToAnnouncements: () -> Unit,
-    onNavigateToProfile: () -> Unit
+    onOpenChannel: (channelId: Long, name: String) -> Unit
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
-    val directConversations by viewModel.directConversations.collectAsState()
-    val channels by viewModel.channels.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val content = uiState as? ConversationsUiState.Content
+    val directConversations = content?.directConversations.orEmpty()
+    val channels = content?.channels.orEmpty()
     var isSearchActive by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
@@ -108,7 +103,14 @@ fun ConversationsScreen(
                                 color = colors.primary
                             )
                             Text(
-                                text = "Сообщения",
+                                text = when (val state = connectionState) {
+                                    is ConnectionState.Connected -> "Сообщения"
+                                    // Shown for the whole refusal streak, not re-announced per retry.
+                                    is ConnectionState.Retrying -> state.message
+                                    else -> "Подключение…"
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onSurfaceVariant
                             )
@@ -140,31 +142,6 @@ fun ConversationsScreen(
                     actionIconContentColor = colors.onSurfaceVariant
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar(containerColor = colors.surfaceVariant.copy(alpha = 0.7f)) {
-                NavigationBarItem(
-                    selected = true,
-                    onClick = {},
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Сообщения") },
-                    label = { Text("Сообщения") },
-                    colors = centyNavigationColors()
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToAnnouncements,
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") },
-                    colors = centyNavigationColors()
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToProfile,
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") },
-                    colors = centyNavigationColors()
-                )
-            }
         }
     ) { innerPadding ->
         Column(
@@ -182,9 +159,9 @@ fun ConversationsScreen(
             )
 
             when {
-                isLoading -> ConversationLoadingState()
-                error != null -> ConversationErrorState(
-                    message = error.orEmpty(),
+                uiState is ConversationsUiState.Loading -> ConversationLoadingState()
+                uiState is ConversationsUiState.Error -> ConversationErrorState(
+                    message = (uiState as ConversationsUiState.Error).message,
                     onRetry = viewModel::loadData
                 )
                 selectedTab == ConversationsTab.CHATS -> {
@@ -430,15 +407,6 @@ private fun ConversationStatePanel(
         }
     }
 }
-
-@Composable
-private fun centyNavigationColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-    selectedTextColor = MaterialTheme.colorScheme.primary,
-    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-)
 
 @Composable
 fun DirectConversationItem(conversation: DirectConversation, onClick: () -> Unit) {

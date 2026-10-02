@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.auth
 import android.content.SharedPreferences
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.repository.DefaultAuthRepository
 import com.openmychat.mobile.core.session.SessionStorageState
 import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
@@ -32,7 +33,7 @@ class LoginViewModelStorageTest {
             val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false).apply {
                 serverUrl = "https://chat.example"
             }
-            val viewModel = LoginViewModel(ApiClient(sessionManager, successfulLoginClient()), sessionManager)
+            val viewModel = LoginViewModel(DefaultAuthRepository(ApiClient(sessionManager, successfulLoginClient()), sessionManager))
 
             viewModel.login(username = "alice", password = "password")
 
@@ -62,8 +63,10 @@ class LoginViewModelStorageTest {
             }
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
-                ApiClient(sessionManager, claimedDeviceLoginClient(requestPaths)),
-                sessionManager
+                DefaultAuthRepository(
+                    ApiClient(sessionManager, claimedDeviceLoginClient(requestPaths)),
+                    sessionManager
+                )
             )
             val emittedStates = mutableListOf<LoginUiState>()
             val observer = launch(Dispatchers.Unconfined) {
@@ -108,8 +111,10 @@ class LoginViewModelStorageTest {
             )
             val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
             val viewModel = LoginViewModel(
-                ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
-                sessionManager
+                DefaultAuthRepository(
+                    ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
+                    sessionManager
+                )
             )
 
             viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
@@ -146,8 +151,10 @@ class LoginViewModelStorageTest {
             val sessionManager = SessionManager(prefs = storage, isDebuggableBuild = false)
             val requestPaths = mutableListOf<String>()
             val viewModel = LoginViewModel(
-                ApiClient(sessionManager, successfulPasswordChangeClient(requestPaths)),
-                sessionManager
+                DefaultAuthRepository(
+                    ApiClient(sessionManager, successfulPasswordChangeClient(requestPaths)),
+                    sessionManager
+                )
             )
             val emittedStates = mutableListOf<LoginUiState>()
             val observer = launch(Dispatchers.Unconfined) {

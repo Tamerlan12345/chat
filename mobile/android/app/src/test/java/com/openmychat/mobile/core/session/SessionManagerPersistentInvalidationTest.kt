@@ -3,6 +3,7 @@ package com.openmychat.mobile.core.session
 import android.content.SharedPreferences
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.data.repository.DefaultAuthRepository
 import com.openmychat.mobile.features.auth.LoginUiState
 import com.openmychat.mobile.features.auth.LoginViewModel
 import com.openmychat.mobile.features.connect.ServerConnectUiState
@@ -203,8 +204,10 @@ class SessionManagerPersistentInvalidationTest {
             )
             val sessionManager = sessionManager(securePrefs, invalidation)
             val serverConnect = ServerConnectViewModel(
-                ApiClient(sessionManager, verificationHttpClient = verifiedOnboardingClient()),
-                sessionManager
+                DefaultAuthRepository(
+                    ApiClient(sessionManager, verificationHttpClient = verifiedOnboardingClient()),
+                    sessionManager
+                )
             )
             var paired: Boolean? = null
 
@@ -216,7 +219,7 @@ class SessionManagerPersistentInvalidationTest {
             assertEquals("https://chat.example/api", sessionManager.serverUrl)
             assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
 
-            val login = LoginViewModel(ApiClient(sessionManager, okHttpClient = loginClient()), sessionManager)
+            val login = LoginViewModel(DefaultAuthRepository(ApiClient(sessionManager, okHttpClient = loginClient()), sessionManager))
             login.login("alice", "password")
             withTimeout(2_000) { login.uiState.first { it is LoginUiState.Success } }
 

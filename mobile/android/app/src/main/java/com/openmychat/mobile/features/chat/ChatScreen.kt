@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
@@ -44,13 +45,22 @@ fun ChatScreen(
     title: String,
     avatarUrl: String? = null,
     status: String? = null,
+    showBackButton: Boolean = true,
     onNavigateBack: () -> Unit,
     onStartCall: (peerId: Long, peerName: String) -> Unit
 ) {
-    val messages by viewModel.messages.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val typingUser by viewModel.typingUser.collectAsState()
     val wakeCooldown by viewModel.wakeCooldownSeconds.collectAsState()
     val editingMessage by viewModel.editingMessage.collectAsState()
+
+    // Nav3 gives each entry its own lifecycle: the chat counts as open only while it is resumed,
+    // not while it waits in the back stack under a call or behind another tab.
+    LifecycleResumeEffect(viewModel) {
+        viewModel.onVisibilityChanged(true)
+        onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+    }
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -99,11 +109,13 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад"
-                        )
+                    if (showBackButton) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Назад"
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -154,24 +166,47 @@ fun ChatScreen(
                 .consumeWindowInsets(innerPadding)
         ) {
             // Message List
-            LazyColumn(
-                state = listState,
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(messages, key = { it.id }) { message ->
-                    val isOwn = message.senderId == viewModel.currentUserId
-                    MessageBubble(
-                        message = message,
-                        isOwn = isOwn,
-                        canEdit = viewModel.canEditMessage(message),
-                        canDelete = viewModel.canDeleteMessage(message),
-                        onEdit = { viewModel.startEditing(message) },
-                        onDelete = { viewModel.deleteMessage(message) }
-                    )
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        val isOwn = message.senderId == viewModel.currentUserId
+                        MessageBubble(
+                            message = message,
+                            isOwn = isOwn,
+                            canEdit = viewModel.canEditMessage(message),
+                            canDelete = viewModel.canDeleteMessage(message),
+                            onEdit = { viewModel.startEditing(message) },
+                            onDelete = { viewModel.deleteMessage(message) }
+                        )
+                    }
+                }
+                when (val state = uiState) {
+                    is ChatUiState.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    is ChatUiState.Error -> Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(onClick = { viewModel.loadMessages() }) { Text("Повторить") }
+                    }
+                    is ChatUiState.Content -> Unit
                 }
             }
 
