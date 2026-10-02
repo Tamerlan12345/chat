@@ -383,6 +383,20 @@ Worktree `m-integration`. Depends on Task 16. The owner confirmed that the push 
 - doc wording fixes;
 - tests for the 3 untested branches.
 
+### Task 19: Integration — call-push hardening follow-ups
+
+Worktree `m-integration`. Depends on Task 18. Close the Task 18 re-review minors before mobile clients implement `push.md` §3:
+1. A duplicate `call_answer` while the pair is already active must not get `call_end`. It is ignored or acknowledged idempotently, and the contract states this.
+2. `pushCallUndeliverable` matches the job's `offerAt`, so a stale failure can't cancel a fresh re-offer.
+3. After a legitimate `/auth/refresh`, delivery retries follow `rebindSession` (old → new jti) instead of being dropped.
+4. Close the `call_offer` / `canRing` await race with caller `call_end`, e.g. by re-checking the offer after the await or by serialising call frames per pair.
+5. Consume tombstones once delivered to a socket, or document why they are not.
+6. When the queue is full at `notifyCall`, the caller gets `call_unavailable`.
+7. Add tests for the `connection_lost` and `timeout` tombstone reasons.
+8. Desktop: map server call `reason` codes (`no_call`, `unavailable`, `cancelled`, `timeout`, `connection_lost`) to Russian text in `desktop/src/renderer/src/lib/call-signal.mjs` (or the panel) instead of showing the raw code. For this task, Integration may edit those two desktop files only, with a desktop unit test.
+
+TDD; full `npm test` and the desktop test for the touched file must be green.
+
 ### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
 
 Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
@@ -403,5 +417,5 @@ Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/deliver
 
 Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18; QA 10 after Wave 1.
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16 → 18 → 19; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
