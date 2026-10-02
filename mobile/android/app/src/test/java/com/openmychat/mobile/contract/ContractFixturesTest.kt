@@ -8,6 +8,9 @@ import com.openmychat.mobile.data.model.Announcement
 import com.openmychat.mobile.data.model.ApiErrorBody
 import com.openmychat.mobile.data.model.AuthSuccessResponse
 import com.openmychat.mobile.data.model.Channel
+import com.openmychat.mobile.data.model.ConversationType
+import com.openmychat.mobile.data.notifications.PushPayload
+import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.data.model.DeviceClaimRequest
 import com.openmychat.mobile.data.model.DeviceClaimResponse
 import com.openmychat.mobile.data.model.DirectConversation
@@ -119,7 +122,8 @@ class ContractFixturesTest {
         "user_created" to null,
         "user_updated" to null,
         // Echo of cancel_message (G9). Android does not cancel sends yet; the send queue (Task 15) maps it.
-        "message_cancelled" to null
+        "message_cancelled" to null,
+        "conversation_read" to WsEvent.ConversationRead::class
     )
 
     @Test
@@ -128,6 +132,7 @@ class ContractFixturesTest {
             .filter { it.isFile && it.extension == "json" && it.name != "manifest.json" }
             .map { it.relativeTo(fixturesDir).invariantSeparatorsPath }
             .filterNot { it.startsWith("reducers/") } // client reducer vectors, not server responses (fixtures/README.md)
+            .filterNot { it.startsWith("notify/") } // векторы «кому уведомление»: решает сервер (поле notify), Android его не повторяет
             .toSet()
         assertTrue("no fixtures found in $fixturesDir", onDisk.isNotEmpty())
         assertEquals("fixtures missing from manifest.json", emptySet<String>(), onDisk - manifest.keys)
@@ -173,6 +178,28 @@ class ContractFixturesTest {
         assertEquals("connection_lost", (wsEvent("call_end.connection_lost.json") as WsEvent.CallEnd).reason)
         assertEquals("MUST_CHANGE_PASSWORD", (wsEvent("auth_error.must_change_password.json") as WsEvent.AuthError).code)
         assertEquals("alice", (wsEvent("auth_success.json") as WsEvent.AuthSuccess).user.username)
+        assertEquals(false, (wsEvent("direct_message.json") as WsEvent.NewMessage).notify)
+        val direct = wsEvent("conversation_read.direct.json") as WsEvent.ConversationRead
+        assertEquals(ConversationType.DIRECT, direct.conversationType)
+        assertTrue(direct.messageIds.isNotEmpty())
+        assertEquals(null, direct.lastReadId)
+        val channel = wsEvent("conversation_read.channel.json") as WsEvent.ConversationRead
+        assertEquals(ConversationType.CHANNEL, channel.conversationType)
+        assertEquals(3L, channel.targetId)
+        assertEquals(9L, channel.lastReadId)
+        assertTrue(channel.messageIds.isEmpty())
+    }
+
+    /** Data-push FCM разбирается тем же кодом, что будет в обработчике сервиса (MessageNotifier.onPush). */
+    @Test
+    fun pushFixturesDecode() {
+        fun fcm(name: String): Map<String, String> =
+            json.parseToJsonElement(File(fixturesDir, "push/$name").readText()).jsonObject["message"]!!.jsonObject["data"]!!.jsonObject
+                .mapValues { it.value.jsonPrimitive.content }
+        assertEquals(PushPayload.Read(ConversationRef(ConversationType.DIRECT, 2)), PushPayload.parse(fcm("fcm.read.json")))
+        assertEquals(PushPayload.NewMessage(ConversationRef(ConversationType.DIRECT, 2), 13), PushPayload.parse(fcm("fcm.message.direct.json")))
+        assertTrue(PushPayload.parse(fcm("fcm.message.channel.json")) is PushPayload.NewMessage)
+        assertTrue(PushPayload.parse(fcm("fcm.call.json")) is PushPayload.Call)
     }
 
     /** The real [ApiClient] request methods must read the recorded responses, not just the DTOs. */
@@ -240,7 +267,7 @@ class ContractFixturesTest {
             "fcm" -> {
                 val data = payload["message"]?.jsonObject?.get("data")?.jsonObject ?: error("fcm: нет message.data")
                 val type = data["type"]?.jsonPrimitive?.content
-                check(type == "message" || type == "call") { "fcm: неизвестный тип push \"$type\"" }
+                check(PushPayload.parse(data.mapValues { it.value.jsonPrimitive.content }) != null) { "fcm: push \"$type\" не разобран" }
             }
             "apns" -> check(payload.isNotEmpty()) { "apns: пустая полезная нагрузка" }
             else -> error("неизвестный провайдер push \"$provider\"")

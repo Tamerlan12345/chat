@@ -311,4 +311,5 @@
     <!-- App-wide events -->
     <string name="wake_received">Вас зовёт %1$s</string>
     <string name="wake_received_unknown">Вас зовёт коллега</string>
+    <string name="notification_channel_messages">Сообщения</string>
 </resources>

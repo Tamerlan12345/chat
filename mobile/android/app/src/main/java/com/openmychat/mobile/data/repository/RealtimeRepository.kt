@@ -23,6 +23,9 @@ interface RealtimeRepository {
     fun editMessage(messageId: Long, text: String): Boolean
     fun deleteMessage(messageId: Long): Boolean
     fun markRead(conversationType: ConversationType, targetId: Long): Boolean
+
+    /** «Смотрю этот чат» на переднем плане; null — ни один (multi-device.md §4). */
+    fun sendViewing(conversation: Pair<ConversationType, Long>?): Boolean
     fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean): Boolean
     /** Автоматическое присутствие («online» / «away»), свой статус не меняется. */
     fun sendPresence(state: String): Boolean
@@ -54,6 +57,9 @@ class DefaultRealtimeRepository @Inject constructor(
     override fun deleteMessage(messageId: Long) = webSocketClient.deleteMessage(messageId)
     override fun markRead(conversationType: ConversationType, targetId: Long) =
         webSocketClient.markRead(conversationType, targetId)
+
+    override fun sendViewing(conversation: Pair<ConversationType, Long>?) =
+        webSocketClient.sendViewing(conversation?.first, conversation?.second)
 
     override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
         webSocketClient.sendTyping(conversationType, targetId, isTyping)

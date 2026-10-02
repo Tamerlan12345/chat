@@ -31,7 +31,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideWebSocketClient(sessionManager: SessionManager): WebSocketClient = WebSocketClient(sessionManager)
+    fun provideWebSocketClient(sessionManager: SessionManager, authContext: com.openmychat.mobile.core.network.AuthContext): WebSocketClient =
+        WebSocketClient(sessionManager, authContext = authContext)
 
     /** A refused WebSocket token is re-checked over HTTP: refresh if possible, sign out on 401. */
     @Provides

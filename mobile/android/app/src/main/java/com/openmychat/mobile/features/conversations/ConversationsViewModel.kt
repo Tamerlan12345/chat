@@ -62,7 +62,10 @@ class ConversationsViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
     private val sessionRepository: SessionRepository,
-    private val activeConversations: ActiveConversationRegistry
+    private val activeConversations: ActiveConversationRegistry,
+    /** Прочитано на другом устройстве (conversation_read, push read) — обнулить счётчик переписки. */
+    private val readElsewhere: com.openmychat.mobile.data.notifications.ConversationReadBus =
+        com.openmychat.mobile.data.notifications.ConversationReadBus()
 ) : ViewModel() {
 
     val currentUserId: Long? get() = sessionRepository.currentUserId
@@ -154,6 +157,9 @@ class ConversationsViewModel @Inject constructor(
     }
 
     private fun observeOpenConversation() {
+        viewModelScope.launch {
+            readElsewhere.reads.collect { read -> updateContent { it.withoutUnreadFor(read) } }
+        }
         viewModelScope.launch {
             activeConversations.active.collect { open ->
                 // The chat marks its messages read when it opens; mirror that in the list.

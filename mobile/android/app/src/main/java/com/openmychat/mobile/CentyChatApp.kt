@@ -22,6 +22,9 @@ class CentyChatApp : Application(), SingletonImageLoader.Factory {
     /** Создаётся сразу: при конце сессии (выход, 401, отозванный токен) он стирает кэш справочника. */
     @Inject lateinit var people: com.openmychat.mobile.data.repository.PeopleRepository
 
+    /** Уведомления о сообщениях из кадров сокета (notify) и снятие по conversation_read — с запуска. */
+    @Inject lateinit var notifier: com.openmychat.mobile.data.notifications.MessageNotifier
+
     override fun onCreate() {
         super.onCreate()
         // Присутствие как на настольном клиенте: процесс на экране — «В сети», свёрнут — «Отошёл».

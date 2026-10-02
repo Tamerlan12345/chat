@@ -216,6 +216,8 @@ class ChatViewModel @AssistedInject constructor(
                             if (isVisible && msg.senderId != currentUserId) markAsRead()
                         }
                     }
+                    // Переподключились с открытым чатом: всё пришедшее за перерыв прочитано (multi-device.md §7.8).
+                    is WsEvent.AuthSuccess -> if (isVisible) markAsRead()
                     is WsEvent.MessageStatusUpdated -> updateMessages { list ->
                         list.map { msg ->
                             if (msg.id == event.messageId) {

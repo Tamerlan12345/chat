@@ -50,6 +50,8 @@ class FakeRealtimeRepository : RealtimeRepository {
     override fun deleteMessage(messageId: Long) = record("delete_message $messageId")
     override fun markRead(conversationType: ConversationType, targetId: Long) =
         record("mark_read ${conversationType.value} $targetId")
+    override fun sendViewing(conversation: Pair<ConversationType, Long>?) =
+        record(if (conversation == null) "viewing null" else "viewing ${conversation.first.value} ${conversation.second}")
     override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
         record("typing $targetId $isTyping")
     override fun sendPresence(state: String) = record("presence $state")

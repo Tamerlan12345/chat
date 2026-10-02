@@ -29,4 +29,7 @@ abstract class RepositoryModule {
     @Binds abstract fun realtimeRepository(impl: DefaultRealtimeRepository): RealtimeRepository
     @Binds abstract fun peopleRepository(impl: DefaultPeopleRepository): PeopleRepository
     @Binds abstract fun recentsStore(impl: SharedPreferencesRecentsStore): RecentsStore
+    @Binds abstract fun notificationSink(
+        impl: com.openmychat.mobile.data.notifications.SystemNotificationSink
+    ): com.openmychat.mobile.data.notifications.NotificationSink
 }
