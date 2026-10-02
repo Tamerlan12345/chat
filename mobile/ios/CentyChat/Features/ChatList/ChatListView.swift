@@ -125,12 +125,19 @@ public struct ChatListView: View {
     private var directConversationsList: some View {
         List {
             if filteredConversations.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "Нет активных диалогов" : "Ничего не найдено",
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text(searchText.isEmpty ? "Нажмите карандаш сверху, чтобы начать диалог с коллегой" : "Попробуйте изменить поисковый запрос")
-                )
-                .listRowBackground(Color.clear)
+                if searchText.isEmpty && ListLoadStateView.replacesEmptyState(conversations.directState) {
+                    ListLoadStateView(state: conversations.directState, failureTitle: "Не удалось загрузить диалоги") {
+                        await conversations.loadDirectConversations()
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ContentUnavailableView(
+                        searchText.isEmpty ? "Нет активных диалогов" : "Ничего не найдено",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text(searchText.isEmpty ? "Нажмите карандаш сверху, чтобы начать диалог с коллегой" : "Попробуйте изменить поисковый запрос")
+                    )
+                    .listRowBackground(Color.clear)
+                }
             } else {
                 ForEach(filteredConversations) { conv in
                     NavigationLink(destination: ChatDetailView(
@@ -157,12 +164,19 @@ public struct ChatListView: View {
     private var channelsList: some View {
         List {
             if filteredChannels.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "Нет доступных каналов" : "Ничего не найдено",
-                    systemImage: "number",
-                    description: Text("Создайте новый канал для координации")
-                )
-                .listRowBackground(Color.clear)
+                if searchText.isEmpty && ListLoadStateView.replacesEmptyState(conversations.channelsState) {
+                    ListLoadStateView(state: conversations.channelsState, failureTitle: "Не удалось загрузить каналы") {
+                        await conversations.loadChannels()
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ContentUnavailableView(
+                        searchText.isEmpty ? "Нет доступных каналов" : "Ничего не найдено",
+                        systemImage: "number",
+                        description: Text("Создайте новый канал для координации")
+                    )
+                    .listRowBackground(Color.clear)
+                }
             } else {
                 ForEach(filteredChannels) { channel in
                     NavigationLink(destination: ChatDetailView(

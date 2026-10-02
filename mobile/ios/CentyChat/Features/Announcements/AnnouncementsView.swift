@@ -27,12 +27,19 @@ public struct AnnouncementsView: View {
                     .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
 
                 if displayedAnnouncements.isEmpty {
-                    ContentUnavailableView(
-                        filterUnconfirmedOnly ? "Все распоряжения подписаны" : "Нет активных оповещений",
-                        systemImage: "bell.slash",
-                        description: Text("Здесь отображаются важные корпоративные приказы и новости компании")
-                    )
-                    .listRowBackground(Color.clear)
+                    if ListLoadStateView.replacesEmptyState(store.loadState) {
+                        ListLoadStateView(state: store.loadState, failureTitle: "Не удалось загрузить распоряжения") {
+                            await store.load()
+                        }
+                        .listRowBackground(Color.clear)
+                    } else {
+                        ContentUnavailableView(
+                            filterUnconfirmedOnly ? "Все распоряжения подписаны" : "Нет активных оповещений",
+                            systemImage: "bell.slash",
+                            description: Text("Здесь отображаются важные корпоративные приказы и новости компании")
+                        )
+                        .listRowBackground(Color.clear)
+                    }
                 } else {
                     ForEach(displayedAnnouncements) { announcement in
                         announcementCard(announcement)

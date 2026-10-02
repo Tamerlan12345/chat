@@ -6,6 +6,7 @@ import Observation
 @MainActor
 public final class AnnouncementsStore: RealtimeEventHandling {
     public var announcements: [Announcement] = []
+    public private(set) var loadState: LoadState = .idle
 
     @ObservationIgnored private let repository: any AnnouncementsRepository
     @ObservationIgnored private let session: SessionStore
@@ -17,6 +18,17 @@ public final class AnnouncementsStore: RealtimeEventHandling {
 
     public var unconfirmedCount: Int {
         announcements.filter { !$0.isConfirmed }.count
+    }
+
+    public func load() async {
+        loadState = .loading
+        do {
+            announcements = try await repository.announcements()
+            loadState = .loaded
+        } catch {
+            Log.announcements.error("Loading announcements failed: \(error.localizedDescription, privacy: .public)")
+            loadState = .failed(error.userMessage)
+        }
     }
 
     /// Returns true when the server confirmed the acknowledgement.
@@ -34,6 +46,7 @@ public final class AnnouncementsStore: RealtimeEventHandling {
 
     func reset() {
         announcements = []
+        loadState = .idle
     }
 
     private func markConfirmed(id: Int64) {

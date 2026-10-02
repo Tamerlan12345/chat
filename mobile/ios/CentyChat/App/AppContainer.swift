@@ -15,9 +15,6 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let profile: ProfileStore
     public let chats: ChatRegistry
 
-    @ObservationIgnored private let chatRepository: any ChatRepository
-    @ObservationIgnored private let announcementsRepository: any AnnouncementsRepository
-
     init(
         server: any ServerRepository,
         auth: any AuthRepository,
@@ -27,9 +24,6 @@ public final class AppContainer: SessionLifecycleDelegate {
         audioRelayFactory: (@MainActor (Int64) -> AudioCallRelay)? = nil,
         deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice
     ) {
-        self.chatRepository = chat
-        self.announcementsRepository = announcementsRepository
-
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(auth: auth, server: server, realtime: realtime, deviceDescriptor: deviceDescriptor)
         let conversations = ConversationsStore(repository: chat, session: session)
@@ -67,9 +61,6 @@ public final class AppContainer: SessionLifecycleDelegate {
         realtime.audioSink = { [weak calls] frame in
             calls?.receiveAudio(frame)
         }
-        conversations.onNeedsReload = { [weak self] in
-            Task { await self?.loadAllData() }
-        }
     }
 
     /// Production wiring over the shared network clients.
@@ -87,23 +78,14 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     // MARK: - Data
 
+    /// Loads every list concurrently; each list keeps its own loading/error state,
+    /// so one failing request does not empty the others.
     public func loadAllData() async {
-        async let directRequest = chatRepository.directConversations()
-        async let channelsRequest = chatRepository.channels()
-        async let announcementsRequest = announcementsRepository.announcements()
-        async let usersRequest = chatRepository.users()
-
-        do {
-            let (directs, channels, announcementItems, users) = try await (
-                directRequest, channelsRequest, announcementsRequest, usersRequest
-            )
-            conversations.directConversations = directs
-            conversations.channels = channels
-            announcements.announcements = announcementItems
-            conversations.users = users
-        } catch {
-            Log.session.error("Loading data failed: \(error.localizedDescription, privacy: .public)")
-        }
+        async let direct: Void = conversations.loadDirectConversations()
+        async let channels: Void = conversations.loadChannels()
+        async let users: Void = conversations.loadUsers()
+        async let announcementItems: Void = announcements.load()
+        _ = await (direct, channels, users, announcementItems)
     }
 
     // MARK: - SessionLifecycleDelegate

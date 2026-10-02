@@ -175,5 +175,9 @@ final class PartialLoadTests: XCTestCase {
         XCTAssertEqual(app.container.conversations.directConversations.map(\.userId), [12])
         XCTAssertEqual(app.container.conversations.users.map(\.id), [12])
         XCTAssertEqual(app.container.announcements.announcements.map(\.id), [4])
+        XCTAssertEqual(app.container.conversations.channelsState, .failed("Каналы недоступны"))
+        XCTAssertEqual(app.container.conversations.directState, .loaded)
+        XCTAssertEqual(app.container.conversations.usersState, .loaded)
+        XCTAssertEqual(app.container.announcements.loadState, .loaded)
     }
 }

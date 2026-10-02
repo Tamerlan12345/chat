@@ -10,12 +10,13 @@ public final class ConversationsStore: RealtimeEventHandling {
     public var users: [PublicUser] = []
     /// "\(conversationType)_\(targetId)" → «Алия печатает...»
     public private(set) var typingUsers: [String: String] = [:]
+    public private(set) var directState: LoadState = .idle
+    public private(set) var channelsState: LoadState = .idle
+    public private(set) var usersState: LoadState = .idle
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private var typingResetTimers: [String: Task<Void, Never>] = [:]
-    /// Asks the container to reload everything (e.g. a message from an unknown dialog).
-    @ObservationIgnored var onNeedsReload: (@MainActor () -> Void)?
 
     init(repository: any ChatRepository, session: SessionStore) {
         self.repository = repository
@@ -32,6 +33,41 @@ public final class ConversationsStore: RealtimeEventHandling {
 
     public static func typingKey(for conversation: ConversationKey) -> String {
         "\(conversation.type.rawValue)_\(conversation.targetId)"
+    }
+
+    // MARK: - Loading (each list independently)
+
+    public func loadDirectConversations() async {
+        directState = .loading
+        do {
+            directConversations = try await repository.directConversations()
+            directState = .loaded
+        } catch {
+            Log.chat.error("Loading dialogs failed: \(error.localizedDescription, privacy: .public)")
+            directState = .failed(error.userMessage)
+        }
+    }
+
+    public func loadChannels() async {
+        channelsState = .loading
+        do {
+            channels = try await repository.channels()
+            channelsState = .loaded
+        } catch {
+            Log.chat.error("Loading channels failed: \(error.localizedDescription, privacy: .public)")
+            channelsState = .failed(error.userMessage)
+        }
+    }
+
+    public func loadUsers() async {
+        usersState = .loading
+        do {
+            users = try await repository.users()
+            usersState = .loaded
+        } catch {
+            Log.chat.error("Loading colleagues failed: \(error.localizedDescription, privacy: .public)")
+            usersState = .failed(error.userMessage)
+        }
     }
 
     // MARK: - Mutations
@@ -68,6 +104,9 @@ public final class ConversationsStore: RealtimeEventHandling {
         directConversations = []
         channels = []
         users = []
+        directState = .idle
+        channelsState = .idle
+        usersState = .idle
         typingResetTimers.values.forEach { $0.cancel() }
         typingResetTimers = [:]
         typingUsers = [:]
@@ -121,7 +160,8 @@ public final class ConversationsStore: RealtimeEventHandling {
                 let updated = directConversations.remove(at: index)
                 directConversations.insert(updated, at: 0)
             } else {
-                onNeedsReload?()
+                // A dialog we do not know yet: fetch the list that contains it.
+                Task { await loadDirectConversations() }
             }
         } else {
             if let index = channels.firstIndex(where: { $0.id == message.targetId }) {
