@@ -103,7 +103,7 @@
     <string name="inbox_title">Чаты</string>
     <string name="inbox_segment_direct">Личные</string>
     <string name="inbox_segment_channels">Каналы</string>
-    <string name="inbox_search_hint">Поиск по имени</string>
+    <string name="inbox_search_hint">Люди, каналы, сообщения</string>
     <string name="inbox_search_clear">Очистить поиск</string>
     <string name="inbox_empty_direct">Пока нет диалогов</string>
     <string name="inbox_empty_direct_message">Когда вы или коллега напишете первое сообщение, диалог появится здесь.</string>
@@ -157,6 +157,86 @@
     <string name="chat_today">Сегодня</string>
     <string name="chat_yesterday">Вчера</string>
     <string name="chat_message_description">%1$s, %2$s: %3$s</string>
+
+<!-- People («Сотрудники») -->
+    <string name="tab_people">Сотрудники</string>
+    <string name="people_title">Сотрудники</string>
+    <string name="people_search_hint">Имя, должность, отдел, вн. номер</string>
+    <plurals name="people_count">
+        <item quantity="one">%d сотрудник</item>
+        <item quantity="few">%d сотрудника</item>
+        <item quantity="many">%d сотрудников</item>
+        <item quantity="other">%d сотрудника</item>
+    </plurals>
+    <string name="people_online_count">%1$d в сети</string>
+    <string name="people_scope_all">Все</string>
+    <string name="people_scope_departments">Отделы</string>
+    <string name="people_online_filter">В сети</string>
+    <string name="people_refresh_failed">Не удалось обновить список</string>
+    <string name="people_error">Не удалось загрузить сотрудников</string>
+    <string name="people_empty">В справочнике пока никого нет</string>
+    <string name="people_empty_message">Когда администратор добавит сотрудников, они появятся здесь.</string>
+    <string name="people_not_found">Никого не нашли по «%1$s»</string>
+    <string name="people_not_found_message">Проверьте написание или поищите по должности, отделу и внутреннему номеру.</string>
+    <string name="people_clear_search">Очистить поиск</string>
+    <string name="people_nobody_online">Сейчас никого нет в сети</string>
+    <string name="people_nobody_online_message">Выключите фильтр «В сети», чтобы увидеть всех.</string>
+    <string name="people_show_everyone">Показать всех</string>
+    <string name="people_extension">вн. %1$s</string>
+    <string name="people_unassigned">Без подразделения</string>
+    <string name="people_department_online">%1$d/%2$d в сети</string>
+    <string name="people_department_expand">Развернуть</string>
+    <string name="people_department_collapse">Свернуть</string>
+    <string name="people_fast_scroll">Буква %1$s</string>
+
+    <!-- Person card -->
+    <string name="person_write">Написать</string>
+    <string name="person_call">Позвонить</string>
+    <string name="person_wake">Побудить</string>
+    <string name="person_wake_wait">Через %1$d с</string>
+    <string name="person_call_not_permitted">Звонки недоступны для вашей роли</string>
+    <string name="person_call_offline">Не в сети — звонок сейчас не дойдёт</string>
+    <string name="person_status_away">Отошёл(ла)</string>
+    <string name="person_seen_today">Был(а) в сети сегодня в %1$s</string>
+    <string name="person_seen_yesterday">Был(а) в сети вчера в %1$s</string>
+    <string name="person_seen_on">Был(а) в сети %1$s</string>
+    <string name="person_custom_status">«%1$s»</string>
+    <string name="person_job">Должность</string>
+    <string name="person_department">Отдел</string>
+    <string name="person_extension">Вн. номер</string>
+    <string name="person_phone">Мобильный</string>
+    <string name="person_email">Email</string>
+    <string name="person_role">Роль</string>
+    <string name="person_copied">Скопировано</string>
+    <string name="person_copy_hint">скопировать</string>
+    <string name="person_call_phone">позвонить по номеру</string>
+    <string name="person_write_email">написать письмо</string>
+    <string name="person_show_department">показать в «Отделах»</string>
+    <string name="person_edit_profile">Редактировать профиль</string>
+    <string name="person_not_found">Карточка недоступна</string>
+    <string name="person_not_found_message">Сотрудник мог быть удалён из справочника.</string>
+    <string name="person_no_app">Нет приложения, чтобы открыть это</string>
+
+    <!-- Universal search in «Чаты» -->
+    <string name="search_hint">Люди, каналы, сообщения</string>
+    <string name="search_close">Закрыть поиск</string>
+    <string name="search_recent">Недавние</string>
+    <string name="search_recent_empty">Здесь появятся люди и каналы, которые вы открывали из поиска.</string>
+    <string name="search_people">Люди</string>
+    <string name="search_channels">Каналы</string>
+    <string name="search_messages">Сообщения</string>
+    <string name="search_all_people">Все сотрудники (%1$d)</string>
+    <string name="search_messages_short">Сообщения ищутся от двух символов</string>
+    <string name="search_messages_none">В сообщениях ничего не нашли</string>
+    <string name="search_messages_failed">Не удалось найти сообщения</string>
+    <string name="search_messages_rate_limited">Слишком много поисков подряд — повторите через минуту</string>
+    <string name="search_nothing">Ничего не нашли по «%1$s»</string>
+    <string name="search_nothing_message">Проверьте написание: ищем по людям, каналам и тексту сообщений.</string>
+    <string name="search_message_from_you">Вы</string>
+    <string name="search_message_in">%1$s · %2$s</string>
+    <string name="chat_jump_unavailable">Сообщение слишком давнее — показаны последние</string>
+    <string name="chat_open_card">Карточка сотрудника</string>
+
 
     <!-- Announcements -->
     <string name="announcements_title">Объявления</string>

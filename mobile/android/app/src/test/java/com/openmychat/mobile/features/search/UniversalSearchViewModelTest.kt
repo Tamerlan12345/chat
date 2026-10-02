@@ -63,8 +63,9 @@ class UniversalSearchViewModelTest {
         channels = listOf(Channel(id = 5, name = "Общий"), Channel(id = 6, name = "Иван-чай"), Channel(id = 7, name = "Склад"))
     }
     private val recents = MemoryRecents()
+    private val requests = com.openmychat.mobile.features.people.PeopleRequests()
 
-    private fun viewModel() = UniversalSearchViewModel(FakePeople(directory), server, recents, FakeSessionRepository())
+    private fun viewModel() = UniversalSearchViewModel(FakePeople(directory), server, recents, FakeSessionRepository(), requests)
 
     private fun message(id: Long, text: String, from: Long, to: Long, type: ConversationType = ConversationType.DIRECT, channelName: String? = null) =
         Message(id = id, conversationType = type, targetId = to, senderId = from, text = text, senderName = "Отправитель $from", createdAt = "2026-10-02T09:00:00.000Z", channelName = channelName)
@@ -180,6 +181,13 @@ class UniversalSearchViewModelTest {
         runCurrent()
         assertTrue(vm.state.value.isEmptyQuery)
         assertEquals(listOf("Общий", "Петров Иван"), vm.state.value.recents.map { it.title })
+    }
+
+    @Test
+    fun allPeopleCarriesTheQueryToThePeopleTab() = runTest(mainDispatcher.dispatcher) {
+        val vm = viewModel()
+        vm.showAllPeople(" иван ")
+        assertEquals(com.openmychat.mobile.features.people.PeopleRequest.Search("иван"), requests.pending.value)
     }
 
     @Test

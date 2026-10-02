@@ -106,16 +106,39 @@ fun SkeletonBlock(modifier: Modifier = Modifier, shape: Shape = RoundedCornerSha
  * loaded row moves nothing.
  */
 @Composable
-fun SkeletonRow(modifier: Modifier = Modifier, nameFraction: Float = 0.5f, previewFraction: Float = 0.72f) {
+fun SkeletonRow(
+    modifier: Modifier = Modifier,
+    nameFraction: Float = 0.5f,
+    previewFraction: Float = 0.72f,
+    rowHeight: Dp = 72.dp,
+    avatarSize: Dp = 44.dp
+) {
     Row(
-        modifier = modifier.fillMaxWidth().height(72.dp).padding(horizontal = 16.dp),
+        modifier = modifier.fillMaxWidth().height(rowHeight).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        SkeletonBlock(Modifier.size(44.dp), CircleShape)
+        SkeletonBlock(Modifier.size(avatarSize), CircleShape)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SkeletonBlock(Modifier.fillMaxWidth(nameFraction).height(14.dp))
             SkeletonBlock(Modifier.fillMaxWidth(previewFraction).height(12.dp))
+        }
+    }
+}
+
+/** Строки «Сотрудников» (64 dp, аватар 40): только при первой загрузке, без кэша. */
+@Composable
+fun PeopleSkeleton(modifier: Modifier = Modifier, rows: Int = 9) {
+    SkeletonContainer(modifier.fillMaxSize()) {
+        Column {
+            repeat(rows) { index ->
+                SkeletonRow(
+                    nameFraction = listOf(0.46f, 0.58f, 0.38f, 0.52f)[index % 4],
+                    previewFraction = listOf(0.66f, 0.5f, 0.74f, 0.6f)[index % 4],
+                    rowHeight = 64.dp,
+                    avatarSize = 40.dp
+                )
+            }
         }
     }
 }

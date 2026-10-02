@@ -9,6 +9,8 @@ import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.PeopleRepository
 import com.openmychat.mobile.data.repository.SessionRepository
+import com.openmychat.mobile.features.people.PeopleRequest
+import com.openmychat.mobile.features.people.PeopleRequests
 import com.openmychat.mobile.features.people.PeopleSearch
 import com.openmychat.mobile.features.people.Person
 import com.openmychat.mobile.features.people.PersonMatch
@@ -81,7 +83,8 @@ class UniversalSearchViewModel @Inject constructor(
     private val people: PeopleRepository,
     private val chats: ChatRepository,
     private val recents: RecentsStore,
-    private val session: SessionRepository
+    private val session: SessionRepository,
+    private val peopleRequests: PeopleRequests
 ) : ViewModel() {
 
     private val query = MutableStateFlow("")
@@ -134,6 +137,9 @@ class UniversalSearchViewModel @Inject constructor(
     }
 
     fun clear() = setQuery("")
+
+    /** «Все сотрудники (N)»: вкладка «Сотрудники» откроется с этим же запросом. */
+    fun showAllPeople(query: String) = peopleRequests.send(PeopleRequest.Search(query.trim()))
 
     fun remember(item: RecentItem) = recents.add(item)
 

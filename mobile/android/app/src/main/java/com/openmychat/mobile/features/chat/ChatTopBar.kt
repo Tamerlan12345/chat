@@ -39,6 +39,13 @@ import com.openmychat.mobile.ui.components.presenceLabel
 import com.openmychat.mobile.ui.components.sharedConversationElement
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.theme.CentyRadius
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 
 /**
  * The chat header. Flat on the canvas at rest; it lifts to L3 (elevated tone + hairline) while
@@ -75,7 +82,19 @@ internal fun ChatTopBar(
                 }
             },
             title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                val openCard = actions.onOpenCard
+                val cardLabel = stringResource(R.string.chat_open_card)
+                // В личной переписке аватар и имя открывают карточку собеседника поверх чата.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = if (openCard != null) {
+                        Modifier
+                            .clip(RoundedCornerShape(CentyRadius.control))
+                            .clickable(onClickLabel = cardLabel, role = Role.Button, onClick = openCard)
+                            .padding(end = 8.dp)
+                            .testTag("chat-open-card")
+                    } else Modifier
+                ) {
                     CentyAvatar(
                         name = title,
                         avatarUrl = avatarUrl,

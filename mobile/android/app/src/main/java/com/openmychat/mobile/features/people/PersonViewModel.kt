@@ -57,7 +57,8 @@ class PersonViewModel @AssistedInject constructor(
     @Assisted val userId: Long,
     private val people: PeopleRepository,
     private val session: SessionRepository,
-    private val realtime: RealtimeRepository
+    private val realtime: RealtimeRepository,
+    private val requests: PeopleRequests
 ) : ViewModel() {
 
     @AssistedFactory
@@ -101,6 +102,12 @@ class PersonViewModel @AssistedInject constructor(
                 }
             }
         }
+    }
+
+    /** «Отдел» в карточке: «Сотрудники › Отделы» с раскрытой веткой этого отдела. */
+    fun showDepartment() {
+        val id = _state.value.person?.departmentId ?: return
+        requests.send(PeopleRequest.Department(id))
     }
 
     /** «Побудить»: сигнал и вибрация у коллеги; повторно — через минуту. */

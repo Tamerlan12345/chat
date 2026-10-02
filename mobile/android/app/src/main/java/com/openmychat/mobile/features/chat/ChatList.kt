@@ -27,8 +27,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import com.openmychat.mobile.ui.theme.CentyTheme
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -73,7 +80,10 @@ internal fun MessageList(
     baseline: Set<Long>,
     onReply: (Message) -> Unit,
     onEdit: (Message) -> Unit,
-    onRequestDelete: (Message) -> Unit
+    onRequestDelete: (Message) -> Unit,
+    /** Сообщение из поиска: прокрутить к нему (примерно в середину экрана) и подсветить 1,2 с. */
+    focusMessageId: Long? = null,
+    onFocusShown: () -> Unit = {}
 ) {
     // A derived state: when the send queue keeps its marks in snapshot state, a changed mark rebuilds the rows.
     val chronological by remember(messages, currentUserId, actions) {
@@ -145,6 +155,21 @@ internal fun MessageList(
 
     val showJump by remember { derivedStateOf { JumpToLatest.isVisible(unseen, listState.firstVisibleItemIndex) } }
 
+    var pulseId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(focusMessageId, items) {
+        val id = focusMessageId ?: return@LaunchedEffect
+        val index = items.indexOfFirst { it is ChatItem.Bubble && it.message.id == id }
+        if (index < 0) return@LaunchedEffect
+        listState.scrollToItem(index)
+        // Снизу (reverseLayout) — к середине экрана, если ниже есть более новые сообщения.
+        val viewport = listState.layoutInfo.viewportSize.height
+        val size = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.size ?: 0
+        val lift = (viewport / 2 - size / 2).coerceAtLeast(0)
+        if (lift > 0) listState.scrollBy(-lift.toFloat())
+        pulseId = id
+        onFocusShown()
+    }
+
     // The sticky date shows only while the history moves (and a second after), never while its own
     // separator is on screen, and never when the history does not fill the viewport.
     var recentlyScrolled by remember { mutableStateOf(false) }
@@ -201,6 +226,7 @@ internal fun MessageList(
                     is ChatItem.Bubble -> {
                         val id = item.message.id
                         val fresh = remember(id) { id !in baseline && animated.add(id) }
+                        val pulsing = pulseId == id
                         ChatBubbleRow(
                             item = item,
                             strings = strings,
@@ -212,7 +238,7 @@ internal fun MessageList(
                             onReply = onReply,
                             onEdit = onEdit,
                             onRequestDelete = onRequestDelete,
-                            modifier = placement
+                            modifier = placement.highlightPulse(pulsing) { if (pulseId == id) pulseId = null }
                         )
                     }
                 }
@@ -246,4 +272,39 @@ private class NoKeyboardPull(private val imeVisible: () -> Boolean) : NestedScro
 
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
         if (available.y < 0f && !imeVisible()) Velocity(0f, available.y) else Velocity.Zero
+}
+
+/**
+ * Подсветка найденного сообщения: мягкая заливка accent проявляется (200 мс), держится и гаснет —
+ * всего 1,2 с. При reduce motion — без нарастания: включена 1,2 с и выключена.
+ */
+@Composable
+internal fun Modifier.highlightPulse(active: Boolean, onDone: () -> Unit): Modifier {
+    val tokens = CentyTheme.tokens
+    val reduce = LocalReduceMotion.current
+    val level = remember { Animatable(0f) }
+    val done = rememberUpdatedState(onDone)
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        if (reduce) {
+            level.snapTo(1f)
+            delay(1_200)
+            level.snapTo(0f)
+        } else {
+            level.animateTo(1f, tween(200, easing = CentyMotion.EaseOut))
+            delay(500)
+            level.animateTo(0f, tween(500, easing = CentyMotion.EaseOut))
+        }
+        done.value()
+    }
+    val color = tokens.primary
+    return drawBehind {
+        val a = level.value
+        if (a > 0f) {
+            drawRoundRect(
+                color = color.copy(alpha = 0.18f * a),
+                cornerRadius = CornerRadius(12.dp.toPx())
+            )
+        }
+    }.semantics { if (active) testTag = "message-highlight" }
 }

@@ -56,7 +56,7 @@ class PersonCardTest {
         val people = FakePeople(listOf(bob))
         people.gate = CompletableDeferred()
         people.fresh = bob.copy(jobTitle = "Инженер")
-        val vm = PersonViewModel(8, people, FakeSessionRepository(), FakeRealtimeRepository())
+        val vm = PersonViewModel(8, people, FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests())
 
         assertEquals("Боб Тестов", vm.state.value.person?.fullName)
         assertEquals(null, vm.state.value.person?.jobTitle)
@@ -68,7 +68,7 @@ class PersonCardTest {
     @Test
     fun presenceChangesReachTheOpenCard() {
         val people = FakePeople(listOf(bob))
-        val vm = PersonViewModel(8, people, FakeSessionRepository(), FakeRealtimeRepository())
+        val vm = PersonViewModel(8, people, FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests())
         assertEquals(CallAvailability.AVAILABLE, vm.state.value.call)
 
         people.state.value = people.state.value.copy(people = listOf(bob.copy(status = UserStatus.OFFLINE)))
@@ -79,7 +79,7 @@ class PersonCardTest {
     fun theCallerPermissionComesFromTheOwnSession() {
         val session = FakeSessionRepository()
         session.currentUser.value = User(id = FakeSessionRepository.ME, username = "me", fullName = "Я", permissions = RolePermissions(canCall = false))
-        val vm = PersonViewModel(8, FakePeople(listOf(bob)), session, FakeRealtimeRepository())
+        val vm = PersonViewModel(8, FakePeople(listOf(bob)), session, FakeRealtimeRepository(), PeopleRequests())
         assertEquals(CallAvailability.NOT_PERMITTED, vm.state.value.call)
     }
 
@@ -87,16 +87,24 @@ class PersonCardTest {
     fun theOwnCardIsMarkedSoTheActionsBecomeEditProfile() {
         val session = FakeSessionRepository()
         session.currentUser.value = User(id = FakeSessionRepository.ME, username = "me", fullName = "Я Сам", jobTitle = "Аналитик")
-        val vm = PersonViewModel(FakeSessionRepository.ME, FakePeople(emptyList()), session, FakeRealtimeRepository())
+        val vm = PersonViewModel(FakeSessionRepository.ME, FakePeople(emptyList()), session, FakeRealtimeRepository(), PeopleRequests())
         assertTrue(vm.state.value.isSelf)
         assertEquals("Я Сам", vm.state.value.person?.fullName)
         assertEquals("Аналитик", vm.state.value.person?.jobTitle)
     }
 
     @Test
+    fun theDepartmentRowAsksThePeopleTabForThatBranch() {
+        val requests = PeopleRequests()
+        val vm = PersonViewModel(8, FakePeople(listOf(bob.copy(departmentId = 4))), FakeSessionRepository(), FakeRealtimeRepository(), requests)
+        vm.showDepartment()
+        assertEquals(PeopleRequest.Department(4), requests.pending.value)
+    }
+
+    @Test
     fun wakingSendsOnceAndStartsTheCooldown() {
         val realtime = FakeRealtimeRepository()
-        val vm = PersonViewModel(8, FakePeople(listOf(bob)), FakeSessionRepository(), realtime)
+        val vm = PersonViewModel(8, FakePeople(listOf(bob)), FakeSessionRepository(), realtime, PeopleRequests())
         vm.wake()
         vm.wake()
         assertEquals(listOf("wake_send 8"), realtime.sent)
