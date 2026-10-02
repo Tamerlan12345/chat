@@ -31,7 +31,7 @@ public final class AppState {
     private var incomingAudioTask: Task<Void, Never>?
     public var callAudioError: String? = nil
     public var callAudioRequiresMicrophonePermission = false
-    private let audioRelayFactory: (Int64) -> AudioCallRelay
+    private let audioRelayFactory: @MainActor (Int64) -> AudioCallRelay
     
     // MARK: - Wake Buzzer & Presence
     
@@ -46,7 +46,16 @@ public final class AppState {
     
     // MARK: - Initialization & Lifecycle
     
-    public init(audioRelayFactory: @escaping (Int64) -> AudioCallRelay = { peerId in
+    public convenience init() {
+        self.init(audioRelayFactory: AppState.makeProductionAudioRelay)
+    }
+
+    init(audioRelayFactory: @escaping @MainActor (Int64) -> AudioCallRelay) {
+        self.audioRelayFactory = audioRelayFactory
+    }
+
+    /// Production relay: AVAudioEngine capture with frames sent over the shared WebSocket.
+    private static func makeProductionAudioRelay(peerId: Int64) -> AudioCallRelay {
         AudioCallRelay(
             targetUserId: peerId,
             backend: AVAudioEngineBackend(),
@@ -56,8 +65,6 @@ public final class AppState {
                 }
             }
         )
-    }) {
-        self.audioRelayFactory = audioRelayFactory
     }
     
     public func initialize() async {

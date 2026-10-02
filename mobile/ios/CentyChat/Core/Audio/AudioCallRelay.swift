@@ -1,5 +1,4 @@
 import AVFoundation
-import Darwin
 import Foundation
 import QuartzCore
 
@@ -328,7 +327,7 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     public var lifecycleHandler: ((AudioRelayBackendEvent) -> Void)?
 
     public var recordPermission: AudioRecordPermission {
-        switch AVAudioSession.sharedInstance().recordPermission {
+        switch AVAudioApplication.shared.recordPermission {
         case .granted:
             return .granted
         case .denied:
@@ -365,11 +364,9 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     }
 
     public func requestRecordPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                continuation.resume(returning: granted)
-            }
-        }
+        // The async API resumes this main-actor method directly, so no completion
+        // closure inherits main-actor isolation while the system calls it off-main.
+        await AVAudioApplication.requestRecordPermission()
     }
 
     public func startCapture(_ handler: @escaping ([Float]) -> Void) throws {
@@ -441,10 +438,28 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
         isPlaybackInFlight = true
         let generation = playbackGeneration
         let delay = max(0, next.time - CACurrentMediaTime())
-        let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay)
-        player.scheduleBuffer(next.buffer, at: AVAudioTime(hostTime: hostTime), options: []) { [weak self] in
-            Task { @MainActor [weak self] in
+        // System uptime (declared as SystemBootTime / 35F9.1 in PrivacyInfo.xcprivacy)
+        // shares the host-time clock and is used only to measure the scheduling delay.
+        let hostTime = AVAudioTime.hostTime(forSeconds: ProcessInfo.processInfo.systemUptime + delay)
+        player.scheduleBuffer(
+            next.buffer,
+            at: AVAudioTime(hostTime: hostTime),
+            options: [],
+            completionHandler: Self.makePlaybackCompletionHandler(generation: generation) { [weak self] generation in
                 self?.finishPlayback(generation: generation)
+            }
+        )
+    }
+
+    /// Builds the scheduleBuffer completion handler, which AVFoundation calls on its own queue.
+    /// It is nonisolated and Sendable so Swift 6 never asserts main-actor isolation on that queue.
+    nonisolated static func makePlaybackCompletionHandler(
+        generation: Int,
+        onFinished: @escaping @MainActor @Sendable (Int) -> Void
+    ) -> @Sendable () -> Void {
+        {
+            Task { @MainActor in
+                onFinished(generation)
             }
         }
     }
@@ -476,15 +491,30 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
 
     private func installCaptureTap(on inputNode: AVAudioInputNode) {
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { [weak self] buffer, _ in
+        inputNode.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: nil,
+            block: Self.makeCaptureTapBlock { [weak self] samples in
+                self?.captureHandler?(samples)
+            }
+        )
+    }
+
+    /// Builds the input tap block, which AVFoundation calls on its realtime audio thread.
+    /// PCM conversion stays on that thread; only the normalized samples hop to the main actor.
+    nonisolated static func makeCaptureTapBlock(
+        deliver: @escaping @MainActor @Sendable ([Float]) -> Void
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        { buffer, _ in
             let monoSamples = Self.monoSamples(from: buffer)
             let normalized = AudioCaptureNormalizer.normalize(
                 monoSamples,
                 bufferSampleRate: buffer.format.sampleRate
             )
             guard !normalized.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                self?.captureHandler?(normalized)
+            Task { @MainActor in
+                deliver(normalized)
             }
         }
     }
