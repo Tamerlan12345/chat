@@ -69,6 +69,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -86,6 +87,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -116,6 +118,7 @@ import com.openmychat.mobile.ui.components.DeliveryGlyph
 import com.openmychat.mobile.ui.components.DeliveryMark
 import com.openmychat.mobile.ui.components.EmptyState
 import com.openmychat.mobile.ui.components.ErrorState
+import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.TypingIndicator
 import com.openmychat.mobile.ui.components.presenceLabel
@@ -576,7 +579,6 @@ private fun MessageBubble(
     val isOwn = item.isOwn
     val tokens = CentyTheme.tokens
     val reduce = LocalReduceMotion.current
-    val haptics = rememberHaptics()
     val clipboard = LocalClipboardManager.current
     val snackbar = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
@@ -636,12 +638,12 @@ private fun MessageBubble(
                     }
                     .background(if (isOwn) tokens.primarySoft else tokens.card, shape)
                     .border(1.dp, if (isOwn) tokens.primaryLine else tokens.border, shape)
+                    // combinedClickable performs the long-press haptic itself. A tap opens the same menu,
+                    // so TalkBack's click is a real action rather than a no-op.
                     .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            haptics.longPress()
-                            menuOpen = true
-                        },
+                        onClick = { menuOpen = true },
+                        onClickLabel = stringResource(R.string.chat_message_actions),
+                        onLongClick = { menuOpen = true },
                         onLongClickLabel = stringResource(R.string.chat_message_actions)
                     )
                     .semantics(mergeDescendants = true) {
@@ -678,11 +680,13 @@ private fun MessageBubble(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // On primary-soft, textDim drops below 4.5:1 in dark; the own footer uses textSecondary.
+                    val meta = if (isOwn) tokens.textSecondary else tokens.textDim
                     if (!message.updatedAt.isNullOrBlank() && !message.isDeleted) {
-                        Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = tokens.textDim)
+                        Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = meta)
                     }
-                    Text(time, style = MaterialTheme.typography.labelSmall, color = tokens.textDim)
-                    if (mark != null) DeliveryGlyph(mark)
+                    Text(time, style = MaterialTheme.typography.labelSmall, color = meta)
+                    if (mark != null) DeliveryGlyph(mark, tint = meta)
                 }
             }
             DropdownMenu(
@@ -778,10 +782,11 @@ private fun FileChip(name: String, size: Long?) {
     }
 }
 
+@Composable
 private fun formatBytes(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes Б"
-    bytes < 1024 * 1024 -> String.format(Locale.forLanguageTag("ru"), "%.1f КБ", bytes / 1024.0)
-    else -> String.format(Locale.forLanguageTag("ru"), "%.1f МБ", bytes / (1024.0 * 1024))
+    bytes < 1024 -> stringResource(R.string.file_size_bytes, bytes)
+    bytes < 1024 * 1024 -> stringResource(R.string.file_size_kb, bytes / 1024.0)
+    else -> stringResource(R.string.file_size_mb, bytes / (1024.0 * 1024))
 }
 
 @Composable
@@ -811,9 +816,19 @@ private fun Composer(editingMessage: Message?, actions: ChatActions) {
     val tokens = CentyTheme.tokens
     val haptics = rememberHaptics()
     val reduce = LocalReduceMotion.current
+    val anchor = LocalSnackbarAnchor.current
+    val density = LocalDensity.current
+    DisposableEffect(anchor) { onDispose { anchor.bottom = 0.dp } }
     var text by rememberSaveable { mutableStateOf("") }
+    // Only a real change of the edited message replaces the text. On re-entry (after a call or a
+    // tab switch) the restored id matches, so the saved draft is kept.
+    var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     LaunchedEffect(editingMessage?.id) {
-        text = editingMessage?.text.orEmpty()
+        val id = editingMessage?.id
+        if (id != editingId) {
+            editingId = id
+            text = editingMessage?.text.orEmpty()
+        }
     }
     val canSend = text.isNotBlank()
     val send = {
@@ -834,6 +849,7 @@ private fun Composer(editingMessage: Message?, actions: ChatActions) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .onSizeChanged { anchor.bottom = with(density) { it.height.toDp() } }
                 .padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)
                 .testTag("composer"),
             verticalAlignment = Alignment.Bottom,
@@ -847,10 +863,10 @@ private fun Composer(editingMessage: Message?, actions: ChatActions) {
                     actions.onTyping(it.isNotBlank())
                 },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = tokens.textMain),
-                cursorBrush = SolidColor(tokens.primary),
+                cursorBrush = SolidColor(tokens.accentText),
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("composer-field"),
                 decorationBox = { inner ->
                     Box(
                         modifier = Modifier

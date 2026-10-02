@@ -67,6 +67,7 @@ import com.openmychat.mobile.features.conversations.ConversationsScreen
 import com.openmychat.mobile.features.profile.ProfileScreen
 import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.components.CentySnackbarHost
+import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
@@ -138,6 +139,7 @@ fun CentyNavigation(
     }
 
     val snackbarHost = LocalSnackbarHostState.current
+    val snackbarAnchor = LocalSnackbarAnchor.current
     if (state.isAuthFlow) {
         Box(modifier = modifier.fillMaxSize()) {
             display()
@@ -158,14 +160,14 @@ fun CentyNavigation(
         navigationBarItemColors = NavigationBarItemDefaults.colors(
             selectedIconColor = tokens.accentText,
             selectedTextColor = tokens.accentText,
-            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            indicatorColor = tokens.navIndicator,
             unselectedIconColor = tokens.textSecondary,
             unselectedTextColor = tokens.textSecondary
         ),
         navigationRailItemColors = NavigationRailItemDefaults.colors(
             selectedIconColor = tokens.accentText,
             selectedTextColor = tokens.accentText,
-            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            indicatorColor = tokens.navIndicator,
             unselectedIconColor = tokens.textSecondary,
             unselectedTextColor = tokens.textSecondary
         )
@@ -210,7 +212,8 @@ fun CentyNavigation(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime).exclude(barInsets))
-                    .padding(bottom = if (currentKey is NavKey.Chat) 72.dp else 0.dp)
+                    // Above whatever the screen pins to the bottom (the chat composer reports its height).
+                    .padding(bottom = snackbarAnchor.bottom)
             )
         }
     }

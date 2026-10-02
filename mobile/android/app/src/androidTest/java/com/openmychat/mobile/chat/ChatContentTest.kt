@@ -8,7 +8,10 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -127,6 +130,25 @@ class ChatContentTest {
 
         compose.onNodeWithText("Свежее").assertIsDisplayed()
         compose.onAllNodes(hasTestTag("new-messages-pill")).assertCountEquals(0)
+    }
+
+    @Test
+    fun aTypedDraftSurvivesLeavingAndComingBack() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            CentyChatTheme(darkTheme = false, reduceMotion = true) {
+                ChatContent(
+                    title = "Боб Тестов", isDirect = true, uiState = ChatUiState.Content(listOf(message(1, peer))),
+                    currentUserId = me, connectionState = ConnectionState.Connected, actions = actions
+                )
+            }
+        }
+        compose.onNodeWithTag("composer-field").performTextInput("Черновик ответа")
+
+        // Leaving the chat for a call or another tab saves and later restores the entry's state.
+        restoration.emulateSavedInstanceStateRestore()
+
+        compose.onNodeWithTag("composer-field").assertTextEquals("Черновик ответа")
     }
 
     @Test

@@ -7,7 +7,11 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
@@ -17,6 +21,16 @@ import androidx.compose.ui.platform.LocalView
  * by MainActivity; screens post through it so a message survives navigation between tabs.
  */
 val LocalSnackbarHostState = staticCompositionLocalOf { SnackbarHostState() }
+
+/**
+ * Height of the chrome a screen pins to the bottom edge (the chat composer), above the system
+ * insets. The snackbar host sits above it instead of guessing a fixed offset.
+ */
+class SnackbarAnchor {
+    var bottom by mutableStateOf(0.dp)
+}
+
+val LocalSnackbarAnchor = staticCompositionLocalOf { SnackbarAnchor() }
 
 @Composable
 fun CentySnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {

@@ -36,7 +36,9 @@ import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
+import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.components.SnackbarAnchor
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.launch
@@ -140,7 +142,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
+                val snackbarAnchor = remember { SnackbarAnchor() }
+                CompositionLocalProvider(
+                    LocalSnackbarHostState provides snackbarHostState,
+                    LocalSnackbarAnchor provides snackbarAnchor
+                ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = CentyTheme.tokens.canvas
