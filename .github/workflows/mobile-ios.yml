@@ -37,7 +37,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
       - name: Upload iOS test result bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-simulator-test-results
           if-no-files-found: warn
@@ -47,7 +47,7 @@ jobs:
         run: python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
       - name: Upload exported screenshots
         if: always() && github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-screenshots
           if-no-files-found: ignore
@@ -69,7 +69,7 @@ jobs:
       - name: Download exported screenshots
         id: download
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ios-screenshots
           path: screenshots
@@ -93,10 +93,19 @@ jobs:
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$work" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git"
-          if git -C "$work" fetch -q --depth=1 origin ci/ios-screenshots; then
+          # ls-remote exits 2 only when the branch is absent; any other failure stops the job.
+          set +e
+          git -C "$work" ls-remote --exit-code --heads origin ci/ios-screenshots > /dev/null
+          remote_status=$?
+          set -e
+          if [ "$remote_status" -eq 0 ]; then
+            git -C "$work" fetch -q --depth=1 origin ci/ios-screenshots
             git -C "$work" checkout -q -b ci/ios-screenshots FETCH_HEAD
-          else
+          elif [ "$remote_status" -eq 2 ]; then
             git -C "$work" checkout -q --orphan ci/ios-screenshots
+          else
+            echo "Could not query ci/ios-screenshots (exit $remote_status)" >&2
+            exit "$remote_status"
           fi
           rm -rf "${work:?}/${short_sha}"
           mkdir -p "$work/$short_sha"
@@ -107,5 +116,5 @@ jobs:
             exit 0
           fi
           git -C "$work" commit -q -m "ci(ios): screenshots for ${short_sha}"
-          git -C "$work" push -q --force origin HEAD:refs/heads/ci/ios-screenshots
+          git -C "$work" push -q origin HEAD:refs/heads/ci/ios-screenshots
           echo "Published ${#shots[@]} screenshot(s) to ci/ios-screenshots/${short_sha}"
