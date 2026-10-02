@@ -642,16 +642,18 @@ class MessageService {
     }
 
     // Пока ждали настройку, сообщение могли удалить — правка надгробия
-    // вернула бы ему текст.
-    if (db.prepare('SELECT is_deleted FROM messages WHERE id = ?').get(message.id)?.is_deleted) {
-      throw codedError('MESSAGE_DELETED', 'Сообщение удалено');
-    }
+    // вернула бы ему текст — или исправить параллельной правкой: в историю
+    // идёт текст, который эта правка заменяет на самом деле, а не прочитанный
+    // до ожидания (иначе промежуточная версия пропала бы из истории).
+    const current = db.prepare('SELECT * FROM messages WHERE id = ?').get(message.id);
+    if (!current) throw codedError('NOT_FOUND', 'Сообщение не найдено');
+    if (current.is_deleted) throw codedError('MESSAGE_DELETED', 'Сообщение удалено');
 
     const now = new Date().toISOString();
     db.prepare(`
       INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
       VALUES (?, 'edit', ?, ?, ?, ?)
-    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+    `).run(current.id, current.text, current.metadata_json, Number(actorId), now);
 
     withChangeSeq(db, (seq) => db.prepare('UPDATE messages SET text = ?, updated_at = ?, change_seq = ? WHERE id = ?')
       .run(body, now, seq, message.id));
@@ -692,6 +694,10 @@ class MessageService {
     }
     if (message.is_deleted) return tombstone(message, true);
 
+    // Строка, которую удаление обнуляет: без ожидания (супер-администратор) —
+    // прочитанная выше; после ожидания настройки — перечитанная (её могли
+    // исправить за это время, и в историю должен попасть последний текст).
+    let current = message;
     if (!isSuperAdmin) {
       const windowMinutes = await SettingsService.getSetting('message_delete_window_minutes', DEFAULT_DELETE_WINDOW_MINUTES);
       if (!isWithinWindow(message.created_at, windowMinutes)) {
@@ -699,7 +705,7 @@ class MessageService {
       }
       // Пока ждали настройку, то же сообщение мог удалить параллельный запрос
       // (другой сокет, cancel_message) — второе удаление не пишется.
-      const current = db.prepare('SELECT * FROM messages WHERE id = ?').get(message.id);
+      current = db.prepare('SELECT * FROM messages WHERE id = ?').get(message.id);
       if (!current) throw codedError('NOT_FOUND', 'Сообщение не найдено');
       if (current.is_deleted) return tombstone(current, true);
     }
@@ -708,12 +714,12 @@ class MessageService {
     db.prepare(`
       INSERT INTO message_history (message_id, action, old_text, old_metadata_json, actor_id, created_at)
       VALUES (?, 'delete', ?, ?, ?, ?)
-    `).run(message.id, message.text, message.metadata_json, Number(actorId), now);
+    `).run(current.id, current.text, current.metadata_json, Number(actorId), now);
 
     withChangeSeq(db, (seq) => db.prepare("UPDATE messages SET is_deleted = 1, text = '', metadata_json = NULL, updated_at = ?, change_seq = ? WHERE id = ?")
-      .run(now, seq, message.id));
+      .run(now, seq, current.id));
 
-    return tombstone({ ...message, updated_at: now }, false);
+    return tombstone({ ...current, updated_at: now }, false);
   }
 
   static async getMessageById(messageId) {

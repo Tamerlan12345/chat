@@ -537,15 +537,17 @@ class WsServer {
     }
     lane.pending += 1;
     const userAtArrival = this.socketUser.get(ws) || null;
-    const run = () => this.runFrame(ws, data, userAtArrival).finally(() => { lane.pending -= 1; });
+    const run = () => this.runFrame(ws, data, userAtArrival, { timeout: true }).finally(() => { lane.pending -= 1; });
     lane.tail = lane.tail.then(run, run);
   }
 
   // Обработчик обращается к двум базам и потому асинхронен. Отказ обещания без
   // перехвата завершает процесс Node — одно кривое сообщение роняло бы сервер
   // для всех. Зависший обработчик держит очередь сокета не дольше
-  // frameTimeoutMs.
-  runFrame(ws, data, userAtArrival = null) {
+  // frameTimeoutMs — таймер заводится только у кадров очереди (timeout):
+  // кадру вне очереди (rd_*, ICE, присутствие) держать нечего, и таймер на
+  // каждый такой кадр был бы лишней работой и ложным предупреждением.
+  runFrame(ws, data, userAtArrival = null, { timeout: withTimeout = false } = {}) {
     if (ws.revoked) return Promise.resolve();
     const work = Promise.resolve()
       .then(() => this.handleMessage(ws, data, userAtArrival))
@@ -556,6 +558,7 @@ class WsServer {
           : { type: 'error', message: 'Ошибка обработки запроса' };
         safeSend(ws, frame);
       });
+    if (!withTimeout) return work;
     let timer;
     const timeout = new Promise((resolve) => {
       timer = setTimeout(() => {
