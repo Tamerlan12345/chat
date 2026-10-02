@@ -88,6 +88,33 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(logoutCount, 0, "A still-valid session must not be logged out")
     }
 
+    func testRealtimeMustChangePasswordStopsTheSocket() async throws {
+        let app = TestApp()
+        await app.session.bootstrap()
+        _ = try await app.session.login(username: "qa", password: "password")
+
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"MUST_CHANGE_PASSWORD","message":"Требуется смена пароля"}"#))
+
+        let changeRequired = await eventually { app.session.phase == .passwordChangeRequired }
+        XCTAssertTrue(changeRequired)
+        let disconnected = await eventually { await !app.realtime.isConnected }
+        XCTAssertTrue(disconnected, "The socket client must not keep retrying while the password change is pending")
+    }
+
+    func testRealtimeInvalidTokenThatCannotBeRevalidatedStopsTheSocket() async throws {
+        let app = TestApp()
+        await app.session.bootstrap()
+        _ = try await app.session.login(username: "qa", password: "password")
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.unauthorized) }
+
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"INVALID_TOKEN","message":"Недействительный токен авторизации"}"#))
+
+        let signedOut = await eventually { app.session.phase == .signedOut }
+        XCTAssertTrue(signedOut)
+        let isConnected = await app.realtime.isConnected
+        XCTAssertFalse(isConnected, "A revoked session must not leave the socket client retrying")
+    }
+
     func testServerDisconnectWithARevokedTokenSignsOut() async throws {
         let app = TestApp()
         await app.session.bootstrap()

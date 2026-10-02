@@ -40,6 +40,7 @@ private struct ChatDetailContent: View {
     @Environment(SessionStore.self) private var session
     @Environment(ConversationsStore.self) private var conversations
     @Environment(CallStore.self) private var calls
+    @Environment(\.scenePhase) private var scenePhase
 
     let store: ChatStore
     let title: String
@@ -184,10 +185,14 @@ private struct ChatDetailContent: View {
             }
         }
         .onAppear {
-            store.setVisible(true)
+            store.screenDidAppear(sceneIsActive: scenePhase == .active)
         }
         .onDisappear {
-            store.setVisible(false)
+            store.screenDidDisappear()
+        }
+        .onChange(of: scenePhase) {
+            let isActive = scenePhase == .active
+            Task { await store.sceneActivityChanged(isActive: isActive) }
         }
         .task {
             await store.load()

@@ -37,11 +37,28 @@ public final class ChatStore: RealtimeEventHandling {
 
     // MARK: - Visibility
 
-    /// Called by the chat screen on appear/disappear. While visible, incoming
-    /// messages are marked read instead of raising the unread counter.
-    public func setVisible(_ visible: Bool) {
-        isVisible = visible
-        conversations.setConversation(conversation, visible: visible)
+    @ObservationIgnored private var presence = ChatScreenPresence()
+
+    /// The chat screen appeared. `sceneIsActive` is `scenePhase == .active`.
+    public func screenDidAppear(sceneIsActive: Bool) {
+        presence.appeared = true
+        presence.sceneIsActive = sceneIsActive
+        applyPresence()
+    }
+
+    public func screenDidDisappear() {
+        presence.appeared = false
+        applyPresence()
+    }
+
+    /// The app moved between foreground and background while the screen may be shown.
+    public func sceneActivityChanged(isActive: Bool) async {
+    }
+
+    /// While visible, incoming messages are marked read instead of raising the unread counter.
+    private func applyPresence() {
+        isVisible = presence.isVisible
+        conversations.setConversation(conversation, visible: isVisible)
     }
 
     // MARK: - Loading
@@ -231,6 +248,14 @@ public final class ChatStore: RealtimeEventHandling {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         change(&messages[index])
     }
+}
+
+/// Whether the user can actually see a chat: the screen is shown and the app is in the foreground.
+struct ChatScreenPresence: Equatable {
+    var appeared = false
+    var sceneIsActive = true
+
+    var isVisible: Bool { appeared }
 }
 
 /// Creates and caches one `ChatStore` per conversation for the current session

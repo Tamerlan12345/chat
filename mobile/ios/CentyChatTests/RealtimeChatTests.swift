@@ -58,8 +58,8 @@ final class RealtimeChatTests: XCTestCase {
     func testIncomingPairForADialogThatIsNotOnScreenRaisesUnreadByExactlyOne() async {
         conversations.directConversations = [TestModels.direct(with: 12)]
         let chat = await openChat(with: 12)
-        chat.setVisible(true)
-        chat.setVisible(false)
+        chat.screenDidAppear(sceneIsActive: true)
+        chat.screenDidDisappear()
         let message = messageJSON(id: 700, from: 12, to: 1)
 
         realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
@@ -74,7 +74,7 @@ final class RealtimeChatTests: XCTestCase {
     func testIncomingMessageInTheVisibleChatStaysReadAndIsMarkedRead() async {
         conversations.directConversations = [TestModels.direct(with: 12)]
         let chat = await openChat(with: 12)
-        chat.setVisible(true)
+        chat.screenDidAppear(sceneIsActive: true)
         let message = messageJSON(id: 701, from: 12, to: 1)
 
         realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
@@ -84,6 +84,46 @@ final class RealtimeChatTests: XCTestCase {
         let realtimeRepository = app.realtime
         let markedRead = await eventually { await realtimeRepository.sentTypes.contains("mark_read") }
         XCTAssertTrue(markedRead, "The visible chat must send mark_read so the sender sees the message as read")
+    }
+
+    func testChatOpenWhileTheAppIsInTheBackgroundStaysUnreadUntilTheUserReturns() async {
+        conversations.directConversations = [TestModels.direct(with: 12)]
+        let chat = await openChat(with: 12)
+        chat.screenDidAppear(sceneIsActive: true)
+        await chat.sceneActivityChanged(isActive: false)
+        let message = messageJSON(id: 702, from: 12, to: 1)
+
+        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
+        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+
+        XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1, "The user cannot see the chat in the background")
+        await settle()
+        let sentWhileAway = await app.realtime.sentTypes
+        XCTAssertFalse(sentWhileAway.contains("mark_read"), "No read receipt for messages the user has not seen")
+
+        await chat.sceneActivityChanged(isActive: true)
+
+        XCTAssertEqual(conversations.directConversations.first?.unreadCount, 0)
+        let sentAfterReturn = await app.realtime.sentTypes
+        XCTAssertTrue(sentAfterReturn.contains("mark_read"), "Returning to the open chat marks what arrived meanwhile as read")
+    }
+
+    func testChatAppearingWhileTheSceneIsInactiveIsNotVisible() async {
+        conversations.directConversations = [TestModels.direct(with: 12)]
+        let chat = await openChat(with: 12)
+        chat.screenDidAppear(sceneIsActive: false)
+
+        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(messageJSON(id: 703, from: 12, to: 1))}"#))
+
+        XCTAssertFalse(chat.isVisible)
+        XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1)
+    }
+
+    func testChatScreenPresenceIsVisibleOnlyWhenShownInTheForeground() {
+        XCTAssertTrue(ChatScreenPresence(appeared: true, sceneIsActive: true).isVisible)
+        XCTAssertFalse(ChatScreenPresence(appeared: true, sceneIsActive: false).isVisible)
+        XCTAssertFalse(ChatScreenPresence(appeared: false, sceneIsActive: true).isVisible)
+        XCTAssertFalse(ChatScreenPresence(appeared: false, sceneIsActive: false).isVisible)
     }
 
     // MARK: - Open chat reflects realtime events
