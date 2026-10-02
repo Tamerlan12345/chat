@@ -38,6 +38,8 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldValue
+import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -177,9 +179,20 @@ fun CentyNavigation(
     val currentKey = state.currentKey
     val layoutType = when {
         currentKey is NavKey.Call -> NavigationSuiteType.None
-        // Phones show a chat full screen; medium windows keep the rail next to the single pane.
-        currentKey is NavKey.Chat && isCompact -> NavigationSuiteType.None
         else -> NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(adaptiveInfo)
+    }
+    // Phones show a chat full screen: the bar slides away with the inbox→chat transition and comes
+    // back with it, instead of vanishing in one frame. Medium windows keep the rail next to the pane.
+    val navState = rememberNavigationSuiteScaffoldState()
+    val hideBar = currentKey is NavKey.Chat && isCompact
+    LaunchedEffect(hideBar, reduce) {
+        val target = if (hideBar) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
+        when {
+            navState.targetValue == target -> Unit
+            reduce -> navState.snapTo(target)
+            hideBar -> navState.hide()
+            else -> navState.show()
+        }
     }
     val tokens = CentyTheme.tokens
     val itemColors = NavigationSuiteDefaults.itemColors(
@@ -202,6 +215,7 @@ fun CentyNavigation(
     NavigationSuiteScaffold(
         modifier = modifier,
         layoutType = layoutType,
+        state = navState,
         navigationSuiteColors = NavigationSuiteDefaults.colors(
             navigationBarContainerColor = tokens.frame,
             navigationRailContainerColor = tokens.frame
@@ -230,7 +244,9 @@ fun CentyNavigation(
         }
     ) {
         // The bottom bar already pads for the gesture area; screens above it must not pad again.
-        val barInsets = if (layoutType == NavigationSuiteType.NavigationBar) WindowInsets.navigationBars else WindowInsets(0, 0, 0, 0)
+        // The bar pads for the gesture area while it is (going to be) shown; a chat pads itself.
+        val barShown = layoutType == NavigationSuiteType.NavigationBar && navState.targetValue == NavigationSuiteScaffoldValue.Visible
+        val barInsets = if (barShown) WindowInsets.navigationBars else WindowInsets(0, 0, 0, 0)
         Box(Modifier.fillMaxSize().consumeWindowInsets(barInsets)) {
             display()
             CentySnackbarHost(
