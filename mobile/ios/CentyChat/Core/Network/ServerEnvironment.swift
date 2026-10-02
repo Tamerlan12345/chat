@@ -1,6 +1,15 @@
 import Foundation
 
-/// The CentyChat server this build talks to.
+/// The CentyChat server this build talks to, fixed at build time.
+///
+/// - Release: the production server is a compile-time constant. Nothing at runtime (stored
+///   values, deep links, launch arguments, environment, Info.plist) can change it, and the
+///   override code below is not compiled in.
+/// - Debug: `CENTYCHAT_SERVER_URL` from the build configuration (Info.plist key
+///   `CentyChatServerURL`, default production), e.g. the dev stand `https://localhost:8443`.
+///   UI tests may pass `-centychat-server-url <url>` together with `CENTYCHAT_UI_TESTING=1`.
+///   Only `https` origins are accepted; anything else falls back to production.
+/// There is no UI to change the server in any build.
 public struct ServerEnvironment: Sendable, Equatable {
     /// Origin of the server (`https://host[:port]`); the API lives under `/api`.
     public let serverURL: URL
@@ -9,11 +18,22 @@ public struct ServerEnvironment: Sendable, Equatable {
     /// Lower-cased `scheme://host[:port]`, used to bind stored credentials to their issuer.
     public let origin: String
 
-    static let productionURLString = "https://server.invalid"
+    static let productionURLString = "https://centychat-production.up.railway.app"
 
     public static let production = ServerEnvironment(validating: productionURLString)!
 
-    public static let current: ServerEnvironment = .production
+    public static let current: ServerEnvironment = {
+#if DEBUG
+        return resolve(
+            .debug,
+            infoPlistValue: Bundle.main.object(forInfoDictionaryKey: DebugOverride.infoPlistKey) as? String,
+            arguments: ProcessInfo.processInfo.arguments,
+            environment: ProcessInfo.processInfo.environment
+        )
+#else
+        return .production
+#endif
+    }()
 
     enum BuildFlavor: Sendable {
         case debug
@@ -26,8 +46,33 @@ public struct ServerEnvironment: Sendable, Equatable {
         arguments: [String],
         environment: [String: String]
     ) -> ServerEnvironment {
-        .production
+        switch flavor {
+        case .release:
+            return .production
+        case .debug:
+#if DEBUG
+            if environment[DebugOverride.uiTestingFlag] == "1",
+               let index = arguments.firstIndex(of: DebugOverride.launchArgument),
+               arguments.indices.contains(index + 1),
+               let override = ServerEnvironment(validating: arguments[index + 1]) {
+                return override
+            }
+            if let infoPlistValue, let configured = ServerEnvironment(validating: infoPlistValue) {
+                return configured
+            }
+#endif
+            return .production
+        }
     }
+
+#if DEBUG
+    /// Debug-only override points. Not compiled into Release builds.
+    enum DebugOverride {
+        static let infoPlistKey = "CentyChatServerURL"
+        static let launchArgument = "-centychat-server-url"
+        static let uiTestingFlag = "CENTYCHAT_UI_TESTING"
+    }
+#endif
 
     /// Accepts only an `https` origin without credentials, path, query or fragment.
     public init?(validating rawValue: String) {
