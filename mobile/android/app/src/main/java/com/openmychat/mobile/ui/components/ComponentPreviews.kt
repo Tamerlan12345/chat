@@ -70,7 +70,7 @@ private fun StatesPreview() {
     CentyChatTheme(reduceMotion = true) {
         Column(Modifier.background(CentyTheme.tokens.list)) {
             Column(Modifier.height(210.dp)) {
-                EmptyState(Icons.Outlined.Forum, "Пока нет диалогов", message = "Диалоги появятся здесь.")
+                EmptyState("Пока нет диалогов", icon = Icons.Outlined.Forum, message = "Диалоги появятся здесь.")
             }
             Column(Modifier.height(210.dp)) { ErrorState("Не удалось загрузить чаты", onRetry = {}) }
         }

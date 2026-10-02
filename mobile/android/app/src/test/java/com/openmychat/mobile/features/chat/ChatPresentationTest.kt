@@ -62,7 +62,7 @@ class ChatPresentationTest {
             ),
             currentUserId = me, zone = ZoneOffset.UTC
         )
-        val days = items.filterIsInstance<ChatItem.Day>().map { it.date }
+        val days = items.filterIsInstance<ChatItem.Day>().map { it.day }
         assertEquals(listOf(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2)), days)
         val bubbles = items.filterIsInstance<ChatItem.Bubble>().associateBy { it.message.id }
         assertTrue(bubbles.getValue(1).startsGroup)

@@ -127,12 +127,12 @@ fun TypingIndicator(
 }
 
 @Composable
-fun TypingDots(color: Color, modifier: Modifier = Modifier, dot: Dp = 4.dp) {
+fun TypingDots(color: Color, modifier: Modifier = Modifier, dot: Dp = 4.dp, rise: Dp = 0.dp, gap: Dp = 3.dp) {
     val reduce = LocalReduceMotion.current
     val transition = if (reduce) null else rememberInfiniteTransition(label = "typing")
     Row(
         modifier = modifier.padding(top = 2.dp).clearAndSetSemantics { },
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(gap),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(3) { index ->
@@ -152,40 +152,17 @@ fun TypingDots(color: Color, modifier: Modifier = Modifier, dot: Dp = 4.dp) {
                 label = "dot-$index"
             )
             // Read in the draw layer: the wave runs without recomposition.
-            Box(Modifier.size(dot).graphicsLayer { this.alpha = alpha?.value ?: 0.6f }.background(color, CircleShape))
+            Box(
+                Modifier
+                    .size(dot)
+                    .graphicsLayer {
+                        val a = alpha?.value ?: 0.6f
+                        this.alpha = a
+                        // The wave: each dot lifts as it brightens (0.25 → 1 maps to 0 → rise).
+                        translationY = -rise.toPx() * ((a - 0.25f) / 0.75f)
+                    }
+                    .background(color, CircleShape)
+            )
         }
-    }
-}
-
-/** Delivery state of an own message, in the brief's order. Queued/failed arrive with the outbox. */
-enum class DeliveryMark { QUEUED, SENT, DELIVERED, READ, FAILED }
-
-/** ⏱ → ✓ → ✓✓ → ✓✓ (accent): the glyph crossfades in 120 ms when the state changes. */
-@Composable
-fun DeliveryGlyph(mark: DeliveryMark, modifier: Modifier = Modifier, tint: Color = CentyTheme.tokens.textDim) {
-    val tokens = CentyTheme.tokens
-    val description = stringResource(
-        when (mark) {
-            DeliveryMark.QUEUED -> R.string.delivery_queued
-            DeliveryMark.SENT -> R.string.delivery_sent
-            DeliveryMark.DELIVERED -> R.string.delivery_delivered
-            DeliveryMark.READ -> R.string.delivery_read
-            DeliveryMark.FAILED -> R.string.delivery_failed
-        }
-    )
-    AnimatedContent(
-        targetState = mark,
-        transitionSpec = { fadeIn(CentyMotion.fast()) togetherWith fadeOut(CentyMotion.fast()) },
-        modifier = modifier.semantics { contentDescription = description },
-        label = "delivery"
-    ) { state ->
-        val (icon, color) = when (state) {
-            DeliveryMark.QUEUED -> Icons.Outlined.Schedule to tint
-            DeliveryMark.SENT -> Icons.Rounded.Done to tint
-            DeliveryMark.DELIVERED -> Icons.Rounded.DoneAll to tint
-            DeliveryMark.READ -> Icons.Rounded.DoneAll to tokens.accentText
-            DeliveryMark.FAILED -> Icons.Outlined.ErrorOutline to tokens.danger
-        }
-        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(15.dp))
     }
 }

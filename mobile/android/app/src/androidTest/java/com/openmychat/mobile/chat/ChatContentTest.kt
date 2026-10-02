@@ -15,7 +15,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import com.openmychat.mobile.core.network.ConnectionState
@@ -99,7 +99,8 @@ class ChatContentTest {
                 ChatContent(title = "Боб Тестов", isDirect = true, uiState = state, currentUserId = me, connectionState = ConnectionState.Connected, actions = actions)
             }
         }
-        compose.onNodeWithTag("message-list").performScrollToIndex(0)
+        // The list runs bottom-up: the oldest message is the far end.
+        compose.onNodeWithTag("message-list").performScrollToKey("msg-1")
         compose.waitForIdle()
 
         state = ChatUiState.Content((state as ChatUiState.Content).messages + message(41, peer, "Новое входящее"))
@@ -154,6 +155,9 @@ class ChatContentTest {
     @Test
     fun loadingShowsASkeletonNotASpinner() {
         show(ChatUiState.Loading)
+        // Nothing for the first 300 ms (a cached history would replace it without a flash), then the skeleton.
+        compose.onAllNodes(hasTestTag("skeleton")).assertCountEquals(0)
+        compose.mainClock.advanceTimeBy(400)
         compose.onNodeWithTag("skeleton").assertIsDisplayed()
     }
 
@@ -184,5 +188,62 @@ class ChatContentTest {
         show(ChatUiState.Content(listOf(message(1, peer))))
         compose.mainClock.advanceTimeBy(3_000)
         compose.onAllNodes(hasTestTag("connection-banner")).assertCountEquals(0)
+    }
+
+    // While the peer is typing the typing bubble is the newest row; the follow rule must still see
+    // new messages arrive.
+    private fun showTyping(state: () -> ChatUiState) {
+        compose.setContent {
+            CentyChatTheme(darkTheme = false, reduceMotion = true) {
+                ChatContent(
+                    title = "Боб Тестов", isDirect = true, uiState = state(), currentUserId = me,
+                    connectionState = ConnectionState.Connected, actions = actions, typingUser = "Боб Тестов"
+                )
+            }
+        }
+    }
+
+    @Test
+    fun whileThePeerTypesAnIncomingMessageWhileScrolledUpStillShowsThePill() {
+        var state by mutableStateOf<ChatUiState>(ChatUiState.Content((1L..40L).map { message(it, if (it % 2 == 0L) me else peer) }))
+        showTyping { state }
+        compose.onNodeWithTag("message-list").performScrollToKey("msg-1")
+        compose.waitForIdle()
+
+        state = ChatUiState.Content((state as ChatUiState.Content).messages + message(41, peer, "Пока печатал"))
+        compose.waitForIdle()
+
+        compose.onNodeWithText("1 новое").assertIsDisplayed()
+        compose.onAllNodes(hasText("Пока печатал")).assertCountEquals(0)
+    }
+
+    @Test
+    fun whileThePeerTypesAnOwnSendWhileScrolledUpJumpsToTheBottom() {
+        var state by mutableStateOf<ChatUiState>(ChatUiState.Content((1L..40L).map { message(it, if (it % 2 == 0L) me else peer) }))
+        showTyping { state }
+        compose.onNodeWithTag("message-list").performScrollToKey("msg-1")
+        compose.waitForIdle()
+
+        state = ChatUiState.Content((state as ChatUiState.Content).messages + message(41, me, "Моё новое"))
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Моё новое").assertIsDisplayed()
+        compose.onAllNodes(hasTestTag("new-messages-pill")).assertCountEquals(0)
+    }
+
+    @Test
+    fun aFailedRefreshOverCachedHistorySaysSoAndRetries() {
+        compose.setContent {
+            CentyChatTheme(darkTheme = false, reduceMotion = true) {
+                ChatContent(
+                    title = "Боб Тестов", isDirect = true, uiState = ChatUiState.Content(listOf(message(1, peer))),
+                    currentUserId = me, connectionState = ConnectionState.Connected, actions = actions, refreshFailed = true
+                )
+            }
+        }
+        compose.onNodeWithText("Не удалось обновить").assertIsDisplayed()
+        compose.onNodeWithText("Сообщение 1").assertIsDisplayed()
+        compose.onNodeWithText("Повторить").performClick()
+        assertEquals(1, retries)
     }
 }

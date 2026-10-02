@@ -8,6 +8,7 @@
     <string name="action_close">Закрыть</string>
     <string name="action_delete">Удалить</string>
     <string name="action_copy">Копировать</string>
+    <string name="action_reply">Ответить</string>
     <string name="action_edit">Изменить</string>
     <string name="action_back">Назад</string>
     <string name="action_refresh">Обновить</string>
@@ -21,13 +22,15 @@
     <string name="status_offline">Не в сети</string>
 
     <!-- Realtime link banner -->
-    <string name="connection_offline">Нет подключения к интернету</string>
-    <string name="connection_reconnecting">Нет связи с сервером. Переподключаемся…</string>
+    <string name="connection_offline">Нет сети</string>
+    <string name="connection_reconnecting">Переподключение…</string>
+    <string name="connection_back_online">Снова в сети</string>
     <string name="connection_refused">Сервер временно не принимает подключение. Повторяем…</string>
     <string name="connection_signed_out">Сессия завершена. Войдите снова.</string>
 
     <!-- Delivery state of an own message -->
     <string name="delivery_queued">Ожидает отправки</string>
+    <string name="delivery_sending">Отправляется</string>
     <string name="delivery_sent">Отправлено</string>
     <string name="delivery_delivered">Доставлено</string>
     <string name="delivery_read">Прочитано</string>
@@ -135,6 +138,16 @@
     <string name="chat_delete_message">Сообщение удалится у всех участников переписки.</string>
     <string name="chat_copied">Сообщение скопировано</string>
     <string name="chat_reply_to">В ответ</string>
+    <string name="chat_replying_to">Ответ · %1$s</string>
+    <string name="chat_cancel_reply">Отменить ответ</string>
+    <string name="chat_attach">Прикрепить файл</string>
+    <string name="chat_jump_latest">К последним сообщениям</string>
+    <string name="chat_refresh_failed">Не удалось обновить</string>
+    <string name="chat_typing_bubble">Собеседник печатает</string>
+    <string name="attachment_failed">Не загрузилось</string>
+    <string name="attachment_uploading">Загрузка: %1$d%%</string>
+    <string name="attachment_open">Открыть «%1$s»</string>
+    <string name="call_level_meter">Громкость собеседника</string>
     <string name="chat_file">Файл</string>
     <string name="file_size_bytes">%1$d Б</string>
     <string name="file_size_kb">%1$.1f КБ</string>

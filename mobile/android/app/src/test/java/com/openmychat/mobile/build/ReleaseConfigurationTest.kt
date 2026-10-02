@@ -34,6 +34,24 @@ class ReleaseConfigurationTest {
     }
 
     @Test
+    fun debugDefaultsToTheLocalDevStandNeverProduction() {
+        val script = projectBuildScript().readText()
+        val debugBody = buildTypeBlock("debug")!!.groups["body"]!!.value
+        assertTrue(
+            "the dev stand constant must be the emulator alias of the local stand",
+            script.contains("val devStandServerUrl = \"https://10.0.2.2:8443\"")
+        )
+        assertTrue(
+            "without -Pcentychat.serverUrl a debug build must talk to the dev stand, not production",
+            Regex("""debugServerUrl[^
+]*
+[^
+]*?: devStandServerUrl""").containsMatchIn(script)
+        )
+        assertTrue("debug SERVER_URL comes from debugServerUrl", debugBody.contains("\$debugServerUrl"))
+    }
+
+    @Test
     fun releaseBuildHardCodesTheProductionServer() {
         val script = projectBuildScript().readText()
         val releaseBody = buildTypeBlock("release")!!.groups["body"]!!.value

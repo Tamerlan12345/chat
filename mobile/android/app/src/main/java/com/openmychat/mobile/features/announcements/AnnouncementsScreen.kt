@@ -6,6 +6,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import com.openmychat.mobile.ui.components.AcknowledgeButton
+import com.openmychat.mobile.ui.components.Illustration
+import com.openmychat.mobile.ui.components.liftSurface
+import com.openmychat.mobile.ui.components.rememberLift
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -123,13 +131,21 @@ fun AnnouncementsContent(
     modifier: Modifier = Modifier
 ) {
     val tokens = CentyTheme.tokens
+    val listState = rememberLazyListState()
+    val scrolledUnder by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val lift = rememberLift(scrolledUnder)
     Scaffold(
         modifier = modifier,
         containerColor = tokens.list,
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.announcements_title)) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = tokens.list, titleContentColor = tokens.textStrong)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                    titleContentColor = tokens.textStrong
+                ),
+                modifier = Modifier.liftSurface(lift, rest = tokens.list)
             )
         }
     ) { innerPadding ->
@@ -162,13 +178,14 @@ fun AnnouncementsContent(
                     ) {
                         if (uiState.announcements.isEmpty()) {
                             EmptyState(
-                                icon = Icons.Outlined.Campaign,
+                                illustration = Illustration.ANNOUNCEMENTS,
                                 title = stringResource(R.string.announcements_empty),
                                 message = stringResource(R.string.announcements_empty_message)
                             )
                         } else {
                             val reduce = LocalReduceMotion.current
                             LazyColumn(
+                                state = listState,
                                 modifier = Modifier.fillMaxSize().testTag("announcement-list"),
                                 contentPadding = PaddingValues(
                                     start = 16.dp, end = 16.dp, top = 8.dp,
@@ -276,6 +293,7 @@ private fun AnnouncementSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = tokens.elevated,
+        scrimColor = tokens.scrim,
         contentColor = tokens.textMain
     ) {
         Column(
@@ -316,45 +334,12 @@ private fun AnnouncementSheet(
                 Text(announcement.content, style = MaterialTheme.typography.bodyLarge, color = tokens.textMain)
                 Spacer(Modifier.size(20.dp))
             }
-            // «Ознакомлен» turns into its success state in place.
-            AnimatedContent(
-                targetState = announcement.isConfirmed,
-                transitionSpec = {
-                    if (reduce) fadeIn(CentyMotion.fast()) togetherWith fadeOut(CentyMotion.fast())
-                    else (fadeIn(CentyMotion.base()) + scaleIn(CentyMotion.base(), initialScale = 0.96f)) togetherWith fadeOut(CentyMotion.fast())
-                },
-                label = "ack"
-            ) { confirmed ->
-                if (confirmed) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 52.dp)
-                            .background(tokens.successSoft, RoundedCornerShape(CentyRadius.control))
-                            .border(1.dp, tokens.successLine, RoundedCornerShape(CentyRadius.control))
-                            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = tokens.success, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text(stringResource(R.string.announcements_acknowledged), style = MaterialTheme.typography.labelLarge, color = tokens.successText)
-                    }
-                } else {
-                    Button(
-                        onClick = onAcknowledge,
-                        enabled = !isAcknowledging,
-                        shape = RoundedCornerShape(CentyRadius.control),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                    ) {
-                        if (isAcknowledging) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tokens.textDim)
-                        } else {
-                            Text(stringResource(R.string.announcements_acknowledge))
-                        }
-                    }
-                }
-            }
+            // «Ознакомлен» turns into its success state in place; the check draws in (the stamp).
+            AcknowledgeButton(
+                acknowledged = announcement.isConfirmed,
+                busy = isAcknowledging,
+                onAcknowledge = onAcknowledge
+            )
         }
     }
 }

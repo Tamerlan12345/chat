@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Icon
@@ -32,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -58,10 +61,37 @@ fun linkProblem(state: ConnectionState, networkAvailable: Boolean): LinkProblem?
     else -> LinkProblem.RECONNECTING
 }
 
+/** What the banner shows. */
+sealed interface BannerState {
+    data object Hidden : BannerState
+    data class Problem(val problem: LinkProblem) : BannerState
+
+    /** «Снова в сети»: shown after a problem, collapses by itself after [ConnectionBannerMachine.BACK_ONLINE_MILLIS]. */
+    data object BackOnline : BannerState
+}
+
 /**
- * Compact banner under the top bar, only while the realtime link is down: warning while
- * reconnecting, danger when the device is offline or the session was refused. It slides down and
- * collapses when the link is back. A short grace period hides the normal connect on launch.
+ * The banner's state machine (UI layer v2): a problem shows (and may change kind); the link coming
+ * back after a problem says «Снова в сети» for 1.2 s; a link that was never down says nothing.
+ */
+object ConnectionBannerMachine {
+    const val BACK_ONLINE_MILLIS = CentyMotion.BACK_ONLINE.toLong()
+
+    fun onLink(current: BannerState, problem: LinkProblem?): BannerState = when {
+        problem != null -> BannerState.Problem(problem)
+        current is BannerState.Problem -> BannerState.BackOnline
+        else -> current
+    }
+
+    fun onBackOnlineElapsed(current: BannerState): BannerState =
+        if (current is BannerState.BackOnline) BannerState.Hidden else current
+}
+
+/**
+ * Compact banner that slides down from under the top bar, only while the realtime link is down:
+ * «Нет сети» (danger-soft), «Переподключение…» (warning-soft, with the dots), then «Снова в сети»
+ * (success-soft) that collapses after 1.2 s. An L3 surface: the soft tint over the elevated tone and
+ * a hairline. A short grace period hides the normal connect on launch.
  */
 @Composable
 fun ConnectionBanner(
@@ -71,36 +101,72 @@ fun ConnectionBanner(
     networkAvailable: Boolean = rememberNetworkAvailable()
 ) {
     val problem = linkProblem(state, networkAvailable)
-    var shown by remember { mutableStateOf(if (graceMillis <= 0) problem else null) }
+    var banner by remember { mutableStateOf<BannerState>(if (graceMillis <= 0 && problem != null) BannerState.Problem(problem) else BannerState.Hidden) }
     LaunchedEffect(problem) {
-        if (problem != null && shown == null) delay(graceMillis)
-        shown = problem
+        if (problem != null && banner == BannerState.Hidden) delay(graceMillis)
+        banner = ConnectionBannerMachine.onLink(banner, problem)
+        if (banner == BannerState.BackOnline) {
+            delay(ConnectionBannerMachine.BACK_ONLINE_MILLIS)
+            banner = ConnectionBannerMachine.onBackOnlineElapsed(banner)
+        }
     }
     val reduce = LocalReduceMotion.current
-    var last by remember { mutableStateOf(LinkProblem.RECONNECTING) }
-    shown?.let { last = it }
+    var last by remember { mutableStateOf<BannerState>(BannerState.Problem(LinkProblem.RECONNECTING)) }
+    if (banner != BannerState.Hidden) last = banner
     val retryMessage = (state as? ConnectionState.Retrying)?.message
 
     AnimatedVisibility(
-        visible = shown != null,
+        visible = banner != BannerState.Hidden,
         modifier = modifier,
         enter = if (reduce) fadeIn(CentyMotion.fast()) else expandVertically(CentyMotion.slow(), expandFrom = Alignment.Top) + fadeIn(CentyMotion.slow()),
         exit = if (reduce) fadeOut(CentyMotion.fast()) else shrinkVertically(CentyMotion.base(), shrinkTowards = Alignment.Top) + fadeOut(CentyMotion.fast())
     ) {
         val tokens = CentyTheme.tokens
-        val danger = last == LinkProblem.OFFLINE || last == LinkProblem.SIGNED_OUT
-        val background by animateColorAsState(if (danger) tokens.dangerSoft else tokens.warningSoft, CentyMotion.base(), label = "banner-bg")
-        val content by animateColorAsState(if (danger) tokens.dangerText else tokens.warningText, CentyMotion.base(), label = "banner-fg")
-        val text = when (last) {
-            LinkProblem.OFFLINE -> stringResource(R.string.connection_offline)
-            LinkProblem.RECONNECTING -> stringResource(R.string.connection_reconnecting)
-            LinkProblem.REFUSED -> retryMessage?.takeIf { it.isNotBlank() } ?: stringResource(R.string.connection_refused)
-            LinkProblem.SIGNED_OUT -> stringResource(R.string.connection_signed_out)
+        val shown = last
+        val tone = when {
+            shown == BannerState.BackOnline -> Tone.SUCCESS
+            shown is BannerState.Problem && (shown.problem == LinkProblem.OFFLINE || shown.problem == LinkProblem.SIGNED_OUT) -> Tone.DANGER
+            else -> Tone.WARNING
         }
+        val background by animateColorAsState(
+            when (tone) {
+                Tone.SUCCESS -> tokens.successSoft
+                Tone.DANGER -> tokens.dangerSoft
+                Tone.WARNING -> tokens.warningSoft
+            },
+            CentyMotion.base(),
+            label = "banner-bg"
+        )
+        val content by animateColorAsState(
+            when (tone) {
+                Tone.SUCCESS -> tokens.successText
+                Tone.DANGER -> tokens.dangerText
+                Tone.WARNING -> tokens.warningText
+            },
+            CentyMotion.base(),
+            label = "banner-fg"
+        )
+        val text = when (shown) {
+            BannerState.BackOnline -> stringResource(R.string.connection_back_online)
+            is BannerState.Problem -> when (shown.problem) {
+                LinkProblem.OFFLINE -> stringResource(R.string.connection_offline)
+                LinkProblem.RECONNECTING -> stringResource(R.string.connection_reconnecting)
+                LinkProblem.REFUSED -> retryMessage?.takeIf { it.isNotBlank() } ?: stringResource(R.string.connection_refused)
+                LinkProblem.SIGNED_OUT -> stringResource(R.string.connection_signed_out)
+            }
+            BannerState.Hidden -> ""
+        }
+        val reconnecting = shown is BannerState.Problem && (shown.problem == LinkProblem.RECONNECTING || shown.problem == LinkProblem.REFUSED)
+        val hairline = tokens.border
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(tokens.elevated)
                 .background(background)
+                .drawBehind {
+                    val y = size.height - 0.5.dp.toPx()
+                    drawLine(hairline, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                }
                 .heightIn(min = 36.dp)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .testTag("connection-banner")
@@ -109,15 +175,22 @@ fun ConnectionBanner(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                imageVector = if (danger) Icons.Outlined.CloudOff else Icons.Outlined.Sync,
+                imageVector = when (tone) {
+                    Tone.SUCCESS -> Icons.Outlined.CloudDone
+                    Tone.DANGER -> Icons.Outlined.CloudOff
+                    Tone.WARNING -> Icons.Outlined.Sync
+                },
                 contentDescription = null,
                 tint = content,
                 modifier = Modifier.size(16.dp)
             )
-            Text(text, color = content, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Text(text, color = content, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f, fill = false))
+            if (reconnecting) TypingDots(color = content)
         }
     }
 }
+
+private enum class Tone { SUCCESS, WARNING, DANGER }
 
 /** Whether the device has a validated internet connection; follows changes. */
 @Composable

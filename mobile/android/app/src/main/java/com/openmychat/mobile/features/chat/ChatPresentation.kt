@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.chat
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.ui.components.BubblePosition
 import com.openmychat.mobile.ui.components.DeliveryMark
 import java.time.Instant
 import java.time.LocalDate
@@ -34,48 +35,88 @@ object FollowPolicy {
     }
 }
 
-/** Rows of the message list: date pills and bubbles, with stable keys for animateItem(). */
+/** Rows of the message list: date separators and bubbles, with stable keys for animateItem(). */
 sealed interface ChatItem {
     val key: String
 
-    data class Day(val date: LocalDate) : ChatItem {
-        override val key: String get() = "day-$date"
+    /** The day this row belongs to (the sticky date pill shows it). */
+    val day: LocalDate
+
+    data class Day(override val day: LocalDate) : ChatItem {
+        override val key: String get() = "day-$day"
     }
 
     data class Bubble(
         val message: Message,
         val isOwn: Boolean,
-        /** First of a run from one sender: carries the tail corner and, in channels, the name. */
-        val startsGroup: Boolean,
-        val mark: DeliveryMark?
+        /** Place in a run from one sender: drives the radii (the tail is on the first only). */
+        val position: BubblePosition,
+        val mark: DeliveryMark?,
+        /**
+         * Time and state are shown on the last bubble of a group; an earlier bubble shows them only
+         * when it is edited. Stable inputs only: a delivery status catching up never reflows history.
+         */
+        val showsMeta: Boolean,
+        override val day: LocalDate
     ) : ChatItem {
         override val key: String get() = "msg-${message.id}"
+
+        /** First of a run from one sender: carries the tail corner and, in channels, the name. */
+        val startsGroup: Boolean get() = position.startsGroup
+    }
+
+    /** The peer is typing: a bubble with the dots wave at the newest end of the list. */
+    data object Typing : ChatItem {
+        override val key: String get() = "typing"
+        override val day: LocalDate get() = LocalDate.MAX
     }
 }
 
 /** Desktop ChatView: a new group after 5 minutes, another sender or another day. */
 const val GROUP_BREAK_MILLIS = 5 * 60 * 1000L
 
+/**
+ * Chronological rows (oldest first). [markOverride] lets the send queue (Task 15) report queued,
+ * sending and failed states for own messages; without it the server status decides.
+ */
 fun buildChatItems(
     messages: List<Message>,
     currentUserId: Long,
-    zone: ZoneId = ZoneId.systemDefault()
+    zone: ZoneId = ZoneId.systemDefault(),
+    markOverride: (Message) -> DeliveryMark? = { null }
 ): List<ChatItem> {
-    val items = ArrayList<ChatItem>(messages.size + 4)
-    var previous: Message? = null
-    var previousMillis = 0L
-    var previousDay: LocalDate? = null
-    messages.forEach { message ->
-        val millis = DateTimeUtils.parseIso8601ToMillis(message.createdAt)
-        val day = Instant.ofEpochMilli(millis).atZone(zone).toLocalDate()
-        val newDay = day != previousDay
-        if (newDay) items += ChatItem.Day(day)
-        val startsGroup = newDay || previous?.senderId != message.senderId || millis - previousMillis > GROUP_BREAK_MILLIS
-        val isOwn = message.senderId == currentUserId
-        items += ChatItem.Bubble(message, isOwn, startsGroup, deliveryMark(message, isOwn))
-        previous = message
-        previousMillis = millis
-        previousDay = day
+    val n = messages.size
+    if (n == 0) return emptyList()
+    val millis = LongArray(n) { DateTimeUtils.parseIso8601ToMillis(messages[it].createdAt) }
+    val days = Array<LocalDate>(n) { Instant.ofEpochMilli(millis[it]).atZone(zone).toLocalDate() }
+    val starts = BooleanArray(n) { i ->
+        i == 0 || days[i] != days[i - 1] || messages[i].senderId != messages[i - 1].senderId ||
+            millis[i] - millis[i - 1] > GROUP_BREAK_MILLIS
+    }
+    val marks = Array(n) { i -> markOverride(messages[i]) ?: deliveryMark(messages[i], messages[i].senderId == currentUserId) }
+    // Index of the last bubble of each message's group, filled from the end.
+    val groupEnd = IntArray(n)
+    for (i in n - 1 downTo 0) groupEnd[i] = if (i == n - 1 || starts[i + 1]) i else groupEnd[i + 1]
+
+    val items = ArrayList<ChatItem>(n + 4)
+    messages.forEachIndexed { i, message ->
+        if (i == 0 || days[i] != days[i - 1]) items += ChatItem.Day(days[i])
+        val ends = groupEnd[i] == i
+        val position = when {
+            starts[i] && ends -> BubblePosition.SINGLE
+            starts[i] -> BubblePosition.FIRST
+            ends -> BubblePosition.LAST
+            else -> BubblePosition.MIDDLE
+        }
+        val edited = !message.updatedAt.isNullOrBlank() && !message.isDeleted
+        items += ChatItem.Bubble(
+            message = message,
+            isOwn = message.senderId == currentUserId,
+            position = position,
+            mark = marks[i],
+            showsMeta = ends || edited,
+            day = days[i]
+        )
     }
     return items
 }

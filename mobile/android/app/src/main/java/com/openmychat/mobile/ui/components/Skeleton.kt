@@ -101,43 +101,74 @@ fun SkeletonBlock(modifier: Modifier = Modifier, shape: Shape = RoundedCornerSha
     )
 }
 
+/**
+ * One inbox row with the real row geometry (72dp, avatar 44, name over preview), so swapping to the
+ * loaded row moves nothing.
+ */
+@Composable
+fun SkeletonRow(modifier: Modifier = Modifier, nameFraction: Float = 0.5f, previewFraction: Float = 0.72f) {
+    Row(
+        modifier = modifier.fillMaxWidth().height(72.dp).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SkeletonBlock(Modifier.size(44.dp), CircleShape)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SkeletonBlock(Modifier.fillMaxWidth(nameFraction).height(14.dp))
+            SkeletonBlock(Modifier.fillMaxWidth(previewFraction).height(12.dp))
+        }
+    }
+}
+
+/** A bubble placeholder with the grouping radii of a real bubble. */
+@Composable
+fun SkeletonBubble(own: Boolean, widthFraction: Float, modifier: Modifier = Modifier, position: BubblePosition = BubblePosition.SINGLE, lines: Int = 1) {
+    Box(modifier.fillMaxWidth(), contentAlignment = if (own) Alignment.CenterEnd else Alignment.CenterStart) {
+        SkeletonBlock(
+            Modifier.fillMaxWidth(widthFraction).height(if (lines > 1) 58.dp else 38.dp),
+            bubbleShape(own, position)
+        )
+    }
+}
+
 /** Inbox rows: avatar, name, preview. */
 @Composable
 fun ConversationSkeleton(modifier: Modifier = Modifier, rows: Int = 7, contentPadding: PaddingValues = PaddingValues()) {
     SkeletonContainer(modifier.fillMaxSize().padding(contentPadding)) {
         Column {
             repeat(rows) { index ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SkeletonBlock(Modifier.size(44.dp), CircleShape)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SkeletonBlock(Modifier.fillMaxWidth(if (index % 2 == 0) 0.45f else 0.6f).height(14.dp))
-                        SkeletonBlock(Modifier.fillMaxWidth(if (index % 3 == 0) 0.8f else 0.65f).height(12.dp))
-                    }
-                }
+                SkeletonRow(
+                    nameFraction = if (index % 2 == 0) 0.45f else 0.6f,
+                    previewFraction = if (index % 3 == 0) 0.8f else 0.65f
+                )
             }
         }
     }
 }
 
-/** Chat history: alternating bubbles. */
+/** Chat history: grouped bubbles anchored to the bottom, like the list they stand in for. */
 @Composable
 fun ChatSkeleton(modifier: Modifier = Modifier) {
-    val widths = listOf(0.62f, 0.45f, 0.7f, 0.38f, 0.55f, 0.66f)
     SkeletonContainer(modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom)
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.Bottom
         ) {
-            widths.forEachIndexed { index, width ->
-                val own = index % 3 == 1
-                Box(Modifier.fillMaxWidth(), contentAlignment = if (own) Alignment.CenterEnd else Alignment.CenterStart) {
-                    SkeletonBlock(Modifier.fillMaxWidth(width).height(if (index % 2 == 0) 52.dp else 38.dp), RoundedCornerShape(8.dp))
-                }
-            }
+            SkeletonBubble(own = false, widthFraction = 0.62f, position = BubblePosition.FIRST, lines = 2)
+            Spacer(Modifier.height(2.dp))
+            SkeletonBubble(own = false, widthFraction = 0.42f, position = BubblePosition.LAST)
+            Spacer(Modifier.height(10.dp))
+            SkeletonBubble(own = true, widthFraction = 0.5f)
+            Spacer(Modifier.height(10.dp))
+            SkeletonBubble(own = false, widthFraction = 0.7f, position = BubblePosition.FIRST)
+            Spacer(Modifier.height(2.dp))
+            SkeletonBubble(own = false, widthFraction = 0.55f, position = BubblePosition.MIDDLE, lines = 2)
+            Spacer(Modifier.height(2.dp))
+            SkeletonBubble(own = false, widthFraction = 0.36f, position = BubblePosition.LAST)
+            Spacer(Modifier.height(10.dp))
+            SkeletonBubble(own = true, widthFraction = 0.66f, position = BubblePosition.FIRST)
+            Spacer(Modifier.height(2.dp))
+            SkeletonBubble(own = true, widthFraction = 0.4f, position = BubblePosition.LAST)
         }
     }
 }

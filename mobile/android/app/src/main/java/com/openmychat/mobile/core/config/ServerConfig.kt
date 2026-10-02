@@ -11,8 +11,9 @@ import com.openmychat.mobile.core.network.ValidatedEndpoint
  *   second line of defence, and nothing at runtime (UI, deep link, intent extra, stored value) can
  *   change it. Removing the editable server field removes the "type your corporate password into
  *   someone else's server" phishing vector.
- * - Debug: `BuildConfig.SERVER_URL` from the Gradle property `centychat.serverUrl` (default
- *   production), e.g. the local HTTPS dev stand `https://10.0.2.2:8443`. Still no runtime switch.
+ * - Debug: `BuildConfig.SERVER_URL`, by default the local HTTPS dev stand `https://10.0.2.2:8443`;
+ *   the Gradle property `centychat.serverUrl` overrides it (production only when given explicitly).
+ *   Still no runtime switch.
  */
 object ServerConfig {
     const val PRODUCTION_SERVER_URL = "https://centychat-production.up.railway.app"

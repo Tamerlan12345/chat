@@ -111,7 +111,9 @@ class ContractFixturesTest {
         "ice_candidate" to null,
         // The directory is loaded on demand; live roster updates are not shown on mobile yet.
         "user_created" to null,
-        "user_updated" to null
+        "user_updated" to null,
+        // Echo of cancel_message (G9). Android does not cancel sends yet; the send queue (Task 15) maps it.
+        "message_cancelled" to null
     )
 
     @Test
@@ -158,7 +160,8 @@ class ContractFixturesTest {
         assertEquals(8L, deleted.messageId)
         assertEquals(3L, deleted.targetId)
         val status = wsEvent("message_status_updated.reconnect.json") as WsEvent.MessageStatusUpdated
-        assertEquals(11L, status.messageId)
+        // Recaptured with the Task 16 delivery fixtures (3a68ec8): the reconnect status now refers to message 13.
+        assertEquals(13L, status.messageId)
         assertEquals("delivered", status.status)
         assertEquals("connection_lost", (wsEvent("call_end.connection_lost.json") as WsEvent.CallEnd).reason)
         assertEquals("MUST_CHANGE_PASSWORD", (wsEvent("auth_error.must_change_password.json") as WsEvent.AuthError).code)

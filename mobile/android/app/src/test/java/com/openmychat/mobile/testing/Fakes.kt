@@ -79,7 +79,17 @@ class FakeChatRepository(
         return channels
     }
     override suspend fun refreshServerInfo() = Unit
-    override suspend fun messages(conversationType: ConversationType, targetId: Long): List<Message> = history
+    /** When set, history requests wait for it (a slow network). */
+    var historyGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+    /** When set, history requests fail with it. */
+    var historyFailure: Exception? = null
+
+    override suspend fun messages(conversationType: ConversationType, targetId: Long): List<Message> {
+        historyGate?.await()
+        historyFailure?.let { throw it }
+        return history
+    }
 }
 
 class FakeSessionRepository(userId: Long = ME) : SessionRepository {
