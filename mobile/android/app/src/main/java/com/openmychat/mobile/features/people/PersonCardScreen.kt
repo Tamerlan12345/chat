@@ -70,6 +70,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import com.openmychat.mobile.R
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyAvatar
@@ -337,13 +340,12 @@ private fun ActionTile(
         val color = if (enabled) content else tokens.textDim
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
         Spacer(Modifier.height(4.dp))
-        Text(
+        // Одна строка, при крупном шрифте сжимается, а не рвёт слово («Написат-ь»).
+        BasicText(
             label,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = color,
-            maxLines = 2,
-            textAlign = TextAlign.Center,
-            overflow = TextOverflow.Ellipsis
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold, color = color, textAlign = TextAlign.Center),
+            maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = MaterialTheme.typography.labelLarge.fontSize)
         )
     }
 }

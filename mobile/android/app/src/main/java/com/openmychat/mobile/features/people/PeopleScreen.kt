@@ -84,6 +84,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material3.LocalContentColor
 import com.openmychat.mobile.R
 import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.ui.components.ConnectionBanner
@@ -329,7 +333,15 @@ private fun ScopeRow(state: PeopleUiState, actions: PeopleActions) {
                         shape = SegmentedButtonDefaults.itemShape(index, 2, RoundedCornerShape(CentyRadius.control)),
                         colors = colors,
                         icon = {},
-                        label = { Text(stringResource(label), maxLines = 1) },
+                        // Сжимается, а не обрезается при крупном шрифте («Отделы» при 2.0).
+                        label = {
+                            BasicText(
+                                stringResource(label),
+                                maxLines = 1,
+                                style = MaterialTheme.typography.labelLarge.copy(color = LocalContentColor.current),
+                                autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = MaterialTheme.typography.labelLarge.fontSize)
+                            )
+                        },
                         modifier = Modifier.testTag("people-scope-${scope.name.lowercase()}")
                     )
                 }
