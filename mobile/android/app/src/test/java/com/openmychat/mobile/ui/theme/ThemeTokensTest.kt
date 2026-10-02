@@ -64,6 +64,73 @@ class ThemeTokensTest {
     }
 
     @Test
+    fun uiLayerV2PairsMeetAaContrast() {
+        listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
+            val theme = if (t.isDark) "dark" else "light"
+            val ownBubble = t.primarySoft.compositeOver(t.canvas)
+            val tile = t.hover.compositeOver(t.card)
+            listOf(
+                // L3 surfaces: composer, banners, sticky date pill, lifted bars, menus.
+                Triple("date pill text on elevated", t.textSecondary, t.elevated),
+                Triple("lifted bar title on elevated", t.textStrong, t.elevated),
+                Triple("composer banner quote on elevated", t.textSecondary, t.elevated),
+                Triple("composer text on card", t.textMain, t.card),
+                Triple("menu item on elevated", t.textMain, t.elevated),
+                Triple("menu delete on elevated", t.dangerText, t.elevated),
+                Triple("banner «Нет сети»", t.dangerText, t.dangerSoft.compositeOver(t.elevated)),
+                Triple("banner «Переподключение…»", t.warningText, t.warningSoft.compositeOver(t.elevated)),
+                Triple("banner «Снова в сети»", t.successText, t.successSoft.compositeOver(t.elevated)),
+                // Bubbles and their rows.
+                Triple("failed row text on canvas", t.dangerText, t.canvas),
+                Triple("reply quote in own bubble", t.textSecondary, t.hover.compositeOver(ownBubble)),
+                Triple("reply quote sender in own bubble", t.accentText, t.hover.compositeOver(ownBubble)),
+                Triple("jump pill count", Color.White, t.primary),
+                // Attachments.
+                Triple("file name on tile", t.textStrong, tile),
+                Triple("file size on tile", t.textSecondary, tile),
+                Triple("PDF badge", t.dangerText, t.dangerSoft.compositeOver(t.card)),
+                Triple("file badge", t.accentText, t.primarySoft.compositeOver(t.card)),
+                // «Ознакомлен» stamp.
+                Triple("acknowledged text", t.successText, t.successSoft.compositeOver(t.elevated))
+            ).forEach { (name, fg, bg) ->
+                val ratio = contrast(fg, bg)
+                assertTrue("$theme $name: ${"%.2f".format(ratio)}:1", ratio >= 4.5)
+            }
+        }
+    }
+
+    @Test
+    fun uiLayerV2GraphicsHoldThreeToOne() {
+        listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
+            val theme = if (t.isDark) "dark" else "light"
+            val ownBubble = t.primarySoft.compositeOver(t.canvas)
+            listOf(
+                Triple("read ticks in own bubble", t.accentText, ownBubble),
+                Triple("failed ⟲ in own bubble", t.dangerText, ownBubble),
+                Triple("sent tick in own bubble", t.textSecondary, ownBubble),
+                Triple("swipe-to-reply ring", t.accentText, t.primarySoft.compositeOver(t.canvas)),
+                Triple("illustration indigo on list", t.accentText, t.list),
+                Triple("illustration indigo on soft fill", t.accentText, t.primarySoft.compositeOver(t.card)),
+                Triple("illustration line on list", t.textSecondary, t.list),
+                Triple("illustration line on canvas", t.textSecondary, t.canvas),
+                Triple("level meter bar on frame", t.accentText, t.frame),
+                Triple("typing dots in a bubble", t.textDim, t.card)
+            ).forEach { (name, fg, bg) ->
+                val ratio = contrast(fg, bg)
+                assertTrue("$theme $name: ${"%.2f".format(ratio)}:1", ratio >= 3.0)
+            }
+        }
+    }
+
+    @Test
+    fun theScrimDimsLikeTheBrief() {
+        assertEquals(Color(0x57141428), LightCentyTokens.scrim)
+        assertEquals(Color(0xA308080C), DarkCentyTokens.scrim)
+        // Overlays sit on L3: in dark the elevated tone must stand off the canvas (tone, not shadow).
+        assertTrue(contrast(DarkCentyTokens.elevated, DarkCentyTokens.canvas) >= 1.15)
+    }
+
+    @Test
     fun theSelectedNavigationPillStandsOffTheBar() {
         listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
             val ratio = contrast(t.navIndicator, t.frame)

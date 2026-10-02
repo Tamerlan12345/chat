@@ -1,6 +1,11 @@
 package com.openmychat.mobile.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -18,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -49,7 +56,9 @@ fun CentyAvatar(
     size: Dp = 44.dp,
     isChannel: Boolean = false,
     /** Colour behind the avatar; the presence dot is cut out of it. */
-    ringColor: Color = CentyTheme.tokens.list
+    ringColor: Color = CentyTheme.tokens.list,
+    /** The person is typing: the presence dot pulses softly (still with reduce motion). */
+    typing: Boolean = false
 ) {
     val tokens = CentyTheme.tokens
     val source = remember(avatarUrl) { AvatarPalette.resolveUrl(avatarUrl, BuildConfig.SERVER_URL) }
@@ -85,6 +94,7 @@ fun CentyAvatar(
                 status = status,
                 size = (size * 0.3f).coerceAtLeast(10.dp),
                 ringColor = ringColor,
+                pulse = typing,
                 modifier = Modifier.align(Alignment.BottomEnd)
             )
         }
@@ -97,7 +107,8 @@ fun StatusDot(
     status: UserStatus,
     modifier: Modifier = Modifier,
     size: Dp = 10.dp,
-    ringColor: Color? = null
+    ringColor: Color? = null,
+    pulse: Boolean = false
 ) {
     val target = presenceColor(status)
     val color by animateColorAsState(
@@ -105,9 +116,23 @@ fun StatusDot(
         animationSpec = CentyMotion.orReduced(LocalReduceMotion.current, CentyMotion.slow(), instant = true),
         label = "presence"
     )
+    // The pulse runs only while typing (a typing indicator, like the dots) and is read in the layer.
+    val beat: State<Float>? = if (pulse && !LocalReduceMotion.current) {
+        rememberInfiniteTransition(label = "presence-pulse").animateFloat(
+            initialValue = 1f,
+            targetValue = 1.22f,
+            animationSpec = infiniteRepeatable(tween(CentyMotion.TYPING_CYCLE / 2, easing = CentyMotion.EaseOut), RepeatMode.Reverse),
+            label = "presence-beat"
+        )
+    } else null
     Box(
         modifier = modifier
             .size(size)
+            .graphicsLayer {
+                val s = beat?.value ?: 1f
+                scaleX = s
+                scaleY = s
+            }
             .then(if (ringColor != null) Modifier.background(ringColor, CircleShape).padding(size * 0.16f) else Modifier)
             .background(color, CircleShape)
     )

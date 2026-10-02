@@ -6,7 +6,9 @@ import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -31,8 +33,36 @@ object CentyMotion {
     const val BASE = 180
     const val SLOW = 280
 
-    /** Own message lifting out of the composer. */
-    const val SEND = 220
+    /**
+     * UI layer v2 decelerate for confident arrivals, `cubic-bezier(.16,1,.3,1)`: the message lands,
+     * shared elements settle.
+     */
+    val EaseOutExpo = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+
+    /** Own message lifting out of the composer into its bubble ("the message lands"). */
+    const val SEND = 240
+
+    /** Delivery glyph: each state draws its stroke in this time. */
+    const val GLYPH_DRAW = 160
+
+    /** Failed glyph: one 4dp shake. */
+    const val SHAKE = 280
+
+    /** Top bar lift on scroll, attach → send morph. */
+    const val LIFT = 150
+
+    /** Inbox → chat: shared avatar and name, fade-through for the rest. */
+    const val SHARED = 300
+    const val FADE_THROUGH_OUT = 90
+
+    /** Reduce motion: shared elements and the navigation become a crossfade of this length. */
+    const val REDUCED_CROSSFADE = 150
+
+    /** «Снова в сети» stays this long, then the banner collapses. */
+    const val BACK_ONLINE = 1_200
+
+    /** «Ознакомлен» stamp: the check draws in. */
+    const val STAMP = 280
 
     /** Incoming message fade + rise (desktop `message-in` 0.26 s). */
     const val INCOMING = 260
@@ -50,6 +80,11 @@ object CentyMotion {
     fun <T> fast(): FiniteAnimationSpec<T> = tween(FAST, easing = EaseOut)
     fun <T> base(): FiniteAnimationSpec<T> = tween(BASE, easing = EaseOut)
     fun <T> slow(): FiniteAnimationSpec<T> = tween(SLOW, easing = EaseOut)
+    fun <T> land(): FiniteAnimationSpec<T> = tween(SEND, easing = EaseOutExpo)
+    fun <T> lift(): FiniteAnimationSpec<T> = tween(LIFT, easing = EaseOut)
+
+    /** Composer height while it grows line by line (damping 0.85, no overshoot to speak of). */
+    fun <T> grow(): FiniteAnimationSpec<T> = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
 
     /** [spec] normally; a 120 ms crossfade-length tween (or a snap) when motion is reduced. */
     fun <T> orReduced(reduce: Boolean, spec: FiniteAnimationSpec<T>, instant: Boolean = false): FiniteAnimationSpec<T> =

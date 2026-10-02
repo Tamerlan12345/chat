@@ -39,20 +39,22 @@ import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.theme.CentyTheme
 
 /**
- * Empty state: icon in a soft tile, one sentence, optional action. Centred in the available space,
+ * Empty state: an authored spot illustration (or an icon in a soft tile), one sentence, an optional action. Centred in the available space,
  * scrolls when the text is large (fontScale 2.0) so the action stays reachable.
  */
 @Composable
 fun EmptyState(
-    icon: ImageVector,
+    icon: ImageVector? = null,
     title: String,
     modifier: Modifier = Modifier,
     message: String? = null,
     actionLabel: String? = null,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    illustration: Illustration? = null
 ) {
     val tokens = CentyTheme.tokens
     StatePanel(
+        illustration = illustration,
         icon = icon,
         iconTint = tokens.accentText,
         iconBackground = tokens.primarySoft,
@@ -72,10 +74,12 @@ fun ErrorState(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     message: String = stringResource(R.string.error_check_connection),
-    icon: ImageVector = Icons.Outlined.CloudOff
+    icon: ImageVector = Icons.Outlined.CloudOff,
+    illustration: Illustration? = Illustration.OFFLINE
 ) {
     val tokens = CentyTheme.tokens
     StatePanel(
+        illustration = illustration,
         icon = icon,
         iconTint = tokens.dangerText,
         iconBackground = tokens.dangerSoft,
@@ -94,7 +98,8 @@ fun ErrorState(
 
 @Composable
 private fun StatePanel(
-    icon: ImageVector,
+    illustration: Illustration?,
+    icon: ImageVector?,
     iconTint: Color,
     iconBackground: Color,
     title: String,
@@ -114,15 +119,20 @@ private fun StatePanel(
             modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .background(iconBackground, RoundedCornerShape(16.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(26.dp))
+            if (illustration != null) {
+                SpotIllustration(illustration)
+                Spacer(Modifier.height(16.dp))
+            } else if (icon != null) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(iconBackground, RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(26.dp))
+                }
+                Spacer(Modifier.height(20.dp))
             }
-            Spacer(Modifier.height(20.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,

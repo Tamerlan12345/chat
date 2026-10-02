@@ -66,8 +66,35 @@ data class CentyTokens(
     /** Channel avatars: slate instead of a per-person hue. */
     val channelAvatar: Color,
     /** Selected pill of the navigation bar/rail: primary-soft on frame with a visible tone step. */
-    val navIndicator: Color
+    val navIndicator: Color,
+    /** Behind every overlay (sheets, the lifted message menu): `rgba(20,20,40,.34)` / `rgba(8,8,12,.64)`. */
+    val scrim: Color
 )
+
+/**
+ * The depth model (UI layer v2, «наслоенность»): four planes from the desktop tokens. Elevation is
+ * tone plus a hairline, never a heavy shadow.
+ */
+enum class Plane {
+    /** L0: navigation bar / rail. */
+    FRAME,
+
+    /** L1: inbox, announcements, profile. */
+    LIST,
+
+    /** L2: chat, forms. */
+    CANVAS,
+
+    /** L3: composer, sheets, menus, banners, the sticky date pill, a lifted top bar. */
+    ELEVATED
+}
+
+fun CentyTokens.plane(plane: Plane): Color = when (plane) {
+    Plane.FRAME -> frame
+    Plane.LIST -> list
+    Plane.CANVAS -> canvas
+    Plane.ELEVATED -> elevated
+}
 
 internal val LightCentyTokens = CentyTokens(
     isDark = false,
@@ -107,7 +134,8 @@ internal val LightCentyTokens = CentyTokens(
     dnd = Color(0xFFD9363B),
     offline = Color(0xFF9A9AA6),
     channelAvatar = Color(0xFF475569),
-    navIndicator = Color(0xFFD2D0EF) // rgba(91,78,230,.18) on frame #ececf1
+    navIndicator = Color(0xFFD2D0EF), // rgba(91,78,230,.18) on frame #ececf1
+    scrim = Color(0x57141428) // rgba(20,20,40,.34)
 )
 
 internal val DarkCentyTokens = CentyTokens(
@@ -148,7 +176,8 @@ internal val DarkCentyTokens = CentyTokens(
     dnd = Color(0xFFE5484D),
     offline = Color(0xFF7D7D89),
     channelAvatar = Color(0xFF2B2B2B), // desktop dark channel slate
-    navIndicator = Color(0xFF36354C) // primary-soft on canvas
+    navIndicator = Color(0xFF36354C), // primary-soft on canvas
+    scrim = Color(0xA308080C) // rgba(8,8,12,.64)
 )
 
 internal val LocalCentyTokens = staticCompositionLocalOf { LightCentyTokens }

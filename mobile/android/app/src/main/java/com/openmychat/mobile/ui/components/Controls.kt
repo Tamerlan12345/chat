@@ -22,12 +22,18 @@ import com.openmychat.mobile.ui.theme.CentyTheme
 
 /** Material text button with accent-text content (dialog dismiss, inline actions). */
 @Composable
-fun CentyTextButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
+fun CentyTextButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentColor: androidx.compose.ui.graphics.Color = CentyTheme.tokens.accentText,
+    content: @Composable RowScope.() -> Unit
+) {
     TextButton(
         onClick = onClick,
         modifier = modifier.heightIn(min = 48.dp),
         enabled = enabled,
-        colors = ButtonDefaults.textButtonColors(contentColor = CentyTheme.tokens.accentText),
+        colors = ButtonDefaults.textButtonColors(contentColor = contentColor),
         content = content
     )
 }

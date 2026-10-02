@@ -21,4 +21,7 @@ object CentyRadius {
 
     /** The bubble corner nearest the sender: the desktop signature tail. */
     val tail = 2.dp
+
+    /** Where two bubbles of one group meet (sender side): tighter than a free corner, softer than the tail. */
+    val joined = 4.dp
 }
