@@ -1,0 +1,114 @@
+package com.openmychat.mobile.navigation
+
+import android.Manifest
+import android.graphics.Bitmap
+import android.os.Build
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
+import com.openmychat.mobile.MainActivity
+import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.model.User
+import dagger.hilt.android.testing.HiltAndroidRule
+import dagger.hilt.android.testing.HiltAndroidTest
+import org.junit.After
+import org.junit.Assert.assertNull
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
+import java.io.File
+import javax.inject.Inject
+
+/**
+ * Signed-in navigation on a device. The server endpoint is unreachable on purpose: screens show
+ * their error states, while tabs, back handling and logout must still work.
+ */
+@HiltAndroidTest
+class MainNavigationTest {
+
+    private val hiltRule = HiltAndroidRule(this)
+    private val composeRule = createEmptyComposeRule()
+
+    @get:Rule
+    val rules: TestRule = RuleChain.outerRule(hiltRule)
+        .around(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                GrantPermissionRule.grant()
+            }
+        )
+        .around(composeRule)
+
+    @Inject lateinit var sessionManager: SessionManager
+
+    private lateinit var scenario: ActivityScenario<MainActivity>
+
+    @Before
+    fun signInAndLaunch() {
+        hiltRule.inject()
+        sessionManager.commitVerifiedServerEndpoint(
+            sessionManager.validateServerEndpoint("https://127.0.0.1:9").getOrThrow()
+        )
+        sessionManager.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Алиса Тестова"), "token")
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+    }
+
+    @After
+    fun close() {
+        scenario.close()
+    }
+
+    private fun tab(label: String) = composeRule.onNode(hasText(label) and hasClickAction(), useUnmergedTree = false)
+
+    @Test
+    fun tabsBackAndLogout() {
+        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
+        composeRule.waitForIdle()
+        saveScreenshot("main-conversations")
+
+        tab("Профиль").performClick()
+        composeRule.onNodeWithText("Статус присутствия").assertIsDisplayed()
+        tab("Профиль").assertIsSelected()
+        saveScreenshot("main-profile")
+
+        tab("Объявления").performClick()
+        composeRule.onNodeWithText("Объявления компании").assertIsDisplayed()
+
+        // Back from a secondary tab returns to the start tab instead of leaving the app.
+        Espresso.pressBack()
+        composeRule.onNodeWithText("CentyChat").assertIsDisplayed()
+        tab("Сообщения").assertIsSelected()
+
+        tab("Профиль").performClick()
+        composeRule.onNodeWithText("Выйти из учетной записи").performScrollTo().performClick()
+        composeRule.onNode(hasText("Выйти") and hasClickAction()).performClick()
+
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodes(hasText("Вход в CentyChat")).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertNull(sessionManager.token)
+        saveScreenshot("after-logout")
+    }
+
+    private fun saveScreenshot(name: String) {
+        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val dir = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
+        File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+}
