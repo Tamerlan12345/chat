@@ -1,8 +1,9 @@
 // Кэш миниатюр вложений на диске (задача 20).
 //
-// Путь к миниатюре строится только из числового id файла, размера и формата
-// из коротких белых списков — ничто из запроса (имя файла, расширение,
-// произвольная строка) в путь не попадает. Каталог .thumbs лежит рядом с
+// Путь к миниатюре строится только из числового id файла, ключа содержимого
+// (хеш от данных, которые сервер записал сам) и размера и формата из коротких
+// белых списков — ничто из запроса (имя файла, расширение, произвольная
+// строка) в путь не попадает. Каталог .thumbs лежит рядом с
 // вложениями и, как и они, наружу статикой не отдаётся: только через маршрут
 // с той же проверкой доступа, что у скачивания.
 
@@ -19,16 +20,23 @@ const EXT = { webp: 'webp', jpeg: 'jpg' };
 
 const inFlight = new Map(); // путь кэша → Promise<{ color, source }>
 
-function cachePathFor(fileId, size, format) {
-  const id = Number(fileId);
+// Ключ содержимого: id файла после восстановления базы из копии может
+// достаться другому вложению, а каталог миниатюр остаётся прежним — без ключа
+// новый файл получил бы чужую миниатюру. stored_filename сервер придумывает
+// сам при загрузке (время + случайная часть), sha256 считает тоже сам.
+function contentKey(file) {
+  return crypto.createHash('sha256').update(`${file.stored_filename}:${file.sha256 || ''}`).digest('hex').slice(0, 16);
+}
+
+function cachePathFor(file, size, format) {
+  const id = Number(file.id);
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Неверный id файла');
   if (!Object.hasOwn(Images.THUMB_SIZES, size) || !Object.hasOwn(EXT, format)) throw new Error('Неверный размер или формат');
-  return path.join(THUMBS_DIR, `${id}-${size}.${EXT[format]}`);
+  return path.join(THUMBS_DIR, `${id}-${contentKey(file)}-${size}.${EXT[format]}`);
 }
 
 function etagFor(file, size, format) {
-  const content = /^[0-9a-f]{64}$/.test(String(file.sha256 || '')) ? file.sha256.slice(0, 16) : `id${Number(file.id)}`;
-  return `"thumb-${RENDER_VERSION}-${content}-${size}-${format}"`;
+  return `"thumb-${RENDER_VERSION}-${contentKey(file)}-${size}-${format}"`;
 }
 
 /**
@@ -37,7 +45,7 @@ function etagFor(file, size, format) {
  * отрисовывалась в этом вызове (для заполнения размеров вложения).
  */
 async function getThumbnail(file, { size, format }) {
-  const target = cachePathFor(file.id, size, format);
+  const target = cachePathFor(file, size, format);
   const contentType = format === 'webp' ? 'image/webp' : 'image/jpeg';
   const etag = etagFor(file, size, format);
   if (fs.existsSync(target)) return { path: target, etag, contentType, rendered: null };

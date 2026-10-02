@@ -196,6 +196,7 @@ function decompressionBomb() {
 }
 
 const thumbsDir = () => path.join(config.UPLOADS_DIR, '.thumbs');
+const thumbFiles = (id) => (fs.existsSync(thumbsDir()) ? fs.readdirSync(thumbsDir()).filter((n) => n.startsWith(`${id}-`)) : []);
 
 test('Миниатюра: WebP по длинной стороне 160/480, повёрнута по EXIF, без метаданных; кэш на диске по id', async () => {
   const file = await sharedWithBob(await photo(), 'снимок.jpg', 'image/jpeg');
@@ -208,7 +209,7 @@ test('Миниатюра: WebP по длинной стороне 160/480, по�
   assert.strictEqual(meta.format, 'webp');
   assert.deepStrictEqual([meta.width, meta.height], [107, 160], 'портрет после поворота по EXIF');
   assert.ok(!meta.exif, 'EXIF не попал в миниатюру');
-  assert.ok(fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)), 'кэш назван по id файла');
+  assert.ok(thumbFiles(file.id).some((n) => /^\d+-[0-9a-f]{16}-s\.webp$/.test(n)), 'кэш назван по id файла и ключу содержимого');
 
   const medium = await get(`/api/files/thumb/${file.id}?size=m`, { token: bob });
   assert.strictEqual(medium.status, 200);
@@ -244,7 +245,7 @@ test('Миниатюра: доступ как у скачивания — чуж
   assert.strictEqual((await get(`/api/files/thumb/${file.id}`, { token: people['media-carol'].token })).status, 403);
   assert.strictEqual((await get(`/api/files/thumb/${file.id}`)).status, 401);
   assert.strictEqual((await get('/api/files/thumb/999999', { token: people.admin.token })).status, 404);
-  assert.ok(!fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)), 'отказ не порождает миниатюру');
+  assert.deepStrictEqual(thumbFiles(file.id), [], 'отказ не порождает миниатюру');
 });
 
 test('Миниатюра: неверный размер или формат — 400', async () => {
@@ -283,7 +284,7 @@ test('Миниатюра: «бомба распаковки» (20000×20000 в �
   const res = await get(`/api/files/thumb/${file.id}`, { token: people['media-bob'].token });
   assert.strictEqual(res.status, 422);
   assert.strictEqual(JSON.parse(res.body).code, 'IMAGE_TOO_LARGE');
-  assert.ok(!fs.existsSync(path.join(thumbsDir(), `${file.id}-s.webp`)));
+  assert.deepStrictEqual(thumbFiles(file.id), []);
 });
 
 test('Миниатюра: битая картинка — 422 IMAGE_UNREADABLE', async () => {
