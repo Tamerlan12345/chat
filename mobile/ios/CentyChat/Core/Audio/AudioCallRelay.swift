@@ -328,7 +328,7 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     public var lifecycleHandler: ((AudioRelayBackendEvent) -> Void)?
 
     public var recordPermission: AudioRecordPermission {
-        switch AVAudioSession.sharedInstance().recordPermission {
+        switch AVAudioApplication.shared.recordPermission {
         case .granted:
             return .granted
         case .denied:
@@ -365,11 +365,9 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     }
 
     public func requestRecordPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                continuation.resume(returning: granted)
-            }
-        }
+        // The async API resumes this main-actor method directly, so no completion
+        // closure inherits main-actor isolation while the system calls it off-main.
+        await AVAudioApplication.requestRecordPermission()
     }
 
     public func startCapture(_ handler: @escaping ([Float]) -> Void) throws {
@@ -453,10 +451,11 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     }
 
     /// Builds the scheduleBuffer completion handler, which AVFoundation calls on its own queue.
-    static func makePlaybackCompletionHandler(
+    /// It is nonisolated and Sendable so Swift 6 never asserts main-actor isolation on that queue.
+    nonisolated static func makePlaybackCompletionHandler(
         generation: Int,
-        onFinished: @escaping @MainActor (Int) -> Void
-    ) -> AVAudioNodeCompletionHandler {
+        onFinished: @escaping @MainActor @Sendable (Int) -> Void
+    ) -> @Sendable () -> Void {
         {
             Task { @MainActor in
                 onFinished(generation)
@@ -502,9 +501,10 @@ public final class AVAudioEngineBackend: NSObject, AudioRelayBackend {
     }
 
     /// Builds the input tap block, which AVFoundation calls on its realtime audio thread.
-    static func makeCaptureTapBlock(
-        deliver: @escaping @MainActor ([Float]) -> Void
-    ) -> AVAudioNodeTapBlock {
+    /// PCM conversion stays on that thread; only the normalized samples hop to the main actor.
+    nonisolated static func makeCaptureTapBlock(
+        deliver: @escaping @MainActor @Sendable ([Float]) -> Void
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { buffer, _ in
             let monoSamples = Self.monoSamples(from: buffer)
             let normalized = AudioCaptureNormalizer.normalize(
