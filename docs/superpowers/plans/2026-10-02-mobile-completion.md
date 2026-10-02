@@ -321,5 +321,27 @@ Worktree `m-integration`. Depends on Task 5 (`client_msg_id`, `/api/sync`, deliv
 - A server-side test (`server/test/mobile-delivery-reducer.test.js`, added to the explicit test list) runs every vector against the reference reducer, so vectors are self-consistent. Both platforms will later run the same vectors against their own reducers.
 - Acceptance: `cd server && npm test` green; README in `fixtures/reducers/` explains the vector format and that iOS/Android must run all of them.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7; Android 2 → 8 → 12 → 9; Integration 3 → 4 → 5; QA 10 after all.
+### Task 16: Integration — close server delivery gaps G1–G4, G7–G9 (additive)
+
+Worktree `m-integration`. Depends on Task 13. Source: `mobile/contracts/delivery-state.md` §10.
+- G1: process WS frames of one socket sequentially (per-socket promise queue), so storage order = send order; keep other sockets concurrent. Test two rapid `send_message` frames get ascending ids.
+- G2: when a frame is rate-limited, reply `error {context, code:"RATE_LIMITED", retry_after_ms, client_msg_id?|messageId?}` instead of silence (still dropping the frame).
+- G3: every `send_message` refusal carries `code` and `retryable` (bool); refusals happen only before the INSERT where possible; a failure after INSERT echoes the stored message instead of an error.
+- G4: `edit_message`/`delete_message` errors carry `messageId` and `code` (`EDIT_WINDOW_EXPIRED`, `DELETE_WINDOW_EXPIRED`, `NOT_OWNER`, `NOT_FOUND`, …); deleting an already-deleted message returns the tombstone (idempotent success).
+- G7: `last_message_id` in `GET /api/channels`.
+- G8: `updated_at` in `message_deleted`.
+- G9: `cancel_message {client_msg_id}` — server remembers the cancelled key per sender (bounded TTL, e.g. 24 h); a later send with that key is refused with `code:"CANCELLED"`; if already stored, the server deletes it and broadcasts `message_deleted`.
+- Desktop must keep working unchanged (error frames are read only for `message`/`text` there — keep those fields).
+- Update `ws-protocol.md`, `delivery-state.md` (use the new signals when present; keep the old fallbacks), the reference reducer, vectors (new vectors for each signal; all existing vectors still pass), fixtures (`--write`), and the Task 13 deferred minors (persisted cancelled-key set; hide messages with a pending delete op).
+- TDD; full `npm test` green.
+
+### Task 14: iOS — Wave 2 messaging core (outbox, realtime, chat)
+
+Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/delivery-state.md` on iOS: a Swift reducer that passes every vector in `mobile/contracts/fixtures/reducers/` (table-driven XCTest reading the JSON), a SwiftData-backed durable outbox + conversation cache, an effects executor (WS send, HTTP flush, timers, persist barrier, sync chain via `/api/sync`, 410 resync), reconnect algorithm, composer cleared only after durable enqueue, visible queued/sending/sent/delivered/read/failed states with retry/cancel per the design brief's motion grammar, history pagination (`beforeId`), and chat polish (reply, edit/delete confirmation). Screenshots of offline send → reconnect in CI against the dev stand.
+
+### Task 15: Android — Wave 2 messaging core (outbox, realtime, chat)
+
+Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
+
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 15; Integration 3 → 4 → 5 → 13 → 16; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.
