@@ -1,0 +1,32 @@
+{
+  "name": "r02-read-on-phone-no-dismiss-push",
+  "description": "Прочитано на телефоне (его сокет online), других устройств с push нет — тихий push никому: телефон снимает уведомление сам, компьютер получает conversation_read.",
+  "decision": "read",
+  "input": {
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "push": []
+  }
+}

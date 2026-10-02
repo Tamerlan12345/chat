@@ -1,0 +1,38 @@
+{
+  "name": "14-phone-foreground-other-screen",
+  "description": "Телефон на переднем плане на другом экране, компьютера нет — баннер в приложении телефона вместо push.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "online",
+        "viewing": {
+          "conversationType": "channel",
+          "targetId": 7
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "banner": [
+      "phone"
+    ],
+    "quiet": []
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "15-phone-away-without-push-token",
+  "description": "Телефон в фоне с живым сокетом, но без токена push (push выключен на сервере или не выдан) — баннер (локальное уведомление из кадра).",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": []
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "banner": [
+      "phone"
+    ],
+    "quiet": []
+  }
+}

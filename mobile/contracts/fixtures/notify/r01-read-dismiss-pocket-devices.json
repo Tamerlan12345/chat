@@ -1,0 +1,38 @@
+{
+  "name": "r01-read-dismiss-pocket-devices",
+  "description": "Прочитано на компьютере (сокет online): тихий push «read» телефону без сокета и iPhone в фоне, чтобы снять показанные уведомления.",
+  "decision": "read",
+  "input": {
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      },
+      {
+        "id": "iphone",
+        "deviceId": "ios-91c2",
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      },
+      {
+        "id": "ios-91c2"
+      }
+    ]
+  },
+  "expected": {
+    "push": [
+      "android-7f3a",
+      "ios-91c2"
+    ]
+  }
+}

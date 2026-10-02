@@ -1,0 +1,38 @@
+{
+  "name": "07-dnd",
+  "description": "«Не беспокоить» гасит всё: ни баннеров, ни push, где бы ни был сотрудник.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": true,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      },
+      {
+        "id": "ios-91c2"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "dnd",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "desk"
+    ]
+  }
+}

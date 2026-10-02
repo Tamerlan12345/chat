@@ -21,5 +21,6 @@
     "file_width": null,
     "file_height": null,
     "file_dominant_color": null
-  }
+  },
+  "notify": false
 }

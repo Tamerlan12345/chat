@@ -1,0 +1,42 @@
+{
+  "name": "04-both-on-list",
+  "description": "Оба устройства на переднем плане, но в списке чатов (viewing = null) — баннер на обоих, push нет: у телефона живой сокет на переднем плане.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "banner": [
+      "desk",
+      "phone"
+    ],
+    "quiet": []
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "03-desktop-other-chat-phone-in-pocket",
+  "description": "Настольный клиент открыт в другом чате, у телефона нет сокета — баннер на компьютере и push на телефон.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 9
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "desk"
+    ],
+    "quiet": []
+  }
+}

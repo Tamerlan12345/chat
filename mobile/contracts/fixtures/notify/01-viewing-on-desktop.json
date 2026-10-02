@@ -1,0 +1,45 @@
+{
+  "name": "01-viewing-on-desktop",
+  "description": "Настольный клиент на переднем плане открыт в этом чате — никому ничего: ни баннера, ни push на телефон в кармане.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "viewing",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "desk",
+      "phone"
+    ]
+  }
+}

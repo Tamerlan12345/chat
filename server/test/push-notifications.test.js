@@ -135,7 +135,8 @@ async function api(method, urlPath, { body, token } = {}) {
   return { status: res.status, json, text };
 }
 
-async function connect(name, token = people[name].token) {
+// extra — необязательные поля кадра auth (device_id, platform), как у мобильных клиентов.
+async function connect(name, token = people[name].token, extra = {}) {
   await disconnect(name);
   const sock = new WebSocket(wsUrl);
   const client = { sock, inbox: [] };
@@ -146,7 +147,7 @@ async function connect(name, token = people[name].token) {
   });
   sock.on('error', () => {});
   await new Promise((resolve) => sock.on('open', resolve));
-  sock.send(JSON.stringify({ type: 'auth', token }));
+  sock.send(JSON.stringify({ type: 'auth', token, ...extra }));
   await waitFor(client, (m) => m.type === 'auth_success');
   sockets[name] = client;
   return client;
@@ -323,23 +324,40 @@ test('Получатель не в сети: ровно одно уведомл�
   assert.strictEqual(allCalls().length, 2, 'повтор не даёт второго уведомления');
 });
 
-test('Канал: уведомление каждому участнику не в сети, кроме автора и тех, кто в сети', async () => {
+test('Канал: уведомление каждому участнику, кроме автора и тех, у кого канал открыт (multi-device.md §5)', async () => {
   await android('bob', 40);
   await android('carol', 41);
   await android('alice', 42);
-  await connect('carol');
+  const c = await connect('carol');
+  c.sock.send(JSON.stringify({ type: 'viewing', conversationType: 'channel', targetId: people.teamId }));
+  await sleep(50);
   const message = await restSend('alice', 'channel', people.teamId, 'Всем привет', 'push-channel-1');
   await push.idle();
   assert.deepStrictEqual(fcm.calls.map((c) => c.token), [ANDROID(40)]);
   assert.deepStrictEqual(fcm.calls[0].notification.data, { type: 'message', conversationType: 'channel', targetId: people.teamId, messageId: message.id });
 });
 
-test('Получатель в сети (любое устройство на сокете) — уведомления нет; отправка по WS — так же, как по REST', async () => {
-  await android('bob', 50);
-  await connect('bob');
+test('Получатель на сокете: телефон на переднем плане или чат открыт — push нет; компьютер в другом чате — push на телефон; WS — как REST', async () => {
+  await android('bob', 50, { device_id: 'bob-phone-50' });
+  // Сокет самого телефона (device_id в auth) на переднем плане — всё по сокету.
+  await connect('bob', people.bob.token, { device_id: 'bob-phone-50', platform: 'android' });
   await restSend('alice', 'direct', people.bob.id, 'Онлайн', 'push-online-1');
   await push.idle();
   assert.strictEqual(allCalls().length, 0);
+  // Сокет компьютера (без device_id), чат с Алисой открыт — никому.
+  const desk = await connect('bob');
+  desk.sock.send(JSON.stringify({ type: 'viewing', conversationType: 'direct', targetId: people.alice.id }));
+  await sleep(50);
+  await restSend('alice', 'direct', people.bob.id, 'Смотришь', 'push-online-2');
+  await push.idle();
+  assert.strictEqual(allCalls().length, 0);
+  // Компьютер в списке чатов, телефон в кармане — push на телефон.
+  desk.sock.send(JSON.stringify({ type: 'viewing', conversationType: null }));
+  await sleep(50);
+  await restSend('alice', 'direct', people.bob.id, 'Не смотришь', 'push-online-3');
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1);
+  fcm.calls.length = 0;
   await disconnect('bob');
   const a = await connect('alice');
   a.sock.send(JSON.stringify({ type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'По сокету', client_msg_id: 'push-ws-1' }));
@@ -801,7 +819,8 @@ test('Т19-5: call_end о закончившемся вызове приходи
 });
 
 test('Т19-6: очередь push переполнена при вызове — вызывающему call_unavailable, вызов снят', async () => {
-  configurePush({ concurrency: 1, queueMax: 1 });
+  // Резерв для звонков выключен: проверяется переполнение самой очереди звонков.
+  configurePush({ concurrency: 1, queueMax: 1, callReserve: 0 });
   await android('bob', 164);
   await android('carol', 165);
   const held = gate();
