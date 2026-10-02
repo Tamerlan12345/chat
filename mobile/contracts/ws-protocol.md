@@ -78,9 +78,9 @@
 }
 ```
 
-`retry_after_ms` — через сколько мс откроется окно этого типа (1…1000); корреляция — `client_msg_id` (отправка, отзыв; только допустимый ключ) или `messageId` (правка, удаление; только целое > 0); `text` — у отправки и правки. Ответ **не гарантирован**: их не больше 10 в секунду на сокет, и их нет, пока клиент не читает свой сокет (больше 1 МБ неотправленного) — поток отброшенных кадров не превращается в поток ответов в памяти сервера. Без ответа клиент узнаёт об отбрасывании по таймауту, как раньше. `mark_read`, `typing`, присутствие и прочее отбрасываются молча.
+`retry_after_ms` — через сколько мс откроется окно этого типа (1…1000; клиент на всякий случай ограничивает паузу 30 с, `delivery-state.md` §6.1); корреляция — `client_msg_id` (отправка, отзыв; только допустимый ключ) или `messageId` (правка, удаление; только целое > 0); `text` — у отправки и правки. Ответ **не гарантирован**: их не больше 10 в секунду на сокет, и их нет, пока клиент не читает свой сокет (больше 1 МБ неотправленного) — поток отброшенных кадров не превращается в поток ответов в памяти сервера. Без ответа клиент узнаёт об отбрасывании по таймауту, как раньше. `mark_read`, `typing`, присутствие и прочее отбрасываются молча.
 
-**Порядок обработки (G1).** Кадры переписки одного сокета — `send_message` (и алиасы), `edit_message`, `delete_message`, `cancel_message`, `mark_read` — обрабатываются **строго по очереди** в порядке получения: сообщения, отправленные подряд по одному сокету, получают `id` по возрастанию. Очередь своя у каждого сокета (медленный кадр одного соединения не задерживает другие), кадры вне переписки (`auth`, звонки, `typing`, присутствие, `rd_*`) идут мимо очереди, как раньше. Очередь ограничена 100 кадрами; кадр сверх неё получает тот же `error` `RATE_LIMITED` (`retry_after_ms: 1000`). Обработчик, не завершившийся за 30 с, перестаёт держать очередь (следующий кадр идёт дальше). Порядок между **разными** сокетами и между WS и REST не гарантируется.
+**Порядок обработки (G1).** Кадры переписки одного сокета — `send_message` (и алиасы), `edit_message`, `delete_message`, `cancel_message`, `mark_read` — обрабатываются **строго по очереди** в порядке получения: сообщения, отправленные подряд по одному сокету, получают `id` по возрастанию. Очередь своя у каждого сокета (медленный кадр одного соединения не задерживает другие), кадры вне переписки (`auth`, звонки, `typing`, присутствие, `rd_*`) идут мимо очереди, как раньше. Очередь ограничена 100 кадрами; кадр сверх неё не обрабатывается: `send_message`, `edit_message`, `delete_message`, `cancel_message` получают тот же `error` `RATE_LIMITED` (`retry_after_ms: 1000`), а `mark_read` отбрасывается **молча**, как при пределе частоты. Обработчик кадра очереди, не завершившийся за 30 с, перестаёт держать очередь (следующий кадр идёт дальше); кадров вне очереди этот таймаут не касается. Порядок между **разными** сокетами и между WS и REST не гарантируется.
 
 ### 2.4. Сердечный ритм (Heartbeat / Keepalive)
 
@@ -341,7 +341,7 @@
   "targetUserId": 12
 }
 ```
-*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`.*
+*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с живым устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`. Не удалось разбудить ни одно устройство — вызывающему `call_unavailable` «Сотрудник сейчас не в сети». Вызов закончился до подключения — вызываемому при входе `call_end` (`reason`: `cancelled`, `connection_lost`, `timeout`, `unavailable`).*
 
 #### `call_answer` — Принятие вызова
 ```json
@@ -350,7 +350,7 @@
   "targetUserId": 7
 }
 ```
-*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`.*
+*Принимается только если от `targetUserId` есть активный ожидающий вызов (`pendingOffers`). После этого сервер фиксирует активную пару `activeCalls`. Ответ на вызов, которого нет (сброшен, истёк), разговор не начинает: отвечающему приходит `call_end {senderId: targetUserId, senderName, reason}` (`ws/call_end.no_call.json`, `reason: "no_call"` или причина конца вызова через push).*
 
 #### `call_rejected` — Отклонение вызова
 ```json
@@ -1114,7 +1114,7 @@
   "reason": "Сотрудник сейчас не в сети"
 }
 ```
-`call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети». `call_answer` без реально ожидающего вызова сервер молча игнорирует; ожидающий вызов живёт 2 минуты.
+`call_unavailable.reason` — «У сотрудника включено «Не беспокоить»» или «Сотрудник сейчас не в сети» (второе — только если у вызываемого нет устройства, которое будит push о звонке, или push на сервере выключен; иначе вызов ждёт, `push.md` §3). `call_answer` без реально ожидающего вызова сервер молча игнорирует; ожидающий вызов живёт 2 минуты.
 
 ---
 
@@ -1307,10 +1307,12 @@ sequenceDiagram
 | `channel_created` / `channel_deleted` | `ws/channel_created.json`, `ws/channel_deleted.json` |
 | `new_announcement` / `announcement_acknowledged` | `ws/new_announcement.json`, `ws/announcement_acknowledged.json` |
 | `call_offer` / `call_answer` / `call_rejected` / `ice_candidate` | `ws/call_offer.json`, `ws/call_answer.json`, `ws/call_rejected.json`, `ws/ice_candidate.json` |
-| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json` |
+| `call_end` | `ws/call_end.json`, `ws/call_end.connection_lost.json`, `ws/call_end.no_call.json` (ответ на вызов, которого нет; та же форма — вызов через push закончился до входа) |
 | `call_denied` / `call_unavailable` | `ws/call_denied.json`, `ws/call_unavailable.dnd.json`, `.offline.json` |
 | `wake_state` | `ws/wake_state.idle.json`, `.cooldown.json` |
 | `wake_sent` / `wake_ring` / `wake_error` | `ws/wake_sent.json`, `ws/wake_ring.json`, `ws/wake_error.cooldown.json`, `.dnd.json`, `.offline.json`, `.invalid_target.json` |
 | `error` | `ws/error.send_message.json`, `ws/error.edit_message.json`, `ws/error.delete_message.json`, `ws/error.invalid_client_msg_id.json`, `ws/error.client_msg_id_conflict.json`, `ws/error.rate_limited.json`, `ws/error.cancelled.json`, `ws/error.cancel_message.json` |
+
+Push-уведомления (задача 18): регистрация токена — `http/devices.push-token-register.json`, `.push-token-invalid.json`, `.push-token-delete.json`; что уходит через Google/Apple — `push/fcm.*.json`, `push/apns.*.json` (описание — `push.md`).
 
 HTTP-фикстуры надёжной доставки: `http/messages.send-direct-idempotent.json` (201 с `client_msg_id`), `http/messages.send-direct-duplicate.json` (200, повтор), `http/messages.send-client-msg-id-invalid.json` (400), `http/messages.send-client-msg-id-conflict.json` (409), `http/messages.send-cancelled.json` (409 `CANCELLED`), `http/messages.after-page.json` (`afterId`), `http/sync.bootstrap.json`, `http/sync.page.json`, `http/sync.cursor-invalid.json` (410).

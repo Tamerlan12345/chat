@@ -627,3 +627,149 @@ test('G9: поток cancel_message ограничен как delete_message —
   assert.strictEqual(err.context, 'cancel_message');
   assert.ok(keys.slice(10).includes(err.client_msg_id));
 });
+
+// ══ Задача 18: замечания ревью задачи 16 ═══════════════════════════════════
+
+test('Т18: таймаут обработчика — только у кадров очереди; кадр вне очереди таймера не получает', async () => {
+  process.env.WS_FRAME_TIMEOUT_MS = '60';
+  await connect('alice');
+  const warnings = [];
+  stub(console, 'warn', (orig) => (...args) => { warnings.push(args.map(String).join(' ')); return orig.apply(console, args); });
+  const held = gate();
+  stub(UserService, 'updateStatus', (orig) => async (...args) => { await held.promise; return orig.apply(UserService, args); });
+  // presence идёт мимо очереди: его медленный обработчик не должен заводить таймер очереди.
+  send('alice', { type: 'presence', state: 'away' });
+  await sleep(200);
+  held.open();
+  await sleep(30);
+  assert.ok(!warnings.some((w) => w.includes('обрабатывается дольше')), `предупреждение о таймауте вне очереди: ${warnings.join(' | ')}`);
+
+  // Кадр очереди по-прежнему ограничен таймаутом.
+  const stuck = holdRecipientLookup();
+  const key = freshKey('t18-timeout');
+  send('alice', { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Жду', client_msg_id: key });
+  await sleep(200);
+  assert.ok(warnings.some((w) => w.includes('send_message обрабатывается дольше')), 'таймаут кадра очереди');
+  stuck.open();
+  await echoOf('alice', key);
+});
+
+test('Т18: запись истории правки — текст на момент записи, а не до ожидания настройки', async () => {
+  const msg = await MessageService.sendMessageIdempotent({ conversationType: 'direct', targetId: people.bob.id, senderId: people.alice.id, text: 'Версия 0' });
+  const held = gate();
+  let first = true;
+  stub(SettingsService, 'getSetting', (orig) => async (...args) => {
+    if (first && args[0] === 'message_edit_window_minutes') { first = false; await held.promise; }
+    return orig.apply(SettingsService, args);
+  });
+  const slow = MessageService.editMessage({ messageId: msg.message.id, actorId: people.alice.id, text: 'Версия 1' });
+  await sleep(20);
+  await MessageService.editMessage({ messageId: msg.message.id, actorId: people.alice.id, text: 'Версия 2' });
+  held.open();
+  await slow;
+  const history = chat.prepare('SELECT old_text FROM message_history WHERE message_id = ? ORDER BY id').all(msg.message.id).map((r) => r.old_text);
+  assert.deepStrictEqual(history, ['Версия 0', 'Версия 2'], 'вторая запись — текст, который правка заменила на самом деле');
+  assert.strictEqual(row('id = ?', msg.message.id).text, 'Версия 1');
+});
+
+test('Т18: запись истории удаления — текст на момент удаления (правка во время ожидания не теряется)', async () => {
+  const msg = await MessageService.sendMessageIdempotent({ conversationType: 'direct', targetId: people.bob.id, senderId: people.alice.id, text: 'До правки' });
+  const held = gate();
+  stub(SettingsService, 'getSetting', (orig) => async (...args) => {
+    if (args[0] === 'message_delete_window_minutes') await held.promise;
+    return orig.apply(SettingsService, args);
+  });
+  const deleting = MessageService.deleteMessage({ messageId: msg.message.id, actorId: people.alice.id });
+  await sleep(20);
+  await MessageService.editMessage({ messageId: msg.message.id, actorId: people.alice.id, text: 'После правки' });
+  held.open();
+  await deleting;
+  const history = chat.prepare('SELECT action, old_text FROM message_history WHERE message_id = ? ORDER BY id').all(msg.message.id)
+    .map((r) => `${r.action}:${r.old_text}`);
+  assert.deepStrictEqual(history, ['edit:До правки', 'delete:После правки']);
+});
+
+test('Т18: необработанный сбой обработчика — INTERNAL_ERROR с корреляцией для кадров с ответом, общий error для прочих; текст сбоя не утекает', async () => {
+  await connect('alice');
+  stub(wsServer, 'handleMessage', (orig) => async function (ws, msg, ...rest) {
+    if (msg.type === 'send_message' || msg.type === 'typing') throw new Error('SQLITE_CORRUPT секрет');
+    return orig.call(this, ws, msg, ...rest);
+  });
+  const key = freshKey('t18-crash');
+  send('alice', { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Упало', client_msg_id: key });
+  const err = await errorFor('alice', (m) => m.client_msg_id === key);
+  assert.strictEqual(err.context, 'send_message');
+  assert.strictEqual(err.code, 'INTERNAL_ERROR');
+  assert.strictEqual(err.retryable, true);
+  assert.strictEqual(err.text, 'Упало');
+  assert.ok(!/SQLITE|секрет/.test(JSON.stringify(err)));
+  sockets.alice.inbox.length = 0;
+  send('alice', { type: 'typing', conversationType: 'direct', targetId: people.bob.id, isTyping: true });
+  const generic = await errorFor('alice', () => true);
+  assert.deepStrictEqual(generic, { type: 'error', message: 'Ошибка обработки запроса' });
+});
+
+test('Т18: сбой рассылки после записи (WS) — автору эхо двумя кадрами, без ошибки', async () => {
+  await connect('alice');
+  await connect('bob');
+  stub(wsServer, 'publishNewMessage', () => () => { throw new Error('рассылка упала'); });
+  const key = freshKey('t18-publish');
+  send('alice', { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Сохранено', client_msg_id: key });
+  const echo = await echoOf('alice', key);
+  await waitFor(sockets.alice, (m) => m.type === 'new_message' && m.message?.client_msg_id === key);
+  assert.strictEqual(echo.type, 'direct_message');
+  assert.strictEqual(row('id = ?', echo.message.id).text, 'Сохранено');
+  await sleep(100);
+  assert.ok(!sockets.alice.inbox.some((m) => m.type === 'error'), 'ошибки нет');
+  assert.ok(!sockets.bob.inbox.some((m) => m.message?.client_msg_id === key), 'получателю эхо автора не уходит');
+});
+
+test('Т18: кадры очереди отозванного сокета теряются; обычное закрытие — обрабатываются от имени автора', async () => {
+  // Отзыв (revokeSocket): ждущие кадры не обрабатываются.
+  await connect('alice');
+  let held = holdRecipientLookup();
+  const k1 = freshKey('t18-revoked-head');
+  const k2 = freshKey('t18-revoked-queued');
+  send('alice', { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Первое', client_msg_id: k1 });
+  send('alice', { type: 'send_message', conversationType: 'channel', targetId: people.teamId, text: 'В очереди', client_msg_id: k2 });
+  await sleep(40);
+  wsServer.revokeSocket([...wsServer.userSockets.get(people.alice.id)][0], 'Тест');
+  held.open();
+  await sleep(150);
+  assert.strictEqual(countRows('client_msg_id = ?', k2), 0, 'кадр в очереди отозванного сокета не сохранён');
+  delete sockets.alice;
+  restore.pop()();
+
+  // Обычное закрытие: всё, что пришло до закрытия, сохраняется.
+  await connect('alice');
+  held = holdRecipientLookup();
+  const k3 = freshKey('t18-closed-head');
+  const k4 = freshKey('t18-closed-queued');
+  send('alice', { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Перед закрытием', client_msg_id: k3 });
+  send('alice', { type: 'send_message', conversationType: 'channel', targetId: people.teamId, text: 'Тоже до закрытия', client_msg_id: k4 });
+  await sleep(40);
+  await disconnect('alice');
+  held.open();
+  for (let i = 0; i < 50 && countRows('client_msg_id IN (?, ?)', k3, k4) < 2; i += 1) await sleep(20);
+  assert.strictEqual(countRows('client_msg_id IN (?, ?) AND sender_id = ?', k3, k4, people.alice.id), 2);
+});
+
+test('Т18: граница предела отменённых ключей — ровно N остаются и блокируют отправку, N+1-й вытесняет самый старый', async () => {
+  process.env.CANCELLED_KEYS_PER_SENDER = '3';
+  const sender = people.bob.id;
+  const kept = () => chat.prepare('SELECT client_msg_id FROM cancelled_client_msgs WHERE sender_id = ? ORDER BY cancelled_at, rowid').all(sender).map((r) => r.client_msg_id);
+  chat.prepare('DELETE FROM cancelled_client_msgs WHERE sender_id = ?').run(sender);
+  const keys = Array.from({ length: 4 }, (_, i) => freshKey(`t18-cap${i}`));
+  for (const k of keys.slice(0, 3)) await MessageService.cancelClientMessage({ senderId: sender, clientMsgId: k });
+  assert.deepStrictEqual(kept(), keys.slice(0, 3), 'ровно N — никто не вытеснен');
+  for (const k of keys.slice(0, 3)) {
+    await assert.rejects(
+      MessageService.sendMessageIdempotent({ conversationType: 'channel', targetId: people.teamId, senderId: sender, text: 'x', clientMsgId: k }),
+      (err) => err.code === 'CANCELLED'
+    );
+  }
+  await MessageService.cancelClientMessage({ senderId: sender, clientMsgId: keys[3] });
+  assert.deepStrictEqual(kept(), keys.slice(1), 'вытеснен ровно один — самый старый');
+  const revived = await MessageService.sendMessageIdempotent({ conversationType: 'channel', targetId: people.teamId, senderId: sender, text: 'снова можно', clientMsgId: keys[0] });
+  assert.strictEqual(revived.duplicate, false);
+});

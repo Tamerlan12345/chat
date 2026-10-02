@@ -139,7 +139,8 @@ paths:
       summary: Отзыв секрета устройства текущего пользователя
       description: |
         Снимает секрет беспарольного входа для указанного устройства текущего пользователя.
-        Привязка самого устройства к сотруднику остаётся активной.
+        Привязка самого устройства к сотруднику остаётся активной. Токены push этого
+        устройства у текущего пользователя удаляются (`push.md` §2).
       operationId: unbindDeviceSecret
       tags:
         - Auth
@@ -166,6 +167,101 @@ paths:
                     example: true
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+
+  /devices/push-token:
+    post:
+      summary: Регистрация токена push-уведомлений устройства
+      description: |
+        Сообщает серверу токен FCM (Android) или APNs/PushKit (iOS). Идемпотентно: повтор
+        с тем же токеном обновляет запись. Токен привязывается к сотруднику и сеансу,
+        которым вызван запрос (jti, поколение токенов, время входа), и к `device_id`,
+        если он передан. Тот же токен, зарегистрированный другим сотрудником, переходит
+        к нему. Не больше 10 токенов на сотрудника (самые давно обновлённые вытесняются);
+        30 запросов в минуту (вместе с DELETE). Через Google/Apple уходят только
+        идентификаторы — `push.md`.
+      operationId: registerPushToken
+      tags:
+        - Push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRegisterRequest'
+      responses:
+        '200':
+          description: Токен зарегистрирован (fixtures/http/devices.push-token-register.json)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushTokenRegisterResponse'
+        '400':
+          description: |
+            Недопустимое поле (fixtures/http/devices.push-token-invalid.json); `code` —
+            `INVALID_PLATFORM`, `INVALID_TOKEN`, `INVALID_ENVIRONMENT`, `INVALID_KIND`,
+            `INVALID_APP_VERSION`, `INVALID_DEVICE_ID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+        '429':
+          description: 'Слишком много запросов (`code: RATE_LIMITED`, заголовок `Retry-After: 60`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Удаление своего токена push
+      description: |
+        Удаляет токен, если он принадлежит текущему сотруднику. Чужой и несуществующий
+        токен дают одинаковый ответ `{ "removed": false }`. Выход (`/auth/logout`) и
+        отвязка устройства удаляют токены сами.
+      operationId: deletePushToken
+      tags:
+        - Push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Готово (fixtures/http/devices.push-token-delete.json)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - removed
+                properties:
+                  removed:
+                    type: boolean
+                    description: true — удалён свой токен; false — такого своего токена нет
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          description: 'Слишком много запросов (`code: RATE_LIMITED`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /auth/login:
     post:
@@ -312,7 +408,8 @@ paths:
       description: |
         Отзывает текущий JWT токен (заносит jti в `revoked_tokens`) и принудительно
         закрывает все сокеты, авторизованные этим токеном. Опционально отвязывает
-        секрет устройства (`device_id`).
+        секрет устройства (`device_id`). Удаляет токены push, зарегистрированные этим
+        сеансом, и (при `device_id`) токены этого устройства (`push.md` §2).
       operationId: logout
       tags:
         - Auth
@@ -996,7 +1093,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Вы не участник этого канала (`code: NOT_CHANNEL_MEMBER`)
+          description: 'Вы не участник этого канала (`code: NOT_CHANNEL_MEMBER`)'
           content:
             application/json:
               schema:
@@ -2643,6 +2740,53 @@ components:
       properties:
         device_id:
           type: string
+
+    PushTokenRegisterRequest:
+      type: object
+      required:
+        - platform
+        - token
+      properties:
+        platform:
+          type: string
+          enum: [ios, android]
+        token:
+          type: string
+          description: |
+            Android — токен регистрации FCM (`[A-Za-z0-9_:.-]`, 20–4096 символов);
+            iOS — токен устройства APNs или PushKit в hex (64–200 символов).
+        kind:
+          type: string
+          enum: [alert, voip]
+          default: alert
+          description: |
+            iOS: `alert` — токен APNs для уведомлений о сообщениях; `voip` — токен PushKit
+            для входящих звонков (регистрируются оба). Android — только `alert` (один токен FCM
+            для сообщений и звонков).
+        environment:
+          type: string
+          enum: [sandbox, production]
+          description: Узел APNs. Для iOS обязателен (сборка из Xcode — sandbox); для Android по умолчанию production.
+        app_version:
+          type: string
+          pattern: '^[0-9A-Za-z._+-]{1,32}$'
+        device_id:
+          type: string
+          pattern: '^[A-Za-z0-9._:-]{1,128}$'
+          description: Тот же device_id, что в /auth/knock; новый токен того же устройства заменяет прежний.
+
+    PushTokenRegisterResponse:
+      type: object
+      required:
+        - registered
+        - push_enabled
+      properties:
+        registered:
+          type: boolean
+          example: true
+        push_enabled:
+          type: boolean
+          description: false — у сервера нет учётных данных FCM/APNs, уведомлений не будет (токен всё равно сохранён)
 
     LoginRequest:
       type: object

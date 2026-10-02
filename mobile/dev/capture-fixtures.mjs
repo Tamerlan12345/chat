@@ -23,7 +23,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../..');
 export const FIXTURES_DIR = path.join(REPO, 'mobile/contracts/fixtures');
 
-const WebSocket = createRequire(path.join(REPO, 'server/package.json'))('ws');
+const serverRequire = createRequire(path.join(REPO, 'server/package.json'));
+const WebSocket = serverRequire('ws');
 
 // ── shape comparison ────────────────────────────────────────────────────────
 
@@ -63,6 +64,10 @@ export function shapeDiff(expected, actual, at = '$') {
 // ── normalization of volatile values ────────────────────────────────────────
 
 const BASE = Date.parse('2026-10-02T09:00:00.000Z');
+// Заглушки токенов устройств и bundle id для фикстур push (не настоящие).
+const PUSH_APNS_TOKEN = '0f'.repeat(32);
+const PUSH_FCM_TOKEN = 'fcm-registration-token-EXAMPLE_0123456789:abcdefghijklmnop';
+const PUSH_BUNDLE_ID = 'kz.centras.centychat';
 const FAKE_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwianRpIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIn0.c2lnbmF0dXJlLXBsYWNlaG9sZGVy';
 const ISO_RE = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?Z?$/;
 
@@ -95,7 +100,8 @@ function normalizeFixture(value) {
       return out;
     }
     if (typeof v === 'string') {
-      if (key === 'token') return FAKE_JWT;
+      // Токен сеанса (JWT). Токены устройств push (FCM/APNs) в фикстурах — заведомые заглушки.
+      if (key === 'token' && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(v)) return FAKE_JWT;
       if (key === 'storedFilename') return '1790000000000_0123456789abcdef.txt';
       // sync cursor "<epoch>.<seq>": the epoch is random per database.
       if (key === 'next_cursor') return v.replace(/^[0-9a-f]{16}\./, '5e7a1c0d9b3f4a62.');
@@ -231,6 +237,14 @@ export async function captureFixtures({ dataDir } = {}) {
     await http('http/auth.unauthorized.json', 'Любой защищённый маршрут с неверным/истёкшим токеном: HTTP 401 и { error }.',
       'GET', '/auth/me', { token: 'not-a-valid-token' }, 401);
     await http('http/auth.me.json', 'Профиль текущего пользователя: { user }.', 'GET', '/auth/me', { token: tAlice }, 200);
+
+    // push-токены устройства (задача 18, mobile/contracts/push.md)
+    await http('http/devices.push-token-register.json', 'Регистрация токена push устройства (идемпотентно): { registered, push_enabled }. push_enabled = false — у сервера нет учётных данных FCM/APNs, уведомлений не будет.',
+      'POST', '/devices/push-token', { token: tAlice, body: { platform: 'ios', token: PUSH_APNS_TOKEN, environment: 'sandbox', kind: 'alert', app_version: '1.0.0', device_id: 'ios-3F2A9C1E-7B4D-4E88-9A51-0C6D2B7E1F34' } }, 200);
+    await http('http/devices.push-token-invalid.json', 'Отказ регистрации: HTTP 400 и { error, code } (INVALID_PLATFORM, INVALID_TOKEN, INVALID_ENVIRONMENT, INVALID_KIND, INVALID_APP_VERSION, INVALID_DEVICE_ID).',
+      'POST', '/devices/push-token', { token: tAlice, body: { platform: 'ios', token: PUSH_APNS_TOKEN } }, 400);
+    await http('http/devices.push-token-delete.json', 'Удаление своего токена: { removed }. Чужой и несуществующий токен — тот же ответ { removed: false }.',
+      'DELETE', '/devices/push-token', { token: tAlice, body: { token: PUSH_APNS_TOKEN } }, 200);
 
     // refresh: only for a STILL VALID token; the old token is revoked.
     const toRefresh = (await login(CREDENTIALS.alice)).token;
@@ -453,6 +467,9 @@ export async function captureFixtures({ dataDir } = {}) {
     await B.takeType('call_offer');
     B.send({ type: 'call_rejected', targetUserId: alice.id, reason: 'Занят на совещании' });
     ws('ws/call_rejected.json', 'call_rejected', 'Вызов отклонён адресатом (reason — строка клиента).', await A.takeType('call_rejected'), 'call_rejected bob → alice');
+    // Ответ на вызов, которого уже нет (сброшен, истёк, разбуженный push телефон опоздал): отвечающему — call_end.
+    B.send({ type: 'call_answer', targetUserId: alice.id });
+    ws('ws/call_end.no_call.json', 'call_end', 'Ответ на вызов, которого нет: отвечающему call_end (senderId — тот, кому отвечали; reason "no_call"). Тот же кадр с reason "cancelled" | "connection_lost" | "timeout" | "unavailable" приходит телефону, разбуженному push о звонке, если вызов закончился до его подключения (push.md §3).', await B.takeType('call_end'), 'call_answer без ждущего вызова');
 
     // admin-driven broadcasts
     A.clear(); B.clear();
@@ -544,6 +561,31 @@ export async function captureFixtures({ dataDir } = {}) {
     }
     if (!limited) throw new Error('RATE_LIMITED was not reached');
     ws('ws/auth_error.rate_limited.json', 'auth_error', 'Слишком много неудачных auth с адреса (10 за минуту).', limited, 'серия auth с неверными токенами');
+
+    // Что уходит через Google/Apple: тела запросов к поставщикам, собранные
+    // кодом сервера (src/push) для сообщений этого сценария. Только id.
+    const { messagePayload, callPayload, notificationFor } = serverRequire('./src/push/payload.js');
+    const { fcmMessageBody } = serverRequire('./src/push/fcm.js');
+    const { apnsRequest } = serverRequire('./src/push/apns.js');
+    const dmNote = notificationFor(messagePayload(offlineDm.message, bob.id));
+    const channelNote = notificationFor(messagePayload(cm.message, bob.id));
+    const callNote = notificationFor(callPayload({ callerId: alice.id }));
+    const pushFixture = (file, provider, description, value, trigger) => {
+      raw[file] = value;
+      manifest[file] = { kind: 'push', provider, description, trigger };
+    };
+    pushFixture('push/fcm.message.direct.json', 'fcm', 'Тело запроса FCM v1 о личном сообщении. Приложение получает message.data (все значения — строки): targetId — собеседник (автор), messageId — id сообщения. Текста и имени нет — приложение берёт их с сервера.',
+      fcmMessageBody(PUSH_FCM_TOKEN, dmNote), 'личное сообщение alice → bob, у bob нет сокета');
+    pushFixture('push/fcm.message.channel.json', 'fcm', 'Тело запроса FCM v1 о сообщении в канале: targetId — id канала.',
+      fcmMessageBody(PUSH_FCM_TOKEN, channelNote), 'сообщение в канале, у участника нет сокета');
+    pushFixture('push/fcm.call.json', 'fcm', 'Тело запроса FCM v1 о входящем звонке: высокий приоритет, ttl 30 с; data { type: "call", callerId }.',
+      fcmMessageBody(PUSH_FCM_TOKEN, callNote), 'call_offer сотруднику без сокета');
+    pushFixture('push/apns.message.direct.json', 'apns', 'Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.',
+      apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: dmNote, nowMs: BASE }), 'личное сообщение alice → bob, у bob нет сокета');
+    pushFixture('push/apns.message.channel.json', 'apns', 'Уведомление APNs о сообщении в канале.',
+      apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: channelNote, nowMs: BASE }), 'сообщение в канале, у участника нет сокета');
+    pushFixture('push/apns.call.json', 'apns', 'VoIP-уведомление PushKit о входящем звонке: topic <bundle>.voip, push-type voip, срок 30 с; payload { type: "call", callerId }.',
+      apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: callNote, nowMs: BASE }), 'call_offer сотруднику без сокета');
   } finally {
     for (const s of sockets) s.close();
     await server.close();

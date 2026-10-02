@@ -1,0 +1,13 @@
+{
+  "message": {
+    "token": "fcm-registration-token-EXAMPLE_0123456789:abcdefghijklmnop",
+    "data": {
+      "type": "call",
+      "callerId": "2"
+    },
+    "android": {
+      "priority": "HIGH",
+      "ttl": "30s"
+    }
+  }
+}

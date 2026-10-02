@@ -7,6 +7,7 @@ const AuditService = require('../services/audit.service');
 const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
+const PushService = require('../push/push.service');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -249,6 +250,10 @@ function originAllowed(req) {
 
 // Вызов, на который так и не ответили, перестаёт давать право «ответить».
 const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
+// Сколько помнить вызов через push, закончившийся до подключения вызываемого:
+// разбуженный телефон при входе получает call_end и сразу гасит экран звонка.
+const ENDED_PUSH_OFFER_TTL_MS = 60 * 1000;
+const NOT_ONLINE_REASON = 'Сотрудник сейчас не в сети';
 
 // Сообщения, которыми оператор управляет чужим компьютером. При доступе
 // «только просмотр» сервер их не пропускает: полагаться на то, что клиент
@@ -287,6 +292,24 @@ class WsServer {
     this.lastWake = new Map();
     this.wakeInFlight = new Set();
     this.socketsPerIp = new Map(); // ip -> число соединений
+    // Push-уведомления (задача 18) идут только тем, у кого нет ни одного
+    // сокета и не включено «Не беспокоить»: очередь перепроверяет это перед
+    // доставкой — получатель мог подключиться, пока задание ждало.
+    // Вызовы через push, закончившиеся до подключения вызываемого:
+    // calleeId -> Map(callerId -> { at, reason, senderName }).
+    this.endedPushOffers = new Map();
+    PushService.attachPresence({
+      isOnline: (userId) => this.isUserOnline(userId),
+      isDnd: (userId) => this.dndUsers.has(Number(userId)),
+      // Жив ли вызов, ради которого шлётся уведомление: снятый вызов не будит телефон.
+      callOffer: (callerId, calleeId) => {
+        const offer = this.pendingOffers.get(Number(callerId));
+        return offer && offer.viaPush && offer.targetId === Number(calleeId) && this.hasPendingOffer(Number(callerId), Number(calleeId))
+          ? { at: offer.at }
+          : null;
+      },
+      callUndeliverable: (callerId, calleeId) => this.pushCallUndeliverable(Number(callerId), Number(calleeId))
+    });
   }
 
   effectiveStatus(userId) {
@@ -537,15 +560,17 @@ class WsServer {
     }
     lane.pending += 1;
     const userAtArrival = this.socketUser.get(ws) || null;
-    const run = () => this.runFrame(ws, data, userAtArrival).finally(() => { lane.pending -= 1; });
+    const run = () => this.runFrame(ws, data, userAtArrival, { timeout: true }).finally(() => { lane.pending -= 1; });
     lane.tail = lane.tail.then(run, run);
   }
 
   // Обработчик обращается к двум базам и потому асинхронен. Отказ обещания без
   // перехвата завершает процесс Node — одно кривое сообщение роняло бы сервер
   // для всех. Зависший обработчик держит очередь сокета не дольше
-  // frameTimeoutMs.
-  runFrame(ws, data, userAtArrival = null) {
+  // frameTimeoutMs — таймер заводится только у кадров очереди (timeout):
+  // кадру вне очереди (rd_*, ICE, присутствие) держать нечего, и таймер на
+  // каждый такой кадр был бы лишней работой и ложным предупреждением.
+  runFrame(ws, data, userAtArrival = null, { timeout: withTimeout = false } = {}) {
     if (ws.revoked) return Promise.resolve();
     const work = Promise.resolve()
       .then(() => this.handleMessage(ws, data, userAtArrival))
@@ -556,6 +581,7 @@ class WsServer {
           : { type: 'error', message: 'Ошибка обработки запроса' };
         safeSend(ws, frame);
       });
+    if (!withTimeout) return work;
     let timer;
     const timeout = new Promise((resolve) => {
       timer = setTimeout(() => {
@@ -692,6 +718,10 @@ class WsServer {
 
       ws.send(JSON.stringify({ type: 'auth_success', user }));
       ws.send(JSON.stringify(this.wakeStateFor(user.id)));
+
+      // Телефон, разбуженный push-уведомлением о звонке, получает ждущий вызов
+      // по сокету — тем же кадром call_offer, что и при звонке онлайн.
+      this.replayPushedOffers(ws, user.id);
 
       // Получатель снова на связи: всё, что пришло ему, пока его не было,
       // теперь доставлено — и авторы, кто в сети, узнают об этом сразу.
@@ -935,13 +965,19 @@ class WsServer {
           return;
         }
         // Nobody is at the other end — tell the caller instead of ringing out.
+        // Unless the callee has a phone that a push can wake (задача 18):
+        // then the offer waits, and the phone receives it on connecting.
         if (!this.userSockets.get(targetUserId)?.size) {
-          ws.send(JSON.stringify({
-            type: 'call_unavailable',
-            targetUserId,
-            reason: 'Сотрудник сейчас не в сети'
-          }));
-          return;
+          if (await this.ringByPush(currentUser, targetUserId, msg)) return;
+          // Пока проверялись устройства, вызываемый мог подключиться — тогда обычный звонок.
+          if (!this.userSockets.get(targetUserId)?.size) {
+            ws.send(JSON.stringify({
+              type: 'call_unavailable',
+              targetUserId,
+              reason: NOT_ONLINE_REASON
+            }));
+            return;
+          }
         }
         this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now() });
       }
@@ -950,7 +986,14 @@ class WsServer {
       // вызов. Раньше «ответ» принимался от кого угодно и переписывал пару —
       // посторонний мог перехватить звук чужого разговора.
       if (type === 'call_answer') {
-        if (!this.hasPendingOffer(targetUserId, currentUser.id)) return;
+        // Ответ на вызов, которого уже нет (сброшен, истёк, не дождался
+        // подключения разбуженного телефона): отвечающему — call_end, чтобы он
+        // не держал экран разговора, в котором никого нет.
+        if (!this.hasPendingOffer(targetUserId, currentUser.id)) {
+          const ended = this.endedPushOffers.get(currentUser.id)?.get(targetUserId);
+          safeSend(ws, this.callEndFrame(targetUserId, ended?.reason || 'no_call', ended?.senderName));
+          return;
+        }
         this.pendingOffers.delete(targetUserId);
         this.setCallPair(currentUser.id, targetUserId);
       }
@@ -960,7 +1003,10 @@ class WsServer {
       // обрывал звук его текущего разговора.
       if (type === 'call_rejected' || type === 'call_end') {
         if (this.hasPendingOffer(targetUserId, currentUser.id)) this.pendingOffers.delete(targetUserId);
-        if (this.pendingOffers.get(currentUser.id)?.targetId === targetUserId) this.pendingOffers.delete(currentUser.id);
+        if (this.pendingOffers.get(currentUser.id)?.targetId === targetUserId) {
+          this.rememberEndedPushOffer(currentUser.id, 'cancelled');
+          this.pendingOffers.delete(currentUser.id);
+        }
         if (this.activeCalls.get(currentUser.id) === targetUserId) this.clearCallPair(currentUser.id);
       }
 
@@ -1277,6 +1323,7 @@ class WsServer {
     }
     const outgoing = this.pendingOffers.get(user.id);
     if (outgoing) {
+      this.rememberEndedPushOffer(user.id, 'connection_lost');
       this.pendingOffers.delete(user.id);
       this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
     }
@@ -1362,6 +1409,92 @@ class WsServer {
     }
 
     if (!duplicate && message.conversation_type === 'direct') this.markDeliveredIfOnline(message);
+    if (!duplicate) this.pushToOffline(message, recipients, senderId);
+  }
+
+  // Push-уведомление (только id) участникам без сокета и без «Не беспокоить».
+  // Доставка — в очереди PushService: рассылка её не ждёт и не падает из-за неё.
+  pushToOffline(message, recipients, senderId) {
+    try {
+      const offline = [...new Set(recipients.map(Number))]
+        .filter((id) => id !== senderId && !this.isUserOnline(id) && !this.dndUsers.has(id));
+      if (offline.length) PushService.notifyMessage(message, offline);
+    } catch (err) {
+      console.warn('[Push] постановка уведомлений не удалась:', err.message);
+    }
+  }
+
+  // Вызываемый не в сети: если у него есть устройство, которое будит push о
+  // звонке (FCM на Android, PushKit VoIP на iOS), вызов ждёт как обычный
+  // (pendingOffers, 2 минуты), а кадр call_offer доставится при входе
+  // (replayPushedOffers). Иначе — false, и вызывающий получает call_unavailable.
+  // Устройство считается, только если его токен жив (сеанс действует).
+  async ringByPush(caller, targetUserId, msg) {
+    let canRing = false;
+    try {
+      canRing = await PushService.canRing(targetUserId);
+    } catch (err) {
+      console.warn('[Push] проверка устройств для звонка не удалась:', err.message);
+    }
+    if (!canRing || this.userSockets.get(targetUserId)?.size) return false;
+    const at = Date.now();
+    const frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
+    this.pendingOffers.set(caller.id, { targetId: targetUserId, at, viaPush: true, frame });
+    this.endedPushOffers.get(targetUserId)?.delete(caller.id);
+    PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at });
+    return true;
+  }
+
+  callEndFrame(callerId, reason, senderName = null) {
+    const name = senderName || this.socketsOf(callerId)[0]?.full_name || null;
+    return { type: 'call_end', senderId: callerId, ...(name ? { senderName: name } : {}), reason };
+  }
+
+  // Вызов через push закончился, а вызываемый так и не подключился: запомнить
+  // ненадолго, чтобы разбуженный им телефон сразу погасил экран звонка.
+  rememberEndedPushOffer(callerId, reason) {
+    const offer = this.pendingOffers.get(callerId);
+    if (!offer || !offer.viaPush || this.isUserOnline(offer.targetId)) return;
+    const now = Date.now();
+    let byCaller = this.endedPushOffers.get(offer.targetId);
+    if (!byCaller) {
+      byCaller = new Map();
+      this.endedPushOffers.set(offer.targetId, byCaller);
+    }
+    byCaller.set(callerId, { at: now, reason, senderName: offer.frame?.senderName || null });
+    for (const [calleeId, map] of this.endedPushOffers) {
+      for (const [id, entry] of map) if (now - entry.at > ENDED_PUSH_OFFER_TTL_MS) map.delete(id);
+      if (!map.size) this.endedPushOffers.delete(calleeId);
+    }
+  }
+
+  // Очередь push не разбудила ни одно устройство вызываемого: вызывающему —
+  // call_unavailable, как если бы push не было, вызов снимается.
+  pushCallUndeliverable(callerId, calleeId) {
+    const offer = this.pendingOffers.get(callerId);
+    if (!offer || !offer.viaPush || offer.targetId !== calleeId || this.isUserOnline(calleeId)) return;
+    this.rememberEndedPushOffer(callerId, 'unavailable');
+    this.pendingOffers.delete(callerId);
+    this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+  }
+
+  // При входе вызываемого: ждущие вызовы через push — тем же кадром
+  // call_offer; закончившиеся до входа (сброшен, истёк, не разбудили) — call_end.
+  replayPushedOffers(ws, userId) {
+    for (const [callerId, offer] of [...this.pendingOffers]) {
+      if (!offer.viaPush || offer.targetId !== userId) continue;
+      if (this.hasPendingOffer(callerId, userId)) {
+        safeSend(ws, offer.frame);
+      } else {
+        this.rememberEndedPushOffer(callerId, 'timeout');
+        this.pendingOffers.delete(callerId);
+      }
+    }
+    const now = Date.now();
+    for (const [callerId, entry] of this.endedPushOffers.get(userId) || []) {
+      if (now - entry.at > ENDED_PUSH_OFFER_TTL_MS || this.pendingOffers.get(callerId)?.targetId === userId) continue;
+      safeSend(ws, this.callEndFrame(callerId, entry.reason, entry.senderName));
+    }
   }
 
   // Получатель личного сообщения на связи — «доставлено» ставится сразу.
