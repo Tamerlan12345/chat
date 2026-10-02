@@ -60,7 +60,7 @@ public actor WebSocketClient {
 
     // Heartbeat
     private var pingTask: Task<Void, Never>?
-    private let pingIntervalSeconds: TimeInterval = 30
+    private let pingIntervalSeconds: TimeInterval
 
     // Event Streams
     private var eventContinuation: AsyncStream<WSServerEvent>.Continuation?
@@ -73,12 +73,14 @@ public actor WebSocketClient {
         credentials: @escaping Credentials = { (KeychainManager.shared.serverUrl, KeychainManager.shared.authToken) },
         makeTransport: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) },
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
-        jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) }
+        jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) },
+        pingIntervalSeconds: TimeInterval = 30
     ) {
         self.credentials = credentials
         self.makeTransport = makeTransport
         self.sleep = sleep
         self.jitter = jitter
+        self.pingIntervalSeconds = pingIntervalSeconds
     }
 
     // MARK: - Streams
