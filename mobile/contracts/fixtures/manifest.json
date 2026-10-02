@@ -269,6 +269,12 @@
     "description": "Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.",
     "trigger": "личное сообщение alice → bob, у bob нет сокета"
   },
+  "push/apns.read.json": {
+    "kind": "push",
+    "provider": "apns",
+    "description": "Тихий background-push «read»: apns-push-type background, apns-priority 5, aps { content-available: 1 } без alert, apns-collapse-id r-<conversationType>-<targetId>; id — числа. Apple доставку не гарантирует — снятие «как получится».",
+    "trigger": "mark_read на компьютере; iPhone без сокета на переднем плане раньше получил push о сообщении этой переписки"
+  },
   "push/fcm.call.json": {
     "kind": "push",
     "provider": "fcm",
@@ -286,6 +292,12 @@
     "provider": "fcm",
     "description": "Тело запроса FCM v1 о личном сообщении. Приложение получает message.data (все значения — строки): targetId — собеседник (автор), messageId — id сообщения. Текста и имени нет — приложение берёт их с сервера.",
     "trigger": "личное сообщение alice → bob, у bob нет сокета"
+  },
+  "push/fcm.read.json": {
+    "kind": "push",
+    "provider": "fcm",
+    "description": "Тихий data-push «read» (multi-device.md §6): переписку прочитали на другом устройстве — снять показанные уведомления. data { type: \"read\", conversationType, targetId } (targetId — как у сообщения), android.priority NORMAL, collapse_key r-<conversationType>-<targetId>. Уведомление не показывать.",
+    "trigger": "mark_read на компьютере; телефону без сокета на переднем плане раньше уходил push о сообщении этой переписки"
   },
   "ws/announcement_acknowledged.json": {
     "kind": "ws",
@@ -419,6 +431,20 @@
     "event": "channel_message",
     "direction": "server->client",
     "trigger": "send_message conversationType=channel"
+  },
+  "ws/conversation_read.channel.json": {
+    "kind": "ws",
+    "description": "Вы прочитали канал на другом своём устройстве: lastReadId — новая позиция прочтения (id последнего сообщения канала), messageIds нет.",
+    "event": "conversation_read",
+    "direction": "server->client",
+    "trigger": "mark_read conversationType=channel с другого сокета того же сотрудника"
+  },
+  "ws/conversation_read.direct.json": {
+    "kind": "ws",
+    "description": "Вы прочитали личный диалог на ДРУГОМ своём устройстве: снять непрочитанное и показанные уведомления этой переписки. targetId — собеседник (с вашей точки зрения), messageIds — вновь прочитанные входящие, byUserId — вы, at — время (ISO). Отметившему сокету не приходит; приходит только когда что-то действительно прочитано.",
+    "event": "conversation_read",
+    "direction": "server->client",
+    "trigger": "mark_read conversationType=direct с другого сокета того же сотрудника"
   },
   "ws/direct_message.json": {
     "kind": "ws",

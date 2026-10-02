@@ -1,0 +1,51 @@
+{
+  "name": "17-viewing-ignored-while-away-everywhere",
+  "description": "Все сокеты в фоне/простое, на обоих «открыт» этот чат — никто не смотрит: компьютеру баннер, телефону push (его кадр без баннера).",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "away",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "desk"
+    ],
+    "quiet": [
+      "phone"
+    ]
+  }
+}

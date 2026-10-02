@@ -1,0 +1,45 @@
+{
+  "name": "06-phone-background-desktop-viewing",
+  "description": "Телефон в фоне с живым сокетом, на компьютере открыт этот чат — никому ничего, push на телефон не уходит.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": null
+      },
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "viewing",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "phone",
+      "desk"
+    ]
+  }
+}

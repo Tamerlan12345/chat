@@ -812,10 +812,16 @@ class MessageService {
         .prepare(`SELECT MAX(id) AS max_id FROM messages WHERE conversation_type = 'channel' AND target_id = ?`)
         .get(target);
       const maxId = maxIdRow?.max_id || 0;
+      // changed — позиция прочтения действительно сдвинулась (и сотрудник —
+      // участник канала): только тогда другим его устройствам уходит
+      // conversation_read. Пустая отметка не рассылается.
+      const member = db
+        .prepare('SELECT last_read_message_id FROM channel_members WHERE channel_id = ? AND user_id = ?')
+        .get(target, me);
 
       db.prepare('UPDATE channel_members SET last_read_message_id = ? WHERE channel_id = ? AND user_id = ?')
         .run(maxId, target, me);
-      return { lastReadId: maxId };
+      return { lastReadId: maxId, changed: Boolean(member) && Number(member.last_read_message_id || 0) < maxId };
     }
 
     // Только ещё не прочитанные. Раньше возвращалась вся история собеседника, и

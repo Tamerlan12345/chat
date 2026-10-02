@@ -102,10 +102,22 @@ function reasonOf(res) {
 /**
  * Заголовки apns-* и тело уведомления (без адреса и авторизации): сообщение —
  * alert с общей заглушкой и mutable-content (текст подставит расширение
- * уведомлений приложения); звонок — PushKit VoIP (<bundle>.voip).
+ * уведомлений приложения); звонок — PushKit VoIP (<bundle>.voip); «read» —
+ * тихий background-push (content-available, приоритет 5): приложение снимает
+ * показанные уведомления переписки. Apple тихие push не гарантирует.
  */
 function apnsRequest({ bundleId, notification, nowMs }) {
   const call = notification.kind === 'call';
+  if (notification.kind === 'read') {
+    const headers = {
+      'apns-topic': bundleId,
+      'apns-push-type': 'background',
+      'apns-priority': '5',
+      'apns-expiration': String(Math.floor(nowMs / 1000) + notification.ttlSeconds)
+    };
+    if (notification.collapseKey) headers['apns-collapse-id'] = notification.collapseKey;
+    return { headers, payload: { aps: { 'content-available': 1 }, ...notification.data } };
+  }
   const headers = {
     'apns-topic': call ? `${bundleId}.voip` : bundleId,
     'apns-push-type': call ? 'voip' : 'alert',

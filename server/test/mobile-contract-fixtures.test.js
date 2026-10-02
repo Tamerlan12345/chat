@@ -26,7 +26,7 @@ const CAPTURE = pathToFileURL(path.join(REPO, 'mobile/dev/capture-fixtures.mjs')
 const REQUIRED_WS_EVENTS = [
   'auth_success', 'auth_error', 'server_disconnect',
   'new_message', 'direct_message', 'channel_message',
-  'message_status_updated', 'messages_read', 'message_updated', 'message_deleted', 'message_cancelled',
+  'message_status_updated', 'messages_read', 'conversation_read', 'message_updated', 'message_deleted', 'message_cancelled',
   'user_typing', 'user_status_changed', 'user_created', 'user_updated',
   'channel_created', 'channel_deleted',
   'new_announcement', 'announcement_acknowledged',
@@ -58,7 +58,9 @@ const REQUIRED_HTTP = [
 // Что уходит через поставщиков push (задача 18): по форме на сообщение и звонок.
 const REQUIRED_PUSH = [
   'push/fcm.message.direct.json', 'push/fcm.message.channel.json', 'push/fcm.call.json',
-  'push/apns.message.direct.json', 'push/apns.message.channel.json', 'push/apns.call.json'
+  'push/apns.message.direct.json', 'push/apns.message.channel.json', 'push/apns.call.json',
+  // тихий «read» — снять уведомления, прочитанные на другом устройстве (multi-device.md §6)
+  'push/fcm.read.json', 'push/apns.read.json'
 ];
 
 function walk(dir, base = dir) {
@@ -72,10 +74,12 @@ function walk(dir, base = dir) {
 }
 
 // reducers/ — табличные векторы клиентского редьюсера доставки (delivery-state.md),
-// их пишут руками, а не снимают с сервера; проверяет их mobile-delivery-reducer.test.js.
+// notify/ — векторы решения об уведомлении (multi-device.md); их пишут руками,
+// а не снимают с сервера; проверяют их mobile-delivery-reducer.test.js и
+// notify-decision.test.js.
 function committedFiles() {
   return fs.existsSync(FIXTURES)
-    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json' && !f.startsWith('reducers/'))
+    ? walk(FIXTURES).filter((f) => f.endsWith('.json') && f !== 'manifest.json' && !f.startsWith('reducers/') && !f.startsWith('notify/'))
     : [];
 }
 
@@ -109,9 +113,12 @@ test('every required push payload fixture is committed and carries ids only', ()
     const value = JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'utf8'));
     const data = f.startsWith('push/fcm.') ? value.message.data : value.payload;
     const { aps, ...ids } = data;
-    const allowed = ids.type === 'call' ? ['type', 'callerId', 'callId'] : ['type', 'conversationType', 'targetId', 'messageId'];
+    const allowed = ids.type === 'call' ? ['type', 'callerId', 'callId']
+      : ids.type === 'read' ? ['type', 'conversationType', 'targetId']
+        : ['type', 'conversationType', 'targetId', 'messageId'];
     for (const k of Object.keys(ids)) assert.ok(allowed.includes(k), `${f}: unexpected field ${k} (only ids may pass through Google/Apple)`);
-    if (aps) assert.deepStrictEqual(aps.alert, { body: 'Новое сообщение' }, `${f}: alert must be the generic placeholder`);
+    if (aps && ids.type === 'read') assert.deepStrictEqual(aps, { 'content-available': 1 }, `${f}: read is silent (no alert, no sound)`);
+    else if (aps) assert.deepStrictEqual(aps.alert, { body: 'Новое сообщение' }, `${f}: alert must be the generic placeholder`);
   }
 });
 

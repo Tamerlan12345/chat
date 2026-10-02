@@ -72,11 +72,13 @@ async function readError(res) {
 /**
  * Тело запроса FCM v1: только data (значения — строки, требование FCM) и
  * параметры доставки Android. Блока notification нет: уведомление с текстом
- * собирает само приложение, забрав текст с нашего сервера.
+ * собирает само приложение, забрав текст с нашего сервера. «read» (снять
+ * показанное уведомление) — обычный приоритет: уведомления он не показывает, а
+ * высокий приоритет без уведомления Android понижает приложению.
  */
 function fcmMessageBody(token, notification) {
   const data = Object.fromEntries(Object.entries(notification.data).map(([k, v]) => [k, String(v)]));
-  const android = { priority: 'HIGH', ttl: `${notification.ttlSeconds}s` };
+  const android = { priority: notification.kind === 'read' ? 'NORMAL' : 'HIGH', ttl: `${notification.ttlSeconds}s` };
   if (notification.collapseKey) android.collapse_key = notification.collapseKey;
   return { message: { token, data, android } };
 }
