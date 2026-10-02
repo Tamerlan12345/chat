@@ -1,4 +1,4 @@
-const { getDatabase, withChangeSeq, getSyncState } = require('../db');
+const { getDatabase, foldText, withChangeSeq, getSyncState } = require('../db');
 const UserService = require('./user.service');
 const SettingsService = require('./settings.service');
 
@@ -851,12 +851,13 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.is_deleted = 0 AND m.text LIKE ? ESCAPE '\\' AND ${VISIBLE_TO_USER_SQL}
+        WHERE m.is_deleted = 0 AND fold_text(m.text) LIKE ? ESCAPE '\\' AND ${VISIBLE_TO_USER_SQL}
         ORDER BY m.id DESC LIMIT 30
       `)
       // % и _ в строке поиска — буквально, а не шаблон: «100%» ищет «100%», а
-      // строка из сотни «%» не превращается в дорогой перебор (Р4-10).
-      .all(`%${escapeLike(String(query))}%`, me, me, me);
+      // строка из сотни «%» не превращается в дорогой перебор (Р4-10). Обе
+      // стороны свёрнуты (foldText): кириллица — без учёта регистра, «ё» = «е».
+      .all(`%${escapeLike(foldText(String(query)))}%`, me, me, me);
 
     return this.attachSenders(rows);
   }

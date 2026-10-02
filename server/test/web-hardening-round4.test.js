@@ -246,6 +246,26 @@ test('поиск: % и _ ищутся буквально, длинная стр�
   assert.ok(limited, 'после 30 поисков в минуту — 429');
 });
 
+// SQLite LIKE сравнивает без учёта регистра только ASCII: «отчёт» не находил
+// «Отчёт». Мобильный поиск (задача 21) ищет кириллицей — регистр и «ё» не
+// должны мешать, а % и _ по-прежнему буквальные.
+test('поиск: кириллица без учёта регистра, «ё» равна «е», шаблонные символы буквальны', async () => {
+  const bobId = people.w4_bob.id;
+  const send = (text) => api('POST', `/api/messages/direct/${bobId}`, { token: people.w4_carol.token, ip: '198.51.100.8', body: { text } });
+  assert.strictEqual((await send('Квартальный ОТЧЁТ по Ёлкам готов')).status, 201);
+  assert.strictEqual((await send('Скидка 50% для отдела')).status, 201);
+  const search = async (q) => {
+    const res = await api('GET', `/api/messages/search?q=${encodeURIComponent(q)}`, { token: people.w4_carol.token, ip: '198.51.100.8' });
+    assert.strictEqual(res.status, 200, res.text);
+    return res.json.map((m) => m.text);
+  };
+  assert.deepStrictEqual(await search('отчёт'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('КВАРТАЛЬНЫЙ'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('отчет по елкам'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('СКИДКА 50%'), ['Скидка 50% для отдела']);
+  assert.deepStrictEqual(await search('50_'), [], '_ по-прежнему не шаблон');
+});
+
 // ── Регистрация (Р4-13, Р4-16) ─────────────────────────────────────────────
 
 test('регистрация: при 200 ожидающих заявках новая получает 429', async () => {
