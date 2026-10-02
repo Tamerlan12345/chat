@@ -52,7 +52,9 @@ const TABLES = {
       metadata_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT,
-      is_deleted INTEGER DEFAULT 0
+      is_deleted INTEGER DEFAULT 0,
+      client_msg_id TEXT,              -- ключ идемпотентности отправки (уникален на отправителя)
+      change_seq INTEGER               -- номер последнего изменения: курсор /api/sync
     )`,
   message_statuses: `
     CREATE TABLE IF NOT EXISTS message_statuses (
@@ -115,8 +117,41 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_messages_direct ON messages(conversation_type, sender_id, target_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(conversation_type, target_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_message_history_message ON message_history(message_id)`
+  `CREATE INDEX IF NOT EXISTS idx_message_history_message ON message_history(message_id)`,
+  // Идемпотентность отправки: один client_msg_id — одно сообщение, но только
+  // в пределах отправителя. Чужой id не совпадёт с вашим ни при каком угадывании.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg ON messages(sender_id, client_msg_id) WHERE client_msg_id IS NOT NULL`,
+  // Курсор синхронизации: каждое изменение строки получает следующий номер.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`
 ];
+
+// Колонки, добавленные к messages уже после первых установок. CREATE TABLE IF
+// NOT EXISTS существующую таблицу не меняет, поэтому они доводятся здесь, на
+// месте, при каждом открытии базы (повторно — без последствий).
+const MESSAGE_COLUMNS_ADDED = [
+  ['client_msg_id', 'TEXT'],
+  ['change_seq', 'INTEGER']
+];
+
+/**
+ * Доводит messages до текущей схемы. Новым колонкам нужен один шаг заполнения:
+ * change_seq у строк, которых ещё не было при его появлении, ставится по
+ * возрастанию id и ВЫШЕ уже выданных номеров — так курсор синхронизации не
+ * пропустит ни одну строку. updated_at не заполняется намеренно: настольный
+ * клиент по непустому updated_at рисует «Изменено», и заполнение пометило бы
+ * отредактированной всю историю.
+ */
+function migrateMessages(db) {
+  const present = new Set(db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name));
+  for (const [name, type] of MESSAGE_COLUMNS_ADDED) {
+    if (!present.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
+  }
+  const pending = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE change_seq IS NULL').get();
+  if (Number(pending?.n || 0) > 0) {
+    const max = Number(db.prepare('SELECT COALESCE(MAX(change_seq), 0) AS m FROM messages').get().m);
+    db.prepare('UPDATE messages SET change_seq = id + ? WHERE change_seq IS NULL').run(max);
+  }
+}
 
 let dbInstance = null;
 
@@ -145,6 +180,7 @@ function closeDatabase() {
 
 function initSchema(db) {
   for (const ddl of Object.values(TABLES)) db.exec(ddl);
+  migrateMessages(db);
   for (const ddl of INDEXES) db.exec(ddl);
 }
 
