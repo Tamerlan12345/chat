@@ -247,6 +247,15 @@ Worktree `m-ios`. Depends on Task 6.
 - `#Preview` for every screen with mock repositories.
 - Extend `ScreenshotTourTests` to capture every screen light/dark and at an accessibility text size.
 - Acceptance: green CI; screenshots attached; report lists before/after per screen.
+- **Extended 2026-10-02:** also implement the design brief section «UI layer v2» in full on iOS:
+  - the "message lands" focal sequence;
+  - the zoom/matched transition inbox → chat;
+  - keyboard glued via `safeAreaInset` + `.scrollDismissesKeyboard(.interactively)`;
+  - the four-plane depth model with system materials;
+  - all 15 visual components with `#Preview`, including the spot illustrations as SwiftUI `Shape`s;
+  - the delight moments and Reduce Motion fallbacks.
+  
+  Record the simulator videos listed in the brief in CI.
 
 ### Task 8: Android — toolchain, Navigation 3, DI, lifecycle fixes (F0/F1)
 
@@ -335,6 +344,18 @@ Worktree `m-integration`. Depends on Task 13. Source: `mobile/contracts/delivery
 - Update `ws-protocol.md`, `delivery-state.md` (use the new signals when present; keep the old fallbacks), the reference reducer, vectors (new vectors for each signal; all existing vectors still pass), fixtures (`--write`), and the Task 13 deferred minors (persisted cancelled-key set; hide messages with a pending delete op).
 - TDD; full `npm test` green.
 
+### Task 17: Android — UI layer v2 (transitions, keyboard, depth, visual components)
+
+Worktree `m-android`. Depends on Task 9. Implement the design brief section «UI layer v2» in full on Android:
+- motion thesis, with the "message lands" focal sequence and shared-element inbox → chat via Navigation 3 + `SharedTransitionLayout`;
+- keyboard glued to the composer with animated IME insets, `reverseLayout`, `imeNestedScroll` interactive dismiss, and a growing composer;
+- the four-plane depth model with lift-on-scroll top bars;
+- all 15 visual components, as a `ui/components` library with Compose previews, including authored vector spot illustrations as `ImageVector`s;
+- the delight moments;
+- Reduce-motion fallbacks.
+
+Acceptance: the screen recordings listed in the brief, captured on `emulator-5554` against the dev stand, plus Compose UI tests for SwipeToReply threshold, ContextMenu actions, JumpToLatestPill visibility rule, and ConnectionBanner states. Android command + androidTest green.
+
 ### Task 14: iOS — Wave 2 messaging core (outbox, realtime, chat)
 
 Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/delivery-state.md` on iOS: a Swift reducer that passes every vector in `mobile/contracts/fixtures/reducers/` (table-driven XCTest reading the JSON), a SwiftData-backed durable outbox + conversation cache, an effects executor (WS send, HTTP flush, timers, persist barrier, sync chain via `/api/sync`, 410 resync), reconnect algorithm, composer cleared only after durable enqueue, visible queued/sending/sent/delivered/read/failed states with retry/cancel per the design brief's motion grammar, history pagination (`beforeId`), and chat polish (reply, edit/delete confirmation). Screenshots of offline send → reconnect in CI against the dev stand.
@@ -343,5 +364,5 @@ Worktree `m-ios`. Depends on Tasks 7 and 16. Implement `mobile/contracts/deliver
 
 Worktree `m-android`. Depends on Tasks 9 and 16. Same as Task 14 on Android: Kotlin reducer passing every vector (JUnit reading the JSON), Room-backed outbox + cache, effects executor with WorkManager for background flush, `/api/sync` chain + 410 resync, composer rules, visible delivery states with retry/cancel and motion, history paging, reply/edit/delete confirmation. Emulator evidence: airplane mode send → restart → reconnect → exactly one delivery seen from bob's session.
 
-> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 15; Integration 3 → 4 → 5 → 13 → 16; QA 10 after Wave 1.
+> Execution order per lane: iOS 1 → 6 → 11 → 7 → 14; Android 2 → 8 → 12 → 9 → 17 → 15; Integration 3 → 4 → 5 → 13 → 16; QA 10 after Wave 1.
 > Waves 2–5 (outbox/realtime, attachments/announcements/profile/calls, contacts/search/push, release) are appended as Tasks 13+ after the Wave 1 gate, in the same structure.

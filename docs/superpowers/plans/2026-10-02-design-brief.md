@@ -92,3 +92,137 @@ loading (skeleton), empty (icon + one sentence + action), error (message + «П�
 - Android: `adb exec-out screencap` on `emulator-5554` light/dark + `font_scale 2.0` (emulator evidence; say so).
 - Native platforms skip the impeccable web detector; the finish review checks against this brief, `ios.md` and `android.md` platform references.
 - After both platforms pass, document the built system in `DESIGN.md` (documenter step).
+
+---
+
+# UI layer v2 — transitions, keyboard, depth, visual components (owner request 2026-10-02)
+
+Owner: «полностью улучши UI слой — переходы, открытие клавиатуры, наслоенность; добавь визуалы и компоненты; удобство и лучшая работа системы». Produced with impeccable `animate` + `delight` + `layout` (Operate mode, native platforms: system motion first, brand in the open layer).
+
+## Motion thesis
+
+- **Focal moment (authored, product-specific): "the message lands".** Principle #1 is *never lose a message*, so the one sequence we author is the life of an own message:
+  - The composer text lifts into its bubble: ≈240 ms, decelerate `cubic-bezier(.16,1,.3,1)` / spring damping 0.85.
+  - The delivery glyph *draws* itself through ⏱ → ✓ → ✓✓ → ✓✓ indigo: stroke-draw 160 ms per state, crossfade between states.
+  - Failed: the glyph becomes a red ⟲ with a single 4-pt shake and a warning haptic.
+  - This is the product's signature; nothing else gets equal flourish.
+- **Continuity:**
+  - Inbox row → chat: the avatar and name travel into the chat header.
+    - iOS: `matchedTransitionSource` + `.navigationTransition(.zoom)` on iOS 18+, push as the fallback.
+    - Android: Navigation 3 shared element via `SharedTransitionLayout` + `sharedElement` for avatar/name; fade-through for the rest.
+  - Back reverses exactly.
+  - Sheets rise from the bottom with a scrim fade (iOS system sheet; Android `ModalBottomSheet`).
+- **Feedback:**
+  - Press: 0.97 scale (iOS) / ripple (Android), plus a 120 ms `primary-soft` row highlight.
+  - Unread pill: numeric roll.
+  - Typing: dots wave.
+  - «Ознакомлен»: check draw + success haptic.
+- **Budget:**
+  - At most one shared-element transition at a time.
+  - No blur animations on Android < 12.
+  - List item animations only via stable keys (`animateItem()`, SwiftUI `.transition` on identity).
+  - No infinite loops except typing dots and the call ring; both stop when offscreen.
+  - Target 60/120 fps; profile on each device class.
+- **Reduce Motion / Remove animations:**
+  - shared elements → crossfade 150 ms;
+  - lift → fade;
+  - glyph draw → instant swap;
+  - shake → colour only;
+  - haptics stay.
+
+## Keyboard (IME) — glued, never jumps
+
+- The composer is pinned to the keyboard and moves **frame-synchronously** with it.
+  - **Android:**
+    - `enableEdgeToEdge`;
+    - `Modifier.imePadding()` on the composer container, driven by animated `WindowInsets.ime` (API 30+ `WindowInsetsAnimation`);
+    - message list with `reverseLayout = true`, so the newest message stays anchored above the composer while the keyboard opens;
+    - `Modifier.imeNestedScroll()` for **interactive dismiss** by dragging the list down;
+    - no `adjustResize` jumps.
+  - **iOS:**
+    - composer in `.safeAreaInset(edge: .bottom)`;
+    - list with `.defaultScrollAnchor(.bottom)` and `.scrollDismissesKeyboard(.interactively)`;
+    - no manual keyboard-notification offsets.
+- Opening the keyboard scrolls the conversation only if the user was already at the bottom. If they were scrolled up, the «↓ N новых» pill floats above the composer.
+- The composer grows smoothly from 1 to 6 lines (height animates with a spring), then scrolls internally. The attach button morphs into send when text appears (scale + crossfade, 150 ms).
+- Forms: focus moves Login → Password → «Войти» via IME actions. The active field always stays visible above the keyboard (Android `bringIntoViewRequester`; iOS `@FocusState` + `ScrollView` + `.scrollPosition`).
+
+## Depth model («наслоенность») — four planes from desktop tokens
+
+| Plane | Role | Light / Dark | iOS | Android |
+|---|---|---|---|---|
+| L0 frame | tab bar / rail | `#ececf1` / `#19191e` | `.bar` material over content | `NavigationBar`/`NavigationRail`, `surfaceContainer` |
+| L1 list | inbox, grouped lists | `#f4f4f7` / `#1e1e24` | grouped background token | `surface` |
+| L2 canvas | chat, forms | `#fcfcfd` / `#24242a` | plain background | canvas token |
+| L3 elevated | composer, sheets, menus, banners, sticky date pill | `#ffffff` / `#303038` + hairline | `.regularMaterial` / `.thinMaterial` | `surfaceContainerHigh` + tonal elevation; scrim `rgba(20,20,40,.34)` / `rgba(8,8,12,.64)` |
+
+- Elevation comes from tone plus a hairline, never heavy shadows.
+- The top bar is flat at rest and **lifts on scroll** (hairline + tone shift, 150 ms), so the user sees content passing underneath.
+- On iOS, content scrolls under translucent L0/L3 system materials. Android uses opaque tonal surfaces, with no fake blur.
+- Every overlay has a scrim and an obvious dismiss (swipe down / back).
+
+## Visual component library (same names on both platforms)
+
+1. **`BrandMark`** — the exact desktop C (done).
+2. **`Avatar`**
+   - Deterministic hue from the user id; initials, or the image when available.
+   - Presence dot with a 2-pt ring in the surface colour; the dot pulses softly while the person is typing.
+   - Channel avatar: slate tile with a `#` glyph.
+3. **`DeliveryGlyph`** — custom-drawn path with animated stroke for queued, sending, sent, delivered, read and failed.
+4. **`MessageBubble`**
+   - Grouping radii: first/middle/last, with the tail corner of 2 only on the first.
+   - Own: primary-soft + primary-line + accent-text. Incoming: card + border.
+   - Reply quote with a 2-pt indigo bar; edited label; failed row «Повторить / Удалить».
+5. **`TypingBubble`** — 3-dot wave with 0.2 s stagger; also used as the inbox preview line.
+6. **`UnreadPill` + `JumpToLatestPill`** («↓ N новых») — numeric roll, scale-in.
+7. **`DateSeparator`** — sticky L3 pill.
+8. **`ConnectionBanner`** — slides from under the bar:
+   - «Нет сети» (danger-soft);
+   - «Переподключение…» (warning-soft, dots);
+   - «Снова в сети» (success-soft, auto-collapses after 1.2 s).
+9. **`SkeletonRow` / `SkeletonBubble`** — slow 1.2 s shimmer, real row geometry so there is no layout shift on swap.
+10. **`EmptyState` with authored spot illustrations**
+    - Vector, 120 pt, primary + graphite line art with soft primary-soft fills; no gradients, no stock art.
+    - Inbox: two overlapping bubbles.
+    - Channels: a hash in a bubble.
+    - Announcements: a megaphone with a check.
+    - Offline: a cloud with a broken link.
+    - Search: a magnifier over an empty bubble.
+    - Each pairs one sentence with one action.
+11. **`SwipeToReply`** — dragging a bubble reveals an arrow that fills toward the threshold. Crossing it gives a light haptic tick; release starts a reply with the quote.
+12. **`MessageContextMenu`** — long-press lifts the bubble (scale 1.03) over a scrim with Ответить / Копировать / Изменить / Удалить.
+    - iOS: native `.contextMenu(menuItems:preview:)`.
+    - Android: anchored Material menu + lifted bubble.
+13. **`AcknowledgeButton`** — «Ознакомлен» → the check draws in, the button switches to the success state, success haptic.
+14. **`CallStage`**
+    - Dark full-screen.
+    - Breathing ring around the avatar.
+    - Live 5-bar level meter from audio RMS.
+    - 64-pt circular controls.
+15. **`AttachmentTile`**
+    - Image: dominant-colour placeholder + fade-in, upload progress ring, failure with retry.
+    - PDF: tile with glyph, size and an open action.
+
+## Delight thesis
+
+*Certainty, not fun.* The user should feel **sure**: that a message landed, that an order was acknowledged, that the app is back online. Delight lives only in four places:
+- the message-lands sequence;
+- the «Ознакомлен» stamp;
+- «Снова в сети»;
+- first-run empty states that orient.
+
+No confetti, no sounds, no mascot.
+
+## Acceptance (both platforms)
+
+- Screen recordings (Android `adb shell screenrecord`, iOS `xcrun simctl io booted recordVideo`) of:
+  - inbox → chat transition;
+  - keyboard open/close with interactive dismiss;
+  - send → delivered → read;
+  - failed → retry;
+  - swipe-to-reply;
+  - context menu;
+  - empty states;
+  - the connection-banner cycle.
+- Record each in light and dark, plus one with Reduce Motion.
+- No visible dropped frames during the keyboard animation or list inserts. Label the evidence as emulator/simulator.
