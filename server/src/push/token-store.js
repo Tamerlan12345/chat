@@ -161,6 +161,7 @@ module.exports = {
   removeForLogout,
   removeForDevice,
   rebindSession,
+  currentJti,
   forUser,
   get,
   deleteToken,

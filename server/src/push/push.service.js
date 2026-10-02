@@ -159,6 +159,8 @@ class PushService {
   }
 
   /** Входящий звонок сотруднику без сокета; offerAt — время вызова (окно звонка считается от него). */
+  // Группа доставки заводится сразу: если очередь переполнена и задание
+  // отброшено уже здесь, вызывающему всё равно приходит call_unavailable.
   notifyCall({ calleeId, callerId, offerAt = Date.now(), callId = null }) {
     if (!this.enabled) return;
     this.enqueue({
@@ -166,7 +168,8 @@ class PushService {
       kind: 'call',
       userId: Number(calleeId),
       payload: callPayload({ callerId, callId }),
-      call: { callerId: Number(callerId), calleeId: Number(calleeId), offerAt, expiresAt: offerAt + CALL_RING_MS }
+      call: { callerId: Number(callerId), calleeId: Number(calleeId), offerAt, expiresAt: offerAt + CALL_RING_MS },
+      group: { pending: 0, done: false }
     });
   }
 
@@ -220,9 +223,10 @@ class PushService {
   settle(job, outcome) {
     const group = job.group;
     if (!group || group.done) return;
+    // offerAt — какой именно вызов не дозвонился: у той же пары мог появиться новый.
     if (outcome === 'lost' && job.type === 'user') {
       group.done = true;
-      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId);
+      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerAt);
       return;
     }
     if (outcome !== 'lost') {
@@ -232,7 +236,7 @@ class PushService {
     group.pending -= 1;
     if (group.pending <= 0) {
       group.done = true;
-      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId);
+      this.presence.callUndeliverable(job.call.callerId, job.call.calleeId, job.call.offerAt);
     }
   }
 
@@ -283,12 +287,17 @@ class PushService {
   }
 
   async deliver(job) {
-    // Перед каждой попыткой: тот же владелец, тот же сеанс, сеанс жив.
+    // Перед каждой попыткой: тот же владелец, тот же сеанс, сеанс жив. Сеанс,
+    // продлённый между попытками (/auth/refresh, rebindSession), — тот же
+    // сеанс под новым jti: повтор идёт дальше и помнит уже новый jti. Пауза
+    // повтора (≤ 5 мин) короче памяти продлений (10 мин).
     const row = PushTokens.get(job.token);
-    if (!row || Number(row.user_id) !== job.userId || (row.session_jti || null) !== job.sessionJti) {
+    const sessionJti = job.sessionJti ? PushTokens.currentJti(job.userId, job.sessionJti) : null;
+    if (!row || Number(row.user_id) !== job.userId || (row.session_jti || null) !== sessionJti) {
       this.settle(job, 'lost');
       return;
     }
+    job.sessionJti = sessionJti;
     const user = await this.activeUser(job.userId);
     if (!user) {
       this.settle(job, 'lost');
