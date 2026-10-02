@@ -37,6 +37,25 @@ class LoginViewModelTest {
         submit()
     }
 
+    // --- submittable -----------------------------------------------------------------------------
+
+    @Test
+    fun aWhitespaceOnlyPasswordDoesNotEnableSignIn() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.onUsernameChange("alice")
+        vm.onPasswordChange("   ")
+        runCurrent()
+
+        assertFalse("the button and the submit guard share one predicate", vm.canSubmit.value)
+        vm.submit()
+        runCurrent()
+        assertEquals(emptyList<Pair<String, String>>(), auth.loginAttempts)
+
+        vm.onPasswordChange(" Secret-1 ")
+        runCurrent()
+        assertTrue(vm.canSubmit.value)
+    }
+
     // --- error mapping -------------------------------------------------------------------------
 
     @Test

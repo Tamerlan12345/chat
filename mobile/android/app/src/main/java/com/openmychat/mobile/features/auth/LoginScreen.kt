@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -124,6 +125,11 @@ fun LoginScreen(
     }
 
     LaunchedEffect(viewModel) { viewModel.onScreenShown() }
+    // The ViewModel drops the password after a sign-in attempt (e.g. a forced password change);
+    // the field follows, so it neither keeps showing nor resubmits it.
+    LaunchedEffect(viewModel) {
+        viewModel.password.collect { if (it.isEmpty()) password = "" }
+    }
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) onLoginSuccess()
     }
@@ -229,7 +235,8 @@ private fun BrandHeader(companyName: String, animate: Boolean, onIntroPlayed: ()
             style = MaterialTheme.typography.bodyMedium,
             color = CentyTheme.tokens.textSecondary,
             textAlign = TextAlign.Center,
-            maxLines = 2
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

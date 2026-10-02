@@ -180,6 +180,18 @@ class LoginScreenTest {
     }
 
     @Test
+    fun aForcedPasswordChangeClearsThePasswordFieldOnScreen() {
+        scripted.onLogin = { _, _ -> LoginResult.MUST_CHANGE_PASSWORD }
+        launch()
+
+        signIn(password = "Temp-Pass-1")
+        waitForText("Обязательная смена пароля")
+
+        // The ViewModel forgot the password; the field must not keep showing (or resubmitting) it.
+        composeRule.waitUntil(5_000) { renderedText(field("Пароль")).isEmpty() }
+    }
+
+    @Test
     fun thePasswordIsMaskedUntilRevealed() {
         launch()
         field("Пароль").performTextInput("Secret-1")
