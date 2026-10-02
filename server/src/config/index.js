@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 
 const ROOT_DIR = path.resolve(__dirname, '../../');
-const DATA_DIR = path.join(ROOT_DIR, 'data');
+// DATA_DIR переопределяет каталог данных (локальный стенд mobile/dev, изолированные запуски).
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, 'data');
 const DB_PATH = path.join(DATA_DIR, 'mychat.db');
 // Учётные записи живут отдельно от переписки. Когда задан DATABASE_URL —
 // в PostgreSQL; без него (локальная разработка и тесты) — в отдельном файле
