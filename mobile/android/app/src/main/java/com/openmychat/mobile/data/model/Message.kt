@@ -132,7 +132,11 @@ data class Message(
 
     /** Idempotency key chosen by the sending client; null for messages sent without one. */
     @SerialName("client_msg_id")
-    val clientMsgId: String? = null
+    val clientMsgId: String? = null,
+
+    /** Только в результатах `GET /api/messages/search`: имя канала сообщения. */
+    @SerialName("channel_name")
+    val channelName: String? = null
 )
 
 /** One page of `GET /api/sync`. [nextCursor] is opaque and must be sent back unchanged. */
