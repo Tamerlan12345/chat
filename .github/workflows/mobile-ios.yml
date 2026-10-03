@@ -55,6 +55,16 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl keychain "$udid" add-root-cert mobile/dev/certs/dev-ca.crt
           echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+      # Screen recording of the simulator during the UI tests (login, inbox, chat, profile).
+      # simctl writes an mp4 (h264) and only finalises it on SIGINT, see the stop step below.
+      - name: Start simulator screen recording
+        run: |
+          mkdir -p mobile/ios/build/video
+          nohup xcrun simctl io "$SIMULATOR_UDID" recordVideo --codec=h264 --force mobile/ios/build/video/ios-ui.mp4             > "$RUNNER_TEMP/recordvideo.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/recordvideo.pid"
+          disown || true
+          sleep 3
+          kill -0 "$(cat "$RUNNER_TEMP/recordvideo.pid")" && echo "Recording started (pid $(cat "$RUNNER_TEMP/recordvideo.pid"))"
       # Ad-hoc ("Sign to Run Locally") signing, no team needed: an unsigned simulator app has
       # no entitlements, so every Keychain write fails with errSecMissingEntitlement.
       - name: Run iOS simulator tests (ad-hoc signed)
@@ -75,6 +85,29 @@ jobs:
             CODE_SIGN_IDENTITY=- \
             CENTYCHAT_SERVER_URL=https://localhost:8443 \
             2>&1 | tee "$RUNNER_TEMP/xcodebuild-test.log"
+      - name: Stop simulator screen recording
+        if: always()
+        run: |
+          pid="$(cat "$RUNNER_TEMP/recordvideo.pid" 2>/dev/null || true)"
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -INT "$pid"
+            for _ in $(seq 1 60); do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+          fi
+          cat "$RUNNER_TEMP/recordvideo.log" || true
+          ls -l mobile/ios/build/video/ || true
+          file mobile/ios/build/video/ios-ui.mp4 || true
+          test -s mobile/ios/build/video/ios-ui.mp4
+      - name: Upload UI test video
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-ui-video
+          if-no-files-found: warn
+          retention-days: 7
+          path: mobile/ios/build/video/ios-ui.mp4
       # Compiler errors and failing tests as annotations and in the job summary.
       - name: Report build and test failures
         if: always()

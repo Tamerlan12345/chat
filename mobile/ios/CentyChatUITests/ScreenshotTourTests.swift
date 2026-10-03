@@ -56,6 +56,41 @@ final class ScreenshotTourTests: XCTestCase {
         }
     }
 
+    /// Walk-through for the screen recording in CI (artifact `ios-ui-video`): sign in, inbox,
+    /// open the dialog with Bob, back, the profile tab. Navigation is best-effort (no hard
+    /// waits on optional elements) so the recording never makes the run flaky.
+    func testSignedInWalkthroughForVideo() throws {
+        guard let standURL else {
+            throw XCTSkip("The dev stand is not running (CENTYCHAT_DEV_STAND_URL is not set).")
+        }
+        continueAfterFailure = false
+        let application = launchFreshInstall(server: standURL, appearance: .light)
+        XCTAssertTrue(loginScreen(of: application).waitForExistence(timeout: 15), "Login must open first.")
+        waitForAnimations()
+        signIn(application, username: "alice", password: "Alice-Dev-Stand-5271")
+        XCTAssertTrue(application.tabBars.firstMatch.waitForExistence(timeout: 30), "Alice must reach the tabs.")
+
+        let dialog = application.staticTexts["Боб Тестов"]
+        if dialog.waitForExistence(timeout: 30) {
+            pause(2)
+            dialog.tap()
+            pause(3)
+            let back = application.navigationBars.buttons.firstMatch
+            if back.exists { back.tap() }
+            pause(1)
+        }
+        let profileTab = application.tabBars.buttons["Профиль"]
+        if profileTab.exists {
+            profileTab.tap()
+            pause(2)
+        }
+        application.terminate()
+    }
+
+    private func pause(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
     // MARK: - Tour
 
     private func runLoginTour(appearance: XCUIDevice.Appearance, suffix: String, contentSize: String? = nil) {
