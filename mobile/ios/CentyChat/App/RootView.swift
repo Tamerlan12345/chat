@@ -3,6 +3,7 @@ import SwiftUI
 /// Chooses the top-level screen from the session phase and hosts app-wide presentations.
 public struct RootView: View {
     @Environment(AppContainer.self) private var container
+    @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
@@ -29,6 +30,17 @@ public struct RootView: View {
         }
         .task {
             await session.bootstrap()
+        }
+        // App on screen — «В сети», in the background — «Отошёл»; .inactive is transient.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            switch phase {
+            case .active:
+                container.presence.sceneDidBecomeActive()
+            case .background:
+                container.presence.sceneDidEnterBackground()
+            default:
+                break
+            }
         }
         .fullScreenCover(isPresented: Binding(
             get: { calls.activeCall != nil },

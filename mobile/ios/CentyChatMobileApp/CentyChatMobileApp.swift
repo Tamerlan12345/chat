@@ -4,6 +4,7 @@ import SwiftUI
 /// The legacy SwiftPM entry point remains excluded from this target.
 @main
 struct CentyChatMobileApp: App {
+    @UIApplicationDelegateAdaptor(CentyAppDelegate.self) private var appDelegate
     @State private var container: AppContainer
 
     init() {
@@ -12,7 +13,9 @@ struct CentyChatMobileApp: App {
             try? KeychainManager.shared.resetForUITesting()
         }
 #endif
-        _container = State(initialValue: AppContainer.live())
+        let container = AppContainer.live()
+        PushRouter.shared.notifications = container.notifications
+        _container = State(initialValue: container)
     }
 
     var body: some Scene {

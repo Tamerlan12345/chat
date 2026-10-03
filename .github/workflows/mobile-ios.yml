@@ -62,6 +62,7 @@ jobs:
           # xcodebuild forwards TEST_RUNNER_* variables to the test processes (prefix stripped).
           TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
         run: |
+          set -o pipefail
           mkdir -p mobile/ios/build
           xcodebuild \
             -project mobile/ios/CentyChat.xcodeproj \
@@ -72,10 +73,16 @@ jobs:
             clean test \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY=- \
-            CENTYCHAT_SERVER_URL=https://localhost:8443
+            CENTYCHAT_SERVER_URL=https://localhost:8443 \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-test.log"
+      # Compiler errors and failing tests as annotations and in the job summary.
+      - name: Report build and test failures
+        if: always()
+        run: python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-test.log" mobile/ios/build/CentyChat.xcresult "iOS simulator tests"
       - name: Dev stand log
         if: always()
-        run: tail -n 200 "$RUNNER_TEMP/centy-stand.log" || true
+        # The seed passwords are dev-only, but the CI log never echoes them.
+        run: tail -n 200 "$RUNNER_TEMP/centy-stand.log" | sed -E 's#^( +(Users +:)? +[a-z]+ +/ ).*$#\1***#' || true
       - name: Upload iOS test result bundle
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -103,6 +110,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build Release for the simulator with a server override attempt
         run: |
+          set -o pipefail
           xcodebuild \
             -project mobile/ios/CentyChat.xcodeproj \
             -scheme CentyChat \
@@ -112,7 +120,11 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/release" \
             build \
             CODE_SIGNING_ALLOWED=NO \
-            CENTYCHAT_SERVER_URL=https://override.invalid
+            CENTYCHAT_SERVER_URL=https://override.invalid \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-release.log"
+      - name: Report Release build failures
+        if: always()
+        run: python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-release.log" "" "iOS Release build"
       - name: Verify the Release binary is locked to production
         run: bash mobile/ios/scripts/verify-release-server-lock.sh "$RUNNER_TEMP/release/Build/Products/Release-iphonesimulator/CentyChat.app" https://override.invalid
 

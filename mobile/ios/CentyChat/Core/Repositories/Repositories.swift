@@ -72,6 +72,8 @@ public protocol RealtimeRepository: Sendable {
     func connect() async
     func disconnect() async
     func send(_ message: WSClientMessage) async
+    /// Sends only on a socket the server has authenticated; false when it was not sent.
+    func sendIfAuthenticated(_ message: WSClientMessage) async -> Bool
     func sendAudioFrame(_ frame: Data) async
     func events() async -> AsyncStream<WSServerEvent>
     func incomingAudio() async -> AsyncStream<AudioRelayEngine.DecodedAudioFrame>

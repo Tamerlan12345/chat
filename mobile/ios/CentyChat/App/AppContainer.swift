@@ -14,6 +14,8 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let calls: CallStore
     public let profile: ProfileStore
     public let chats: ChatRegistry
+    public let presence: PresenceController
+    public let notifications: MessageNotificationsStore
 
     init(
         server: any ServerRepository,
@@ -23,7 +25,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         realtime realtimeRepository: any RealtimeRepository,
         environment: ServerEnvironment,
         audioRelayFactory: (@MainActor (Int64) -> AudioCallRelay)? = nil,
-        deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice
+        deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice,
+        handshake: RealtimeHandshakeState = RealtimeHandshakeState(deviceId: { nil }),
+        startsInBackground: Bool = false,
+        notificationCenter: any LocalNotificationCenter = SilentNotificationCenter()
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -39,14 +44,27 @@ public final class AppContainer: SessionLifecycleDelegate {
             realtime: realtime,
             audioRelayFactory: audioRelayFactory ?? CallStore.makeProductionAudioRelay(repository: realtimeRepository)
         )
-        let profile = ProfileStore(realtime: realtime, session: session)
+        let presence = PresenceController(
+            realtime: realtime,
+            handshake: handshake,
+            startsInBackground: startsInBackground,
+            currentUserId: { [weak session] in session?.currentUser?.id }
+        )
+        let profile = ProfileStore(realtime: realtime, session: session, presence: presence)
+        let notifications = MessageNotificationsStore(
+            center: notificationCenter,
+            session: session,
+            conversations: conversations,
+            presence: presence
+        )
         let chats = ChatRegistry { conversation in
             ChatStore(
                 conversation: conversation,
                 repository: chat,
                 realtime: realtime,
                 session: session,
-                conversations: conversations
+                conversations: conversations,
+                presenceController: presence
             )
         }
 
@@ -57,14 +75,18 @@ public final class AppContainer: SessionLifecycleDelegate {
         self.calls = calls
         self.profile = profile
         self.chats = chats
+        self.presence = presence
+        self.notifications = notifications
 
         session.delegate = self
         realtime.register(session)
+        realtime.register(presence)
         realtime.register(conversations)
         realtime.register(chats)
         realtime.register(announcements)
         realtime.register(calls)
         realtime.register(profile)
+        realtime.register(notifications)
         realtime.audioSink = { [weak calls] frame in
             calls?.receiveAudio(frame)
         }
@@ -80,7 +102,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             chat: LiveChatRepository(client: client),
             announcements: LiveAnnouncementsRepository(client: client),
             realtime: LiveRealtimeRepository(client: WebSocketClient.shared),
-            environment: .current
+            environment: .current,
+            handshake: .shared,
+            startsInBackground: UIApplication.shared.applicationState == .background,
+            notificationCenter: UserNotificationCenterBridge()
         )
     }
 
@@ -112,6 +137,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         announcements.reset()
         chats.reset()
         profile.reset()
+        presence.reset()
+        notifications.reset()
         calls.stopCallSession()
     }
 }
@@ -127,5 +154,7 @@ extension View {
             .environment(container.announcements)
             .environment(container.calls)
             .environment(container.profile)
+            .environment(container.presence)
+            .environment(container.notifications)
     }
 }

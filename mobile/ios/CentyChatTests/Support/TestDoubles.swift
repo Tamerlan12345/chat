@@ -280,6 +280,33 @@ actor FakeRealtimeRepository: RealtimeRepository {
         sent.append(message)
     }
 
+    /// Whether the fake socket has seen auth_success: authenticated-only frames are dropped otherwise.
+    private(set) var isAuthenticated = true
+
+    func setAuthenticated(_ value: Bool) {
+        isAuthenticated = value
+    }
+
+    func sendIfAuthenticated(_ message: WSClientMessage) -> Bool {
+        guard isAuthenticated else { return false }
+        sent.append(message)
+        return true
+    }
+
+    /// Sent frames as sorted-key JSON (`{"state":"online","type":"presence"}`).
+    var sentJSON: [String] {
+        sent.compactMap { message in
+            guard let data = message.toJSONData(),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let sorted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
+            return String(data: sorted, encoding: .utf8)
+        }
+    }
+
+    func clearSent() {
+        sent.removeAll()
+    }
+
     func sendAudioFrame(_ frame: Data) {}
 
     func events() -> AsyncStream<WSServerEvent> {
