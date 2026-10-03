@@ -62,13 +62,22 @@ function Test-CentyChatCopyDir {
 # Процессы, запущенные из папки (приложение и его дочерние процессы Chromium).
 function Get-CentyChatProcessesIn {
     param([string]$Dir)
+    # И папка, и путь процесса приводятся к одному виду: GetFullPath в Windows
+    # PowerShell раскрывает короткие имена 8.3 (C:\Users\RUNNER~1\... →
+    # C:\Users\runneradmin\...), а WMI отдаёт путь так, как процесс был
+    # запущен. Без этого процесс, запущенный по короткому пути (так выглядит
+    # %TEMP% у пользователей с длинным именем), не находился и не закрывался.
     $prefix = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
     $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
     if ($processes.Count -eq 0) {
         $processes = @(Get-WmiObject -Class Win32_Process -ErrorAction SilentlyContinue)
     }
-    @($processes |
-        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
+    @($processes | Where-Object {
+        $exePath = $_.ExecutablePath
+        if (-not $exePath) { return $false }
+        try { $exePath = [IO.Path]::GetFullPath($exePath) } catch { }
+        $exePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    })
 }
 
 # Закрывает приложение, запущенное из папки, как это делает и установщик

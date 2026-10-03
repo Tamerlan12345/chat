@@ -1859,6 +1859,10 @@ class WsServer {
     const offer = { targetId: targetUserId, at, seq, ws: callerWs };
     if (decision.push.length) {
       offer.viaPush = true;
+      // Устройства, которые будит push, на момент вызова: если поставщик отклонит
+      // токен и тот удалится, сокет этого устройства в фоне всё равно не звонит
+      // сам (иначе call_unavailable не придёт, а вызов повиснет).
+      offer.devices = devices;
       offer.frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
       this.endedPushOffers.get(targetUserId)?.delete(caller.id);
     }
@@ -1930,7 +1934,7 @@ class WsServer {
     const offer = this.pendingOffers.get(callerId);
     if (!offer || !offer.viaPush || offer.targetId !== calleeId) return;
     if (offerSeq !== undefined && offer.seq !== offerSeq) return;
-    if (this.callDecision(calleeId, callerId).ring.length) return;
+    if (this.callDecision(calleeId, callerId, offer.devices).ring.length) return;
     this.rememberEndedPushOffer(callerId, 'unavailable');
     this.pendingOffers.delete(callerId);
     // Сокеты в фоне получили кадр вызова — снять его.
