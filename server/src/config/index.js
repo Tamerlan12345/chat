@@ -294,5 +294,17 @@ module.exports = {
   // предел по install-id (проверка раунда 4, M7). Через boundedInt (M6).
   UPDATES_MAX_REQ_PER_MIN_PER_IP: boundedInt('UPDATES_MAX_REQ_PER_MIN_PER_IP', 6000, { min: 60, max: 10000000 }),
 
+  // Исходящая почта (SMTP). Пустые SMTP_HOST или SMTP_FROM — отправка отключена
+  // и честно сообщает об этом (см. services/mailer.service.js). Проверка TLS-
+  // сертификата не отключается ничем. SMTP_SECURE=true — неявный TLS (порт 465),
+  // иначе обязателен STARTTLS.
+  SMTP_HOST: (process.env.SMTP_HOST || '').trim(),
+  SMTP_PORT: boundedInt('SMTP_PORT', 587, { min: 1, max: 65535 }),
+  SMTP_SECURE: String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true',
+  SMTP_USER: (process.env.SMTP_USER || '').trim(),
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_FROM: (process.env.SMTP_FROM || '').trim(),
+  SMTP_REPLY_TO: (process.env.SMTP_REPLY_TO || '').trim(),
+
   SERVER_VERSION: '2026.1.0-pro'
 };
