@@ -83,7 +83,7 @@ final class ScreenshotTourTests: XCTestCase {
         }
         let profileTab = application.tabBars.buttons["Профиль"]
         if profileTab.exists {
-            profileTab.tap()
+            profileTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             pause(2)
         }
         application.terminate()
