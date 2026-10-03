@@ -76,8 +76,9 @@ final class ScreenshotTourTests: XCTestCase {
             // The label sits inside a row that XCUI may report as not hittable: tap by coordinate.
             dialog.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             pause(3)
-            let back = application.navigationBars.buttons.firstMatch
-            if back.exists { back.tap() }
+            // Interactive-pop swipe from the left edge: other nav bar buttons are not scrollable for XCUI.
+            let edge = application.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
+            edge.press(forDuration: 0.1, thenDragTo: application.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
             pause(1)
         }
         let profileTab = application.tabBars.buttons["Профиль"]
