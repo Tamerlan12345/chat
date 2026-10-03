@@ -304,8 +304,12 @@ test('install.ps1 поверх копии 1.0.0: на месте, приложе
   reg(['delete', `HKCU\\${REG_ROOT}`, '/f']);
   const l = sandboxLayout('e2e-legacy');
   stageScripts(l);
-  const legacy = path.join(l.programs, 'OpenMyChat Enterprise');
-  fs.mkdirSync(path.join(legacy, 'resources'), { recursive: true });
+  // Папка — в длинной форме пути: install.ps1 записывает в реестр и ярлыки
+  // путь после GetFullPath (он раскрывает 8.3, как RUNNER~1 в %TEMP% раннера CI),
+  // и сравнение с короткой формой падало бы не из-за ошибки установки.
+  const legacyShort = path.join(l.programs, 'OpenMyChat Enterprise');
+  fs.mkdirSync(path.join(legacyShort, 'resources'), { recursive: true });
+  const legacy = fs.realpathSync.native(legacyShort);
   fs.copyFileSync(PING, path.join(legacy, 'OpenMyChat Enterprise.exe'));
   fs.writeFileSync(path.join(legacy, 'resources', 'app.asar'), 'old');
   for (const dir of [l.desktop, l.menu]) makeShortcut(path.join(dir, 'OpenMyChat Enterprise.lnk'), path.join(legacy, 'OpenMyChat Enterprise.exe'));
