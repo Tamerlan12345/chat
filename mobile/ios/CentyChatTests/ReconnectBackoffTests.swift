@@ -117,7 +117,16 @@ final class ReconnectBackoffTests: XCTestCase {
         _ = try await harness.clock.waitForDelays(count: 1)
         await client.disconnect()
 
-        XCTAssertEqual(harness.sentFrames.first, .text(#"{"token":"secret-token","type":"auth"}"#).normalizedJSON)
+        // ws-protocol.md §auth: mobile clients must send device_id, and say platform and presence.
+        guard case .text(let text)? = harness.sentFrames.first,
+              let frame = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            return XCTFail("The first frame must be a JSON text frame")
+        }
+        XCTAssertEqual(frame["type"] as? String, "auth")
+        XCTAssertEqual(frame["token"] as? String, "secret-token")
+        XCTAssertEqual(frame["platform"] as? String, "ios")
+        XCTAssertEqual(frame["presence"] as? String, "online")
+        XCTAssertFalse((frame["device_id"] as? String ?? "").isEmpty)
     }
 }
 
