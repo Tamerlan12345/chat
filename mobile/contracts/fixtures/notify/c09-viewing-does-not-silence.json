@@ -1,0 +1,38 @@
+{
+  "name": "c09-viewing-does-not-silence",
+  "description": "Открытый чат со звонящим не глушит звонок: компьютер смотрит этот чат — звонит; телефон без сокета будит push.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "ring": [
+      "desk"
+    ],
+    "quiet": []
+  }
+}

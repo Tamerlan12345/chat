@@ -849,3 +849,210 @@ test('pushedChats: не больше 100 переписок на сотрудн�
   wsServer.forgetPushedChats(uid);
   assert.strictEqual(wsServer.pushedChats.get(uid), undefined);
 });
+
+// ══ Звонки по тому же правилу (multi-device.md §7, решение владельца 2026-10-03) ══
+
+const IOS_VOIP = (n) => n.toString(16).padStart(2, '0').repeat(32);
+async function voipToken(name, n, deviceId) {
+  const res = await api('POST', '/api/devices/push-token', { token: people[name].token, body: { platform: 'ios', kind: 'voip', token: IOS_VOIP(n), environment: 'sandbox', device_id: deviceId } });
+  assert.strictEqual(res.status, 200, res.text);
+}
+const callPushes = () => [...fcm.calls, ...apns.calls].filter((c) => c.notification.kind === 'call');
+const isOffer = (m) => m.type === 'call_offer';
+async function hangUp(alice, name) {
+  send(alice, { type: 'call_end', targetUserId: people[name].id });
+  await until(() => !wsServer.pendingOffers.has(people.alice.id) && !wsServer.activeCalls.has(people.alice.id));
+  wsServer.endedPushOffers.clear();
+}
+
+test('Звонок: компьютер простаивает, телефон в кармане — компьютер звонит, телефон будит push', async () => {
+  await androidToken('bob', 40, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'presence', state: 'away' });
+  await settle();
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await push.idle();
+  assert.deepStrictEqual(callPushes().map((c) => c.token), [ANDROID(40)], 'телефон разбужен, хотя компьютер на связи');
+  assert.ok(!alice.inbox.some((m) => m.type === 'call_unavailable'));
+  // Телефон проснулся (вход в фоне) — получает тот же вызов и отвечает.
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  const offer = await waitFor(phone, isOffer);
+  assert.strictEqual(offer.senderId, people.alice.id);
+  send(phone, { type: 'call_answer', targetUserId: people.alice.id });
+  await waitFor(alice, (m) => m.type === 'call_answer');
+  const ended = await waitFor(desk, (m) => m.type === 'call_end');
+  assert.strictEqual(ended.reason, 'answered_elsewhere', 'компьютер перестаёт звонить');
+  await hangUp(alice, 'bob');
+});
+
+test('Звонок: телефон и компьютер на переднем плане — звонят оба по сокету, push нет', async () => {
+  await androidToken('bob', 41, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android' });
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await waitFor(phone, isOffer);
+  await push.idle();
+  assert.deepStrictEqual(callPushes(), []);
+  await hangUp(alice, 'bob');
+});
+
+test('Звонок: открытый чат со звонящим не глушит звонок; push телефону без сокета', async () => {
+  await androidToken('bob', 42, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'viewing', conversationType: 'direct', targetId: people.alice.id });
+  await settle();
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await push.idle();
+  assert.strictEqual(callPushes().length, 1);
+  await hangUp(alice, 'bob');
+});
+
+test('Звонок: два телефона — тот, что на переднем плане, звонит по сокету, второй будит push; DND — call_unavailable без push', async () => {
+  await androidToken('bob', 43, 'bob-phone-1');
+  await voipToken('bob', 44, 'bob-phone-2');
+  const alice = await device('alice');
+  const p1 = await device('bob', { device_id: 'bob-phone-1', platform: 'android' });
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(p1, isOffer);
+  await push.idle();
+  assert.deepStrictEqual(callPushes().map((c) => c.token), [IOS_VOIP(44)]);
+  await hangUp(alice, 'bob');
+
+  fcm.calls.length = 0;
+  apns.calls.length = 0;
+  wsServer.dndUsers.add(people.bob.id);
+  clear(alice, p1);
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(alice, (m) => m.type === 'call_unavailable');
+  await push.idle();
+  assert.deepStrictEqual(callPushes(), []);
+  assert.ok(!p1.inbox.some(isOffer));
+});
+
+test('Звонок: тот же телефон с сокетом в фоне и токеном — кадр приходит, будит push; сбой push → call_unavailable и call_end сокету', async () => {
+  await androidToken('bob', 45, 'bob-phone');
+  const alice = await device('alice');
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(phone, isOffer);
+  await push.idle();
+  assert.deepStrictEqual(callPushes().map((c) => c.token), [ANDROID(45)]);
+  await hangUp(alice, 'bob');
+
+  // Push не доставлен, а сокет в фоне сам не звонит — вызывающему call_unavailable.
+  fcm.send = async (args) => { fcm.calls.push(args); return { status: 'invalid', reason: 'UNREGISTERED' }; };
+  clear(alice, phone);
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(alice, (m) => m.type === 'call_unavailable');
+  const end = await waitFor(phone, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'unavailable');
+  assert.ok(!wsServer.pendingOffers.has(people.alice.id));
+  wsServer.endedPushOffers.clear();
+});
+
+test('Звонок: push не доставлен, но компьютер звонит — вызов идёт дальше', async () => {
+  await androidToken('bob', 46, 'bob-phone');
+  fcm.send = async (args) => { fcm.calls.push(args); return { status: 'failed', reason: 'X' }; };
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'presence', state: 'away' });
+  await settle();
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await push.idle();
+  assert.strictEqual(fcm.calls.length, 1);
+  assert.ok(!alice.inbox.some((m) => m.type === 'call_unavailable'));
+  assert.ok(wsServer.pendingOffers.has(people.alice.id), 'вызов жив');
+  await hangUp(alice, 'bob');
+});
+
+test('Звонок: телефон без токена в фоне получает кадр и звонит; ни сокетов, ни устройств — call_unavailable', async () => {
+  const alice = await device('alice');
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(phone, isOffer);
+  assert.ok(!alice.inbox.some((m) => m.type === 'call_unavailable'));
+  await hangUp(alice, 'bob');
+  await close(phone);
+  clear(alice);
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  const un = await waitFor(alice, (m) => m.type === 'call_unavailable');
+  assert.strictEqual(un.targetUserId, people.bob.id);
+});
+
+test('Гонка: ответили на компьютере, пока push телефону в очереди, — push не уходит; телефон при входе гасит звонок', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  push.configure({ providers: { fcm, apns }, baseDelayMs: 20, concurrency: 1 });
+  await androidToken('bob', 47, 'bob-phone');
+  await androidToken('carol', 48, 'carol-phone');
+  // Единственный слот доставки занят чужим сообщением — звонок Бобу ждёт в очереди.
+  fcm.send = async (args) => {
+    fcm.calls.push(JSON.parse(JSON.stringify(args)));
+    if (args.notification.kind === 'message') await held;
+    return { status: 'ok' };
+  };
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(desk, { type: 'presence', state: 'away' });
+  await settle();
+  send(alice, { type: 'send_message', conversationType: 'direct', targetId: people.carol.id, text: 'Держит очередь', client_msg_id: 'md-race-1' });
+  await until(() => fcm.calls.length === 1);
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await until(() => push.queue.some((j) => j.kind === 'call'));
+  send(desk, { type: 'call_answer', targetUserId: people.alice.id });
+  await waitFor(alice, (m) => m.type === 'call_answer');
+  release();
+  await push.idle();
+  assert.deepStrictEqual(callPushes(), [], 'запоздалый push об отвеченном вызове отброшен');
+  // Телефон всё же проснулся (например, от прежнего push) — сразу гасит звонок.
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  const end = await waitFor(phone, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'answered_elsewhere');
+  assert.ok(!phone.inbox.some(isOffer));
+  assert.strictEqual(wsServer.activeCalls.get(people.bob.id), people.alice.id, 'разговор на компьютере не тронут');
+  await hangUp(alice, 'bob');
+});
+
+test('Звонок: вызывающий сбросил, пока телефон будили, — компьютер получает call_end, телефон при входе — один раз', async () => {
+  await androidToken('bob', 49, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await push.idle();
+  assert.strictEqual(callPushes().length, 1);
+  send(alice, { type: 'call_end', targetUserId: people.bob.id });
+  const deskEnd = await waitFor(desk, (m) => m.type === 'call_end');
+  assert.strictEqual(deskEnd.senderId, people.alice.id);
+  let phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  const end = await waitFor(phone, (m) => m.type === 'call_end');
+  assert.strictEqual(end.reason, 'cancelled');
+  await close(phone);
+  phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  assert.ok(await nothing(phone, (m) => m.type === 'call_end', 150), 'повторный вход телефона call_end не повторяет');
+  wsServer.endedPushOffers.clear();
+});
+
+test('Звонок: компьютер закрыли, пока телефон будят, — вызов не снят; телефон входит и отвечает', async () => {
+  await androidToken('bob', 50, 'bob-phone');
+  const alice = await device('alice');
+  const desk = await device('bob');
+  send(alice, { type: 'call_offer', targetUserId: people.bob.id });
+  await waitFor(desk, isOffer);
+  await close(desk);
+  await sleep(50);
+  assert.ok(!alice.inbox.some((m) => m.type === 'call_end'), 'вызывающему не сказали «связь потеряна»');
+  const phone = await device('bob', { device_id: 'bob-phone', platform: 'android', presence: 'away' });
+  await waitFor(phone, isOffer);
+  send(phone, { type: 'call_answer', targetUserId: people.alice.id });
+  await waitFor(alice, (m) => m.type === 'call_answer');
+  await hangUp(alice, 'bob');
+});

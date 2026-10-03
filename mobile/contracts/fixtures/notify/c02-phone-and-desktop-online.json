@@ -1,0 +1,40 @@
+{
+  "name": "c02-phone-and-desktop-online",
+  "description": "Телефон и компьютер на переднем плане — звонят оба по кадру, push не нужен.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "ring": [
+      "desk",
+      "phone"
+    ],
+    "quiet": []
+  }
+}

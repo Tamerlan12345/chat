@@ -1,0 +1,35 @@
+{
+  "name": "c01-desktop-idle-phone-in-pocket",
+  "description": "Компьютер простаивает (away, без push), у телефона с токеном нет сокета — компьютер звонит по кадру, телефон будит push.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "ring": [
+      "desk"
+    ],
+    "quiet": []
+  }
+}

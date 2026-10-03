@@ -275,6 +275,10 @@ const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
 // разбуженный телефон при входе получает call_end и сразу гасит экран звонка.
 const ENDED_PUSH_OFFER_TTL_MS = 60 * 1000;
 const NOT_ONLINE_REASON = 'Сотрудник сейчас не в сети';
+// Окно звонка через push (как срок уведомления у поставщика): пока оно не
+// закончилось, уход последнего сокета вызываемого не снимает вызов — его
+// телефон ещё может проснуться от push и ответить.
+const CALL_RING_MS = require('../push/payload').CALL_TTL_SECONDS * 1000;
 
 // Сообщения, которыми оператор управляет чужим компьютером. При доступе
 // «только просмотр» сервер их не пропускает: полагаться на то, что клиент
@@ -344,8 +348,10 @@ class WsServer {
     // во время проверки отменяет её — вызов не встаёт задним числом.
     this.offerAttempts = new Map();
     PushService.attachPresence({
-      // Для звонков: есть ли у вызываемого хоть один сокет.
-      isOnline: (userId) => this.isUserOnline(userId),
+      // Для звонков: каким устройствам вызываемого нужен push — тем же
+      // решением, что при вызове (decideCallNotification), с сокетами на
+      // момент проверки.
+      callPushTargets: (userId, callerId, devices) => this.callDecision(Number(userId), Number(callerId), devices).push,
       isDnd: (userId) => this.dndUsers.has(Number(userId)),
       // Для сообщений и «read»: какие устройства получают push — тем же
       // решением, что и при рассылке (notify-decision.js), с сокетами на
@@ -413,6 +419,18 @@ class WsServer {
       sockets: this.decisionSockets(userId),
       pushDevices: devices
     }).push;
+  }
+
+  // Решение о звонке (multi-device.md §7) с сокетами вызываемого сейчас.
+  // devices — устройства, которые будит звонок; без них — по таблице токенов.
+  callDecision(userId, callerId, devices = PushService.callDevicesSync(userId)) {
+    return NotifyDecision.decideCallNotification({
+      recipientId: userId,
+      dnd: this.dndUsers.has(userId),
+      call: { callerId },
+      sockets: this.decisionSockets(userId),
+      pushDevices: devices
+    });
   }
 
   readPushTargets(userId, devices) {
@@ -816,7 +834,11 @@ class WsServer {
       this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
     }
     if (!lastSocket) return;
+    const now = Date.now();
     for (const [callerId, offer] of this.pendingOffers) {
+      // Вызов с push в окне звонка остаётся: телефон, который будит push,
+      // ещё может проснуться и ответить (компьютер закрыли, пока звонило).
+      if (offer.targetId === user.id && offer.viaPush && now - offer.at < CALL_RING_MS) continue;
       if (offer.targetId === user.id) {
         this.pendingOffers.delete(callerId);
         this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
@@ -1219,23 +1241,12 @@ class WsServer {
             }));
             return;
           }
-          // Nobody is at the other end — tell the caller instead of ringing out.
-          // Unless the callee has a phone that a push can wake (задача 18):
-          // then the offer waits, and the phone receives it on connecting.
-          if (!this.userSockets.get(targetUserId)?.size) {
-            if (await this.ringByPush(currentUser, targetUserId, msg, abandoned, ws)) return;
-            if (abandoned()) return;
-            // Пока проверялись устройства, вызываемый мог подключиться — тогда обычный звонок.
-            if (!this.userSockets.get(targetUserId)?.size) {
-              ws.send(JSON.stringify({
-                type: 'call_unavailable',
-                targetUserId,
-                reason: NOT_ONLINE_REASON
-              }));
-              return;
-            }
-          }
-          this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now(), seq: this.nextOfferSeq(), ws });
+          // Кому звонить — по тому же правилу, что уведомления о сообщениях
+          // (multi-device.md §7): кадр call_offer — всем сокетам вызываемого,
+          // push — его устройствам без сокета на переднем плане, даже если
+          // другие устройства на связи (компьютер простаивает, телефон в
+          // кармане). Не звонит ни один сокет и будить нечего — call_unavailable.
+          if (!(await this.placeOffer(currentUser, targetUserId, msg, abandoned, ws))) return;
         } finally {
           this.endOfferAttempt(attempt);
         }
@@ -1264,6 +1275,9 @@ class WsServer {
           return;
         }
         const offer = this.pendingOffers.get(targetUserId);
+        // Телефон, который будит push, может войти уже после ответа здесь:
+        // запомнить, чтобы он сразу погасил экран звонка (answered_elsewhere).
+        this.rememberEndedPushOffer(targetUserId, 'answered_elsewhere');
         this.pendingOffers.delete(targetUserId);
         this.setCallPair(currentUser.id, targetUserId);
         const callerWs = offer.ws && this.socketUser.has(offer.ws) ? offer.ws : this.userSockets.get(targetUserId)?.values().next().value;
@@ -1820,28 +1834,36 @@ class WsServer {
     }
   }
 
-  // Вызываемый не в сети: если у него есть устройство, которое будит push о
-  // звонке (FCM на Android, PushKit VoIP на iOS), вызов ждёт как обычный
-  // (pendingOffers, 2 минуты), а кадр call_offer доставится при входе
-  // (replayPushedOffers). Иначе — false, и вызывающий получает call_unavailable.
-  // Устройство считается, только если его токен жив (сеанс действует).
-  // abandoned() — вызывающий сбросил вызов или отключился, пока шла проверка:
-  // тогда true (обработано, делать нечего) — ни вызова, ни уведомления.
-  async ringByPush(caller, targetUserId, msg, abandoned = () => false, callerWs = null) {
-    let canRing = false;
+  // Вызов встаёт (pendingOffers, 2 минуты) и возвращает true, если вызываемому
+  // есть чем позвонить (decideCallNotification): сокет, который звонит, или
+  // устройство с живым токеном, которое будит push о звонке (FCM на Android,
+  // PushKit VoIP на iOS). Вызов с push помнит свой кадр call_offer: телефон,
+  // разбуженный push, получает его при входе (replayPushedOffers). Иначе —
+  // вызывающему call_unavailable, false. abandoned() — вызывающий сбросил вызов
+  // или отключился, пока шла проверка: false без ответа — ни вызова, ни push.
+  async placeOffer(caller, targetUserId, msg, abandoned = () => false, callerWs = null) {
+    let devices = [];
     try {
-      canRing = await PushService.canRing(targetUserId);
+      devices = await PushService.callDevices(targetUserId);
     } catch (err) {
       console.warn('[Push] проверка устройств для звонка не удалась:', err.message);
     }
-    if (abandoned()) return true;
-    if (!canRing || this.userSockets.get(targetUserId)?.size) return false;
+    if (abandoned()) return false;
+    const decision = this.callDecision(targetUserId, caller.id, devices);
+    if (decision.reason) {
+      safeSend(callerWs, { type: 'call_unavailable', targetUserId, reason: NOT_ONLINE_REASON });
+      return false;
+    }
     const at = Date.now();
     const seq = this.nextOfferSeq();
-    const frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
-    this.pendingOffers.set(caller.id, { targetId: targetUserId, at, seq, viaPush: true, frame, ws: callerWs });
-    this.endedPushOffers.get(targetUserId)?.delete(caller.id);
-    PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at, offerSeq: seq });
+    const offer = { targetId: targetUserId, at, seq, ws: callerWs };
+    if (decision.push.length) {
+      offer.viaPush = true;
+      offer.frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
+      this.endedPushOffers.get(targetUserId)?.delete(caller.id);
+    }
+    this.pendingOffers.set(caller.id, offer);
+    if (offer.viaPush) PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at, offerSeq: seq });
     return true;
   }
 
@@ -1873,20 +1895,24 @@ class WsServer {
     return attempt.cancelled || Boolean(ws.revoked) || !this.socketUser.has(ws);
   }
 
-  // Вызов через push закончился, а вызываемый так и не подключился: запомнить
-  // ненадолго, чтобы разбуженный им телефон сразу погасил экран звонка.
-  // calleeConnecting — вызываемый как раз входит (его сокет уже учтён), и
-  // запись нужна, чтобы этот вход получил call_end.
+  // Вызов с push закончился: запомнить ненадолго, чтобы телефон, разбуженный
+  // push и вошедший позже, сразу погасил экран звонка. Сокеты, которые уже на
+  // связи, узнают о конце сами (call_end, answered_elsewhere) — запись им не
+  // повторяется: delivered — ключи устройств (device_id; без него — один общий
+  // ключ), получивших call_end. calleeConnecting — вызываемый как раз входит,
+  // и запись нужна, чтобы этот вход получил call_end.
   rememberEndedPushOffer(callerId, reason, { calleeConnecting = false } = {}) {
     const offer = this.pendingOffers.get(callerId);
-    if (!offer || !offer.viaPush || (!calleeConnecting && this.isUserOnline(offer.targetId))) return;
+    if (!offer || !offer.viaPush) return;
+    const delivered = new Set();
+    if (!calleeConnecting) for (const s of this.userSockets.get(offer.targetId) || []) delivered.add(WsServer.callDeviceKey(s));
     const now = Date.now();
     let byCaller = this.endedPushOffers.get(offer.targetId);
     if (!byCaller) {
       byCaller = new Map();
       this.endedPushOffers.set(offer.targetId, byCaller);
     }
-    byCaller.set(callerId, { at: now, reason, senderName: offer.frame?.senderName || null, delivered: false });
+    byCaller.set(callerId, { at: now, reason, senderName: offer.frame?.senderName || null, delivered });
     for (const [calleeId, map] of this.endedPushOffers) {
       for (const [id, entry] of map) if (now - entry.at > ENDED_PUSH_OFFER_TTL_MS) map.delete(id);
       if (!map.size) this.endedPushOffers.delete(calleeId);
@@ -1898,13 +1924,24 @@ class WsServer {
   // номер вызова, ради которого шли уведомления: запоздалый провал прежнего
   // вызова не снимает новый вызов той же пары (время вызова у них может
   // совпасть, номер — нет).
+  // Звонит хоть один сокет вызываемого (на переднем плане или в фоне на
+  // устройстве без push) — вызов идёт и без push.
   pushCallUndeliverable(callerId, calleeId, offerSeq) {
     const offer = this.pendingOffers.get(callerId);
-    if (!offer || !offer.viaPush || offer.targetId !== calleeId || this.isUserOnline(calleeId)) return;
+    if (!offer || !offer.viaPush || offer.targetId !== calleeId) return;
     if (offerSeq !== undefined && offer.seq !== offerSeq) return;
+    if (this.callDecision(calleeId, callerId).ring.length) return;
     this.rememberEndedPushOffer(callerId, 'unavailable');
     this.pendingOffers.delete(callerId);
+    // Сокеты в фоне получили кадр вызова — снять его.
+    this.sendToUser(calleeId, this.callEndFrame(callerId, 'unavailable', offer.frame?.senderName));
     this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+  }
+
+  // Ключ устройства для памяти о закончившемся вызове: device_id или один общий
+  // ключ для сокетов без него (настольный клиент, старые сборки).
+  static callDeviceKey(ws) {
+    return ws.deviceId ? 'd:' + ws.deviceId : '-';
   }
 
   // При входе вызываемого: ждущие вызовы через push — тем же кадром
@@ -1923,11 +1960,14 @@ class WsServer {
       }
     }
     const now = Date.now();
+    const key = WsServer.callDeviceKey(ws);
     for (const [callerId, entry] of this.endedPushOffers.get(userId) || []) {
-      if (entry.delivered || now - entry.at > ENDED_PUSH_OFFER_TTL_MS || this.pendingOffers.get(callerId)?.targetId === userId) continue;
+      if (entry.delivered.has(key) || now - entry.at > ENDED_PUSH_OFFER_TTL_MS || this.pendingOffers.get(callerId)?.targetId === userId) continue;
       if (ws.readyState !== WebSocket.OPEN) continue;
+      entry.delivered.add(key);
+      // Разговор с этим вызывающим идёт на другом устройстве — ниже answered_elsewhere.
+      if (this.activeCalls.get(userId) === callerId) continue;
       safeSend(ws, this.callEndFrame(callerId, entry.reason, entry.senderName));
-      entry.delivered = true;
     }
     // Сотрудник уже разговаривает с другого устройства — вошедшее (например,
     // второй телефон, разбуженный тем же push) гасит экран звонка.

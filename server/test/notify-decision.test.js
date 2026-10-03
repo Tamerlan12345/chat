@@ -25,7 +25,11 @@ const REQUIRED = [
   '09-channel-viewing-other-chat', '10-channel-viewing-same', '11-no-sockets', '12-old-clients-never-send-viewing',
   '13-phone-background-socket-desktop-list', '14-phone-foreground-other-screen', '15-phone-away-without-push-token',
   '16-two-phones-one-foreground', '17-viewing-ignored-while-away-everywhere', '18-old-mobile-foreground-no-device-id',
-  'r01-read-dismiss-pocket-devices', 'r02-read-on-phone-no-dismiss-push'
+  'r01-read-dismiss-pocket-devices', 'r02-read-on-phone-no-dismiss-push',
+  // Звонки по тому же правилу (решение владельца, 2026-10-03).
+  'c01-desktop-idle-phone-in-pocket', 'c02-phone-and-desktop-online', 'c03-dnd', 'c04-own-call', 'c05-no-devices',
+  'c06-two-phones-one-foreground', 'c07-old-mobile-no-device-id', 'c08-same-device-away-socket-and-token',
+  'c09-viewing-does-not-silence', 'c10-away-phone-without-token'
 ];
 
 function loadVectors() {
@@ -53,7 +57,9 @@ function deepFreeze(value) {
 
 function run(impl, vector) {
   const input = deepFreeze(JSON.parse(JSON.stringify(vector.input)));
-  return vector.decision === 'read' ? impl.decideReadDismissal(input) : impl.decideMessageNotification(input);
+  if (vector.decision === 'read') return impl.decideReadDismissal(input);
+  if (vector.decision === 'call') return impl.decideCallNotification(input);
+  return impl.decideMessageNotification(input);
 }
 
 const vectors = loadVectors();
@@ -63,7 +69,8 @@ test('векторы решения об уведомлении: формат и
   for (const { file, vector } of vectors) {
     assert.deepStrictEqual(Object.keys(vector).sort(), VECTOR_KEYS, `${file}: ключи`);
     assert.strictEqual(`${vector.name}.json`, file, `${file}: name = имя файла`);
-    assert.ok(['message', 'read'].includes(vector.decision), `${file}: decision`);
+    assert.ok(['message', 'read', 'call'].includes(vector.decision), `${file}: decision`);
+    if (vector.decision === 'call') assert.ok(vector.name.startsWith('c'), `${file}: векторы звонка — c01…`);
     assert.ok(vector.description.length > 10, `${file}: description`);
     for (const s of vector.input.sockets || []) {
       assert.deepStrictEqual(Object.keys(s).sort(), ['deviceId', 'id', 'presence', 'viewing'], `${file}: сокет`);
@@ -95,4 +102,16 @@ test('chatOf: личный — собеседник с точки зрения �
   assert.deepStrictEqual(server.chatOf({ conversationType: 'direct', targetId: 2, senderId: 5 }, 2), { conversationType: 'direct', targetId: 5 });
   assert.deepStrictEqual(server.chatOf({ conversationType: 'direct', targetId: 2, senderId: 5 }, 5), { conversationType: 'direct', targetId: 2 });
   assert.deepStrictEqual(server.chatOf({ conversationType: 'channel', targetId: 7, senderId: 5 }, 2), { conversationType: 'channel', targetId: 7 });
+});
+
+test('звонок: ни одно устройство не молчит из-за открытого чата; push — устройствам без сокета на переднем плане', () => {
+  const base = { recipientId: 2, call: { callerId: 5 }, pushDevices: [{ id: 'a' }, { id: 'b' }] };
+  const r = server.decideCallNotification({
+    ...base,
+    sockets: [
+      { id: 's1', deviceId: 'a', presence: 'online', viewing: { conversationType: 'direct', targetId: 5 } },
+      { id: 's2', deviceId: 'b', presence: 'away', viewing: null }
+    ]
+  });
+  assert.deepStrictEqual(r, { reason: null, push: ['b'], ring: ['s1'], quiet: ['s2'] });
 });
