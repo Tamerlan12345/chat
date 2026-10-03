@@ -121,8 +121,9 @@ class PresenceController @Inject constructor(
         if (sent != desired) {
             if (!realtime.sendPresence(desired.wire)) return
             sent = desired
-            // «Отошёл» сервер снимает viewing сам; после возврата «в сети» его нужно прислать заново.
-            sentViewing = if (desired == Presence.AWAY) null else UNSENT
+            // Смена присутствия обнуляет viewing на сервере («отошёл» снимает его сам, у нового
+            // сокета его нет): «ничего не смотрю» повторно слать не нужно, открытый чат — заново.
+            sentViewing = null
         }
         if (desired != Presence.ONLINE || viewing == sentViewing) return
         if (viewingCooldown?.isActive == true) return // уйдёт по окончании паузы

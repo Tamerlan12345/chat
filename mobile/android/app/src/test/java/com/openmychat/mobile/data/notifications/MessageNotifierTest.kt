@@ -75,6 +75,7 @@ class MessageNotifierTest {
         runCurrent()
         sink.log.clear()
         realtime.emit(WsEvent.NewMessage(incoming(12), notify = null))
+        runCurrent() // кадр обработан, пока переписка ещё открыта
         registry.leave(chat5)
         realtime.emit(WsEvent.UserStatusChanged(1, UserStatus.DND, null))
         realtime.emit(WsEvent.NewMessage(incoming(13), notify = null))
