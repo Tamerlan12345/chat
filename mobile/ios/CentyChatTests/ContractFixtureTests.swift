@@ -10,6 +10,7 @@ final class ContractFixtureTests: XCTestCase {
         let kind: String
         let event: String?
         let status: Int?
+        let provider: String?
     }
 
     private func fixturesRoot() throws -> URL {
@@ -28,7 +29,7 @@ final class ContractFixtureTests: XCTestCase {
     func testEveryManifestFixtureDecodes() throws {
         let root = try fixturesRoot()
         let entries = try manifest()
-        XCTAssertGreaterThanOrEqual(entries.count, 70, "The manifest looks truncated (77 entries on 2026-10-02)")
+        XCTAssertGreaterThanOrEqual(entries.count, 100, "The manifest looks truncated (104 entries on 2026-10-03)")
 
         for (file, entry) in entries.sorted(by: { $0.key < $1.key }) {
             let data: Data
@@ -47,6 +48,8 @@ final class ContractFixtureTests: XCTestCase {
                 }
             case "ws":
                 assertEventParses(file, expectedType: entry.event, data)
+            case "push":
+                assertPushParses(file, provider: entry.provider, data)
             default:
                 XCTFail("\(file): unknown fixture kind \(entry.kind)")
             }
@@ -56,7 +59,7 @@ final class ContractFixtureTests: XCTestCase {
     func testEveryFixtureFileIsListedInTheManifest() throws {
         let root = try fixturesRoot()
         let listed = Set(try manifest().keys)
-        for folder in ["http", "ws"] {
+        for folder in ["http", "ws", "push"] {
             let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(folder).path)
             for file in files where file.hasSuffix(".json") {
                 XCTAssertTrue(listed.contains("\(folder)/\(file)"), "\(folder)/\(file) is not in manifest.json")
@@ -103,6 +106,29 @@ final class ContractFixtureTests: XCTestCase {
             XCTAssertTrue(try decoder.decode(FilePolicyEffectiveResponse.self, from: data).isExtensionAllowed("pdf"), file)
         case "files.upload":
             XCTAssertFalse(try decoder.decode(FileUploadResponse.self, from: data).url.isEmpty, file)
+        case "files.upload-image":
+            let upload = try decoder.decode(FileUploadResponse.self, from: data)
+            XCTAssertEqual(upload.width, 640, file)
+            XCTAssertEqual(upload.height, 480, file)
+            XCTAssertEqual(upload.dominantColor, "#c83838", file)
+        case "devices.push-token-register":
+            let response = try decoder.decode(PushTokenRegisterResponse.self, from: data)
+            XCTAssertTrue(response.registered, file)
+            XCTAssertFalse(response.pushEnabled, file)
+        case "devices.push-token-delete":
+            XCTAssertTrue(try decoder.decode(PushTokenDeleteResponse.self, from: data).removed, file)
+        case "devices.push-token-invalid":
+            XCTAssertEqual(try decoder.decode(ServerErrorResponse.self, from: data).code, "INVALID_ENVIRONMENT", file)
+        case "messages.send-cancelled":
+            XCTAssertEqual(try decoder.decode(ServerErrorResponse.self, from: data).code, "CANCELLED", file)
+        case "users.avatar-not-image":
+            XCTAssertEqual(try decoder.decode(ServerErrorResponse.self, from: data).code, "NOT_AN_IMAGE", file)
+        case "users.avatar-upload":
+            let user = try decoder.decode(User.self, from: data)
+            XCTAssertTrue(user.avatarUrl?.hasPrefix("/api/users/4/avatar?v=") == true, file)
+        case "users.get-with-avatar":
+            let user = try decoder.decode(PublicUser.self, from: data)
+            XCTAssertTrue(user.avatarUrl?.hasPrefix("/api/users/4/avatar?v=") == true, file)
         case "messages.after-page", "messages.channel-page", "messages.direct-page":
             XCTAssertFalse(try decoder.decode([Message].self, from: data).isEmpty, file)
         case "messages.send-direct", "messages.send-direct-duplicate", "messages.send-direct-idempotent":
@@ -121,6 +147,39 @@ final class ContractFixtureTests: XCTestCase {
             XCTAssertFalse(try decoder.decode([PublicUser].self, from: data).isEmpty, file)
         default:
             XCTFail("\(file): no DTO is mapped to this fixture; add one before the contract can ship")
+        }
+    }
+
+    // MARK: - Push
+
+    /// `push/fcm.*`: the device receives `message.data` (string values); `push/apns.*`: the
+    /// `payload` is `userInfo` (numeric ids). Both must parse into the matching `PushPayload`.
+    private func assertPushParses(_ file: String, provider: String?, _ data: Data) {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return XCTFail("\(file): not a JSON object")
+        }
+        let userInfo: [String: Any]?
+        switch provider {
+        case "fcm": userInfo = (root["message"] as? [String: Any])?["data"] as? [String: Any]
+        case "apns": userInfo = root["payload"] as? [String: Any]
+        default: return XCTFail("\(file): unknown push provider \(provider ?? "nil")")
+        }
+        guard let userInfo else { return XCTFail("\(file): no data/payload object") }
+        guard let payload = PushPayload.parse(userInfo) else {
+            return XCTFail("\(file): PushPayload.parse returned nil")
+        }
+        let kind = file.split(separator: ".").dropFirst().first.map(String.init) ?? ""
+        switch (kind, payload) {
+        case ("message", .message(let conversation, let messageId)):
+            XCTAssertGreaterThan(messageId, 0, file)
+            XCTAssertGreaterThan(conversation.targetId, 0, file)
+            XCTAssertEqual(conversation.type == .channel, file.contains(".channel"), file)
+        case ("read", .read(let conversation)):
+            XCTAssertGreaterThan(conversation.targetId, 0, file)
+        case ("call", .call(let callerId, _)):
+            XCTAssertEqual(callerId, 2, file)
+        default:
+            XCTFail("\(file): parsed as \(payload)")
         }
     }
 
@@ -150,6 +209,8 @@ final class ContractFixtureTests: XCTestCase {
         case .wakeState: ["wake_state"]
         case .serverDisconnect: ["server_disconnect"]
         case .newMessage: ["new_message", "direct_message", "channel_message"]
+        case .conversationRead: ["conversation_read"]
+        case .messageCancelled: ["message_cancelled"]
         case .messageStatusUpdated: ["message_status_updated"]
         case .messagesRead: ["messages_read"]
         case .messageUpdated: ["message_updated"]

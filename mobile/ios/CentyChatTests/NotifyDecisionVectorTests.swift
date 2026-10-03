@@ -17,6 +17,13 @@ final class NotifyDecisionVectorTests: XCTestCase {
         let quiet: [String]
     }
 
+    private struct CallExpected: Decodable {
+        let reason: NotifyDecision.Reason?
+        let push: [String]
+        let ring: [String]
+        let quiet: [String]
+    }
+
     private struct ReadExpected: Decodable {
         let push: [String]
     }
@@ -42,7 +49,7 @@ final class NotifyDecisionVectorTests: XCTestCase {
 
     func testEveryNotifyVectorMatchesTheReference() throws {
         let files = try vectorFiles()
-        XCTAssertGreaterThanOrEqual(files.count, 20, "notify vectors look truncated (01–18, r01, r02 on 2026-10-02)")
+        XCTAssertGreaterThanOrEqual(files.count, 20, "notify vectors look truncated (01–18, c01–c10, r01, r02 on 2026-10-03)")
         var ran = 0
         let decoder = JSONDecoder()
         for file in files {
@@ -77,6 +84,20 @@ final class NotifyDecisionVectorTests: XCTestCase {
                     pushDevices: vector.input.pushDevices ?? []
                 )
                 XCTAssertEqual(push, vector.expected.push, "\(name): push")
+                ran += 1
+            case "call":
+                let vector: Vector<NotifyDecision.CallInput, CallExpected>
+                do {
+                    vector = try decoder.decode(Vector<NotifyDecision.CallInput, CallExpected>.self, from: data)
+                } catch {
+                    XCTFail("\(name): does not decode: \(error)")
+                    continue
+                }
+                let outcome = NotifyDecision.decideCallNotification(vector.input)
+                XCTAssertEqual(outcome.reason, vector.expected.reason, "\(name): reason")
+                XCTAssertEqual(outcome.push, vector.expected.push, "\(name): push")
+                XCTAssertEqual(outcome.ring, vector.expected.ring, "\(name): ring")
+                XCTAssertEqual(outcome.quiet, vector.expected.quiet, "\(name): quiet")
                 ran += 1
             default:
                 XCTFail("\(name): unknown decision \(header.decision)")

@@ -88,6 +88,65 @@ public enum NotifyDecision {
         case own
         case dnd
         case viewing
+        /// Calls only: no socket would ring and there is nothing to wake by push.
+        case unreachable
+    }
+
+    /// The caller of an incoming call (`multi-device.md` §7).
+    public struct CallRef: Codable, Equatable, Sendable {
+        public let callerId: Int64
+
+        public init(callerId: Int64) {
+            self.callerId = callerId
+        }
+    }
+
+    public struct CallInput: Codable, Equatable, Sendable {
+        public let recipientId: Int64
+        public let dnd: Bool
+        public let call: CallRef
+        public let sockets: [Socket]
+        /// Devices able to ring: Android FCM, iOS PushKit VoIP.
+        public let pushDevices: [PushDevice]
+
+        public init(recipientId: Int64, dnd: Bool = false, call: CallRef, sockets: [Socket] = [], pushDevices: [PushDevice] = []) {
+            self.recipientId = recipientId
+            self.dnd = dnd
+            self.call = call
+            self.sockets = sockets
+            self.pushDevices = pushDevices
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case recipientId, dnd, call, sockets, pushDevices
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            recipientId = try container.decode(Int64.self, forKey: .recipientId)
+            dnd = try container.decodeIfPresent(Bool.self, forKey: .dnd) ?? false
+            call = try container.decode(CallRef.self, forKey: .call)
+            sockets = try container.decodeIfPresent([Socket].self, forKey: .sockets) ?? []
+            pushDevices = try container.decodeIfPresent([PushDevice].self, forKey: .pushDevices) ?? []
+        }
+    }
+
+    public struct CallOutcome: Equatable, Sendable {
+        /// nil — the call rings somewhere.
+        public let reason: Reason?
+        /// Device ids that get a ring push; in `pushDevices` order.
+        public let push: [String]
+        /// Socket ids that ring on the `call_offer` frame; in `sockets` order.
+        public let ring: [String]
+        /// Socket ids that get the frame but are woken by push.
+        public let quiet: [String]
+
+        public init(reason: Reason?, push: [String], ring: [String], quiet: [String]) {
+            self.reason = reason
+            self.push = push
+            self.ring = ring
+            self.quiet = quiet
+        }
     }
 
     public struct MessageOutcome: Equatable, Sendable {
@@ -159,6 +218,35 @@ public enum NotifyDecision {
         }
         let push = input.pushDevices.filter { !onlineDevices.contains($0.id) }.map(\.id)
         return MessageOutcome(reason: nil, push: push, banner: banner, quiet: quiet)
+    }
+
+    /// An incoming call always rings — an open chat does not silence it. Every socket gets the
+    /// `call_offer` frame; `ring` are the sockets that ring on it (foreground, or background on a
+    /// device without push), `quiet` are background sockets on a device with push (the push wakes
+    /// them). `push` goes to devices with no foreground socket. Nothing to ring or wake — `unreachable`.
+    public static func decideCallNotification(_ input: CallInput) -> CallOutcome {
+        func silent(_ reason: Reason) -> CallOutcome {
+            CallOutcome(reason: reason, push: [], ring: [], quiet: input.sockets.map(\.id))
+        }
+        if input.call.callerId == input.recipientId { return silent(.own) }
+        if input.dnd { return silent(.dnd) }
+        let withPush = Set(input.pushDevices.map(\.id))
+        let onlineDevices = onlineDeviceIds(input.sockets)
+        var ring: [String] = []
+        var quiet: [String] = []
+        for socket in input.sockets {
+            let hasPush = socket.deviceId.map { !$0.isEmpty && withPush.contains($0) } ?? false
+            if socket.presence == online || !hasPush {
+                ring.append(socket.id)
+            } else {
+                quiet.append(socket.id)
+            }
+        }
+        let push = input.pushDevices.filter { !onlineDevices.contains($0.id) }.map(\.id)
+        if ring.isEmpty && push.isEmpty {
+            return CallOutcome(reason: .unreachable, push: push, ring: ring, quiet: quiet)
+        }
+        return CallOutcome(reason: nil, push: push, ring: ring, quiet: quiet)
     }
 
     /// Read on one device: the silent `read` push goes to devices with push and no foreground socket.
