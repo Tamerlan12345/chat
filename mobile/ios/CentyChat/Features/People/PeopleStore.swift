@@ -67,7 +67,7 @@ public final class PeopleDiskCache: PeopleCache {
         url = directory?.appendingPathComponent(Self.fileName)
     }
 
-    nonisolated static func defaultDirectory() -> URL? {
+    public nonisolated static func defaultDirectory() -> URL? {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         return base?.appendingPathComponent("CentyChat", isDirectory: true)
     }
