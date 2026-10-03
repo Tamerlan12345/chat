@@ -1,6 +1,26 @@
 package com.openmychat.mobile.features.conversations
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.openmychat.mobile.features.people.Person
+import com.openmychat.mobile.features.search.MessageHit
+import com.openmychat.mobile.features.search.MessageResults
+import com.openmychat.mobile.features.search.RecentItem
+import com.openmychat.mobile.features.search.UniversalSearchActions
+import com.openmychat.mobile.features.search.UniversalSearchContent
+import com.openmychat.mobile.features.search.UniversalSearchState
+import com.openmychat.mobile.features.search.UniversalSearchViewModel
+import com.openmychat.mobile.ui.components.CentySearchField
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -103,11 +123,17 @@ interface ConversationsActions {
 @Composable
 fun ConversationsScreen(
     viewModel: ConversationsViewModel,
+    searchViewModel: UniversalSearchViewModel,
     onOpenDirectChat: (userId: Long, name: String, avatarUrl: String?, status: String?) -> Unit,
-    onOpenChannel: (channelId: Long, name: String) -> Unit
+    onOpenChannel: (channelId: Long, name: String) -> Unit,
+    onOpenPerson: (Person) -> Unit = {},
+    onOpenMessage: (MessageHit) -> Unit = {},
+    onShowAllPeople: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
+    val search by searchViewModel.state.collectAsState()
+    // Поиск — своё состояние экрана, не фильтр поверх списка (спецификация «Universal search»).
+    var searchActive by rememberSaveable { mutableStateOf(false) }
     val uiState by viewModel.uiState.collectAsState()
     val connection by viewModel.connectionState.collectAsState()
     val refreshing by viewModel.isRefreshing.collectAsState()
@@ -124,10 +150,36 @@ fun ConversationsScreen(
         }
     }
 
+    val searchActions = remember(searchViewModel) {
+        object : UniversalSearchActions {
+            override fun onOpenPerson(match: Person) {
+                searchViewModel.rememberPerson(match)
+                onOpenPerson(match)
+            }
+            override fun onOpenChannel(channel: Channel) {
+                searchViewModel.rememberChannel(channel)
+                onOpenChannel(channel.id, channel.name)
+            }
+            override fun onOpenRecent(item: RecentItem) {
+                searchViewModel.remember(item)
+                when (item.kind) {
+                    RecentItem.Kind.PERSON -> onOpenPerson(Person(id = item.id, fullName = item.title, avatarUrl = item.avatarUrl))
+                    RecentItem.Kind.CHANNEL -> onOpenChannel(item.id, item.title)
+                }
+            }
+            override fun onShowAllPeople(query: String) {
+                searchViewModel.showAllPeople(query)
+                onShowAllPeople()
+            }
+            override fun onOpenMessage(hit: MessageHit) = onOpenMessage(hit)
+            override fun onClear() = searchViewModel.clear()
+        }
+    }
+
     val actions = remember(viewModel) {
         object : ConversationsActions {
             override fun onSelectTab(tab: ConversationsTab) = viewModel.selectTab(tab)
-            override fun onSearch(query: String) = viewModel.setSearchQuery(query)
+            override fun onSearch(query: String) = searchViewModel.setQuery(query)
             override fun onRefresh() = viewModel.refresh()
             override fun onRetry() = viewModel.loadData()
             override fun onOpenDirect(conversation: DirectConversation) =
@@ -139,7 +191,14 @@ fun ConversationsScreen(
     ConversationsContent(
         uiState = uiState,
         selectedTab = selectedTab,
-        searchQuery = searchQuery,
+        searchQuery = search.query,
+        searchActive = searchActive,
+        onSearchActiveChange = { active ->
+            searchActive = active
+            if (active) searchViewModel.onOpened() else searchViewModel.clear()
+        },
+        search = search,
+        searchActions = searchActions,
         connectionState = connection,
         isRefreshing = refreshing,
         typing = typing,
@@ -164,9 +223,20 @@ fun ConversationsContent(
     isRefreshing: Boolean = false,
     typing: Set<ConversationRef> = emptySet(),
     openConversation: ConversationRef? = null,
-    currentUserId: Long? = null
+    currentUserId: Long? = null,
+    searchActive: Boolean = false,
+    onSearchActiveChange: (Boolean) -> Unit = {},
+    search: UniversalSearchState = UniversalSearchState(query = searchQuery),
+    searchActions: UniversalSearchActions = object : UniversalSearchActions {}
 ) {
     val tokens = CentyTheme.tokens
+    val reduce = LocalReduceMotion.current
+    val focus = LocalFocusManager.current
+    BackHandler(enabled = searchActive) {
+        onSearchActiveChange(false)
+        focus.clearFocus()
+    }
+    val collapse = if (reduce) tween<Float>(CentyMotion.REDUCED_CROSSFADE) else tween(200, easing = CentyMotion.EaseOut)
     val directState = rememberLazyListState()
     val channelState = rememberLazyListState()
     val listState = if (selectedTab == ConversationsTab.CHATS) directState else channelState
@@ -187,8 +257,26 @@ fun ConversationsContent(
                     )
                 )
                 ConnectionBanner(connectionState)
-                SearchField(query = searchQuery, onQueryChange = actions::onSearch)
-                Segments(selectedTab, uiState, actions::onSelectTab)
+                CentySearchField(
+                    query = searchQuery,
+                    onQueryChange = actions::onSearch,
+                    placeholder = stringResource(R.string.search_hint),
+                    active = searchActive,
+                    onActiveChange = { active ->
+                        onSearchActiveChange(active)
+                        if (!active) focus.clearFocus()
+                    },
+                    onSearch = { openFirstResult(search, searchActions) },
+                    testTag = "inbox-search",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+                AnimatedVisibility(
+                    visible = !searchActive,
+                    enter = fadeIn(collapse) + expandVertically(tween(200)),
+                    exit = fadeOut(collapse) + shrinkVertically(tween(200))
+                ) {
+                    Segments(selectedTab, uiState, actions::onSelectTab)
+                }
             }
         }
     ) { innerPadding ->
@@ -200,7 +288,17 @@ fun ConversationsContent(
         ) {
 
             val listPadding = PaddingValues(top = 4.dp, bottom = innerPadding.calculateBottomPadding() + 8.dp)
-            when (uiState) {
+            AnimatedContent(
+                targetState = searchActive,
+                transitionSpec = {
+                    fadeIn(tween(if (reduce) CentyMotion.REDUCED_CROSSFADE else 150)) togetherWith
+                        fadeOut(tween(if (reduce) CentyMotion.REDUCED_CROSSFADE else 90))
+                },
+                label = "inbox-search"
+            ) { searching ->
+            if (searching) {
+                UniversalSearchContent(state = search, actions = searchActions, contentPadding = listPadding)
+            } else when (uiState) {
                 is ConversationsUiState.Loading -> ConversationSkeleton(contentPadding = PaddingValues(top = 4.dp))
                 is ConversationsUiState.Error -> ErrorState(title = stringResource(R.string.inbox_error), onRetry = actions::onRetry)
                 is ConversationsUiState.Content -> {
@@ -221,60 +319,23 @@ fun ConversationsContent(
                         }
                     ) {
                         if (selectedTab == ConversationsTab.CHATS) {
-                            DirectList(directState, uiState.directConversations, searchQuery, listPadding, typing, openConversation, currentUserId, actions)
+                            DirectList(directState, uiState.directConversations, "", listPadding, typing, openConversation, currentUserId, actions)
                         } else {
-                            ChannelList(channelState, uiState.channels, searchQuery, listPadding, typing, openConversation, actions)
+                            ChannelList(channelState, uiState.channels, "", listPadding, typing, openConversation, actions)
                         }
                     }
                 }
+            }
             }
         }
     }
 }
 
-@Composable
-private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
-    val tokens = CentyTheme.tokens
-    val focus = LocalFocusManager.current
-    val shape = RoundedCornerShape(CentyRadius.control)
-    BasicTextField(
-        value = query,
-        onValueChange = onQueryChange,
-        singleLine = true,
-        textStyle = MaterialTheme.typography.bodyLarge.copy(color = tokens.textMain),
-        cursorBrush = SolidColor(tokens.accentText),
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .testTag("inbox-search"),
-        decorationBox = { inner ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 44.dp)
-                    .background(tokens.card, shape)
-                    .border(1.dp, tokens.border, shape)
-                    .padding(start = 12.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Outlined.Search, contentDescription = null, tint = tokens.textDim, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Box(Modifier.weight(1f).padding(vertical = 10.dp)) {
-                    if (query.isEmpty()) {
-                        Text(stringResource(R.string.inbox_search_hint), style = MaterialTheme.typography.bodyLarge, color = tokens.textDim)
-                    }
-                    inner()
-                }
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.inbox_search_clear), tint = tokens.textSecondary)
-                    }
-                }
-            }
-        }
-    )
+/** Return в поиске открывает первый результат: человека, затем канал, затем сообщение. */
+private fun openFirstResult(state: UniversalSearchState, actions: UniversalSearchActions) {
+    state.people.firstOrNull()?.let { return actions.onOpenPerson(it.person) }
+    state.channels.firstOrNull()?.let { return actions.onOpenChannel(it.channel) }
+    (state.messages as? MessageResults.Found)?.hits?.firstOrNull()?.let { actions.onOpenMessage(it) }
 }
 
 @Composable

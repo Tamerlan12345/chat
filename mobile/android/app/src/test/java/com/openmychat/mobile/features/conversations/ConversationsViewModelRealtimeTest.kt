@@ -33,12 +33,13 @@ class ConversationsViewModelRealtimeTest {
         ),
         channels = listOf(Channel(id = channelId, name = "mobile-dev", unreadCount = 0))
     )
+    private val readBus = com.openmychat.mobile.data.notifications.ConversationReadBus()
     private lateinit var viewModel: ConversationsViewModel
 
     @Before
     fun createViewModel() {
         // Created after MainDispatcherRule has installed the test Main dispatcher.
-        viewModel = ConversationsViewModel(chats, realtime, FakeSessionRepository(), registry)
+        viewModel = ConversationsViewModel(chats, realtime, FakeSessionRepository(), registry, readBus)
     }
 
     private val content get() = viewModel.uiState.value as ConversationsUiState.Content
@@ -51,6 +52,20 @@ class ConversationsViewModelRealtimeTest {
 
         assertEquals(1, unreadOf(alice))
         assertEquals("text 1", content.directConversations.single { it.userId == alice }.lastMessageText)
+    }
+
+    @Test
+    fun readOnAnotherDeviceZeroesTheCounter() {
+        realtime.emit(WsEvent.NewMessage(message(id = 4, from = alice, to = channelId, type = ConversationType.CHANNEL)))
+        assertEquals(1, channelUnread)
+        assertEquals(3, unreadOf(bob))
+
+        readBus.emit(com.openmychat.mobile.data.realtime.ConversationRef(ConversationType.CHANNEL, channelId))
+        readBus.emit(com.openmychat.mobile.data.realtime.ConversationRef(ConversationType.DIRECT, bob))
+
+        assertEquals(0, channelUnread)
+        assertEquals(0, unreadOf(bob))
+        assertEquals("другие переписки не трогаются", 0, unreadOf(alice))
     }
 
     @Test

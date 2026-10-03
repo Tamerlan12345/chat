@@ -294,12 +294,36 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    /** Справочник сотрудников (поля, открытые любому вошедшему). */
+    suspend fun getUsers(): List<User> = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users").get().build())
+    }
+
+    /** Карточка сотрудника: себе — полная запись, коллеге — поля справочника. */
+    suspend fun getUser(id: Long): User = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users/$id").get().build())
+    }
+
+    suspend fun getOrgTree(): OrgTree = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/org/tree").get().build())
+    }
+
+    /** Поиск по сообщениям, доступным сотруднику: до 30 последних совпадений (сервер: 30 запросов в минуту). */
+    suspend fun searchMessages(query: String): List<Message> = withContext(Dispatchers.IO) {
+        val url = "${getBaseUrl()}/messages/search".toHttpUrlOrNull()?.newBuilder()
+            ?.addQueryParameter("q", query)
+            ?.build()
+            ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/search")
+        executeRequest(Request.Builder().url(url).get().build())
+    }
+
+    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/direct/$targetId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/direct/$targetId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()
@@ -310,12 +334,13 @@ class ApiClient(
             executeRequest(httpRequest)
         }
 
-    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/channels/$channelId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/channels/$channelId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()

@@ -35,15 +35,11 @@ fun CentyConfirmDialog(
         title = { Text(text = title, style = MaterialTheme.typography.titleLarge) },
         text = { Text(text = message, style = MaterialTheme.typography.bodyMedium) },
         confirmButton = {
-            Button(
-                onClick = onConfirm,
-                modifier = Modifier.testTag(confirmTestTag),
-                colors = if (isDestructive) {
-                    ButtonDefaults.buttonColors(containerColor = tokens.dangerFill, contentColor = Color.White)
-                } else {
-                    ButtonDefaults.buttonColors()
-                }
-            ) { Text(confirmText) }
+            if (isDestructive) {
+                CentyDangerButton(text = confirmText, onClick = onConfirm, modifier = Modifier.testTag(confirmTestTag))
+            } else {
+                CentyPrimaryButton(text = confirmText, onClick = onConfirm, modifier = Modifier.testTag(confirmTestTag))
+            }
         },
         dismissButton = { CentyTextButton(onClick = onDismiss) { Text(dismissText) } }
     )

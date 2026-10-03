@@ -26,7 +26,9 @@ import kotlin.random.Random
 class WebSocketClient(
     private val sessionManager: SessionManager,
     private val okHttpClient: OkHttpClient? = null,
-    private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null
+    private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
+    /** Что передать в auth кроме токена: в фоне ли приложение и какой чат открыт (multi-device.md §3). */
+    private val authContext: AuthContext = AuthContext()
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -104,7 +106,8 @@ class WebSocketClient(
             _connectionState.value = ConnectionState.Connecting
         }
 
-        val wsUrl = endpoint.webSocketUrl
+        // Аватары ссылкой и в событиях WebSocket (sender_avatar, профиль в auth_success).
+        val wsUrl = AvatarOptIn.webSocketUrl(endpoint.webSocketUrl)
         val request = Request.Builder()
             .url(wsUrl)
             .header("User-Agent", "CentyChat-Android/1.0.0")
@@ -216,11 +219,7 @@ class WebSocketClient(
     }
 
     private fun sendAuth(token: String) {
-        val authPayload = buildJsonObject {
-            put("type", "auth")
-            put("token", token)
-        }
-        sendJson(authPayload.toString())
+        sendJson(authFrame(token, runCatching { sessionManager.deviceId }.getOrNull(), authContext.snapshot()).toString())
     }
 
     private fun handleTextMessage(text: String) {
@@ -307,6 +306,10 @@ class WebSocketClient(
         return sendJson(payload.toString())
     }
 
+    /** «Смотрю этот чат» (null — ни один): сервер не уведомляет о нём ни одно устройство сотрудника. */
+    fun sendViewing(conversationType: ConversationType?, targetId: Long?): Boolean =
+        sendJson(viewingFrame(conversationType, targetId).toString())
+
     fun markRead(conversationType: ConversationType, targetId: Long): Boolean {
         val payload = buildJsonObject {
             put("type", "mark_read")
@@ -326,20 +329,26 @@ class WebSocketClient(
         return sendJson(payload.toString())
     }
 
-    fun sendPresence(state: String, customStatus: String?): Boolean {
+    /**
+     * Сигнал системы о присутствии: «online» или «away». Без [includeCustomStatus] поле
+     * customStatus не отправляется вовсе — сервер считает null командой стереть свой статус.
+     */
+    fun sendPresence(state: String, customStatus: String? = null, includeCustomStatus: Boolean = false): Boolean {
         val payload = buildJsonObject {
             put("type", "presence")
             put("state", state)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            if (includeCustomStatus) {
+                if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            }
         }
         return sendJson(payload.toString())
     }
 
-    fun setDnd(enabled: Boolean, customStatus: String? = null): Boolean {
+    /** «Не беспокоить» поверх присутствия; свой статус не трогает. */
+    fun setDnd(enabled: Boolean): Boolean {
         val payload = buildJsonObject {
             put("type", "set_dnd")
             put("enabled", enabled)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
         }
         return sendJson(payload.toString())
     }
@@ -408,9 +417,40 @@ class WebSocketClient(
         _connectionState.value = ConnectionState.Disconnected
     }
 
-    private companion object {
-        const val SESSION_LIMIT_MIN_DELAY_MS = 10_000L
-        const val REFUSAL_MIN_DELAY_MS = 2_000L
-        const val REFUSAL_MAX_DELAY_MS = 60_000L
+    companion object {
+        private val DEVICE_ID = Regex("^[A-Za-z0-9._:-]{1,128}$")
+
+        /**
+         * Кадр auth (multi-device.md §3): device_id — тот же, что в knock и регистрации push, чтобы
+         * сервер связал сокет с устройством; в фоне — presence "away"; открытый чат — viewing.
+         */
+        fun authFrame(token: String, deviceId: String?, state: AuthContext.Snapshot): JsonObject = buildJsonObject {
+            put("type", "auth")
+            put("token", token)
+            if (deviceId != null && DEVICE_ID.matches(deviceId)) put("device_id", deviceId)
+            put("platform", "android")
+            if (state.background) {
+                put("presence", "away")
+            } else if (state.viewing != null) {
+                put("viewing", buildJsonObject {
+                    put("conversationType", state.viewing.first.value)
+                    put("targetId", state.viewing.second)
+                })
+            }
+        }
+
+        fun viewingFrame(conversationType: ConversationType?, targetId: Long?): JsonObject = buildJsonObject {
+            put("type", "viewing")
+            if (conversationType == null || targetId == null) {
+                put("conversationType", JsonNull)
+            } else {
+                put("conversationType", conversationType.value)
+                put("targetId", targetId)
+            }
+        }
+
+        private const val SESSION_LIMIT_MIN_DELAY_MS = 10_000L
+        private const val REFUSAL_MIN_DELAY_MS = 2_000L
+        private const val REFUSAL_MAX_DELAY_MS = 60_000L
     }
 }

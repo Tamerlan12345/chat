@@ -1,4 +1,4 @@
-const { getDatabase, withChangeSeq, getSyncState } = require('../db');
+const { getDatabase, foldText, withChangeSeq, getSyncState } = require('../db');
 const UserService = require('./user.service');
 const SettingsService = require('./settings.service');
 
@@ -857,12 +857,16 @@ class MessageService {
         SELECT m.*, c.name AS channel_name
         FROM messages m
         LEFT JOIN channels c ON m.conversation_type = 'channel' AND m.target_id = c.id
-        WHERE m.is_deleted = 0 AND m.text LIKE ? ESCAPE '\\' AND ${VISIBLE_TO_USER_SQL}
+        WHERE m.is_deleted = 0
+          -- Сначала видимость, потом свёртка: CASE не вычисляет THEN для чужих
+          -- строк, и fold_text не перебирает текст всей таблицы.
+          AND CASE WHEN ${VISIBLE_TO_USER_SQL} THEN fold_text(m.text) LIKE ? ESCAPE '\\' ELSE 0 END
         ORDER BY m.id DESC LIMIT 30
       `)
       // % и _ в строке поиска — буквально, а не шаблон: «100%» ищет «100%», а
-      // строка из сотни «%» не превращается в дорогой перебор (Р4-10).
-      .all(`%${escapeLike(String(query))}%`, me, me, me);
+      // строка из сотни «%» не превращается в дорогой перебор (Р4-10). Обе
+      // стороны свёрнуты (foldText): кириллица — без учёта регистра, «ё» = «е».
+      .all(me, me, me, `%${escapeLike(foldText(String(query)))}%`);
 
     return this.attachSenders(rows);
   }
@@ -887,8 +891,9 @@ class MessageService {
       const ids = matchedUsers.map((u) => Number(u.id));
       const idFilter = ids.length ? ` OR m.sender_id IN (${ids.map(() => '?').join(', ')})` : '';
       rows = db
-        .prepare(`SELECT m.* FROM messages m WHERE m.text LIKE ? ESCAPE '\\'${idFilter} ORDER BY m.id DESC LIMIT ?`)
-        .all(`%${escapeLike(term)}%`, ...ids, capped);
+        .prepare(`SELECT m.* FROM messages m WHERE fold_text(m.text) LIKE ? ESCAPE '\\'${idFilter} ORDER BY m.id DESC LIMIT ?`)
+        // Кириллица — без учёта регистра, как в обычном поиске (свёртка обеих сторон).
+        .all(`%${escapeLike(foldText(term))}%`, ...ids, capped);
     }
 
     const withSenders = await this.attachSenders(rows);

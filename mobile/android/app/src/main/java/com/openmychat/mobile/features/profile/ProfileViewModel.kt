@@ -3,7 +3,10 @@ package com.openmychat.mobile.features.profile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.session.SecureStorageUnavailableException
+import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.User
+import com.openmychat.mobile.data.realtime.Presence
+import com.openmychat.mobile.data.realtime.PresenceController
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.ProfileRepository
@@ -48,8 +51,16 @@ enum class ProfileEvent { StatusSaved, StatusSaveFailed }
 class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository,
-    private val realtimeRepository: RealtimeRepository
+    private val realtimeRepository: RealtimeRepository,
+    private val presenceController: PresenceController
 ) : ViewModel() {
+
+    /** Автоматическое присутствие: на экране — «В сети», свёрнуто — «Отошёл». Только для показа. */
+    val presence: StateFlow<Presence> = presenceController.presence
+
+    /** «Не беспокоить» — единственный статус, который сотрудник выбирает сам. */
+    private val _dnd = MutableStateFlow(profileRepository.cachedUser?.status == UserStatus.DND)
+    val dnd: StateFlow<Boolean> = _dnd.asStateFlow()
 
     private val _uiState = MutableStateFlow(initialState(profileRepository.cachedUser))
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
@@ -67,6 +78,16 @@ class ProfileViewModel @Inject constructor(
 
     init {
         refreshProfile()
+        viewModelScope.launch {
+            realtimeRepository.events.collect { event ->
+                // Сервер подтверждает или меняет режим (например, с другого устройства).
+                if (event is WsEvent.UserStatusChanged && event.userId == profileRepository.cachedUser?.id) {
+                    _dnd.value = event.status == UserStatus.DND
+                }
+                // Сервер держит «Не беспокоить» в памяти: после входа верна его версия.
+                if (event is WsEvent.AuthSuccess) _dnd.value = event.user.status == UserStatus.DND
+            }
+        }
     }
 
     private val currentUser: User? get() = (_uiState.value as? ProfileUiState.Content)?.user
@@ -97,6 +118,7 @@ class ProfileViewModel @Inject constructor(
             try {
                 val user = profileRepository.me()
                 showUser(user, user.customStatus ?: "")
+                _dnd.value = user.status == UserStatus.DND
             } catch (error: SecureStorageUnavailableException) {
                 _storageError.value = error.message ?: "Secure storage is unavailable"
             } catch (_: Exception) {
@@ -122,27 +144,17 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    fun setStatus(status: UserStatus) {
-        viewModelScope.launch {
-            _storageError.value = null
-            val user = currentUser ?: return@launch
-            val updated = user.copy(status = status)
-            try {
-                profileRepository.storeUser(updated)
-                showUser(updated)
-            } catch (error: SecureStorageUnavailableException) {
-                showCachedUser()
-                _storageError.value = error.message ?: "Secure storage is unavailable"
-                return@launch
-            }
-
-            val customStatus = _uiState.value.customStatusInput.ifBlank { null }
-            if (status == UserStatus.DND) {
-                realtimeRepository.setDnd(true, customStatus)
-            } else {
-                realtimeRepository.setDnd(false)
-                realtimeRepository.sendPresence(status.value, customStatus)
-            }
+    /**
+     * Переключатель «Не беспокоить» (`set_dnd`). Выключение возвращает показ к автоматическому
+     * присутствию: «В сети» или «Отошёл» вручную не выбираются (как на настольном клиенте).
+     */
+    fun setDnd(enabled: Boolean) {
+        if (_dnd.value == enabled) return
+        _dnd.value = enabled
+        // Не ушло (нет связи) — переключатель возвращается: сервер режим не включил.
+        if (!presenceController.setDnd(enabled)) {
+            _dnd.value = !enabled
+            _events.tryEmit(ProfileEvent.StatusSaveFailed)
         }
     }
 
@@ -153,12 +165,8 @@ class ProfileViewModel @Inject constructor(
                 val updatedText = _uiState.value.customStatusInput.trim()
                 val updatedUser = profileRepository.updateCustomStatus(updatedText.ifBlank { null })
                 showUser(updatedUser)
-                val currentStatus = updatedUser.status
-                if (currentStatus == UserStatus.DND) {
-                    realtimeRepository.setDnd(true, updatedText.ifBlank { null })
-                } else {
-                    realtimeRepository.sendPresence(currentStatus.value, updatedText.ifBlank { null })
-                }
+                // Свой статус коллеги видят сразу; присутствие и «Не беспокоить» не меняются.
+                presenceController.publishCustomStatus(updatedText.ifBlank { null })
                 _events.tryEmit(ProfileEvent.StatusSaved)
             } catch (error: SecureStorageUnavailableException) {
                 showCachedUser()

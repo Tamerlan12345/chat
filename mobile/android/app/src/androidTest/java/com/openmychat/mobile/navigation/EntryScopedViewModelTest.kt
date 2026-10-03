@@ -58,6 +58,8 @@ class EntryScopedViewModelTest {
                 entryProvider {
                     entry<NavKey.Login> { Probe("login") }
                     entry<NavKey.Conversations> { Probe("conversations") }
+                    entry<NavKey.People> { Probe("people") }
+                    entry<NavKey.Person> { key -> Probe("person", key.userId.toString()) }
                     entry<NavKey.Announcements> { Probe("announcements") }
                     entry<NavKey.Profile> { Probe("profile") }
                     entry<NavKey.Call> { key -> Probe("call", key.callId) }

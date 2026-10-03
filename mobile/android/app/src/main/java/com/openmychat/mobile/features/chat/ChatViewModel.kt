@@ -26,6 +26,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.lifecycle.SavedStateHandle
+
+private const val KEY_FOCUS_DONE = "chat.focus_done"
+
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -37,17 +41,25 @@ sealed interface ChatUiState {
 @HiltViewModel(assistedFactory = ChatViewModel.Factory::class)
 class ChatViewModel @AssistedInject constructor(
     @Assisted val conversationType: ConversationType,
-    @Assisted val targetId: Long,
+    @Assisted("target") val targetId: Long,
     private val chatRepository: ChatRepository,
     private val realtimeRepository: RealtimeRepository,
     private val sessionRepository: SessionRepository,
     private val activeConversations: ActiveConversationRegistry,
-    private val historyCache: ChatHistoryCache
+    private val historyCache: ChatHistoryCache,
+    /** Переход к сообщению уже показан: после восстановления процесса его не повторяем. */
+    private val saved: SavedStateHandle = SavedStateHandle(),
+    /** Открыть на этом сообщении (переход из поиска). */
+    @Assisted("focus") focusMessageId: Long? = null
 ) : ViewModel() {
 
     @AssistedFactory
     interface Factory {
-        fun create(conversationType: ConversationType, targetId: Long): ChatViewModel
+        fun create(
+            conversationType: ConversationType,
+            @Assisted("target") targetId: Long,
+            @Assisted("focus") focusMessageId: Long?
+        ): ChatViewModel
     }
 
     private val _uiState = MutableStateFlow<ChatUiState>(ChatUiState.Loading)
@@ -73,6 +85,21 @@ class ChatViewModel @AssistedInject constructor(
 
     private val _editingMessage = MutableStateFlow<Message?>(null)
     val editingMessage: StateFlow<Message?> = _editingMessage.asStateFlow()
+
+    /** Сообщение, к которому прокрутить и которое подсветить; null — после показа или без перехода. */
+    private val _focus = MutableStateFlow<Long?>(null)
+    val focus: StateFlow<Long?> = _focus.asStateFlow()
+
+    /** Найденное сообщение слишком давнее: чат открыт на последних сообщениях. */
+    private val _jumpUnavailable = MutableStateFlow(false)
+    val jumpUnavailable: StateFlow<Boolean> = _jumpUnavailable.asStateFlow()
+
+    /** Переход ещё не выполнен. */
+    private val focusDone = saved.get<Boolean>(KEY_FOCUS_DONE) == true
+    private var pendingFocus: Long? = if (focusDone) null else focusMessageId
+
+    /** История собрана вокруг этого сообщения: обновление собирает её так же, без дыры. */
+    private var windowAnchor: Long? = if (focusDone) focusMessageId else null
 
     private val conversation = ConversationRef(conversationType, targetId)
 
@@ -114,6 +141,11 @@ class ChatViewModel @AssistedInject constructor(
         super.onCleared()
     }
 
+    /** Экран прокрутил к сообщению и подсветил его. */
+    fun onFocusShown() {
+        _focus.value = null
+    }
+
     fun loadMessages() {
         viewModelScope.launch {
             if (_uiState.value !is ChatUiState.Content) _uiState.value = ChatUiState.Loading
@@ -121,13 +153,22 @@ class ChatViewModel @AssistedInject constructor(
             val shownBefore = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty().mapTo(HashSet()) { it.id }
             _refreshFailed.value = false
             try {
-                val history = chatRepository.messages(conversationType, targetId)
+                val jump = pendingFocus
+                val anchor = jump ?: windowAnchor
+                val window = anchor?.let { chatRepository.messagesAround(conversationType, targetId, it) }
+                if (jump != null) {
+                    pendingFocus = null
+                    saved[KEY_FOCUS_DONE] = true
+                    if (window != null) windowAnchor = jump else _jumpUnavailable.value = true
+                }
+                val history = window ?: chatRepository.messages(conversationType, targetId)
                 _uiState.update { state ->
                     // Keep realtime messages that arrived while the history request was in flight.
                     val live = (state as? ChatUiState.Content)?.messages.orEmpty()
                     val historyIds = history.mapTo(HashSet()) { it.id }
                     ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
                 }
+                if (jump != null && window != null) _focus.value = jump
             } catch (e: Exception) {
                 // A cached history stays on screen; the screen says it could not be refreshed.
                 if (_uiState.value is ChatUiState.Content) _refreshFailed.value = true
@@ -175,6 +216,8 @@ class ChatViewModel @AssistedInject constructor(
                             if (isVisible && msg.senderId != currentUserId) markAsRead()
                         }
                     }
+                    // Переподключились с открытым чатом: всё пришедшее за перерыв прочитано (multi-device.md §7.8).
+                    is WsEvent.AuthSuccess -> if (isVisible) markAsRead()
                     is WsEvent.MessageStatusUpdated -> updateMessages { list ->
                         list.map { msg ->
                             if (msg.id == event.messageId) {

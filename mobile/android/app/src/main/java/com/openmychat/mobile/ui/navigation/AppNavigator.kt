@@ -10,7 +10,15 @@ class AppNavigator(val state: AppNavigationState) {
     val hasActiveCall: Boolean
         get() = !state.isAuthFlow && state.topLevelBackStacks.values.any { stack -> stack.any { it is NavKey.Call } }
 
+    /**
+     * Последнее изменение — смена вкладки (выбор в панели, «Назад» с корня вкладки): навигация
+     * показывает её кроссфейдом без сдвига, как системные вкладки, а не как переход вглубь.
+     */
+    var lastChangeWasTabSwitch: Boolean = false
+        private set
+
     fun navigate(key: NavKey) {
+        lastChangeWasTabSwitch = !state.isAuthFlow && key in state.topLevelBackStacks && key != state.topLevelRoute
         when {
             key.isAuthDestination -> navigateWithinAuthFlow(key)
             state.isAuthFlow -> {
@@ -19,6 +27,7 @@ class AppNavigator(val state: AppNavigationState) {
             }
             key in state.topLevelBackStacks -> selectTab(key)
             key is NavKey.Chat -> openChat(key)
+            key is NavKey.Person -> openPerson(key)
             key is NavKey.Call -> showCall(key)
             else -> pushUnlessOnTop(key)
         }
@@ -27,6 +36,7 @@ class AppNavigator(val state: AppNavigationState) {
     /** Handles a back gesture. Returns false when there is nothing left to pop (the app may finish). */
     fun goBack(): Boolean {
         val stack = state.currentBackStack
+        lastChangeWasTabSwitch = false
         return when {
             stack.size > 1 -> {
                 stack.removeAt(stack.lastIndex)
@@ -34,10 +44,22 @@ class AppNavigator(val state: AppNavigationState) {
             }
             !state.isAuthFlow && state.topLevelRoute != state.startRoute -> {
                 state.topLevelRoute = state.startRoute
+                lastChangeWasTabSwitch = true
                 true
             }
             else -> false
         }
+    }
+
+    /**
+     * «Сотрудники» с корня: «Все сотрудники (N)» из поиска в «Чатах», «Отдел» в карточке. Карточки,
+     * открытые раньше на этой вкладке, закрываются — показывается сам справочник.
+     */
+    fun openPeople() {
+        if (state.isAuthFlow) return
+        lastChangeWasTabSwitch = state.topLevelRoute != NavKey.People
+        state.topLevelBackStacks.getValue(NavKey.People).resetTo(NavKey.People)
+        state.topLevelRoute = NavKey.People
     }
 
     /** Shows an incoming call unless another call is already open (the caller should reject it). */
@@ -105,12 +127,23 @@ class AppNavigator(val state: AppNavigationState) {
     private fun openChat(chat: NavKey.Chat) {
         val stack = state.currentBackStack
         val top = stack.last()
+        val below = stack.getOrNull(stack.lastIndex - 1)
         when {
-            top is NavKey.Chat && top.isSameConversation(chat) -> Unit
+            top is NavKey.Chat && top.isSameConversation(chat) && chat.focusMessageId == null -> Unit
+            // «Написать» в карточке, открытой из заголовка этого же чата, — обратно в чат.
+            top is NavKey.Person && below is NavKey.Chat && below.isSameConversation(chat) && chat.focusMessageId == null ->
+                stack.removeAt(stack.lastIndex)
             // Only one conversation is open at a time; on wide screens it replaces the detail pane.
             top is NavKey.Chat -> stack[stack.lastIndex] = chat
             else -> stack.add(chat)
         }
+    }
+
+    private fun openPerson(person: NavKey.Person) {
+        val stack = state.currentBackStack
+        val top = stack.last()
+        if (top is NavKey.Person && top.userId == person.userId) return
+        stack.add(person)
     }
 
     private fun showCall(call: NavKey.Call) {

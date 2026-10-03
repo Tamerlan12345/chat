@@ -275,6 +275,17 @@ function rotateSyncEpoch(filePath) {
   }
 }
 
+/**
+ * Свёртка текста для поиска: нижний регистр по Юникоду и «ё» → «е». SQLite
+ * LIKE без учёта регистра сравнивает только ASCII, поэтому кириллица
+ * сравнивается свёрнутой с обеих сторон: в SQL — функцией fold_text, в JS —
+ * этой же функцией для строки поиска.
+ */
+function foldText(text) {
+  if (text === null || text === undefined) return null;
+  return String(text).toLowerCase().replace(/ё/g, 'е');
+}
+
 let dbInstance = null;
 
 function getDatabase() {
@@ -285,6 +296,7 @@ function getDatabase() {
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA synchronous = NORMAL;');
     dbInstance.exec('PRAGMA busy_timeout = 5000;');
+    dbInstance.function('fold_text', { deterministic: true }, foldText);
 
     initSchema(dbInstance);
   }
@@ -481,6 +493,7 @@ function seedChatDefaults(db, ownerId = null) {
 
 module.exports = {
   getDatabase,
+  foldText,
   closeDatabase,
   withChangeSeq,
   getSyncState,

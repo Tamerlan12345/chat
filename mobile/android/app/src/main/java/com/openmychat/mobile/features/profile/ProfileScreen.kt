@@ -28,8 +28,11 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.platform.testTag
+import com.openmychat.mobile.data.realtime.Presence
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +73,7 @@ import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.InlineNotice
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.StatusDot
+import com.openmychat.mobile.ui.components.CentyTonalButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.components.presenceLabel
 import com.openmychat.mobile.ui.components.rememberHaptics
@@ -83,6 +87,8 @@ fun ProfileScreen(
     onLoggedOut: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val presence by viewModel.presence.collectAsState()
+    val dnd by viewModel.dnd.collectAsState()
     val logoutError by viewModel.logoutError.collectAsState()
     val storageError by viewModel.storageError.collectAsState()
     val snackbar = LocalSnackbarHostState.current
@@ -127,7 +133,7 @@ fun ProfileScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
-                ProfileHeader(user)
+                ProfileHeader(user, status = if (dnd) UserStatus.DND else presence.status)
 
                 if (storageError != null || logoutError != null) {
                     Spacer(Modifier.size(12.dp))
@@ -136,32 +142,12 @@ fun ProfileScreen(
 
                 SectionTitle(stringResource(R.string.profile_status_section))
                 Group {
+                    // Присутствие автоматическое, как на настольном клиенте: только для показа.
+                    PresenceRow(presence)
+                    HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
+                    DndRow(enabled = dnd, onChange = viewModel::setDnd)
+                    HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(UserStatus.ONLINE, UserStatus.AWAY, UserStatus.DND).forEach { status ->
-                                val selected = user?.status == status
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { viewModel.setStatus(status) },
-                                    label = { Text(presenceLabel(status)) },
-                                    leadingIcon = { StatusDot(status, size = 10.dp) },
-                                    shape = RoundedCornerShape(CentyRadius.chip),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        containerColor = tokens.card,
-                                        labelColor = tokens.textSecondary,
-                                        selectedContainerColor = tokens.primarySoft,
-                                        selectedLabelColor = tokens.accentText
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = selected,
-                                        borderColor = tokens.borderStrong,
-                                        selectedBorderColor = tokens.primaryLine
-                                    ),
-                                    modifier = Modifier.heightIn(min = 48.dp)
-                                )
-                            }
-                        }
                         OutlinedTextField(
                             value = uiState.customStatusInput,
                             onValueChange = viewModel::updateCustomStatusInput,
@@ -217,7 +203,8 @@ fun ProfileScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             val cooldown = uiState.wakeCooldownSeconds
-                            Button(
+                            CentyTonalButton(
+                                text = if (cooldown > 0) stringResource(R.string.profile_wake_wait, cooldown) else stringResource(R.string.profile_wake_send),
                                 onClick = {
                                     wakeTarget.toLongOrNull()?.let {
                                         viewModel.sendWakeToColleague(it)
@@ -225,11 +212,8 @@ fun ProfileScreen(
                                     }
                                 },
                                 enabled = cooldown == 0 && wakeTarget.isNotBlank(),
-                                shape = RoundedCornerShape(CentyRadius.control),
-                                modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
-                            ) {
-                                Text(if (cooldown > 0) stringResource(R.string.profile_wake_wait, cooldown) else stringResource(R.string.profile_wake_send))
-                            }
+                                modifier = Modifier.align(Alignment.End)
+                            )
                         }
                     }
                 }
@@ -289,11 +273,11 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileHeader(user: User?) {
+private fun ProfileHeader(user: User?, status: UserStatus) {
     val tokens = CentyTheme.tokens
     val name = user?.fullName ?: stringResource(R.string.profile_unknown_user)
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        CentyAvatar(name = name, avatarUrl = user?.avatarUrl, status = user?.status, size = 64.dp)
+        CentyAvatar(name = name, avatarUrl = user?.avatarUrl, status = status, size = 64.dp)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -309,6 +293,70 @@ private fun ProfileHeader(user: User?) {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = tokens.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+/** «Сейчас: В сети» — автоматическое присутствие; вручную не меняется. */
+@Composable
+private fun PresenceRow(presence: Presence) {
+    val tokens = CentyTheme.tokens
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .semantics(mergeDescendants = true) {}
+            .testTag("presence-now"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatusDot(presence.status, size = 10.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.profile_presence_now, presenceLabel(presence.status)),
+                style = MaterialTheme.typography.bodyLarge,
+                color = tokens.textStrong
+            )
+            Text(
+                stringResource(R.string.profile_presence_auto),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.textSecondary
+            )
+        }
+    }
+}
+
+/** Единственный ручной статус — «Не беспокоить» (`set_dnd`), поверх присутствия. */
+@Composable
+private fun DndRow(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    val tokens = CentyTheme.tokens
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .toggleable(value = enabled, role = Role.Switch, onValueChange = onChange)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag("dnd-switch"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatusDot(UserStatus.DND, size = 10.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.status_dnd), style = MaterialTheme.typography.bodyLarge, color = tokens.textStrong)
+            Text(stringResource(R.string.profile_dnd_hint), style = MaterialTheme.typography.bodyMedium, color = tokens.textSecondary)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = enabled,
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = tokens.primary,
+                checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                uncheckedTrackColor = tokens.hover,
+                uncheckedBorderColor = tokens.borderStrong,
+                uncheckedThumbColor = tokens.textDim
+            )
+        )
     }
 }
 

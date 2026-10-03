@@ -58,6 +58,9 @@ interface ChatActions {
     fun canDelete(message: Message): Boolean = false
     fun onBack() {}
     fun onCall() {}
+
+    /** Тап по аватару и имени в заголовке личной переписки — карточка собеседника; null — нет карточки. */
+    val onOpenCard: (() -> Unit)? get() = null
     fun onWake() {}
     fun onRetry() {}
 
@@ -89,7 +92,8 @@ fun ChatScreen(
     status: String? = null,
     showBackButton: Boolean = true,
     onNavigateBack: () -> Unit,
-    onStartCall: (peerId: Long, peerName: String) -> Unit
+    onStartCall: (peerId: Long, peerName: String) -> Unit,
+    onOpenCard: (() -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val typingUser by viewModel.typingUser.collectAsState()
@@ -98,6 +102,9 @@ fun ChatScreen(
     val connection by viewModel.connectionState.collectAsState()
     val livePeerStatus by viewModel.peerStatus.collectAsState()
     val refreshFailed by viewModel.refreshFailed.collectAsState()
+    val focus by viewModel.focus.collectAsState()
+    val jumpUnavailable by viewModel.jumpUnavailable.collectAsState()
+    val jumpUnavailableText = stringResource(R.string.chat_jump_unavailable)
     val snackbar = LocalSnackbarHostState.current
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
@@ -110,9 +117,15 @@ fun ChatScreen(
         onPauseOrDispose { viewModel.onVisibilityChanged(false) }
     }
 
+    // Найденное сообщение слишком давнее: сказать, что показаны последние.
+    LaunchedEffect(jumpUnavailable) {
+        if (jumpUnavailable) snackbar.showSnackbar(jumpUnavailableText)
+    }
+
     val isDirect = viewModel.conversationType == ConversationType.DIRECT
-    val actions = remember(viewModel) {
+    val actions = remember(viewModel, onOpenCard) {
         object : ChatActions {
+            override val onOpenCard: (() -> Unit)? = onOpenCard
             override fun canEdit(message: Message) = viewModel.canEditMessage(message)
             override fun canDelete(message: Message) = viewModel.canDeleteMessage(message)
             override fun onBack() = onNavigateBack()
@@ -144,13 +157,15 @@ fun ChatScreen(
         connectionState = connection,
         actions = actions,
         avatarUrl = avatarUrl,
-        peerStatus = if (isDirect) livePeerStatus ?: UserStatus.fromValue(status) else null,
+        peerStatus = if (isDirect) livePeerStatus ?: status?.let(UserStatus::fromValue) else null,
         typingUser = typingUser,
         wakeCooldown = wakeCooldown,
         editingMessage = editingMessage,
         showBackButton = showBackButton,
         sharedKey = SharedKeys.conversation(isChannel = !isDirect, id = viewModel.targetId),
-        refreshFailed = refreshFailed
+        refreshFailed = refreshFailed,
+        focusMessageId = focus,
+        onFocusShown = viewModel::onFocusShown
     )
 }
 
@@ -180,7 +195,10 @@ fun ChatContent(
     /** Ties the header's avatar and name to the inbox row for the shared-element transition. */
     sharedKey: String? = null,
     /** A cached history is shown but the server could not refresh it. */
-    refreshFailed: Boolean = false
+    refreshFailed: Boolean = false,
+    /** Прокрутить к этому сообщению и подсветить его (переход из поиска). */
+    focusMessageId: Long? = null,
+    onFocusShown: () -> Unit = {}
 ) {
     val tokens = CentyTheme.tokens
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
@@ -283,7 +301,9 @@ fun ChatContent(
                                     replyToId = null
                                     actions.onStartEdit(message)
                                 },
-                                onRequestDelete = { pendingDelete = it }
+                                onRequestDelete = { pendingDelete = it },
+                                focusMessageId = focusMessageId,
+                                onFocusShown = onFocusShown
                             )
                         }
                     }

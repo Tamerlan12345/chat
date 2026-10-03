@@ -22,11 +22,13 @@ class BearerCredentialsInterceptor(
             )
         ) {
             requestBuilder.removeHeader("Authorization")
-        } else if (
-            !token.isNullOrBlank() &&
-            originalRequest.header("Authorization") == null
-        ) {
-            requestBuilder.header("Authorization", "Bearer $token")
+            requestBuilder.removeHeader(AvatarOptIn.HEADER)
+        } else {
+            // Свой сервер: фото коллег — ссылками, а не data URL в каждом ответе.
+            requestBuilder.header(AvatarOptIn.HEADER, AvatarOptIn.VALUE)
+            if (!token.isNullOrBlank() && originalRequest.header("Authorization") == null) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
         }
 
         val response = chain.proceed(requestBuilder.build())

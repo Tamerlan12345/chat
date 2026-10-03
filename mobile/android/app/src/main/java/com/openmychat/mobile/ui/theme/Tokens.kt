@@ -36,6 +36,8 @@ data class CentyTokens(
     val hover: Color,
     val active: Color,
     val primary: Color,
+    /** Нажатая основная кнопка (desktop `--primary-pressed`). */
+    val primaryPressed: Color,
     /** Own bubble fill, selected row. */
     val primarySoft: Color,
     /** Own bubble outline. */
@@ -112,6 +114,7 @@ internal val LightCentyTokens = CentyTokens(
     hover = Color(0x0B181838), // rgba(24,24,56,.045)
     active = Color(0x14181838), // rgba(24,24,56,.08)
     primary = Color(0xFF5B4EE6),
+    primaryPressed = Color(0xFF4336C2),
     primarySoft = Color(0x1A5B4EE6), // rgba(91,78,230,.10)
     primaryLine = Color(0x4D5B4EE6), // rgba(91,78,230,.30)
     accentText = Color(0xFF4A3DD2),
@@ -154,6 +157,7 @@ internal val DarkCentyTokens = CentyTokens(
     hover = Color(0x0EFFFFFF), // rgba(255,255,255,.055)
     active = Color(0x17FFFFFF), // rgba(255,255,255,.09)
     primary = Color(0xFF6457EE),
+    primaryPressed = Color(0xFF5549DE),
     primarySoft = Color(0x29968CFF), // rgba(150,140,255,.16)
     primaryLine = Color(0x66968CFF), // rgba(150,140,255,.40)
     accentText = Color(0xFFB0A9FF),

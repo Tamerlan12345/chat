@@ -2,6 +2,7 @@ package com.openmychat.mobile.core.network
 
 import com.openmychat.mobile.data.model.Announcement
 import com.openmychat.mobile.data.model.Channel
+import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.model.UserStatus
@@ -61,7 +62,25 @@ object WsEventParser {
         )
         "server_disconnect" -> WsEvent.ServerDisconnect(root.string("reason") ?: "Disconnected by server")
         "new_message", "direct_message", "channel_message" ->
-            WsEvent.NewMessage(json.decodeFromJsonElement<Message>(root.required("message")))
+            WsEvent.NewMessage(
+                json.decodeFromJsonElement<Message>(root.required("message")),
+                notify = (root["notify"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
+            )
+        "conversation_read" -> {
+            val conversationType = root.string("conversationType")
+            val targetId = root.long("targetId")
+            if (conversationType != "direct" && conversationType != "channel" || targetId == null || targetId <= 0) {
+                throw IllegalArgumentException("conversation_read without a conversation")
+            }
+            WsEvent.ConversationRead(
+                conversationType = ConversationType.fromValue(conversationType),
+                targetId = targetId,
+                byUserId = root.long("byUserId") ?: 0L,
+                at = root.string("at") ?: "",
+                messageIds = root["messageIds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull } ?: emptyList(),
+                lastReadId = root.long("lastReadId")
+            )
+        }
         "message_status_updated" -> WsEvent.MessageStatusUpdated(
             messageId = root.long("messageId") ?: 0L,
             status = root.string("status") ?: "delivered",
@@ -95,7 +114,8 @@ object WsEventParser {
         "user_status_changed" -> WsEvent.UserStatusChanged(
             userId = root.long("userId") ?: root.long("user_id") ?: 0L,
             status = UserStatus.fromValue(root.string("status")),
-            customStatus = root.string("customStatus")
+            customStatus = root.string("customStatus"),
+            customStatusPresent = "customStatus" in root
         )
         "channel_created" -> WsEvent.ChannelCreated(json.decodeFromJsonElement<Channel>(root.required("channel")))
         "channel_deleted" -> WsEvent.ChannelDeleted(root.long("channelId") ?: 0L)

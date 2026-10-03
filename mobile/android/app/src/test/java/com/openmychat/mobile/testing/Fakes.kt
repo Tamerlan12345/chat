@@ -32,10 +32,14 @@ class FakeRealtimeRepository : RealtimeRepository {
     /** Outgoing commands in order, e.g. "mark_read direct 7" or "call_end 7". */
     val sent = mutableListOf<String>()
 
+    /** false — сокет закрыт: команды не уходят (send возвращает false). */
+    var accepting = true
+
     fun emit(event: WsEvent) = check(_events.tryEmit(event))
     fun emitAudio(frame: WsEvent.AudioFrameReceived) = check(_audioFrames.tryEmit(frame))
 
     private fun record(command: String): Boolean {
+        if (!accepting) return false
         sent += command
         return true
     }
@@ -46,10 +50,13 @@ class FakeRealtimeRepository : RealtimeRepository {
     override fun deleteMessage(messageId: Long) = record("delete_message $messageId")
     override fun markRead(conversationType: ConversationType, targetId: Long) =
         record("mark_read ${conversationType.value} $targetId")
+    override fun sendViewing(conversation: Pair<ConversationType, Long>?) =
+        record(if (conversation == null) "viewing null" else "viewing ${conversation.first.value} ${conversation.second}")
     override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
         record("typing $targetId $isTyping")
-    override fun sendPresence(state: String, customStatus: String?) = record("presence $state")
-    override fun setDnd(enabled: Boolean, customStatus: String?) = record("set_dnd $enabled")
+    override fun sendPresence(state: String) = record("presence $state")
+    override fun sendCustomStatus(state: String, customStatus: String?) = record("presence $state custom=$customStatus")
+    override fun setDnd(enabled: Boolean) = record("set_dnd $enabled")
     override fun sendWake(targetUserId: Long) = record("wake_send $targetUserId")
     override fun sendCallOffer(targetUserId: Long) = record("call_offer $targetUserId")
     override fun sendCallAnswer(targetUserId: Long) = record("call_answer $targetUserId")
@@ -58,7 +65,7 @@ class FakeRealtimeRepository : RealtimeRepository {
     override fun sendAudioFrame(targetUserId: Long, pcmSamples: ShortArray) = record("audio $targetUserId")
 }
 
-class FakeChatRepository(
+open class FakeChatRepository(
     var direct: List<DirectConversation> = emptyList(),
     var channels: List<Channel> = emptyList(),
     var history: List<Message> = emptyList()
@@ -89,6 +96,16 @@ class FakeChatRepository(
         historyGate?.await()
         historyFailure?.let { throw it }
         return history
+    }
+
+    /** История вокруг сообщения (переход из поиска); null — «слишком давнее». */
+    var around: List<Message>? = null
+    val aroundRequests = mutableListOf<Long>()
+
+    override suspend fun messagesAround(conversationType: ConversationType, targetId: Long, messageId: Long): List<Message>? {
+        aroundRequests += messageId
+        historyGate?.await()
+        return around
     }
 }
 

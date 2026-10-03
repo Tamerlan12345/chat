@@ -9,6 +9,8 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -169,8 +171,10 @@ class LoginScreenTest {
         launch()
 
         signIn()
-        waitForText("Выполняется вход…")
-        composeRule.onNode(hasText("Выполняется вход…") and hasClickAction()).assertIsNotEnabled().performClick()
+        // Индикатор на месте «Войти»; TalkBack слышит «Выполняется вход…».
+        val signingIn = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Выполняется вход…")
+        composeRule.waitUntil(5_000) { composeRule.onAllNodes(signingIn).fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNode(signingIn and hasClickAction()).assertIsNotEnabled().performClick()
         assertEquals(1, scripted.attempts.size)
 
         gate.complete(Unit)

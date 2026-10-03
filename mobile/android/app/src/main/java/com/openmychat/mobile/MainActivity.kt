@@ -53,7 +53,25 @@ class MainActivity : ComponentActivity() {
 
     private val appViewModel: AppViewModel by viewModels()
 
+    /** Переписка из нажатого уведомления — открывается, когда навигация готова и вход выполнен. */
+    private val notificationOpen = kotlinx.coroutines.flow.MutableStateFlow<NavKey.Chat?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationOpen.value = chatFromNotification(intent)
+    }
+
+    private fun chatFromNotification(intent: android.content.Intent?): NavKey.Chat? {
+        val sink = com.openmychat.mobile.data.notifications.SystemNotificationSink
+        val type = intent?.getStringExtra(sink.EXTRA_CONVERSATION_TYPE) ?: return null
+        val targetId = intent.getLongExtra(sink.EXTRA_TARGET_ID, 0L).takeIf { it > 0 } ?: return null
+        if (type != "direct" && type != "channel") return null
+        return NavKey.Chat(type, targetId, intent.getStringExtra(sink.EXTRA_TITLE).orEmpty())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (savedInstanceState == null) notificationOpen.value = chatFromNotification(intent)
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -92,6 +110,15 @@ class MainActivity : ComponentActivity() {
                             ) != PackageManager.PERMISSION_GRANTED
                         ) {
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+
+                LaunchedEffect(navigator) {
+                    notificationOpen.collect { chat ->
+                        if (chat != null && SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
+                            notificationOpen.value = null
+                            navigator.navigate(chat)
                         }
                     }
                 }

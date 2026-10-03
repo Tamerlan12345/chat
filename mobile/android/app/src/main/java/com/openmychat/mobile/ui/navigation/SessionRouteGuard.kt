@@ -48,6 +48,8 @@ object SessionRouteGuard {
     private fun NavKey.requiresAuthenticatedSession(): Boolean = when (this) {
         is NavKey.Conversations,
         is NavKey.Chat,
+        is NavKey.People,
+        is NavKey.Person,
         is NavKey.Announcements,
         is NavKey.Call,
         is NavKey.Profile -> true

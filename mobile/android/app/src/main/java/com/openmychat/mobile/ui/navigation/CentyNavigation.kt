@@ -29,6 +29,15 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.outlined.Groups
+import androidx.navigation3.runtime.NavMetadataKey
+import androidx.navigation3.runtime.metadata
+import com.openmychat.mobile.features.people.PeopleScreen
+import com.openmychat.mobile.features.people.Person
+import com.openmychat.mobile.features.people.PersonCardActions
+import com.openmychat.mobile.features.people.PersonCardScreen
+import com.openmychat.mobile.features.people.PersonViewModel
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -92,19 +101,40 @@ private data class TopLevelItem(val icon: ImageVector, val selectedIcon: ImageVe
 
 private val TopLevelItems: Map<NavKey, TopLevelItem> = mapOf(
     NavKey.Conversations to TopLevelItem(Icons.AutoMirrored.Outlined.Chat, Icons.AutoMirrored.Filled.Chat, R.string.tab_chats),
+    NavKey.People to TopLevelItem(Icons.Outlined.Groups, Icons.Filled.Groups, R.string.tab_people),
     NavKey.Announcements to TopLevelItem(Icons.Outlined.Campaign, Icons.Filled.Campaign, R.string.tab_announcements),
     NavKey.Profile to TopLevelItem(Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle, R.string.tab_profile)
 )
 
 /**
+ * Метки записей для переходов: корень вкладки (смена вкладки — кроссфейд 150 мс без сдвига, как у
+ * системных вкладок) и экран с общими элементами (аватар и имя летят между ними, остальное —
+ * fade-through).
+ */
+object NavMeta {
+    object TabRoot : NavMetadataKey<Boolean>
+    object SharedHost : NavMetadataKey<Boolean>
+
+    fun tabRoot() = metadata { put(TabRoot, true) }
+    fun sharedHost() = metadata { put(SharedHost, true) }
+}
+
+/**
  * Material shared-axis X for forward/back (system grammar). Inbox ↔ chat is the exception (UI layer
  * v2): the avatar and the name travel as shared elements while the rest fades through (out 90 ms,
- * in 210 ms after it). Reduce motion: a 150 ms crossfade for everything.
+ * in 210 ms after it). The same grammar covers the people flow (row → card → chat). A tab switch
+ * is a 150 ms crossfade without a slide. Reduce motion: a 150 ms crossfade for everything.
  */
-private fun <T : Any> sharedAxis(reduce: Boolean, forward: Boolean): AnimatedContentTransitionScope<Scene<T>>.() -> ContentTransform = {
+private fun <T : Any> sharedAxis(
+    reduce: Boolean,
+    forward: Boolean,
+    isTabSwitch: AnimatedContentTransitionScope<Scene<T>>.() -> Boolean
+): AnimatedContentTransitionScope<Scene<T>>.() -> ContentTransform = {
     if (reduce) {
         fadeIn(tween(CentyMotion.REDUCED_CROSSFADE)) togetherWith fadeOut(tween(CentyMotion.REDUCED_CROSSFADE))
-    } else if (isInboxChatPair()) {
+    } else if (isTabSwitch()) {
+        fadeIn(tween(TAB_CROSSFADE)) togetherWith fadeOut(tween(TAB_CROSSFADE))
+    } else if (isInboxChatPair() || isSharedPair()) {
         fadeIn(tween(CentyMotion.SHARED - CentyMotion.FADE_THROUGH_OUT, delayMillis = CentyMotion.FADE_THROUGH_OUT, easing = CentyMotion.EaseOut)) togetherWith
             fadeOut(tween(CentyMotion.FADE_THROUGH_OUT, easing = CentyMotion.EaseOut))
     } else {
@@ -116,6 +146,19 @@ private fun <T : Any> sharedAxis(reduce: Boolean, forward: Boolean): AnimatedCon
         enter togetherWith exit
     }
 }
+
+private const val TAB_CROSSFADE = 150
+
+/** Оба экрана перехода несут общие элементы (список/карточка/чат). */
+private fun <T : Any> AnimatedContentTransitionScope<Scene<T>>.isSharedPair(): Boolean {
+    val from = initialState.entries.lastOrNull()?.metadata ?: return false
+    val to = targetState.entries.lastOrNull()?.metadata ?: return false
+    return from.contains(NavMeta.SharedHost) && to.contains(NavMeta.SharedHost)
+}
+
+/** Предиктивный «Назад» с корня вкладки — это смена вкладки (корень лежит на дне своего стека). */
+private fun <T : Any> AnimatedContentTransitionScope<Scene<T>>.leavesTabRoot(): Boolean =
+    initialState.entries.lastOrNull()?.metadata?.contains(NavMeta.TabRoot) == true
 
 /** The conversations list and a chat on top of each other (either direction). */
 private fun <T : Any> AnimatedContentTransitionScope<Scene<T>>.isInboxChatPair(): Boolean {
@@ -161,15 +204,18 @@ fun CentyNavigation(
         // Inbox row → chat header: the avatar and the name are shared elements. Only on a single pane
         // (side by side both are on screen anyway) and only with motion on.
         SharedTransitionLayout {
-            CompositionLocalProvider(LocalSharedTransitionScope provides if (reduce || isListDetail) null else this) {
+            // Смена вкладки — без общих элементов: строка «Чатов» и строка «Сотрудников» с тем же
+            // человеком не должны перелетать друг в друга.
+            val sharing = !(reduce || isListDetail || navigator.lastChangeWasTabSwitch)
+            CompositionLocalProvider(LocalSharedTransitionScope provides if (sharing) this else null) {
                 NavDisplay(
                     entries = entries,
                     onBack = { navigator.goBack() },
                     sceneStrategies = listOf(listDetailStrategy),
                     sharedTransitionScope = this,
-                    transitionSpec = sharedAxis(reduce, forward = true),
-                    popTransitionSpec = sharedAxis(reduce, forward = false),
-                    predictivePopTransitionSpec = { _ -> sharedAxis<NavKey>(reduce, forward = false)(this) }
+                    transitionSpec = sharedAxis(reduce, forward = true) { navigator.lastChangeWasTabSwitch },
+                    popTransitionSpec = sharedAxis(reduce, forward = false) { navigator.lastChangeWasTabSwitch },
+                    predictivePopTransitionSpec = { _ -> sharedAxis<NavKey>(reduce, forward = false) { leavesTabRoot() }(this) }
                 )
             }
         }
@@ -302,10 +348,23 @@ private fun appEntryProvider(
         )
     }
     entry<NavKey.Conversations>(
-        metadata = ListDetailScene.listPane()
+        metadata = ListDetailScene.listPane() + NavMeta.tabRoot() + NavMeta.sharedHost()
     ) {
         ConversationsScreen(
             viewModel = hiltViewModel(),
+            searchViewModel = hiltViewModel(),
+            onOpenPerson = { person -> navigator.navigate(person.toCardKey()) },
+            onOpenMessage = { hit ->
+                navigator.navigate(
+                    NavKey.Chat(
+                        conversationType = hit.conversationType.value,
+                        targetId = hit.targetId,
+                        title = hit.conversationTitle.ifBlank { hit.senderName },
+                        focusMessageId = hit.message.id
+                    )
+                )
+            },
+            onShowAllPeople = { navigator.openPeople() },
             onOpenDirectChat = { userId, name, avatar, status ->
                 navigator.navigate(
                     NavKey.Chat(
@@ -324,14 +383,52 @@ private fun appEntryProvider(
             }
         )
     }
+    entry<NavKey.People>(
+        metadata = ListDetailScene.listPane() + NavMeta.tabRoot() + NavMeta.sharedHost()
+    ) {
+        PeopleScreen(viewModel = hiltViewModel(), onOpenPerson = { person -> navigator.navigate(person.toCardKey()) })
+    }
+    entry<NavKey.Person>(
+        metadata = ListDetailScene.detailPane() + NavMeta.sharedHost()
+    ) { key ->
+        val viewModel = hiltViewModel<PersonViewModel, PersonViewModel.Factory> { factory -> factory.create(key.userId) }
+        PersonCardScreen(
+            viewModel = viewModel,
+            placeholderName = key.name,
+            placeholderAvatar = key.avatarUrl,
+            placeholderStatus = key.status,
+            showBackButton = LocalBackButtonVisibility.current,
+            actions = object : PersonCardActions {
+                override fun onBack() {
+                    navigator.goBack()
+                }
+                override fun onWrite(person: Person) = navigator.navigate(
+                    NavKey.Chat(
+                        conversationType = ConversationType.DIRECT.value,
+                        targetId = person.id,
+                        title = person.fullName,
+                        avatarUrl = person.avatarUrl,
+                        status = person.status.value
+                    )
+                )
+                override fun onCall(person: Person) =
+                    navigator.navigate(NavKey.Call(peerId = person.id, peerName = person.fullName, isIncoming = false))
+                override fun onOpenDepartment(person: Person) {
+                    viewModel.showDepartment()
+                    navigator.openPeople()
+                }
+                override fun onEditProfile() = navigator.navigate(NavKey.Profile)
+            }
+        )
+    }
     entry<NavKey.Chat>(
-        metadata = ListDetailScene.detailPane()
+        metadata = ListDetailScene.detailPane() + NavMeta.sharedHost()
     ) { key ->
         val conversationType =
             if (key.conversationType == ConversationType.CHANNEL.value) ConversationType.CHANNEL else ConversationType.DIRECT
         ChatScreen(
             viewModel = hiltViewModel<ChatViewModel, ChatViewModel.Factory> { factory ->
-                factory.create(conversationType, key.targetId)
+                factory.create(conversationType, key.targetId, key.focusMessageId)
             },
             title = key.title,
             avatarUrl = key.avatarUrl,
@@ -340,13 +437,16 @@ private fun appEntryProvider(
             onNavigateBack = { navigator.goBack() },
             onStartCall = { peerId, peerName ->
                 navigator.navigate(NavKey.Call(peerId = peerId, peerName = peerName, isIncoming = false))
-            }
+            },
+            onOpenCard = if (conversationType == ConversationType.DIRECT) {
+                { navigator.navigate(NavKey.Person(userId = key.targetId, name = key.title, avatarUrl = key.avatarUrl, status = key.status)) }
+            } else null
         )
     }
-    entry<NavKey.Announcements> {
+    entry<NavKey.Announcements>(metadata = NavMeta.tabRoot()) {
         AnnouncementsScreen(viewModel = hiltViewModel())
     }
-    entry<NavKey.Profile> {
+    entry<NavKey.Profile>(metadata = NavMeta.tabRoot()) {
         ProfileScreen(
             viewModel = hiltViewModel(),
             onLoggedOut = { navigator.onLoggedOut() }
@@ -361,6 +461,8 @@ private fun appEntryProvider(
         )
     }
 }
+
+private fun Person.toCardKey() = NavKey.Person(userId = id, name = fullName, avatarUrl = avatarUrl, status = status.value)
 
 /** Consumes the gesture-bar inset by the visible part of the bottom bar ([NavBarInset]). */
 private class BarInsetConsumption(
