@@ -1,16 +1,17 @@
 import SwiftUI
+import UIKit
 
 /// Полноэкранный интерфейс голосового вызова CentyChat в стиле Apple HIG
 public struct CallView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(CallStore.self) private var calls
+
     public init() {}
-    
+
     public var body: some View {
-        guard let call = appState.activeCall else {
+        guard let call = calls.activeCall else {
             return AnyView(EmptyView())
         }
-        
+
         return AnyView(
             ZStack {
                 // Фон: темный градиент с эффектом размытия
@@ -20,10 +21,10 @@ public struct CallView: View {
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
-                
+
                 VStack(spacing: 40) {
                     Spacer()
-                    
+
                     // Аватар и имя собеседника
                     VStack(spacing: 16) {
                         AvatarView(
@@ -36,11 +37,11 @@ public struct CallView: View {
                                 .stroke(Color.white.opacity(0.2), lineWidth: 3)
                         )
                         .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
-                        
+
                         Text(call.peerName)
                             .font(.system(size: 26, weight: .bold))
                             .foregroundColor(.white)
-                        
+
                         // Статус или таймер вызова
                         if call.state == .active {
                             Text(call.formattedDuration)
@@ -52,9 +53,45 @@ public struct CallView: View {
                                 .foregroundColor(.white.opacity(0.7))
                         }
                     }
-                    
+
+                    if let audioError = calls.callAudioError {
+                        VStack(spacing: 12) {
+                            Text(audioError)
+                                .font(.callout)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.white)
+                                .accessibilityLabel("Ошибка звука: \(audioError)")
+                            if call.state == .active || call.state == .connecting || calls.callAudioRequiresMicrophonePermission {
+                                HStack {
+                                    if call.state == .active || call.state == .connecting {
+                                        Button("Повторить") {
+                                            Task { await calls.retryAudioForActiveCall() }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .accessibilityLabel("Повторить подключение звука")
+                                        .accessibilityHint("Пробует заново подключить звук текущего звонка")
+                                    }
+
+                                    if calls.callAudioRequiresMicrophonePermission {
+                                        Button("Открыть настройки") {
+                                            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+                                            UIApplication.shared.open(settingsURL)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .tint(.white)
+                                        .accessibilityLabel("Открыть настройки микрофона")
+                                        .accessibilityHint("Открывает настройки приложения, чтобы разрешить доступ к микрофону")
+                                    }
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 16))
+                        .accessibilityElement(children: .contain)
+                    }
+
                     Spacer()
-                    
+
                     // Панель управления звонком
                     if call.state == .ringing && call.direction == .incoming {
                         incomingCallControls(call)
@@ -66,14 +103,14 @@ public struct CallView: View {
             }
         )
     }
-    
+
     // MARK: - Incoming Call Controls (Answer / Reject)
-    
+
     private func incomingCallControls(_ call: CallSession) -> some View {
         HStack(spacing: 60) {
             // Кнопка отклонить
             Button(action: {
-                Task { await appState.rejectIncomingCall() }
+                Task { await calls.rejectIncomingCall() }
             }) {
                 VStack(spacing: 8) {
                     Image(systemName: "phone.down.fill")
@@ -87,10 +124,10 @@ public struct CallView: View {
                         .foregroundColor(.white.opacity(0.8))
                 }
             }
-            
+
             // Кнопка принять
             Button(action: {
-                Task { await appState.answerIncomingCall() }
+                Task { await calls.answerIncomingCall() }
             }) {
                 VStack(spacing: 8) {
                     Image(systemName: "phone.fill")
@@ -106,16 +143,16 @@ public struct CallView: View {
             }
         }
     }
-    
+
     // MARK: - Active / Outgoing Controls
-    
+
     private func activeOrOutgoingCallControls(_ call: CallSession) -> some View {
         VStack(spacing: 36) {
             // Микрофон и громкая связь
             HStack(spacing: 48) {
                 // Mute
                 Button(action: {
-                    appState.toggleMute()
+                    calls.toggleMute()
                 }) {
                     VStack(spacing: 6) {
                         Image(systemName: call.isMuted ? "mic.slash.fill" : "mic.fill")
@@ -129,10 +166,10 @@ public struct CallView: View {
                             .foregroundColor(.white.opacity(0.75))
                     }
                 }
-                
+
                 // Speaker
                 Button(action: {
-                    appState.toggleSpeaker()
+                    calls.toggleSpeaker()
                 }) {
                     VStack(spacing: 6) {
                         Image(systemName: call.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.fill")
@@ -147,10 +184,10 @@ public struct CallView: View {
                     }
                 }
             }
-            
+
             // Завершить вызов
             Button(action: {
-                Task { await appState.endCall() }
+                Task { await calls.endCall() }
             }) {
                 Image(systemName: "phone.down.fill")
                     .font(.system(size: 32))

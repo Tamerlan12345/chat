@@ -19,6 +19,11 @@ async function start() {
   await bootstrap();
   await SettingsService.load();
   SettingsService.startAutoRefresh();
+  // Push-уведомления мобильных клиентов: учётные данные FCM/APNs только из
+  // окружения; без них push выключен (одна строка в журнале), остальное — как раньше.
+  require('./push/push.service').configureFromEnv();
+  // Почта: если SMTP не настроен, одно честное предупреждение (запуск не блокируется).
+  require('./services/mailer.service').logStartupStatus();
 
   server.listen(config.PORT, config.HOST, () => {
     backupScheduler.start();

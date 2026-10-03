@@ -1,0 +1,22 @@
+{
+  "id": 7,
+  "conversation_type": "direct",
+  "target_id": 3,
+  "sender_id": 2,
+  "text": "Отправлено через REST.",
+  "type": "text",
+  "reply_to_id": null,
+  "metadata_json": null,
+  "created_at": "2026-10-02T09:00:00.000Z",
+  "updated_at": null,
+  "is_deleted": 0,
+  "client_msg_id": null,
+  "sender_username": "alice",
+  "sender_name": "Алиса Тестова",
+  "sender_avatar": null,
+  "sender_department": null,
+  "file_original_name": null,
+  "file_width": null,
+  "file_height": null,
+  "file_dominant_color": null
+}

@@ -1,0 +1,374 @@
+{
+  "name": "59-send-retryable-error-and-cancelled",
+  "description": "G3: error send_message с retryable = true (INTERNAL_ERROR) — не отказ, а неудачная попытка: failures + 1, пауза backoff, повтор тем же ключом. Отказ с retryable = false — как раньше: failed (rejected) с кодом. Код CANCELLED (ключ отозван на сервере) входит в KEY_ERRORS: «Повторить» даёт новый ключ. Кадр старого сервера без retryable — тоже окончательный отказ (прежнее поведение).",
+  "covers": [
+    "T45",
+    "T16",
+    "T23",
+    "T13"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 3,
+    "outbox": [
+      {
+        "client_msg_id": "a0000211-0000-4000-8000-000000000211",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Временная ошибка",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000212-0000-4000-8000-000000000212",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Ключ отозван",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000213-0000-4000-8000-000000000213",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "Старый сервер",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 1000
+    },
+    {
+      "type": "ws",
+      "now": 1100,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Не удалось обработать запрос — повторите позже",
+        "text": "Временная ошибка",
+        "code": "INTERNAL_ERROR",
+        "retryable": true,
+        "client_msg_id": "a0000211-0000-4000-8000-000000000211"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1150,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Отправка отменена автором",
+        "text": "Ключ отозван",
+        "code": "CANCELLED",
+        "retryable": false,
+        "client_msg_id": "a0000212-0000-4000-8000-000000000212"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1160,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Получатель не найден",
+        "text": "Старый сервер",
+        "client_msg_id": "a0000213-0000-4000-8000-000000000213"
+      }
+    },
+    {
+      "type": "retry",
+      "now": 1200,
+      "client_msg_id": "a0000212-0000-4000-8000-000000000212",
+      "new_client_msg_id": "a0000214-0000-4000-8000-000000000214"
+    },
+    {
+      "type": "tick",
+      "now": 2100
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Временная ошибка",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000211-0000-4000-8000-000000000211"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000211-0000-4000-8000-000000000211",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Ключ отозван",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000212-0000-4000-8000-000000000212"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000212-0000-4000-8000-000000000212",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 5,
+          "text": "Старый сервер",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000213-0000-4000-8000-000000000213"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000213-0000-4000-8000-000000000213",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 2100,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Ключ отозван",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000214-0000-4000-8000-000000000214"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11200,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000214-0000-4000-8000-000000000214",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Временная ошибка",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000211-0000-4000-8000-000000000211"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12100,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000211-0000-4000-8000-000000000211",
+          "attempt": 2
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000211-0000-4000-8000-000000000211",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Временная ошибка",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 1,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 12100,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000213-0000-4000-8000-000000000213",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "Старый сервер",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "rejected",
+          "code": null,
+          "message": "Получатель не найден"
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000214-0000-4000-8000-000000000214",
+        "conversation": "direct:4",
+        "seq": 4,
+        "text": "Ключ отозван",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11200,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "seq": 4
+  }
+}

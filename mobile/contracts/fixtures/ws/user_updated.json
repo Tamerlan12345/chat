@@ -1,0 +1,24 @@
+{
+  "type": "user_updated",
+  "user": {
+    "id": 4,
+    "username": "carol",
+    "full_name": "Карина Тестова",
+    "email": "carol@example.test",
+    "phone": "",
+    "job_title": "Аналитик",
+    "department_id": null,
+    "uin": 1004,
+    "extension": "",
+    "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+    "role_id": 2,
+    "avatar_url": null,
+    "status": "offline",
+    "custom_status": null,
+    "last_seen": null,
+    "is_active": 1,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "department_name": null,
+    "role_name": "Сотрудник"
+  }
+}

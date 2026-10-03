@@ -8,6 +8,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import com.openmychat.mobile.core.network.ValidatedEndpoint
+import com.openmychat.mobile.testing.TestSessions
 import java.io.File
 
 class SessionManagerStorageTest {
@@ -33,12 +35,12 @@ class SessionManagerStorageTest {
             .singleOrNull { constructor ->
                 constructor.parameterTypes.size == 2 &&
                     constructor.parameterTypes[0] == SharedPreferences::class.java &&
-                    constructor.parameterTypes[1] == Boolean::class.javaPrimitiveType
+                    constructor.parameterTypes[1] == ValidatedEndpoint::class.java
             }
             ?: throw AssertionError("SessionManager must provide an internal storage constructor for deterministic tests")
         storageConstructor.isAccessible = true
         val storage = FailingSharedPreferences()
-        val manager = storageConstructor.newInstance(storage, false) as SessionManager
+        val manager = storageConstructor.newInstance(storage, TestSessions.CHAT_EXAMPLE) as SessionManager
 
         try {
             manager.saveAuthSuccess(
@@ -49,7 +51,12 @@ class SessionManagerStorageTest {
         } catch (_: SecureStorageUnavailableException) {
             // Expected: callers receive a recoverable storage error.
         }
-        manager.deviceSecret = "sensitive-device-secret"
+        try {
+            manager.deviceSecret = "sensitive-device-secret"
+            fail("device-secret persistence must fail explicitly when secure storage is unavailable")
+        } catch (_: SecureStorageUnavailableException) {
+            // Expected: callers cannot continue as if device credentials were stored.
+        }
 
         assertEquals(SessionStorageState.UNAVAILABLE, manager.storageState.value)
         assertNull(manager.token)
@@ -75,6 +82,32 @@ class SessionManagerStorageTest {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         return generateSequence(File(workingDirectory)) { it.parentFile }
             .first { File(it, "app/src/main/res/xml/backup_rules.xml").isFile }
+    }
+
+    private class AvailableSharedPreferences : SharedPreferences {
+        override fun getAll(): MutableMap<String, *> = mutableMapOf<String, Any?>()
+        override fun getString(key: String, defValue: String?): String? = defValue
+        override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+        override fun getInt(key: String, defValue: Int): Int = defValue
+        override fun getLong(key: String, defValue: Long): Long = defValue
+        override fun getFloat(key: String, defValue: Float): Float = defValue
+        override fun getBoolean(key: String, defValue: Boolean): Boolean = defValue
+        override fun contains(key: String): Boolean = false
+        override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+        override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+
+        override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
+            override fun putString(key: String, value: String?): SharedPreferences.Editor = this
+            override fun putStringSet(key: String, values: MutableSet<String>?): SharedPreferences.Editor = this
+            override fun putInt(key: String, value: Int): SharedPreferences.Editor = this
+            override fun putLong(key: String, value: Long): SharedPreferences.Editor = this
+            override fun putFloat(key: String, value: Float): SharedPreferences.Editor = this
+            override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor = this
+            override fun remove(key: String): SharedPreferences.Editor = this
+            override fun clear(): SharedPreferences.Editor = this
+            override fun commit(): Boolean = true
+            override fun apply() = Unit
+        }
     }
 
     private class FailingSharedPreferences : SharedPreferences {

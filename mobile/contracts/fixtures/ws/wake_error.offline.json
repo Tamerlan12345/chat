@@ -1,0 +1,6 @@
+{
+  "type": "wake_error",
+  "code": "offline",
+  "targetUserId": 1,
+  "message": "Собеседник не в сети"
+}

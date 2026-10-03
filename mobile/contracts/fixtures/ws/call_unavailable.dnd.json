@@ -1,0 +1,5 @@
+{
+  "type": "call_unavailable",
+  "targetUserId": 3,
+  "reason": "У сотрудника включено «Не беспокоить»"
+}

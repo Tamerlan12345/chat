@@ -216,6 +216,22 @@ test('Stop-CentyChatCopyApp закрывает запущенное из пап�
   }
 });
 
+test('Stop-CentyChatCopyApp uses the WMI fallback when CIM is unavailable', { skip: SKIP }, async () => {
+  const dir = path.join(sandbox, 'stop-fallback', 'Programs', 'CentyChat');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(PING, path.join(dir, 'CentyChat.exe'));
+  const inside = startFake(path.join(dir, 'CentyChat.exe'));
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(isRunning(inside.pid));
+    const stopped = common(`function Get-CimInstance { return @() }; Stop-CentyChatCopyApp -Dir ${psQuote(dir)} | ConvertTo-Json`);
+    assert.strictEqual(stopped, true);
+    assert.ok(await waitFor(() => !isRunning(inside.pid), 5000), 'fallback closes only the process in the installation directory');
+  } finally {
+    if (isRunning(inside.pid)) inside.kill();
+  }
+});
+
 test('Get-CentyChatNsisInstall находит установку через Setup.exe по записи NSIS', { skip: SKIP }, () => {
   const keys = `@(${psQuote(`HKCU:\\${KEYS.nsisCu}`)}, ${psQuote(`HKCU:\\${KEYS.nsisLm}`)})`;
   // ConvertTo-Json в PowerShell 5.1 ничего не выводит для $null.
@@ -288,8 +304,12 @@ test('install.ps1 поверх копии 1.0.0: на месте, приложе
   reg(['delete', `HKCU\\${REG_ROOT}`, '/f']);
   const l = sandboxLayout('e2e-legacy');
   stageScripts(l);
-  const legacy = path.join(l.programs, 'OpenMyChat Enterprise');
-  fs.mkdirSync(path.join(legacy, 'resources'), { recursive: true });
+  // Папка — в длинной форме пути: install.ps1 записывает в реестр и ярлыки
+  // путь после GetFullPath (он раскрывает 8.3, как RUNNER~1 в %TEMP% раннера CI),
+  // и сравнение с короткой формой падало бы не из-за ошибки установки.
+  const legacyShort = path.join(l.programs, 'OpenMyChat Enterprise');
+  fs.mkdirSync(path.join(legacyShort, 'resources'), { recursive: true });
+  const legacy = fs.realpathSync.native(legacyShort);
   fs.copyFileSync(PING, path.join(legacy, 'OpenMyChat Enterprise.exe'));
   fs.writeFileSync(path.join(legacy, 'resources', 'app.asar'), 'old');
   for (const dir of [l.desktop, l.menu]) makeShortcut(path.join(dir, 'OpenMyChat Enterprise.lnk'), path.join(legacy, 'OpenMyChat Enterprise.exe'));

@@ -5,7 +5,8 @@ public enum APIError: Error, LocalizedError, Sendable {
     case invalidURL(String)
     case insecureTransport
     case invalidResponse
-    case httpError(statusCode: Int, message: String, code: String?)
+    /// `retryAfter` is the server's `Retry-After` in seconds, when it sent one.
+    case httpError(statusCode: Int, message: String, code: String?, retryAfter: TimeInterval? = nil)
     case mustChangePassword(message: String)
     case unauthorized
     case decodingError(String)
@@ -15,21 +16,21 @@ public enum APIError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidURL(let url):
-            return "Неверный URL сервера: \(url)"
+            return String(localized: "Неверный URL сервера: \(url)")
         case .insecureTransport:
-            return "A secure connection is required to protect the session."
+            return String(localized: "Для защиты сессии требуется защищённое соединение (HTTPS).")
         case .invalidResponse:
-            return "Некорректный ответ от сервера"
-        case .httpError(let statusCode, let message, _):
-            return "Ошибка сервера (\(statusCode)): \(message)"
+            return String(localized: "Некорректный ответ от сервера")
+        case .httpError(let statusCode, let message, _, _):
+            return String(localized: "Ошибка сервера (\(statusCode)): \(message)")
         case .mustChangePassword(let message):
             return message
         case .unauthorized:
-            return "Сессия истекла. Пожалуйста, выполните вход заново."
+            return String(localized: "Сессия истекла. Пожалуйста, выполните вход заново.")
         case .decodingError(let detail):
-            return "Ошибка обработки данных: \(detail)"
+            return String(localized: "Ошибка обработки данных: \(detail)")
         case .noConnection:
-            return "Нет подключения к серверу. Проверьте интернет или адрес сервера."
+            return String(localized: "Нет подключения к серверу. Проверьте интернет или адрес сервера.")
         case .custom(let message):
             return message
         }

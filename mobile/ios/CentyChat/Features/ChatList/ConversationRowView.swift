@@ -28,42 +28,41 @@ public struct ConversationRowView: View {
                 name: conversation.fullName,
                 avatarUrl: conversation.avatarUrl,
                 status: conversation.status,
-                size: 50
+                size: 48
             )
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(conversation.fullName)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.body.weight(conversation.unreadCount > 0 ? .semibold : .medium))
                         .lineLimit(1)
                     
                     Spacer()
                     
                     Text(formattedTime)
-                        .font(.caption2)
-                        .foregroundColor(conversation.unreadCount > 0 ? CentyColors.primaryBlue : .secondary)
+                        .font(.caption.weight(conversation.unreadCount > 0 ? .semibold : .regular))
+                        .foregroundColor(conversation.unreadCount > 0 ? CentyColors.accentText : .secondary)
                 }
                 
                 HStack {
-                    Text(conversation.lastMessageText ?? "Нет сообщений")
+                    Text(conversation.lastMessageText ?? String(localized: "Нет сообщений"))
                         .font(.subheadline)
-                        .foregroundColor(conversation.unreadCount > 0 ? Color(uiColor: .label) : .secondary)
-                        .lineLimit(2)
+                        .foregroundColor(conversation.unreadCount > 0 ? .primary : .secondary)
+                        .lineLimit(1)
                     
                     Spacer()
                     
                     if conversation.unreadCount > 0 {
                         Text("\(conversation.unreadCount)")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.caption2.weight(.bold))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .frame(minWidth: 20, minHeight: 20)
                             .background(CentyColors.primaryBlue)
                             .clipShape(Capsule())
                     }
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 }

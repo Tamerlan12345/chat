@@ -8,9 +8,9 @@ public enum AnnouncementTarget: String, Codable, Sendable, CaseIterable {
     
     public var displayName: String {
         switch self {
-        case .all: return "Всем сотрудникам"
-        case .departments: return "Подразделениям"
-        case .users: return "Выбранным сотрудникам"
+        case .all: return String(localized: "Всем сотрудникам")
+        case .departments: return String(localized: "Подразделениям")
+        case .users: return String(localized: "Выбранным сотрудникам")
         }
     }
 }
@@ -23,9 +23,9 @@ public enum AnnouncementPriority: String, Codable, Sendable, CaseIterable, Compa
     
     public var displayName: String {
         switch self {
-        case .normal: return "Обычный"
-        case .urgent: return "Срочный"
-        case .critical: return "Критический"
+        case .normal: return String(localized: "Обычный")
+        case .urgent: return String(localized: "Срочный")
+        case .critical: return String(localized: "Критический")
         }
     }
     
@@ -121,7 +121,7 @@ public struct Announcement: Identifiable, Codable, Sendable, Equatable, Hashable
             self.createdAt = Date()
         }
         
-        self.authorName = try container.decodeIfPresent(String.self, forKey: .authorName) ?? "Администрация"
+        self.authorName = try container.decodeIfPresent(String.self, forKey: .authorName) ?? String(localized: "Администрация")
         self.authorJobTitle = try container.decodeIfPresent(String.self, forKey: .authorJobTitle)
         
         if let confStr = try container.decodeIfPresent(String.self, forKey: .confirmedAt) {

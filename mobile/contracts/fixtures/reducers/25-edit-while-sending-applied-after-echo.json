@@ -1,0 +1,179 @@
+{
+  "name": "25-edit-while-sending-applied-after-echo",
+  "description": "Правка записи в полёте запоминается в pending_edit (повтор с тем же ключом вернул бы старый текст); после эха редьюсер шлёт edit_message с серверным id (правка уходит один раз), message_updated обновляет текст. Задача 18: отправленная правка остаётся в ops (state \"sending\") до подтверждения — persist ops при отправке, message_updated с тем же текстом её снимает.",
+  "covers": [
+    "T25",
+    "T26",
+    "T31",
+    "T07",
+    "T39",
+    "T54"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 1,
+    "outbox": [
+      {
+        "client_msg_id": "a0000048-0000-4000-8000-000000000048",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Встреча в 10:00",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [
+      1000
+    ],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "edit",
+      "now": 1500,
+      "client_msg_id": "a0000048-0000-4000-8000-000000000048",
+      "text": "Встреча в 11:00"
+    },
+    {
+      "type": "ws",
+      "now": 1600,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 80,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Встреча в 10:00",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:10.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000048-0000-4000-8000-000000000048",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null,
+          "file_width": null,
+          "file_height": null,
+          "file_dominant_color": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1700,
+      "frame": {
+        "type": "message_updated",
+        "message": {
+          "id": 80,
+          "conversation_type": "direct",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Встреча в 11:00",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:10.000Z",
+          "updated_at": "2026-10-02T09:00:11.000Z",
+          "is_deleted": 0,
+          "client_msg_id": "a0000048-0000-4000-8000-000000000048",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null,
+          "file_width": null,
+          "file_height": null,
+          "file_dominant_color": null
+        }
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops",
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "edit_message",
+          "messageId": 80,
+          "text": "Встреча в 11:00"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "ops"
+        ]
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [],
+    "ops": [],
+    "opsLog": [
+      1600
+    ],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 80,
+          "client_msg_id": "a0000048-0000-4000-8000-000000000048",
+          "sender_id": 2,
+          "text": "Встреча в 11:00",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:10.000Z",
+          "updated_at": "2026-10-02T09:00:11.000Z",
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    }
+  }
+}

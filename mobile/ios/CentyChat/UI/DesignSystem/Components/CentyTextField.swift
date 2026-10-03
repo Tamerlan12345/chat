@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Фирменное поле ввода CentyChat с иконкой и поддержкой безопасного ввода
 public struct CentyTextField: View {
-    public let placeholder: String
+    public let placeholder: LocalizedStringKey
     @Binding public var text: String
     public var icon: String? = nil
     public var isSecure: Bool = false
@@ -13,7 +13,7 @@ public struct CentyTextField: View {
     @State private var isShowingPassword = false
     
     public init(
-        placeholder: String,
+        placeholder: LocalizedStringKey,
         text: Binding<String>,
         icon: String? = nil,
         isSecure: Bool = false,

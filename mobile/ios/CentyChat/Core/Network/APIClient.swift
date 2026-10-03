@@ -5,11 +5,17 @@ public actor APIClient {
     public static let shared = APIClient()
     
     private let session: URLSession
+    private let keychain: KeychainManager
+    private let environment: ServerEnvironment
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
     private let refreshCoordinator = TokenRefreshCoordinator()
     
-    public init(session: URLSession? = nil) {
+    public init(
+        session: URLSession? = nil,
+        keychain: KeychainManager = .shared,
+        environment: ServerEnvironment = .current
+    ) {
         if let session {
             self.session = session
         } else {
@@ -18,7 +24,9 @@ public actor APIClient {
             configuration.timeoutIntervalForResource = 60.0
             self.session = URLSession(configuration: configuration)
         }
-        
+
+        self.keychain = keychain
+        self.environment = environment
         self.jsonDecoder = JSONDecoder()
         self.jsonEncoder = JSONEncoder()
     }
@@ -42,7 +50,7 @@ public actor APIClient {
             headers: headers,
             requiresAuth: requiresAuth,
             isRetry: isRetry,
-            serverURL: try configuredServerURL()
+            serverURL: environment.serverURL
         )
     }
 
@@ -79,7 +87,7 @@ public actor APIClient {
             guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
                 throw APIError.insecureTransport
             }
-            guard let token = KeychainManager.shared.authToken else {
+            guard let token = keychain.authToken else {
                 throw APIError.unauthorized
             }
             requestToken = token
@@ -109,8 +117,14 @@ public actor APIClient {
             throw APIError.invalidResponse
         }
 
-        if httpResponse.statusCode == 401 && requiresAuth && !isRetry {
+        if httpResponse.statusCode == 401 && requiresAuth {
             guard let requestToken else {
+                throw APIError.unauthorized
+            }
+            if isRetry {
+                if keychain.authToken == requestToken {
+                    try keychain.clearAllAuthData()
+                }
                 throw APIError.unauthorized
             }
             do {
@@ -126,8 +140,8 @@ public actor APIClient {
                     serverURL: serverURL
                 )
             } catch APIError.unauthorized {
-                if KeychainManager.shared.authToken == requestToken {
-                    KeychainManager.shared.clearAllAuthData()
+                if keychain.authToken == requestToken {
+                    try keychain.clearAllAuthData()
                 }
                 throw APIError.unauthorized
             }
@@ -140,15 +154,18 @@ public actor APIClient {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            var errorMessage = "Request failed"
+            var errorMessage = String(localized: "Запрос не выполнен")
             var errorCode: String?
             if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
                 errorMessage = serverError.error
                 errorCode = serverError.code
-            } else if let raw = String(data: data, encoding: .utf8), !raw.isEmpty {
-                errorMessage = raw
             }
-            throw APIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage, code: errorCode)
+            throw APIError.httpError(
+                statusCode: httpResponse.statusCode,
+                message: errorMessage,
+                code: errorCode,
+                retryAfter: RetryAfter.seconds(from: httpResponse.value(forHTTPHeaderField: "Retry-After"), now: Date())
+            )
         }
 
         do {
@@ -156,20 +173,6 @@ public actor APIClient {
         } catch {
             throw APIError.decodingError(error.localizedDescription)
         }
-    }
-
-    private func configuredServerURL() throws -> URL {
-        guard let serverURL = ServerEndpointPolicy.configuredURL(from: KeychainManager.shared.serverUrl) else {
-            throw APIError.invalidURL("A secure server URL is required.")
-        }
-        return serverURL
-    }
-
-    private func validatedServerURL(_ serverURL: URL) throws -> URL {
-        guard ServerEndpointPolicy.allowsConnection(to: serverURL) else {
-            throw APIError.insecureTransport
-        }
-        return serverURL
     }
 
     private func apiURL(serverURL: URL, endpoint: String) throws -> URL {
@@ -187,13 +190,14 @@ public actor APIClient {
     }
 
     private func refreshAccessToken(after staleToken: String) async throws {
-        guard KeychainManager.shared.authToken == staleToken else { return }
-        let serverURL = try configuredServerURL()
+        guard keychain.authToken == staleToken else { return }
+        let serverURL = environment.serverURL
         guard ServerEndpointPolicy.allowsAuthorization(to: serverURL) else {
             throw APIError.insecureTransport
         }
         let refreshURL = try apiURL(serverURL: serverURL, endpoint: "/auth/refresh")
         let session = session
+        let keychain = self.keychain
         let refreshedToken = try await refreshCoordinator.token(for: staleToken) {
             var request = URLRequest(url: refreshURL)
             request.httpMethod = "POST"
@@ -207,16 +211,16 @@ public actor APIClient {
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                     throw APIError.unauthorized
                 }
-                throw APIError.httpError(statusCode: httpResponse.statusCode, message: "Session refresh failed", code: nil)
+                throw APIError.httpError(statusCode: httpResponse.statusCode, message: String(localized: "Не удалось продлить сессию"), code: nil)
             }
             let refreshedToken = try JSONDecoder().decode(RefreshTokenResponse.self, from: data).token
-            if KeychainManager.shared.authToken == staleToken {
-                KeychainManager.shared.authToken = refreshedToken
+            if keychain.authToken == staleToken {
+                try keychain.saveAuthToken(refreshedToken)
             }
             return refreshedToken
         }
-        if KeychainManager.shared.authToken == staleToken {
-            KeychainManager.shared.authToken = refreshedToken
+        if keychain.authToken == staleToken {
+            try keychain.saveAuthToken(refreshedToken)
         }
     }
     
@@ -227,18 +231,12 @@ public actor APIClient {
         try await request(endpoint: "/health", requiresAuth: false)
     }
 
-    public func checkHealth(serverURL: URL) async throws -> HealthResponse {
-        try await performRequest(endpoint: "/health", requiresAuth: false, serverURL: try validatedServerURL(serverURL))
-    }
     
     /// Общедоступные сведения о сервере
     public func getServerInfo() async throws -> ServerInfo {
         try await request(endpoint: "/settings/info", requiresAuth: false)
     }
 
-    public func getServerInfo(serverURL: URL) async throws -> ServerInfo {
-        try await performRequest(endpoint: "/settings/info", requiresAuth: false, serverURL: try validatedServerURL(serverURL))
-    }
     
     /// Device Knock при запуске
     public func knock(request knockReq: KnockRequest) async throws -> KnockResponse {
@@ -250,8 +248,7 @@ public actor APIClient {
     public func claimDevice(deviceId: String, deviceSecret: String) async throws -> Bool {
         let req = DeviceClaimRequest(deviceId: deviceId, deviceSecret: deviceSecret)
         let body = try jsonEncoder.encode(req)
-        struct ClaimResponse: Codable { let claimed: Bool }
-        let res: ClaimResponse = try await request(endpoint: "/auth/device/claim", method: "POST", body: body)
+        let res: DeviceClaimResponse = try await request(endpoint: "/auth/device/claim", method: "POST", body: body)
         return res.claimed
     }
     
@@ -259,23 +256,21 @@ public actor APIClient {
     public func login(request loginReq: LoginRequest) async throws -> AuthSuccessResponse {
         let body = try jsonEncoder.encode(loginReq)
         let res: AuthSuccessResponse = try await request(endpoint: "/auth/login", method: "POST", body: body, requiresAuth: false)
-        KeychainManager.shared.authToken = res.token
+        try keychain.saveAuthToken(res.token)
         return res
     }
     
     /// Выход из системы
     public func logout() async throws {
-        let deviceId = KeychainManager.shared.deviceId
+        let deviceId = try keychain.deviceID()
         let body = try? JSONSerialization.data(withJSONObject: ["device_id": deviceId])
-        struct LogoutResponse: Codable { let success: Bool }
-        let _: LogoutResponse? = try? await request(endpoint: "/auth/logout", method: "POST", body: body)
-        KeychainManager.shared.clearAllAuthData()
+        let _: SuccessResponse? = try? await request(endpoint: "/auth/logout", method: "POST", body: body)
+        try keychain.clearAllAuthData()
     }
     
     /// Профиль текущего пользователя
     public func getCurrentUser() async throws -> User {
-        struct MeResponse: Codable { let user: User }
-        let res: MeResponse = try await request(endpoint: "/auth/me")
+        let res: CurrentUserResponse = try await request(endpoint: "/auth/me")
         return res.user
     }
     
@@ -351,7 +346,7 @@ public actor APIClient {
     public func changePassword(request changeReq: ChangePasswordRequest) async throws -> ChangePasswordResponse {
         let body = try jsonEncoder.encode(changeReq)
         let res: ChangePasswordResponse = try await request(endpoint: "/users/password", method: "POST", body: body)
-        KeychainManager.shared.authToken = res.token
+        try keychain.saveAuthToken(res.token)
         return res
     }
     
@@ -382,12 +377,11 @@ public actor APIClient {
         mimeType: String,
         isRetry: Bool
     ) async throws -> FileUploadResponse {
-        let serverURL = try configuredServerURL()
-        let url = try apiURL(serverURL: serverURL, endpoint: "/files/upload")
+        let url = try apiURL(serverURL: environment.serverURL, endpoint: "/files/upload")
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
             throw APIError.insecureTransport
         }
-        guard let token = KeychainManager.shared.authToken else {
+        guard let token = keychain.authToken else {
             throw APIError.unauthorized
         }
         
@@ -409,19 +403,25 @@ public actor APIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        if httpResponse.statusCode == 401 && !isRetry {
+        if httpResponse.statusCode == 401 {
+            if isRetry {
+                if keychain.authToken == token {
+                    try keychain.clearAllAuthData()
+                }
+                throw APIError.unauthorized
+            }
             do {
                 try await refreshAccessToken(after: token)
                 return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: true)
             } catch APIError.unauthorized {
-                if KeychainManager.shared.authToken == token {
-                    KeychainManager.shared.clearAllAuthData()
+                if keychain.authToken == token {
+                    try keychain.clearAllAuthData()
                 }
                 throw APIError.unauthorized
             }
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            var message = "File upload failed"
+            var message = String(localized: "Не удалось загрузить файл")
             if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
                 message = serverError.error
             }

@@ -1,0 +1,6 @@
+{
+  "type": "call_end",
+  "senderId": 2,
+  "senderName": "Алиса Тестова",
+  "reason": "no_call"
+}

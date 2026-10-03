@@ -1,0 +1,154 @@
+{
+  "name": "12-max-attempts-failed-state",
+  "description": "После пятой неудачи запись failed с причиной max_attempts, maybe_stored остаётся true (сервер мог сохранить), будильников нет; failed не блокирует следующую запись той же переписки.",
+  "covers": [
+    "T14",
+    "T06"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+        "conversation": "direct:4",
+        "seq": 1,
+        "text": "Отчёт во вложении",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 5,
+        "failures": 4,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 68000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Следующее",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "ack_timeout",
+      "now": 68000,
+      "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+      "attempt": 5
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Следующее",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000013-0000-4000-8000-000000000013"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 78000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+          "attempt": 1
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000012-0000-4000-8000-000000000012",
+        "conversation": "direct:4",
+        "seq": 1,
+        "text": "Отчёт во вложении",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "failed",
+        "attempts": 5,
+        "failures": 5,
+        "maybe_stored": true,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": {
+          "reason": "max_attempts",
+          "code": null,
+          "message": null
+        },
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000013-0000-4000-8000-000000000013",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Следующее",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 78000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": null
+  }
+}

@@ -1,30 +1,44 @@
 package com.openmychat.mobile
 
 import android.app.Application
-import com.openmychat.mobile.core.audio.AudioEngine
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.openmychat.mobile.core.network.ApiClient
-import com.openmychat.mobile.core.network.WebSocketClient
-import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.realtime.PresenceController
+import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
-class CentyChatApp : Application() {
+@HiltAndroidApp
+class CentyChatApp : Application(), SingletonImageLoader.Factory {
 
-    lateinit var sessionManager: SessionManager
-        private set
+    @Inject lateinit var apiClient: ApiClient
+    @Inject lateinit var presence: PresenceController
 
-    lateinit var apiClient: ApiClient
-        private set
+    /** Создаётся сразу: при конце сессии (выход, 401, отозванный токен) он стирает кэш справочника. */
+    @Inject lateinit var people: com.openmychat.mobile.data.repository.PeopleRepository
 
-    lateinit var webSocketClient: WebSocketClient
-        private set
-
-    lateinit var audioEngine: AudioEngine
-        private set
+    /** Уведомления о сообщениях из кадров сокета (notify) и снятие по conversation_read — с запуска. */
+    @Inject lateinit var notifier: com.openmychat.mobile.data.notifications.MessageNotifier
 
     override fun onCreate() {
         super.onCreate()
-        sessionManager = SessionManager(this)
-        apiClient = ApiClient(sessionManager)
-        webSocketClient = WebSocketClient(sessionManager)
-        audioEngine = AudioEngine(this)
+        // Присутствие как на настольном клиенте: процесс на экране — «В сети», свёрнут — «Отошёл».
+        // Сигнал — жизненный цикл всего процесса: системный диалог разрешения, окно «Поделиться»
+        // или экран звонка внутри приложения его не останавливают, а поворот экрана сглажен.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) = presence.onForeground()
+            override fun onStop(owner: LifecycleOwner) = presence.onBackground()
+        })
     }
+
+    /** Avatars load through the app's OkHttp client (TLS policy, bearer only to the fixed server). */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .components { add(OkHttpNetworkFetcherFactory(callFactory = { apiClient.imageHttpClient })) }
+            .build()
 }

@@ -1,10 +1,12 @@
 package com.openmychat.mobile.core.network
 
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 
 class BearerCredentialsInterceptor(
     private val tokenProvider: () -> String?,
+    private val trustedApiBaseUrlProvider: () -> HttpUrl?,
     private val markMustChangePassword: () -> Unit
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -14,13 +16,19 @@ class BearerCredentialsInterceptor(
             .header("Accept", "application/json")
             .header("User-Agent", "CentyChat-Android/1.0.0")
 
-        if (!ServerEndpointPolicy.canSendBearerCredentials(originalRequest.url)) {
-            requestBuilder.removeHeader("Authorization")
-        } else if (
-            !token.isNullOrBlank() &&
-            originalRequest.header("Authorization") == null
+        if (!ServerEndpointPolicy.canSendBearerCredentials(
+                originalRequest.url,
+                trustedApiBaseUrlProvider()
+            )
         ) {
-            requestBuilder.header("Authorization", "Bearer $token")
+            requestBuilder.removeHeader("Authorization")
+            requestBuilder.removeHeader(AvatarOptIn.HEADER)
+        } else {
+            // Свой сервер: фото коллег — ссылками, а не data URL в каждом ответе.
+            requestBuilder.header(AvatarOptIn.HEADER, AvatarOptIn.VALUE)
+            if (!token.isNullOrBlank() && originalRequest.header("Authorization") == null) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
         }
 
         val response = chain.proceed(requestBuilder.build())

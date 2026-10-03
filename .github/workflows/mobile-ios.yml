@@ -4,10 +4,16 @@ on:
   pull_request:
     paths:
       - 'mobile/ios/**'
+      - 'mobile/contracts/fixtures/**'
+      - 'mobile/dev/**'
+      - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'
   push:
     paths:
       - 'mobile/ios/**'
+      - 'mobile/contracts/fixtures/**'
+      - 'mobile/dev/**'
+      - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'
 
 permissions:
@@ -16,24 +22,207 @@ permissions:
 jobs:
   ios-simulator-tests:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Run unsigned iOS simulator tests
+      - name: Validate iOS privacy manifest
+        shell: pwsh
+        run: ./mobile/qa/verify-ios-privacy-manifest.ps1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      # DEV ONLY: the local HTTPS stand (real server + TLS proxy + seed data), so UI tests can
+      # sign in without ever touching production. See mobile/dev/README.md.
+      - name: Start the dev stand
         run: |
+          (cd server && npm ci --no-audit --no-fund)
+          node mobile/dev/stand.mjs > "$RUNNER_TEMP/centy-stand.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            if curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/health > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/health
+          echo
+          curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/settings/info
+          echo
+      - name: Boot the simulator and trust the dev CA (simulator only)
+        run: |
+          udid="$(xcrun simctl list devices available --json | python3 mobile/ios/scripts/pick-simulator.py "iPhone 16")"
+          echo "Simulator: $udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl keychain "$udid" add-root-cert mobile/dev/certs/dev-ca.crt
+          echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+      # Screen recording of the simulator during the UI tests (login, inbox, chat, profile).
+      # simctl writes an mp4 (h264) and only finalises it on SIGINT, see the stop step below.
+      - name: Start simulator screen recording
+        run: |
+          mkdir -p mobile/ios/build/video
+          nohup xcrun simctl io "$SIMULATOR_UDID" recordVideo --codec=h264 --force mobile/ios/build/video/ios-ui.mp4             > "$RUNNER_TEMP/recordvideo.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/recordvideo.pid"
+          disown || true
+          sleep 3
+          kill -0 "$(cat "$RUNNER_TEMP/recordvideo.pid")" && echo "Recording started (pid $(cat "$RUNNER_TEMP/recordvideo.pid"))"
+      # Ad-hoc ("Sign to Run Locally") signing, no team needed: an unsigned simulator app has
+      # no entitlements, so every Keychain write fails with errSecMissingEntitlement.
+      - name: Run iOS simulator tests (ad-hoc signed)
+        env:
+          # xcodebuild forwards TEST_RUNNER_* variables to the test processes (prefix stripped).
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
+        run: |
+          set -o pipefail
           mkdir -p mobile/ios/build
           xcodebuild \
             -project mobile/ios/CentyChat.xcodeproj \
             -scheme CentyChat \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "id=$SIMULATOR_UDID" \
             -resultBundlePath mobile/ios/build/CentyChat.xcresult \
             clean test \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CENTYCHAT_SERVER_URL=https://localhost:8443 \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-test.log"
+      - name: Stop simulator screen recording
+        if: always()
+        run: |
+          pid="$(cat "$RUNNER_TEMP/recordvideo.pid" 2>/dev/null || true)"
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -INT "$pid"
+            for _ in $(seq 1 60); do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+          fi
+          cat "$RUNNER_TEMP/recordvideo.log" || true
+          ls -l mobile/ios/build/video/ || true
+          file mobile/ios/build/video/ios-ui.mp4 || true
+          test -s mobile/ios/build/video/ios-ui.mp4
+      - name: Upload UI test video
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-ui-video
+          if-no-files-found: warn
+          retention-days: 7
+          path: mobile/ios/build/video/ios-ui.mp4
+      # Compiler errors and failing tests as annotations and in the job summary.
+      - name: Report build and test failures
+        if: always()
+        run: python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-test.log" mobile/ios/build/CentyChat.xcresult "iOS simulator tests"
+      - name: Dev stand log
+        if: always()
+        # The seed passwords are dev-only, but the CI log never echoes them.
+        run: tail -n 200 "$RUNNER_TEMP/centy-stand.log" | sed -E 's#^( +(Users +:)? +[a-z]+ +/ ).*$#\1***#' || true
       - name: Upload iOS test result bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-simulator-test-results
           if-no-files-found: warn
           path: mobile/ios/build/CentyChat.xcresult
+      - name: Export screenshot attachments as PNG
+        if: always() && github.event_name == 'push'
+        run: python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+      - name: Upload exported screenshots
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-screenshots
+          if-no-files-found: ignore
+          path: mobile/ios/build/screenshots/*.png
+
+  # The Release configuration must be locked to production: build it with a hostile
+  # CENTYCHAT_SERVER_URL and check the binary ignores it and has no Debug override points.
+  ios-release-server-lock:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build Release for the simulator with a server override attempt
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project mobile/ios/CentyChat.xcodeproj \
+            -scheme CentyChat \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/release" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CENTYCHAT_SERVER_URL=https://override.invalid \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-release.log"
+      - name: Report Release build failures
+        if: always()
+        run: python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-release.log" "" "iOS Release build"
+      - name: Verify the Release binary is locked to production
+        run: bash mobile/ios/scripts/verify-release-server-lock.sh "$RUNNER_TEMP/release/Build/Products/Release-iphonesimulator/CentyChat.app" https://override.invalid
+
+  # Publishes the PNGs to the orphan branch `ci/ios-screenshots` under <short-sha>/
+  # so they can be read through the contents API without downloading artifacts.
+  publish-ios-screenshots:
+    needs: ios-simulator-tests
+    if: always() && github.event_name == 'push' && needs.ios-simulator-tests.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: ios-screenshots-publish
+      cancel-in-progress: false
+    steps:
+      - name: Download exported screenshots
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ios-screenshots
+          path: screenshots
+      - name: Commit screenshots to ci/ios-screenshots
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          shots=(screenshots/*.png)
+          if [ ${#shots[@]} -eq 0 ]; then
+            echo "No screenshots exported; nothing to publish."
+            exit 0
+          fi
+          short_sha="${SHA::7}"
+          work="$(mktemp -d)"
+          git -C "$work" init -q
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git"
+          # ls-remote exits 2 only when the branch is absent; any other failure stops the job.
+          set +e
+          git -C "$work" ls-remote --exit-code --heads origin ci/ios-screenshots > /dev/null
+          remote_status=$?
+          set -e
+          if [ "$remote_status" -eq 0 ]; then
+            git -C "$work" fetch -q --depth=1 origin ci/ios-screenshots
+            git -C "$work" checkout -q -b ci/ios-screenshots FETCH_HEAD
+          elif [ "$remote_status" -eq 2 ]; then
+            git -C "$work" checkout -q --orphan ci/ios-screenshots
+          else
+            echo "Could not query ci/ios-screenshots (exit $remote_status)" >&2
+            exit "$remote_status"
+          fi
+          rm -rf "${work:?}/${short_sha}"
+          mkdir -p "$work/$short_sha"
+          cp "${shots[@]}" "$work/$short_sha/"
+          git -C "$work" add "$short_sha"
+          if git -C "$work" diff --cached --quiet; then
+            echo "Screenshots for $short_sha already published."
+            exit 0
+          fi
+          git -C "$work" commit -q -m "ci(ios): screenshots for ${short_sha}"
+          git -C "$work" push -q origin HEAD:refs/heads/ci/ios-screenshots
+          echo "Published ${#shots[@]} screenshot(s) to ci/ios-screenshots/${short_sha}"

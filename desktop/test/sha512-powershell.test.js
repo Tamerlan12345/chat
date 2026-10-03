@@ -48,19 +48,21 @@ test('Get-MyChatSha512Base64 (signing-common.ps1) совпадает с Node cry
 });
 
 test('старая формула через [byte[]] -split действительно падает в PowerShell 5.1 (регресс-проверка)', { skip: process.platform !== 'win32' && 'только Windows' }, () => {
-  const tmpFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mychat-sha512-old-')), 'fake-setup.exe');
-  fs.writeFileSync(tmpFile, Buffer.from('MZ-fake-installer-bytes-for-hash-test-1234567890', 'utf8'));
+  // Хеш подставляется готовым (из Node), а не считается Get-FileHash в самом
+  // PowerShell: на раннере CI Windows PowerShell запускается из pwsh 7 с чужим
+  // PSModulePath и не находит Get-FileHash вовсе — команда падала бы по этой
+  // причине (или, наоборот, «успешно» ничего не делала), а не из-за формулы,
+  // которую здесь проверяют.
+  const hash = crypto.createHash('sha512').update(Buffer.from('MZ-fake-installer-bytes-for-hash-test-1234567890', 'utf8')).digest('hex').toUpperCase();
 
   const psCommand = [
-    `$h = (Get-FileHash -LiteralPath '${tmpFile.replace(/'/g, "''")}' -Algorithm SHA512).Hash`,
+    `$h = '${hash}'`,
     `[byte[]] -split ($h -replace '..', '$0 ') | ForEach-Object { [Convert]::ToByte($_, 16) }`
   ].join('; ');
 
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCommand], {
     encoding: 'utf8'
   });
-
-  fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true });
 
   // Не 0 — подтверждает, что старый способ действительно нерабочий (а не
   // просто «выглядит подозрительно»), и что замена на Get-MyChatSha512Base64

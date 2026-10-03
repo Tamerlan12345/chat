@@ -1,0 +1,9 @@
+{
+  "type": "error",
+  "context": "edit_message",
+  "message": "Нельзя редактировать чужое сообщение",
+  "text": "Чужое сообщение",
+  "code": "NOT_OWNER",
+  "retryable": false,
+  "messageId": 2
+}

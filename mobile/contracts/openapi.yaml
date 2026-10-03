@@ -8,6 +8,11 @@ info:
     оргструктуры, каналов, личных и групповых сообщений, оповещений, файлов,
     настроек и консоли администрирования.
     
+    Фото сотрудников (`avatar_url`, `sender_avatar`) по умолчанию приходят строкой data URL, как
+    раньше. Клиент, который загружает фото по адресу с токеном, присылает в каждом запросе заголовок
+    `X-Avatar-Format: url` и получает адреса `/api/users/{id}/avatar?v=…` (подробнее — `User.avatar_url`);
+    WebSocket — тем же выбором при подключении: `/ws?avatars=url` (`ws-protocol.md`).
+
     Спецификация полностью отражает серверную реализацию CentyChat (`server/src/api/index.js`,
     `server/src/app.js`, `server/src/files/policy-router.js`, `server/src/updates/admin-router.js`,
     `server/src/updates/router.js`).
@@ -139,7 +144,8 @@ paths:
       summary: Отзыв секрета устройства текущего пользователя
       description: |
         Снимает секрет беспарольного входа для указанного устройства текущего пользователя.
-        Привязка самого устройства к сотруднику остаётся активной.
+        Привязка самого устройства к сотруднику остаётся активной. Токены push этого
+        устройства у текущего пользователя удаляются (`push.md` §2).
       operationId: unbindDeviceSecret
       tags:
         - Auth
@@ -166,6 +172,101 @@ paths:
                     example: true
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+
+  /devices/push-token:
+    post:
+      summary: Регистрация токена push-уведомлений устройства
+      description: |
+        Сообщает серверу токен FCM (Android) или APNs/PushKit (iOS). Идемпотентно: повтор
+        с тем же токеном обновляет запись. Токен привязывается к сотруднику и сеансу,
+        которым вызван запрос (jti, поколение токенов, время входа), и к `device_id`,
+        если он передан. Тот же токен, зарегистрированный другим сотрудником, переходит
+        к нему. Не больше 10 токенов на сотрудника (самые давно обновлённые вытесняются);
+        30 запросов в минуту (вместе с DELETE). Через Google/Apple уходят только
+        идентификаторы — `push.md`.
+      operationId: registerPushToken
+      tags:
+        - Push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRegisterRequest'
+      responses:
+        '200':
+          description: Токен зарегистрирован (fixtures/http/devices.push-token-register.json)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushTokenRegisterResponse'
+        '400':
+          description: |
+            Недопустимое поле (fixtures/http/devices.push-token-invalid.json); `code` —
+            `INVALID_PLATFORM`, `INVALID_TOKEN`, `INVALID_ENVIRONMENT`, `INVALID_KIND`,
+            `INVALID_APP_VERSION`, `INVALID_DEVICE_ID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/MustChangePasswordError'
+        '429':
+          description: 'Слишком много запросов (`code: RATE_LIMITED`, заголовок `Retry-After: 60`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Удаление своего токена push
+      description: |
+        Удаляет токен, если он принадлежит текущему сотруднику. Чужой и несуществующий
+        токен дают одинаковый ответ `{ "removed": false }`. Выход (`/auth/logout`) и
+        отвязка устройства удаляют токены сами.
+      operationId: deletePushToken
+      tags:
+        - Push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Готово (fixtures/http/devices.push-token-delete.json)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - removed
+                properties:
+                  removed:
+                    type: boolean
+                    description: true — удалён свой токен; false — такого своего токена нет
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          description: 'Слишком много запросов (`code: RATE_LIMITED`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /auth/login:
     post:
@@ -280,8 +381,9 @@ paths:
     post:
       summary: Продление сессионного токена
       description: |
-        Выдаёт новый токен JWT взамен действующего. Старый токен отзывается с небольшой
-        задержкой grace-period (60с). Активные сокеты переключаются на новый токен.
+        Выдаёт новый токен JWT взамен **ещё действующего**. Старый токен отзывается сразу.
+        Активные сокеты переключаются на новый токен. Истёкший или отозванный токен продлить
+        нельзя (401): нужен вход по паролю или `/auth/knock` с секретом устройства.
       operationId: refreshToken
       tags:
         - Auth
@@ -311,7 +413,8 @@ paths:
       description: |
         Отзывает текущий JWT токен (заносит jti в `revoked_tokens`) и принудительно
         закрывает все сокеты, авторизованные этим токеном. Опционально отвязывает
-        секрет устройства (`device_id`).
+        секрет устройства (`device_id`). Удаляет токены push, зарегистрированные этим
+        сеансом, и (при `device_id`) токены этого устройства (`push.md` §2).
       operationId: logout
       tags:
         - Auth
@@ -429,6 +532,157 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /users/avatar:
+    put:
+      summary: Загрузка своего фото профиля (multipart/form-data)
+      description: |
+        Картинка в поле формы `file`, до 5 МБ. Тип — по сигнатуре (JPEG, PNG, GIF, WebP); SVG и прочее —
+        `415`. Сервер перекодирует её в JPEG не больше 256 px по длинной стороне, поворачивает по EXIF и
+        снимает все метаданные; исходные байты не хранятся. Не больше 10 загрузок в минуту. Ответ —
+        обновлённый профиль, `avatar_url` в нём — новый адрес.
+      operationId: uploadAvatar
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Нет файла или лишние поля формы (`BAD_REQUEST`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '413':
+          description: Больше 5 МБ (`IMAGE_TOO_LARGE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '415':
+          description: Не картинка по сигнатуре (`NOT_AN_IMAGE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '422':
+          description: Больше 50 Мп (`IMAGE_TOO_LARGE`) или не читается (`IMAGE_UNREADABLE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '429':
+          description: Больше 10 загрузок в минуту (`RATE_LIMITED`)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+    delete:
+      summary: Снять своё фото профиля
+      operationId: deleteAvatar
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 'Обновлённый профиль (`avatar_url: null`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /users/{id}/avatar:
+    get:
+      summary: Фото сотрудника
+      description: |
+        Квадрат 96 (`s`) или 256 (`m`) px, JPEG без метаданных — всегда перекодированный сервером, в том
+        числе для фото, сохранённых старым способом (data URL из настольного клиента; перекодируются при
+        первом запросе и кэшируются). Видно любому вошедшему — как и справочник. `v` в адресе из
+        `avatar_url` — версия для кэша, сервер его не проверяет. Нет фото (или сотрудника) — `404`.
+      operationId: getUserAvatar
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [s, m]
+            default: m
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Фото
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"avatar-v1-3f2a9c1e0b7d4a65-m"'
+            Cache-Control:
+              schema:
+                type: string
+                example: 'private, max-age=86400'
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Совпал `If-None-Match`, тела нет
+        '400':
+          description: Неверный `size`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Фото нет (`NO_AVATAR`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
 
   /users/profile:
     put:
@@ -788,9 +1042,20 @@ paths:
           schema:
             type: integer
           description: Загрузить сообщения старше данного messageId (пагинация назад)
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
-          description: Хронологический список сообщений
+          description: Хронологический список сообщений (всегда по возрастанию id). Для `direct` у каждого есть `delivery_status`.
           content:
             application/json:
               schema:
@@ -834,14 +1099,32 @@ paths:
           required: false
           schema:
             type: integer
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
+          description: Страница по возрастанию id
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Message'
+        '400':
+          description: Недопустимый afterId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
@@ -871,8 +1154,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Message'
+        '200':
+          description: |
+            Повтор отправки: у этого автора уже есть сообщение с таким `client_msg_id` в этой же
+            переписке. Ничего не записано, в ответе — уже сохранённая запись (та же `id`; если её
+            успели удалить — надгробие `is_deleted = 1`). Получателям повторно не рассылается,
+            эхо `direct_message`/`channel_message` + `new_message` уходит только сокетам автора.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Отказ проверки — всегда с машинным `code`, ничего не записано, повторять бессмысленно:
+            `INVALID_CLIENT_MSG_ID` (ключ не строка 1–64 символа из `[A-Za-z0-9_-]`),
+            `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`,
+            `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            `code: CLIENT_MSG_ID_CONFLICT` — `client_msg_id` уже использован этим автором в ДРУГОЙ
+            переписке; запись той переписки не возвращается. `code: CANCELLED` — автор отозвал этот
+            ключ (WS `cancel_message`), а сохранено с ним ничего не было
+            (`http/messages.send-cancelled.json`). В обоих случаях ничего не записано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Внутренний сбой до записи (база, сеть): `code: INTERNAL_ERROR`, без подробностей.
+            Временный — повтор с тем же `client_msg_id` безопасен. Сбой ПОСЛЕ записи отказом не
+            бывает: ответ — 201 с сохранённой записью.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -902,16 +1222,34 @@ paths:
           required: false
           schema:
             type: integer
+        - name: afterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Пагинация ВПЕРЁД: первые `limit` сообщений с `id > afterId`, по возрастанию id.
+            `afterId=0` — с самого начала. Только неотрицательное целое (строка из цифр),
+            иначе HTTP 400. Совместим с `beforeId` (диапазон). Для догрузки пропущенного
+            после переподключения используйте `/sync`, а `afterId` — для одной открытой переписки.
       responses:
         '200':
+          description: Страница по возрастанию id
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Message'
+        '400':
+          description: Недопустимый afterId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Вы не участник этого канала
+          description: 'Вы не участник этого канала (`code: NOT_CHANNEL_MEMBER`)'
           content:
             application/json:
               schema:
@@ -943,10 +1281,145 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Message'
+        '200':
+          description: |
+            Повтор отправки: у этого автора уже есть сообщение с таким `client_msg_id` в этой же
+            переписке. Ничего не записано, в ответе — уже сохранённая запись (та же `id`; если её
+            успели удалить — надгробие `is_deleted = 1`). Получателям повторно не рассылается,
+            эхо `direct_message`/`channel_message` + `new_message` уходит только сокетам автора.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Отказ проверки — всегда с машинным `code`, ничего не записано, повторять бессмысленно:
+            `INVALID_CLIENT_MSG_ID` (ключ не строка 1–64 символа из `[A-Za-z0-9_-]`),
+            `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`,
+            `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            `code: CLIENT_MSG_ID_CONFLICT` — `client_msg_id` уже использован этим автором в ДРУГОЙ
+            переписке; запись той переписки не возвращается. `code: CANCELLED` — автор отозвал этот
+            ключ (WS `cancel_message`), а сохранено с ним ничего не было
+            (`http/messages.send-cancelled.json`). В обоих случаях ничего не записано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Внутренний сбой до записи (база, сеть): `code: INTERNAL_ERROR`, без подробностей.
+            Временный — повтор с тем же `client_msg_id` безопасен. Сбой ПОСЛЕ записи отказом не
+            бывает: ответ — 201 с сохранённой записью.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Вы не участник этого канала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sync:
+    get:
+      summary: Дельта-синхронизация после переподключения
+      description: |
+        Всё, что изменилось после курсора `since` во ВСЕХ переписках, видимых пользователю:
+        личные — где он отправитель или получатель; каналы — где он участник (`channel_members`,
+        то же правило, что у истории канала и поиска). Возвращаются:
+        - новые сообщения;
+        - отредактированные (новый `text`, непустой `updated_at`);
+        - удалённые — надгробием: `is_deleted = 1`, `text = ""`, `metadata_json = null`,
+          `file_original_name = null`;
+        - личные сообщения, у которых сменился статус доставки/прочтения (`delivery_status`).
+
+        Каждое сообщение — **один раз, в текущем состоянии** (не журнал событий), по возрастанию
+        номера изменения. Клиент применяет их как upsert по `id`.
+
+        **Курсор.** `next_cursor` — непрозрачная строка (до 64 символов из `[A-Za-z0-9._-]`).
+        Сейчас это `<эпоха>.<номер изменения>`, например `5e7a1c0d9b3f4a62.23`:
+        - номер изменения выдаёт счётчик сервера, который **только растёт** и не зависит от
+          существующих строк: каждое создание, правка, удаление и смена статуса личного сообщения
+          получает следующий номер; физическое удаление сообщений (удаление канала, консоль БД)
+          номера назад не возвращает и повторно их не выдаёт;
+        - эпоха — случайная метка базы сервера. Каждая резервная копия получает свою эпоху, поэтому
+          после восстановления из копии все ранее выданные курсоры недействительны (410).
+        Курсор не зависит от времени, поэтому одинаковые метки `created_at`/`updated_at` ничего не
+        ломают. Разбирать, сравнивать или вычислять курсоры на клиенте нельзя — только хранить
+        последний `next_cursor` и передавать его в `since`.
+
+        **Начало.** Без `since` — `{ messages: [], next_cursor: <голова>, has_more: false }`.
+        Порядок для нового клиента: (1) `GET /sync` без `since` → запомнить курсор; (2) загрузить
+        списки и страницы переписок обычными маршрутами; (3) дальше — `GET /sync?since=<курсор>`.
+        Изменения между шагами 1 и 2 придут повторно — upsert по `id` это поглощает.
+        `since=0` — вся видимая история (постранично).
+
+        **Страницы.** `has_more = true` — сразу запросить следующую страницу с `since = next_cursor`.
+        `has_more = false` — изменений больше нет; `next_cursor` = голова на момент ответа
+        (не меньше `since`), сохранить его.
+
+        **Что сюда не попадает:** удаление канала целиком (сообщения стираются физически —
+        обновите `GET /channels`), прочтение в каналах (`last_read_message_id`, `unread_count` —
+        из `GET /channels`), сообщения канала, в который пользователя добавили позже, — с номером
+        изменения ниже курсора (загрузить историю канала обычным маршрутом).
+      operationId: syncMessages
+      tags:
+        - Messages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9._-]{1,64}$'
+          description: |
+            Последний полученный `next_cursor`. Без параметра — только текущая голова.
+            Строка вне шаблона — 400; по шаблону, но не этой базы — 410.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 100
+            maximum: 200
+          description: Размер страницы; больше 200 урезается до 200. Не целое или < 1 — HTTP 400.
+      responses:
+        '200':
+          description: Страница изменений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+        '400':
+          description: '`since` не похож на курсор (пусто, длиннее 64, символы вне `[A-Za-z0-9._-]`) или недопустимый `limit`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '410':
+          description: |
+            Курсор не принят (`code: SYNC_CURSOR_INVALID`): другая эпоха (база сервера восстановлена
+            из резервной копии, другой сервер), прежний формат или номер впереди текущей головы.
+            Сбросить локальный курсор, заново `GET /sync` без `since` и перезагрузить списки и
+            открытые переписки (полная пересинхронизация).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Больше 60 запросов синхронизации в минуту на пользователя. Заголовок `Retry-After` = 60.
           content:
             application/json:
               schema:
@@ -1224,7 +1697,15 @@ paths:
       description: |
         Отдает файл строго в виде attachment с жесткими заголовками безопасности
         (CSP sandbox, nosniff, no-store). Доступ проверяется по участию пользователя
-        в переписке, содержащей данный `file_id`.
+        в переписке, содержащей данный `file_id` — до любой обработки `Range`.
+
+        Докачка: `Accept-Ranges: bytes` и `ETag` (SHA-256 содержимого в кавычках) в каждом ответе.
+        `Range` — ровно один диапазон байт: `bytes=начало-конец`, `bytes=начало-`, `bytes=-хвост`
+        (конец за файлом обрезается) → `206` с `Content-Range: bytes начало-конец/размер`. Всё прочее
+        (несколько диапазонов, пробелы, другие единицы, перевёрнутый или пустой диапазон, начало за концом
+        файла) → `416` с `Content-Range: bytes */размер`. `If-Range` с той же (сильной) меткой — диапазон;
+        иная метка или дата — весь файл `200`. `If-None-Match` с текущей меткой → `304` без тела.
+        `Cache-Control: private, no-store` остаётся: кэш ведёт сам клиент и присылает `If-None-Match`.
       operationId: downloadFile
       tags:
         - Files
@@ -1236,10 +1717,34 @@ paths:
           required: true
           schema:
             type: integer
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+            example: 'bytes=1048576-'
+        - name: If-Range
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Содержимое файла
           headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            ETag:
+              schema:
+                type: string
+                example: '"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"'
             Content-Disposition:
               schema:
                 type: string
@@ -1257,10 +1762,151 @@ paths:
               schema:
                 type: string
                 format: binary
+        '206':
+          description: Один запрошенный диапазон байт
+          headers:
+            Content-Range:
+              schema:
+                type: string
+                example: 'bytes 1048576-2097151/2097152'
+            ETag:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Содержимое не изменилось (совпал `If-None-Match`), тела нет
         '403':
           description: Доступ запрещен (файл вне ваших диалогов и каналов)
         '404':
           description: Файл не найден
+        '416':
+          description: Range не разобран строго (не один диапазон байт или вне файла), тела нет
+          headers:
+            Content-Range:
+              schema:
+                type: string
+                example: 'bytes */2097152'
+
+  /files/thumb/{id}:
+    get:
+      summary: Миниатюра картинки-вложения
+      description: |
+        Уменьшенная копия картинки: по длинной стороне не больше 160 (`s`) или 480 (`m`) px, без
+        увеличения маленьких, повёрнута по EXIF, без метаданных (EXIF, GPS). Доступ — тот же, что у
+        `/files/download/{id}`, в том же порядке (`404`, затем `403`).
+
+        Тип картинки сервер определяет по сигнатуре файла (JPEG, PNG, GIF — первый кадр, WebP), не по
+        MIME и не по имени: SVG, PDF и прочее — `415`. Картинка, заявляющая в заголовке больше 50 Мп,
+        файл больше 40 МБ — `422 IMAGE_TOO_LARGE` (без декодирования); битая — `422 IMAGE_UNREADABLE`.
+        Отрисовка ленивая (при первом запросе), дальше — из кэша на диске; одновременно отрисовывается
+        не больше двух, при переполненной очереди — `503 IMAGE_BUSY` с `Retry-After`. Новых отрисовок
+        (промахов кэша) — не больше 60 в минуту на сотрудника, сверх — `429 RATE_LIMITED` с
+        `Retry-After`; готовые миниатюры пределом не ограничены. Отказ по самому файлу (415/422)
+        запоминается на 10 минут — повторный запрос получает его без декодирования.
+        `Cache-Control: private, no-cache`: клиент хранит миниатюру и перепроверяет её по `ETag`
+        (в метке — ключ содержимого файла), сервер отвечает `304`. Клиенту стоит
+        запрашивать миниатюру только для вложений с `file_width != null` или с картинным расширением.
+      operationId: getFileThumbnail
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [s, m]
+            default: s
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [webp, jpeg]
+            default: webp
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Миниатюра
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"thumb-v1-5d41402abc4b2a76-s-webp"'
+            Cache-Control:
+              schema:
+                type: string
+                example: 'private, no-cache'
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Совпал `If-None-Match`, тела нет
+        '400':
+          description: 'Неверный `size` или `format` (`code: BAD_REQUEST`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          description: Доступ запрещен (файл вне ваших диалогов и каналов)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '415':
+          description: 'Файл не картинка JPEG/PNG/GIF/WebP по сигнатуре (`code: NOT_AN_IMAGE`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '422':
+          description: Слишком большая (`IMAGE_TOO_LARGE`) или нечитаемая (`IMAGE_UNREADABLE`) картинка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '429':
+          description: Больше 60 новых миниатюр в минуту (`RATE_LIMITED`)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageErrorResponse'
+        '503':
+          description: Очередь отрисовки переполнена (`IMAGE_BUSY`)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
 
   /files/recent:
     get:
@@ -1533,7 +2179,7 @@ paths:
   /admin/users/{id}/reset-password:
     post:
       summary: Сброс пароля пользователя администратором
-      description: Генерирует временный пароль со флагом `must_change_password: 1` или устанавливает заданный.
+      description: 'Генерирует временный пароль со флагом `must_change_password: 1` или устанавливает заданный.'
       operationId: adminResetPassword
       tags:
         - AdminUsers
@@ -2303,6 +2949,19 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    ImageErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          example: Файл не является изображением JPEG, PNG, GIF или WebP
+        code:
+          type: string
+          enum: [BAD_REQUEST, NOT_AN_IMAGE, IMAGE_TOO_LARGE, IMAGE_UNREADABLE, IMAGE_BUSY, NO_AVATAR, RATE_LIMITED]
+
     ErrorResponse:
       type: object
       required:
@@ -2424,6 +3083,53 @@ components:
         device_id:
           type: string
 
+    PushTokenRegisterRequest:
+      type: object
+      required:
+        - platform
+        - token
+      properties:
+        platform:
+          type: string
+          enum: [ios, android]
+        token:
+          type: string
+          description: |
+            Android — токен регистрации FCM (`[A-Za-z0-9_:.-]`, 20–4096 символов);
+            iOS — токен устройства APNs или PushKit в hex (64–200 символов).
+        kind:
+          type: string
+          enum: [alert, voip]
+          default: alert
+          description: |
+            iOS: `alert` — токен APNs для уведомлений о сообщениях; `voip` — токен PushKit
+            для входящих звонков (регистрируются оба). Android — только `alert` (один токен FCM
+            для сообщений и звонков).
+        environment:
+          type: string
+          enum: [sandbox, production]
+          description: Узел APNs. Для iOS обязателен (сборка из Xcode — sandbox); для Android по умолчанию production.
+        app_version:
+          type: string
+          pattern: '^[0-9A-Za-z._+-]{1,32}$'
+        device_id:
+          type: string
+          pattern: '^[A-Za-z0-9._:-]{1,128}$'
+          description: Тот же device_id, что в /auth/knock; новый токен того же устройства заменяет прежний.
+
+    PushTokenRegisterResponse:
+      type: object
+      required:
+        - registered
+        - push_enabled
+      properties:
+        registered:
+          type: boolean
+          example: true
+        push_enabled:
+          type: boolean
+          description: false — у сервера нет учётных данных FCM/APNs, уведомлений не будет (токен всё равно сохранён)
+
     LoginRequest:
       type: object
       required:
@@ -2533,7 +3239,11 @@ components:
         avatar_url:
           type: string
           nullable: true
-          description: Base64 data URL изображения (PNG, JPEG, GIF, WebP) до 500 КБ
+          description: |
+            Base64 data URL изображения (PNG, JPEG, GIF, WebP) до 500 КБ — путь настольного клиента;
+            пустая строка снимает фото. Мобильным клиентам загружать фото через `PUT /users/avatar`.
+            Свой адрес `/api/users/{id}/avatar?v=…`, присланный обратно (форма профиля отправляет
+            полученное значение), означает «фото не менялось».
           example: 'data:image/png;base64,iVBORw0KGgo...'
         custom_status:
           type: string
@@ -2605,7 +3315,14 @@ components:
         avatar_url:
           type: string
           nullable: true
-          example: 'data:image/png;base64,...'
+          description: |
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
+          example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
           enum: [online, away, dnd, offline]
@@ -2722,6 +3439,14 @@ components:
         avatar_url:
           type: string
           nullable: true
+          description: |
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
+          example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
           enum: [online, away, dnd, offline]
@@ -2969,6 +3694,15 @@ components:
         unread_count:
           type: integer
           example: 0
+        last_message_id:
+          type: integer
+          nullable: true
+          description: |
+            id последнего сообщения канала в том же снимке, что и `unread_count` (`null` — сообщений нет
+            или пользователь не участник). Клиент досчитывает к `unread_count` чужие сообщения с
+            бОльшим `id`, пришедшие живыми кадрами после расчёта снимка (`delivery-state.md` §6.3,
+            `unread_snapshot`).
+          example: 1520
         last_message_text:
           type: string
           nullable: true
@@ -3024,6 +3758,14 @@ components:
         avatar_url:
           type: string
           nullable: true
+          description: |
+            Фото сотрудника. По умолчанию — как раньше: `data:image/...;base64` (та же строка, что
+            хранится) или `null`. Клиент, приславший заголовок `X-Avatar-Format: url` (WebSocket —
+            `/ws?avatars=url`), получает вместо data URL адрес `/api/users/{id}/avatar?v=<версия>`
+            (относительно сервера; загружать с заголовком `Authorization`, `v` меняется вместе с фото);
+            значения из старых версий, которые не data URL (внешние ссылки), ему приходят как `null`.
+            Мобильные клиенты присылают `X-Avatar-Format: url` в каждом запросе.
+          example: '/api/users/42/avatar?v=3f2a9c1e0b7d4a65'
         status:
           type: string
           enum: [online, away, dnd, offline]
@@ -3133,6 +3875,16 @@ components:
           type: integer
           enum: [0, 1]
           example: 0
+        client_msg_id:
+          type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          description: |
+            Ключ идемпотентности, присланный автором при отправке (`null`, если не присылался —
+            например, настольным клиентом). Есть во всех формах сообщения: REST-ответы, страницы
+            истории, `/sync`, WS-кадры. Уникален в пределах автора (`sender_id`), не глобально:
+            сопоставлять с локальной очередью только вместе с `sender_id == мой id`.
+          example: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b'
         sender_username:
           type: string
           nullable: true
@@ -3143,6 +3895,10 @@ components:
         sender_avatar:
           type: string
           nullable: true
+          description: |
+            Фото автора — по тем же правилам, что `User.avatar_url`: по умолчанию data URL; с
+            `X-Avatar-Format: url` (или `/ws?avatars=url`) — адрес `/api/users/{sender_id}/avatar?v=…` или `null`.
+          example: '/api/users/7/avatar?v=3f2a9c1e0b7d4a65'
         sender_department:
           type: string
           nullable: true
@@ -3151,11 +3907,53 @@ components:
           type: string
           nullable: true
           example: 'spec.pdf'
+        file_width:
+          type: integer
+          nullable: true
+          description: |
+            Ширина картинки-вложения в пикселях с учётом поворота по EXIF (как её показывать). Считает
+            сервер по самому файлу (JPEG, PNG, GIF, WebP по сигнатуре), а не по `metadata_json`.
+            `null` — не картинка, картинка больше 50 Мп или не читается, или старое вложение, для которого
+            ещё не запрашивали миниатюру (размеры дописываются при первой миниатюре).
+          example: 1200
+        file_height:
+          type: integer
+          nullable: true
+          description: Высота картинки-вложения, правила — как у `file_width`.
+          example: 800
+        file_dominant_color:
+          type: string
+          nullable: true
+          pattern: '^#[0-9a-f]{6}$'
+          description: Преобладающий цвет картинки для заглушки, пока грузится миниатюра (`AttachmentTile`).
+          example: '#c83a32'
         delivery_status:
           type: string
           nullable: true
           enum: [delivered, read]
+          description: |
+            Только в страницах истории личной переписки и в `/sync` (в `/sync` у сообщений канала
+            всегда `null`). В живых WS-кадрах и ответе POST поля нет. Для своего сообщения —
+            статус у собеседника, для входящего — ваш собственный.
           example: read
+
+    SyncResponse:
+      type: object
+      required: [messages, next_cursor, has_more]
+      properties:
+        messages:
+          type: array
+          description: По возрастанию номера изменения; каждое сообщение не больше одного раза.
+          items:
+            $ref: '#/components/schemas/Message'
+        next_cursor:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{1,64}$'
+          description: Непрозрачный курсор для следующего `since`. Хранить как строку, не разбирать.
+          example: '5e7a1c0d9b3f4a62.23'
+        has_more:
+          type: boolean
+          description: true — есть ещё изменения, сразу запросить `since=next_cursor`.
 
     SendMessageRequest:
       type: object
@@ -3176,11 +3974,22 @@ components:
           example: 238
         metadata:
           type: object
-          description: Метаданные вложения, например { file_id: 12 }
+          description: 'Метаданные вложения, например { file_id: 12 }'
           properties:
             file_id:
               type: integer
               example: 42
+        client_msg_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          maxLength: 64
+          description: |
+            Необязательный ключ идемпотентности (рекомендуется UUID v4, генерируется клиентом
+            один раз на сообщение и хранится в его очереди отправки). Повтор с тем же ключом
+            от того же автора в ту же переписку не создаёт второе сообщение (HTTP 200 и сохранённая
+            запись). Тот же ключ у ДРУГОГО автора — независимое сообщение. Не строка, пустая строка,
+            длиннее 64 или символы вне `[A-Za-z0-9_-]` — HTTP 400 `INVALID_CLIENT_MSG_ID`.
+          example: '0b7e5a91-2c4d-4e6f-9a10-b2c3d4e5f607'
 
     Announcement:
       type: object
@@ -3343,6 +4152,9 @@ components:
         - fileSize
         - mimeType
         - url
+        - width
+        - height
+        - dominantColor
       properties:
         id:
           type: integer
@@ -3362,6 +4174,20 @@ components:
         url:
           type: string
           example: '/api/files/download/42'
+        width:
+          type: integer
+          nullable: true
+          description: Ширина картинки с учётом поворота по EXIF; `null` — не картинка (по сигнатуре), больше 50 Мп или не читается.
+          example: 1200
+        height:
+          type: integer
+          nullable: true
+          example: 800
+        dominantColor:
+          type: string
+          nullable: true
+          pattern: '^#[0-9a-f]{6}$'
+          example: '#c83a32'
 
     FilePolicyEffectiveResponse:
       type: object

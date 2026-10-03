@@ -1,0 +1,48 @@
+{
+  "name": "02-viewing-on-phone",
+  "description": "Чат открыт на телефоне (передний план) — никому ничего, в том числе настольному клиенту, открытому в другом чате.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 9
+        }
+      },
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "viewing",
+    "push": [],
+    "banner": [],
+    "quiet": [
+      "desk",
+      "phone"
+    ]
+  }
+}

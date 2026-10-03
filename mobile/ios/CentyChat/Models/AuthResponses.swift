@@ -120,3 +120,18 @@ public struct ServerErrorResponse: Codable, Sendable {
     public let error: String
     public let code: String?
 }
+
+/// Ответ привязки секрета устройства (POST /api/auth/device/claim)
+public struct DeviceClaimResponse: Codable, Sendable {
+    public let claimed: Bool
+}
+
+/// Ответ `{ success }` (например, POST /api/auth/logout)
+public struct SuccessResponse: Codable, Sendable {
+    public let success: Bool
+}
+
+/// Профиль текущего пользователя (GET /api/auth/me)
+public struct CurrentUserResponse: Codable, Sendable {
+    public let user: User
+}

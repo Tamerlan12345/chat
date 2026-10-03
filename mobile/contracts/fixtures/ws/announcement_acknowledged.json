@@ -1,0 +1,6 @@
+{
+  "type": "announcement_acknowledged",
+  "announcementId": "2",
+  "userId": 2,
+  "userName": "Алиса Тестова"
+}

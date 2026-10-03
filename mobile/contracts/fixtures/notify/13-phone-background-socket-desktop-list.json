@@ -1,0 +1,45 @@
+{
+  "name": "13-phone-background-socket-desktop-list",
+  "description": "Телефон в фоне с живым сокетом (away) и токеном push, компьютер в списке чатов — телефону push (кадр без баннера), компьютеру баннер.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": null
+      },
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "desk"
+    ],
+    "quiet": [
+      "phone"
+    ]
+  }
+}

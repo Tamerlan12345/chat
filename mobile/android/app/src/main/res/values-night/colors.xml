@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Desktop theme.css, evening. -->
+    <color name="centy_canvas">#24242A</color>
+    <color name="centy_primary">#6457EE</color>
+</resources>

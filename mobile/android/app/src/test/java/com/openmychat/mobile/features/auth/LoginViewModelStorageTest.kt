@@ -1,20 +1,29 @@
 package com.openmychat.mobile.features.auth
 
+import android.content.SharedPreferences
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SessionManager
+import com.openmychat.mobile.data.repository.DefaultAuthRepository
+import com.openmychat.mobile.core.session.SessionStorageState
+import com.openmychat.mobile.ui.navigation.AuthenticatedRouteState
+import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.openmychat.mobile.testing.TestSessions
 
 class LoginViewModelStorageTest {
 
@@ -22,10 +31,10 @@ class LoginViewModelStorageTest {
     fun loginShowsRecoverableErrorInsteadOfSuccessWhenSessionCannotBeStored() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
-            val sessionManager = SessionManager(prefs = null, isDebuggableBuild = false).apply {
-                serverUrl = "https://chat.example"
-            }
-            val viewModel = LoginViewModel(ApiClient(sessionManager, successfulLoginClient()), sessionManager)
+            val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val viewModel = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(ApiClient(sessionManager, successfulLoginClient()), sessionManager))
 
             viewModel.login(username = "alice", password = "password")
 
@@ -39,6 +48,140 @@ class LoginViewModelStorageTest {
             Dispatchers.resetMain()
         }
     }
+
+    @Test
+    fun loginNeverEmitsSuccessWhenDeviceSecretWriteFailsAfterSessionWasStored() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val storage = FailingAfterFirstCommitSharedPreferences()
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val requestPaths = mutableListOf<String>()
+            val viewModel = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
+                    ApiClient(sessionManager, claimedDeviceLoginClient(requestPaths)),
+                    sessionManager
+                )
+            )
+            val emittedStates = mutableListOf<LoginUiState>()
+            val observer = launch(Dispatchers.Unconfined) {
+                viewModel.uiState.collect { emittedStates += it }
+            }
+
+            viewModel.login(username = "alice", password = "password")
+
+            val terminalState = withTimeout(2_000) {
+                viewModel.uiState.first { it is LoginUiState.Error || it is LoginUiState.Success }
+            }
+            observer.cancel()
+
+            assertTrue(
+                "expected recoverable storage error, got $terminalState after ${storage.commitCount} writes and $requestPaths",
+                terminalState is LoginUiState.Error
+            )
+            assertEquals(listOf("/api/auth/login", "/api/auth/device/claim"), requestPaths)
+            assertEquals(2, storage.commitCount)
+            assertFalse(emittedStates.any { it is LoginUiState.Success })
+            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
+            assertNull(sessionManager.token)
+            assertNull(sessionManager.currentUser)
+            assertNull(sessionManager.deviceSecret)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun passwordChangeShowsRecoverableErrorWhenAtomicReplacementWriteFails() = runBlocking {
+        assertPasswordChangeDoesNotAuthenticateWhenCommitFails(commitToFail = 2)
+    }
+
+    @Test
+    fun passwordChangeFailureCannotRestoreCredentialsAfterProcessRestart() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val storage = FailingAfterFirstCommitSharedPreferences(
+                initialValues = seededPasswordChangeSession(),
+                commitToFail = 2
+            )
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val viewModel = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
+                    ApiClient(sessionManager, successfulPasswordChangeClient(mutableListOf())),
+                    sessionManager
+                )
+            )
+
+            viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
+            withTimeout(2_000) { viewModel.changePasswordError.first { !it.isNullOrBlank() } }
+
+            val restartedManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val restoredRoute = SessionRouteGuard.destinationForNavigation(
+                requestedDestination = com.openmychat.mobile.ui.navigation.NavKey.Conversations,
+                session = AuthenticatedRouteState(
+                    token = restartedManager.token,
+                    hasCurrentUser = restartedManager.currentUser != null,
+                    storageState = restartedManager.storageState.value
+                )
+            )
+
+            assertNull(restartedManager.token)
+            assertNull(restartedManager.currentUser)
+            assertEquals(com.openmychat.mobile.ui.navigation.NavKey.Login, restoredRoute)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private suspend fun kotlinx.coroutines.CoroutineScope.assertPasswordChangeDoesNotAuthenticateWhenCommitFails(
+        commitToFail: Int
+    ) {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val storage = FailingAfterFirstCommitSharedPreferences(
+                initialValues = seededPasswordChangeSession(),
+                commitToFail = commitToFail
+            )
+            val sessionManager = SessionManager(prefs = storage, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val requestPaths = mutableListOf<String>()
+            val viewModel = LoginViewModel(
+                loginPreferences = com.openmychat.mobile.testing.FakeLoginPreferences(),
+                authRepository = DefaultAuthRepository(
+                    ApiClient(sessionManager, successfulPasswordChangeClient(requestPaths)),
+                    sessionManager
+                )
+            )
+            val emittedStates = mutableListOf<LoginUiState>()
+            val observer = launch(Dispatchers.Unconfined) {
+                viewModel.uiState.collect { emittedStates += it }
+            }
+
+            viewModel.changePassword(oldPass = "old-pass", newPass = "new-pass")
+
+            val error = requireNotNull(withTimeout(2_000) {
+                viewModel.changePasswordError.first { !it.isNullOrBlank() }
+            })
+            observer.cancel()
+
+            assertTrue(error.contains("Secure device storage"))
+            assertEquals(listOf("/api/users/password"), requestPaths)
+            assertEquals(commitToFail, storage.commitCount)
+            assertFalse(emittedStates.any { it is LoginUiState.Success })
+            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
+            assertNull(sessionManager.token)
+            assertNull(sessionManager.currentUser)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private fun seededPasswordChangeSession(): Map<String, Any?> = mapOf(
+        "jwt_token" to "old-token",
+        "current_user_json" to """{"id":1,"username":"alice","full_name":"Alice"}""",
+        "must_change_password" to true,
+        "server_url" to "https://chat.example/api"
+    )
 
     private fun successfulLoginClient(): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor { chain ->
@@ -54,4 +197,84 @@ class LoginViewModelStorageTest {
                 .build()
         }
         .build()
+
+    private fun claimedDeviceLoginClient(requestPaths: MutableList<String>): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val path = chain.request().url.encodedPath
+            requestPaths += path
+            val body = when (path) {
+                "/api/auth/login" ->
+                    """{"user":{"id":1,"username":"alice","full_name":"Alice"},"token":"sensitive-token"}"""
+                "/api/auth/device/claim" -> """{"claimed":true}"""
+                else -> error("Unexpected endpoint: ${chain.request().url}")
+            }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(body.toResponseBody())
+                .build()
+        }
+        .build()
+
+    private fun successfulPasswordChangeClient(requestPaths: MutableList<String>): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val path = chain.request().url.encodedPath
+            requestPaths += path
+            check(path == "/api/users/password") { "Unexpected endpoint: ${chain.request().url}" }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(
+                    """{"success":true,"token":"replacement-token","user":{"id":1,"username":"alice","full_name":"Alice"}}"""
+                        .toResponseBody()
+                )
+                .build()
+        }
+        .build()
+
+    private class FailingAfterFirstCommitSharedPreferences(
+        initialValues: Map<String, Any?> = mapOf("device_id" to "existing-device-id"),
+        private val commitToFail: Int = 2
+    ) : SharedPreferences {
+        private val values = initialValues.toMutableMap()
+        var commitCount = 0
+            private set
+
+        override fun getAll(): MutableMap<String, *> = values
+        override fun getString(key: String, defValue: String?): String? = values[key] as? String ?: defValue
+        override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+        override fun getInt(key: String, defValue: Int): Int = values[key] as? Int ?: defValue
+        override fun getLong(key: String, defValue: Long): Long = values[key] as? Long ?: defValue
+        override fun getFloat(key: String, defValue: Float): Float = values[key] as? Float ?: defValue
+        override fun getBoolean(key: String, defValue: Boolean): Boolean = values[key] as? Boolean ?: defValue
+        override fun contains(key: String): Boolean = values.containsKey(key)
+        override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+        override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+
+        override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
+            private val pending = mutableMapOf<String, Any?>()
+
+            override fun putString(key: String, value: String?): SharedPreferences.Editor = apply { pending[key] = value }
+            override fun putStringSet(key: String, values: MutableSet<String>?): SharedPreferences.Editor = apply { pending[key] = values }
+            override fun putInt(key: String, value: Int): SharedPreferences.Editor = apply { pending[key] = value }
+            override fun putLong(key: String, value: Long): SharedPreferences.Editor = apply { pending[key] = value }
+            override fun putFloat(key: String, value: Float): SharedPreferences.Editor = apply { pending[key] = value }
+            override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor = apply { pending[key] = value }
+            override fun remove(key: String): SharedPreferences.Editor = apply { pending[key] = null }
+            override fun clear(): SharedPreferences.Editor = apply { pending.clear(); values.keys.forEach { pending[it] = null } }
+            override fun commit(): Boolean {
+                commitCount += 1
+                if (commitCount >= commitToFail) return false
+                pending.forEach { (key, value) ->
+                    if (value == null) values.remove(key) else values[key] = value
+                }
+                return true
+            }
+            override fun apply() = Unit
+        }
+    }
 }

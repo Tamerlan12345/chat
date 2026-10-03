@@ -1,54 +1,54 @@
-import Foundation
 import AVFoundation
+import Foundation
 
-/// Менеджер аудиосессии iOS для VoIP звонков CentyChat
+/// Owns activation and deactivation of the platform call audio session.
 public final class AudioSessionManager: @unchecked Sendable {
     public static let shared = AudioSessionManager()
-    
+
     private let lock = NSLock()
     private var isConfigured = false
-    
+
     private init() {}
-    
-    /// Настройка AVAudioSession для голосового вызова (PlayAndRecord, VoiceChat)
-    public func configureForCall() {
+
+    /// Configures a call session only after the caller has granted microphone access.
+    /// Failures are surfaced to the relay so an unaudible call is never marked active.
+    public func activateForCall() throws {
         lock.lock()
         defer { lock.unlock() }
-        
+
         let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker])
-            try session.setPreferredSampleRate(AudioRelayEngine.sampleRate)
-            try session.setPreferredIOBufferDuration(0.032) // 32 мс
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-            isConfigured = true
-        } catch {
-            print("[AudioSessionManager] Error configuring audio session: \(error)")
-        }
+        try session.setCategory(
+            .playAndRecord,
+            mode: .voiceChat,
+            options: [.allowBluetooth, .defaultToSpeaker]
+        )
+        try session.setPreferredSampleRate(AudioRelayEngine.sampleRate)
+        try session.setPreferredIOBufferDuration(0.032)
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        isConfigured = true
     }
-    
-    /// Переключение громкой связи (Speaker)
+
+    /// Compatibility entry point for existing callers. New call code uses `activateForCall()`.
+    public func configureForCall() {
+        try? activateForCall()
+    }
+
     public func setSpeaker(enabled: Bool) {
         lock.lock()
         defer { lock.unlock() }
-        
+
         let session = AVAudioSession.sharedInstance()
         do {
-            if enabled {
-                try session.overrideOutputAudioPort(.speaker)
-            } else {
-                try session.overrideOutputAudioPort(.none)
-            }
+            try session.overrideOutputAudioPort(enabled ? .speaker : .none)
         } catch {
-            print("[AudioSessionManager] Error toggling speaker: \(error)")
+            // Changing the preferred route is recoverable; keep the active call running.
         }
     }
-    
-    /// Деактивация аудиосессии при завершении вызова
+
     public func endCallSession() {
         lock.lock()
         defer { lock.unlock() }
-        
+
         guard isConfigured else { return }
         let session = AVAudioSession.sharedInstance()
         do {
@@ -56,7 +56,8 @@ public final class AudioSessionManager: @unchecked Sendable {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
             isConfigured = false
         } catch {
-            print("[AudioSessionManager] Error ending audio session: \(error)")
+            // The operating system may already have deactivated the session after interruption.
+            isConfigured = false
         }
     }
 }

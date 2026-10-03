@@ -2,6 +2,7 @@ package com.openmychat.mobile.core.network
 
 import com.openmychat.mobile.data.model.Announcement
 import com.openmychat.mobile.data.model.Channel
+import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.model.UserStatus
@@ -14,7 +15,24 @@ sealed interface WsEvent {
     data class ServerDisconnect(val reason: String) : WsEvent
 
     // Chat messages
-    data class NewMessage(val message: Message) : WsEvent
+    /**
+     * Новое сообщение. [notify] — решение сервера для этого сокета (multi-device.md §5): true —
+     * показать уведомление, false — нет; null — старый сервер без поля, решает локальное правило.
+     */
+    data class NewMessage(val message: Message, val notify: Boolean? = null) : WsEvent
+
+    /**
+     * Переписку прочитали на другом устройстве этого сотрудника (multi-device.md §6): обнулить
+     * непрочитанное и снять её уведомления. [targetId] — с точки зрения читателя (собеседник / канал).
+     */
+    data class ConversationRead(
+        val conversationType: ConversationType,
+        val targetId: Long,
+        val byUserId: Long,
+        val at: String,
+        val messageIds: List<Long> = emptyList(),
+        val lastReadId: Long? = null
+    ) : WsEvent
     data class MessageStatusUpdated(
         val messageId: Long,
         val status: String,
@@ -40,7 +58,9 @@ sealed interface WsEvent {
     data class UserStatusChanged(
         val userId: Long,
         val status: UserStatus,
-        val customStatus: String?
+        val customStatus: String?,
+        /** Событие несёт поле customStatus (null в нём — свой статус стёрт). */
+        val customStatusPresent: Boolean = true
     ) : WsEvent
 
     // Channels

@@ -1,0 +1,7 @@
+{
+  "type": "call_end",
+  "targetUserId": 3,
+  "reason": "Разговор завершен",
+  "senderId": 2,
+  "senderName": "Алиса Тестова"
+}

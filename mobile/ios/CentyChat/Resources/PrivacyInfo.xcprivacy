@@ -112,31 +112,13 @@
     <!-- Системные API с обязательным обоснованием использования -->
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
-        <!-- User Defaults API -->
+        <!-- Время работы системы: планирование воспроизведения звонка (35F9.1 — интервалы внутри приложения) -->
         <dict>
             <key>NSPrivacyAccessedAPIType</key>
-            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
-                <string>CA92.1</string>
-            </array>
-        </dict>
-        <!-- File Timestamp API -->
-        <dict>
-            <key>NSPrivacyAccessedAPIType</key>
-            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
-            <key>NSPrivacyAccessedAPITypeReasons</key>
-            <array>
-                <string>C617.1</string>
-            </array>
-        </dict>
-        <!-- Disk Space API -->
-        <dict>
-            <key>NSPrivacyAccessedAPIType</key>
-            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
-            <key>NSPrivacyAccessedAPITypeReasons</key>
-            <array>
-                <string>E174.1</string>
+                <string>35F9.1</string>
             </array>
         </dict>
     </array>

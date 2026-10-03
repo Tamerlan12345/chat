@@ -22,6 +22,9 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <!-- Read only by DEBUG builds (ServerEnvironment); Release compiles the production URL in. -->
+    <key>CentyChatServerURL</key>
+    <string>$(CENTYCHAT_SERVER_URL)</string>
     
     <!-- Privacy Descriptions for App Store Review -->
     <key>NSMicrophoneUsageDescription</key>
@@ -37,19 +40,21 @@
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>
-        <string>fetch</string>
-        <string>remote-notification</string>
     </array>
     
     <key>UILaunchScreen</key>
     <dict/>
-    <key>UIRequiredDeviceCapabilities</key>
-    <array>
-        <string>armv7</string>
-    </array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <!-- iPad: все четыре ориентации обязательны для многозадачности (Split View / Slide Over) -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>

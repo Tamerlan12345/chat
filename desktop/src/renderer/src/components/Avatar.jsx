@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { avatarColor, initialsOf } from '../lib/avatar.mjs';
+import { avatarColor, avatarSrc, initialsOf } from '../lib/avatar.mjs';
 
 // Один аватар на всё приложение: фотография, а если её нет или она не
 // загрузилась — инициалы на постоянном для человека цвете. Раньше битая
 // ссылка на фото показывалась значком «сломанной картинки».
-export default function Avatar({ name, src, size = 36, shape = 'circle', className = '' }) {
+export default function Avatar({ name, src: rawSrc, size = 36, shape = 'circle', className = '' }) {
+  // Адрес, который <img> загрузить не сможет (см. avatarSrc), — сразу инициалы.
+  const src = avatarSrc(rawSrc);
   // Запоминается адрес, который не загрузился, а не просто «ошибка»: сброс
   // через эффект срабатывал уже после мгновенной ошибки битой ссылки, и
   // значок сломанной картинки возвращался.

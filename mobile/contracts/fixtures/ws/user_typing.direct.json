@@ -1,0 +1,8 @@
+{
+  "type": "user_typing",
+  "userId": 3,
+  "userName": "Боб Тестов",
+  "conversationType": "direct",
+  "targetId": 2,
+  "isTyping": true
+}

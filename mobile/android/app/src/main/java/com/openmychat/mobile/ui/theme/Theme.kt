@@ -1,87 +1,124 @@
 package com.openmychat.mobile.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
 
-private val LightColorScheme = lightColorScheme(
-    primary = md_theme_light_primary,
-    onPrimary = md_theme_light_onPrimary,
-    primaryContainer = md_theme_light_primaryContainer,
-    onPrimaryContainer = md_theme_light_onPrimaryContainer,
-    secondary = md_theme_light_secondary,
-    onSecondary = md_theme_light_onSecondary,
-    secondaryContainer = md_theme_light_secondaryContainer,
-    onSecondaryContainer = md_theme_light_onSecondaryContainer,
-    tertiary = md_theme_light_tertiary,
-    onTertiary = md_theme_light_onTertiary,
-    tertiaryContainer = md_theme_light_tertiaryContainer,
-    onTertiaryContainer = md_theme_light_onTertiaryContainer,
-    error = md_theme_light_error,
-    onError = md_theme_light_onError,
-    errorContainer = md_theme_light_errorContainer,
-    onErrorContainer = md_theme_light_onErrorContainer,
-    background = md_theme_light_background,
-    onBackground = md_theme_light_onBackground,
-    surface = md_theme_light_surface,
-    onSurface = md_theme_light_onSurface,
-    surfaceVariant = md_theme_light_surfaceVariant,
-    onSurfaceVariant = md_theme_light_onSurfaceVariant,
-    outline = md_theme_light_outline
-)
+/**
+ * Material roles derived from [CentyTokens]. Container roles are the brief's translucent tokens
+ * flattened onto the canvas so Material components that need an opaque colour get one.
+ * Dynamic colour is deliberately off: the brand is pinned to the desktop.
+ */
+internal val LightColorScheme: ColorScheme = LightCentyTokens.let { t ->
+    lightColorScheme(
+        primary = t.primary,
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFECEBFB), // primary-soft on canvas
+        onPrimaryContainer = Color(0xFF17133D), // on-selected
+        inversePrimary = Color(0xFFB0A9FF),
+        secondary = t.textSecondary,
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFECEBFB),
+        onSecondaryContainer = t.accentText,
+        tertiary = Color(0xFF2A72EE), // brand azure
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFDDE7FF),
+        onTertiaryContainer = Color(0xFF001B3F),
+        error = t.danger,
+        onError = Color.White,
+        errorContainer = Color(0xFFF9ECEE), // danger-soft on canvas
+        onErrorContainer = t.dangerText,
+        background = t.canvas,
+        onBackground = t.textStrong,
+        surface = t.list,
+        onSurface = t.textStrong,
+        surfaceVariant = t.frame,
+        onSurfaceVariant = t.textSecondary,
+        surfaceTint = t.list, // no tonal tint: elevation is tone + hairline
+        inverseSurface = Color(0xFF2B2B32),
+        inverseOnSurface = Color(0xFFF4F4F7),
+        outline = Color(0xFF8A8A96), // input baseline, >= 3:1 on card
+        outlineVariant = Color(0xFFE3E3E9), // border on canvas
+        scrim = Color(0xFF141428),
+        surfaceBright = t.canvas,
+        surfaceDim = t.frame,
+        surfaceContainerLowest = t.card,
+        surfaceContainerLow = Color(0xFFF7F7FA), // bg-panel
+        surfaceContainer = t.list,
+        surfaceContainerHigh = t.elevated,
+        surfaceContainerHighest = t.frame
+    )
+}
 
-private val DarkColorScheme = darkColorScheme(
-    primary = md_theme_dark_primary,
-    onPrimary = md_theme_dark_onPrimary,
-    primaryContainer = md_theme_dark_primaryContainer,
-    onPrimaryContainer = md_theme_dark_onPrimaryContainer,
-    secondary = md_theme_dark_secondary,
-    onSecondary = md_theme_dark_onSecondary,
-    secondaryContainer = md_theme_dark_secondaryContainer,
-    onSecondaryContainer = md_theme_dark_onSecondaryContainer,
-    tertiary = md_theme_dark_tertiary,
-    onTertiary = md_theme_dark_onTertiary,
-    tertiaryContainer = md_theme_dark_tertiaryContainer,
-    onTertiaryContainer = md_theme_dark_onTertiaryContainer,
-    error = md_theme_dark_error,
-    onError = md_theme_dark_onError,
-    errorContainer = md_theme_dark_errorContainer,
-    onErrorContainer = md_theme_dark_onErrorContainer,
-    background = md_theme_dark_background,
-    onBackground = md_theme_dark_onBackground,
-    surface = md_theme_dark_surface,
-    onSurface = md_theme_dark_onSurface,
-    surfaceVariant = md_theme_dark_surfaceVariant,
-    onSurfaceVariant = md_theme_dark_onSurfaceVariant,
-    outline = md_theme_dark_outline
-)
+internal val DarkColorScheme: ColorScheme = DarkCentyTokens.let { t ->
+    darkColorScheme(
+        // The brief's #6457ee with white text for filled buttons; #b0a9ff stays accent text only.
+        primary = t.primary,
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFF36354C), // primary-soft on canvas
+        onPrimaryContainer = Color.White,
+        inversePrimary = Color(0xFF5B4EE6),
+        secondary = t.textSecondary,
+        onSecondary = t.list,
+        secondaryContainer = Color(0xFF36354C),
+        onSecondaryContainer = t.accentText,
+        tertiary = Color(0xFF8FB4FF),
+        onTertiary = Color(0xFF002F6D),
+        tertiaryContainer = Color(0xFF084DAD),
+        onTertiaryContainer = Color(0xFFDDE7FF),
+        error = t.danger,
+        onError = Color.White,
+        errorContainer = Color(0xFF3F292F), // danger-soft on canvas
+        onErrorContainer = t.dangerText,
+        background = t.canvas,
+        onBackground = t.textStrong,
+        surface = t.list,
+        onSurface = t.textStrong,
+        surfaceVariant = t.card,
+        onSurfaceVariant = t.textSecondary,
+        surfaceTint = t.list,
+        inverseSurface = Color(0xFFE6E6EC),
+        inverseOnSurface = t.list,
+        outline = Color(0xFF80808C),
+        outlineVariant = Color(0xFF36363D),
+        scrim = Color(0xFF08080C),
+        surfaceBright = t.elevated,
+        surfaceDim = t.frame,
+        surfaceContainerLowest = t.frame,
+        surfaceContainerLow = t.list,
+        surfaceContainer = t.canvas,
+        surfaceContainerHigh = t.elevated,
+        surfaceContainerHighest = Color(0xFF34343C)
+    )
+}
 
 @Composable
 fun CentyChatTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    /** Null follows the system "Remove animations" setting; tests may force it. */
+    reduceMotion: Boolean? = null,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val systemReduceMotion = rememberSystemReduceMotion()
+    val tokens = if (darkTheme) DarkCentyTokens else LightCentyTokens
+    CompositionLocalProvider(
+        LocalCentyTokens provides tokens,
+        LocalReduceMotion provides (reduceMotion ?: systemReduceMotion),
+        // Selection handles and highlight in accent text, not the fill-only primary.
+        LocalTextSelectionColors provides TextSelectionColors(tokens.accentText, tokens.accentText.copy(alpha = 0.3f))
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+            typography = Typography,
+            shapes = Shapes,
+            content = content
+        )
     }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        shapes = Shapes,
-        content = content
-    )
 }

@@ -30,7 +30,7 @@ jobs:
       - name: Verify Android client
         run: |
           chmod +x mobile/android/gradlew
-          mobile/android/gradlew -p mobile/android --no-daemon testDebugUnitTest lint assembleDebug assembleRelease
+          mobile/android/gradlew -p mobile/android --no-daemon testDebugUnitTest lint assembleDebug assembleDebugAndroidTest assembleRelease
       - name: Upload Android verification artifacts
         if: always()
         uses: actions/upload-artifact@v4

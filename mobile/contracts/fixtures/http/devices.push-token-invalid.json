@@ -1,0 +1,4 @@
+{
+  "error": "environment — \"sandbox\" или \"production\"",
+  "code": "INVALID_ENVIRONMENT"
+}

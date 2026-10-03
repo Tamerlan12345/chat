@@ -1,0 +1,35 @@
+{
+  "name": "c07-old-mobile-no-device-id",
+  "description": "Старая мобильная сборка без device_id на переднем плане: звонит по кадру и получает push (сокет нельзя связать с токеном).",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "old",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "#legacy-token"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "#legacy-token"
+    ],
+    "ring": [
+      "old"
+    ],
+    "quiet": []
+  }
+}

@@ -1,0 +1,685 @@
+{
+  "name": "20-throttle-eight-per-second",
+  "description": "Повтор девяти записей девяти переписок: за секунду уходят 8 (запас к пределу сервера 10/с), девятая ждёт будильника tick к освобождению окна; ранний tick ничего не делает и не дублирует будильник.",
+  "covers": [
+    "T05",
+    "T21",
+    "T04"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "offline",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 9,
+    "outbox": [
+      {
+        "client_msg_id": "a0000030-0000-4000-8000-000000000030",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Сообщение 1",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000031-0000-4000-8000-000000000031",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Сообщение 2",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000032-0000-4000-8000-000000000032",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "Сообщение 3",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000033-0000-4000-8000-000000000033",
+        "conversation": "direct:6",
+        "seq": 4,
+        "text": "Сообщение 4",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000034-0000-4000-8000-000000000034",
+        "conversation": "direct:7",
+        "seq": 5,
+        "text": "Сообщение 5",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000035-0000-4000-8000-000000000035",
+        "conversation": "direct:8",
+        "seq": 6,
+        "text": "Сообщение 6",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000036-0000-4000-8000-000000000036",
+        "conversation": "direct:9",
+        "seq": 7,
+        "text": "Сообщение 7",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000037-0000-4000-8000-000000000037",
+        "conversation": "direct:10",
+        "seq": 8,
+        "text": "Сообщение 8",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000038-0000-4000-8000-000000000038",
+        "conversation": "direct:11",
+        "seq": 9,
+        "text": "Сообщение 9",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "auth_success",
+        "user": {
+          "id": 2,
+          "username": "alice",
+          "full_name": "Алиса Тестова",
+          "email": "alice@example.test",
+          "phone": "",
+          "job_title": "Сотрудник",
+          "department_id": null,
+          "uin": 1002,
+          "extension": "",
+          "company": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+          "role_id": 2,
+          "avatar_url": null,
+          "status": "online",
+          "custom_status": null,
+          "last_seen": "2026-10-02T09:00:01.000Z",
+          "is_active": 1,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "bound_ip": null,
+          "admin_scope_dept_id": null,
+          "must_change_password": 0,
+          "approval_status": "approved",
+          "registered_at": null,
+          "token_version": 1,
+          "last_login_at": "2026-10-02T09:00:01.000Z",
+          "last_login_ip": "127.0.0.1",
+          "role_name": "Сотрудник",
+          "permissions_json": "{\"is_admin\":false,\"can_manage_users\":false,\"can_manage_structure\":false,\"can_manage_db\":false,\"can_broadcast\":false,\"can_call\":true,\"can_remote_control\":false,\"can_create_channels\":true,\"can_upload_files\":true}",
+          "department_name": null,
+          "admin_scope_dept_name": null,
+          "permissions": {
+            "is_admin": false,
+            "can_manage_users": false,
+            "can_manage_structure": false,
+            "can_manage_db": false,
+            "can_broadcast": false,
+            "can_call": true,
+            "can_remote_control": false,
+            "can_create_channels": true,
+            "can_upload_files": true
+          }
+        }
+      }
+    },
+    {
+      "type": "sync_page",
+      "now": 1000,
+      "chain": 1,
+      "body": {
+        "messages": [],
+        "next_cursor": "5e7a1c0d9b3f4a62.12",
+        "has_more": false
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1999
+    },
+    {
+      "type": "tick",
+      "now": 2000
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "sync_request",
+        "cursor": "5e7a1c0d9b3f4a62.11",
+        "limit": 200,
+        "chain": 1
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "cursor",
+          "outbox"
+        ]
+      },
+      {
+        "type": "refresh_conversation_lists"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Сообщение 1",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000030-0000-4000-8000-000000000030"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000030-0000-4000-8000-000000000030",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 4,
+          "text": "Сообщение 2",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000031-0000-4000-8000-000000000031"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000031-0000-4000-8000-000000000031",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 5,
+          "text": "Сообщение 3",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000032-0000-4000-8000-000000000032"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000032-0000-4000-8000-000000000032",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 6,
+          "text": "Сообщение 4",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000033-0000-4000-8000-000000000033"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000033-0000-4000-8000-000000000033",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 7,
+          "text": "Сообщение 5",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000034-0000-4000-8000-000000000034"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000034-0000-4000-8000-000000000034",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 8,
+          "text": "Сообщение 6",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000035-0000-4000-8000-000000000035"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000035-0000-4000-8000-000000000035",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 9,
+          "text": "Сообщение 7",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000036-0000-4000-8000-000000000036"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000036-0000-4000-8000-000000000036",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 10,
+          "text": "Сообщение 8",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000037-0000-4000-8000-000000000037"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000037-0000-4000-8000-000000000037",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 2000,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 11,
+          "text": "Сообщение 9",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000038-0000-4000-8000-000000000038"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000038-0000-4000-8000-000000000038",
+          "attempt": 1
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000030-0000-4000-8000-000000000030",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Сообщение 1",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000031-0000-4000-8000-000000000031",
+        "conversation": "direct:4",
+        "seq": 2,
+        "text": "Сообщение 2",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000032-0000-4000-8000-000000000032",
+        "conversation": "direct:5",
+        "seq": 3,
+        "text": "Сообщение 3",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000033-0000-4000-8000-000000000033",
+        "conversation": "direct:6",
+        "seq": 4,
+        "text": "Сообщение 4",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000034-0000-4000-8000-000000000034",
+        "conversation": "direct:7",
+        "seq": 5,
+        "text": "Сообщение 5",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000035-0000-4000-8000-000000000035",
+        "conversation": "direct:8",
+        "seq": 6,
+        "text": "Сообщение 6",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000036-0000-4000-8000-000000000036",
+        "conversation": "direct:9",
+        "seq": 7,
+        "text": "Сообщение 7",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000037-0000-4000-8000-000000000037",
+        "conversation": "direct:10",
+        "seq": 8,
+        "text": "Сообщение 8",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000038-0000-4000-8000-000000000038",
+        "conversation": "direct:11",
+        "seq": 9,
+        "text": "Сообщение 9",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 1,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 12000,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "sendLog": [
+      2000
+    ],
+    "wake_at": null
+  }
+}

@@ -1,8 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.CentyChat" parent="android:Theme.Material.Light.NoActionBar">
+    <!-- DayNight, so the window behind the first Compose frame matches the theme (no white flash
+         in dark mode). System bar icon contrast is set by enableEdgeToEdge(). -->
+    <style name="Theme.CentyChat" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/centy_primary</item>
+        <item name="android:colorBackground">@color/centy_canvas</item>
+        <item name="android:windowBackground">@color/centy_canvas</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Launch theme for the SplashScreen API: canvas colour and the brand C mark. -->
+    <style name="Theme.CentyChat.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/centy_canvas</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+        <item name="postSplashScreenTheme">@style/Theme.CentyChat</item>
     </style>
 </resources>

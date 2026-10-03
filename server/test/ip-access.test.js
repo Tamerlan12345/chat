@@ -114,3 +114,91 @@ test('маршруты /updates/* закрыты ALLOWED_CLIENT_IPS и стоя�
     delete process.env.ALLOWED_CLIENT_IPS;
   }
 });
+
+test('GET /api/health variants mirror /health while the server is starting', async () => {
+  const http = require('node:http');
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const root = await fetch(base + '/health');
+
+    assert.strictEqual(root.status, 503);
+    const rootBody = await root.json();
+    const headers = [
+      'cache-control',
+      'content-security-policy',
+      'cross-origin-opener-policy',
+      'cross-origin-resource-policy',
+      'origin-agent-cluster',
+      'permissions-policy',
+      'referrer-policy',
+      'x-content-type-options',
+      'x-frame-options',
+      'x-permitted-cross-domain-policies'
+    ];
+
+    for (const path of ['/api/health', '/api/health/', '/API/health']) {
+      const alias = await fetch(base + path);
+      assert.strictEqual(alias.status, root.status, path);
+      assert.deepStrictEqual(await alias.json(), rootBody, path);
+      for (const name of headers) {
+        assert.strictEqual(alias.headers.get(name), root.headers.get(name), `${path}: ${name}`);
+      }
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('restricted IP treats API health case and trailing slash variants like /health', async () => {
+  const http = require('node:http');
+  loadService({ ALLOWED_CLIENT_IPS: '10.9.9.9' });
+  delete require.cache[require.resolve('../src/app')];
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const root = await fetch(base + '/health');
+    assert.strictEqual(root.status, 403);
+    const rootBody = await root.text();
+
+    for (const path of ['/api/health', '/api/health/', '/API/health']) {
+      const alias = await fetch(base + path);
+      assert.strictEqual(alias.status, root.status, path);
+      assert.strictEqual(await alias.text(), rootBody, path);
+      assert.strictEqual(alias.headers.get('content-type'), root.headers.get('content-type'), `${path}: content-type`);
+      assert.strictEqual(alias.headers.get('cache-control'), root.headers.get('cache-control'), `${path}: cache-control`);
+    }
+  } finally {
+    server.close();
+    delete process.env.ALLOWED_CLIENT_IPS;
+  }
+});
+
+test('double-slash API health paths remain protected by generic startup handling', async () => {
+  const http = require('node:http');
+  loadService();
+  delete require.cache[require.resolve('../src/app')];
+  const app = require('../src/app');
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    for (const path of ['/api/health//', '/API/health//']) {
+      const response = await fetch(base + path);
+      assert.strictEqual(response.status, 503, path);
+      assert.strictEqual(response.headers.get('cache-control'), 'no-store', path);
+      const body = await response.json();
+      assert.ok(typeof body.error === 'string', path);
+      assert.notStrictEqual(body.status, 'starting', path);
+    }
+  } finally {
+    server.close();
+  }
+});

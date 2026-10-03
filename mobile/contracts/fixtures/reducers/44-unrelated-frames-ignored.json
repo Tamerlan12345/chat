@@ -1,0 +1,163 @@
+{
+  "name": "44-unrelated-frames-ignored",
+  "description": "Кадры, не относящиеся к доставке (набор текста, статусы, побудка, server_disconnect, каналы, оповещения), модель не меняют и эффектов не дают.",
+  "covers": [
+    "T38"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": "direct:3",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 200,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Привет",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {
+      "channel:3": 1
+    },
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "ws",
+      "now": 1000,
+      "frame": {
+        "type": "user_typing",
+        "userId": 3,
+        "userName": "Боб Тестов",
+        "conversationType": "direct",
+        "targetId": 2,
+        "isTyping": true
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1001,
+      "frame": {
+        "type": "user_status_changed",
+        "userId": 2,
+        "user_id": 2,
+        "status": "online",
+        "customStatus": null
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1002,
+      "frame": {
+        "type": "wake_ring",
+        "fromUserId": 2,
+        "fromName": "Алиса Тестова",
+        "at": 1790931600000
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1003,
+      "frame": {
+        "type": "server_disconnect",
+        "reason": "Выход из системы"
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1004,
+      "frame": {
+        "type": "channel_created",
+        "channel": {
+          "id": 4,
+          "name": "#релиз",
+          "topic": "Подготовка релиза",
+          "type": "public",
+          "owner_id": 1,
+          "created_at": "2026-10-02T09:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1005,
+      "frame": {
+        "type": "new_announcement",
+        "announcement": {
+          "id": 2,
+          "author_id": 1,
+          "title": "Плановое обновление",
+          "content": "Сегодня в 22:00 сервер будет недоступен 10 минут.",
+          "target_type": "all",
+          "target_ids_json": "[]",
+          "priority": "urgent",
+          "expires_at": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "author_name": "Администратор системы",
+          "author_job_title": "Главный системный администратор"
+        }
+      }
+    }
+  ],
+  "expectedEffects": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expectedState": {
+    "visible": "direct:3",
+    "unread": {
+      "channel:3": 1
+    },
+    "messages": {
+      "direct:3": [
+        {
+          "id": 200,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Привет",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:01.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "outbox": [],
+    "ops": [],
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "connection": "online"
+  }
+}

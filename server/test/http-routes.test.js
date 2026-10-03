@@ -49,6 +49,31 @@ test('/health отвечает без авторизации', async () => {
   assert.strictEqual(res.json.status, 'ok');
 });
 
+test('/api/health is a backwards-compatible alias for /health', async () => {
+  const [root, alias] = await Promise.all([
+    fetch(baseUrl + '/health'),
+    fetch(baseUrl + '/api/health')
+  ]);
+
+  assert.strictEqual(root.status, 200);
+  assert.strictEqual(alias.status, root.status);
+  assert.deepStrictEqual(await alias.json(), await root.json());
+
+  for (const name of [
+    'cache-control',
+    'content-security-policy',
+    'cross-origin-opener-policy',
+    'cross-origin-resource-policy',
+    'origin-agent-cluster',
+    'permissions-policy',
+    'referrer-policy',
+    'x-content-type-options',
+    'x-frame-options',
+    'x-permitted-cross-domain-policies'
+  ]) {
+    assert.strictEqual(alias.headers.get(name), root.headers.get(name), name);
+  }
+});
 test('/api/settings/info открыт и отдаёт название компании', async () => {
   const res = await request('GET', '/api/settings/info');
   assert.strictEqual(res.status, 200);

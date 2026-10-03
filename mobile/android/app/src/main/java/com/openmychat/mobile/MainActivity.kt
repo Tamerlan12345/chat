@@ -8,55 +8,94 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
-import com.openmychat.mobile.data.model.ChangePasswordRequest
+import com.openmychat.mobile.data.realtime.RealtimeConnectionManager
 import com.openmychat.mobile.features.auth.ChangePasswordDialog
-import com.openmychat.mobile.ui.navigation.CentyNavHost
+import com.openmychat.mobile.ui.navigation.AppNavigationState
+import com.openmychat.mobile.ui.navigation.AppNavigator
+import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
-import com.openmychat.mobile.ui.navigation.rememberNavBackStack
+import com.openmychat.mobile.ui.navigation.SessionRouteGuard
+import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
+import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
+import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.components.SnackbarAnchor
 import com.openmychat.mobile.ui.theme.CentyChatTheme
-import kotlinx.coroutines.flow.collectLatest
+import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.launch
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val app: CentyChatApp get() = application as CentyChatApp
+    @Inject lateinit var connectionManager: RealtimeConnectionManager
+    @Inject lateinit var callAudio: CallAudio
+
+    private val appViewModel: AppViewModel by viewModels()
+
+    /** Переписка из нажатого уведомления — открывается, когда навигация готова и вход выполнен. */
+    private val notificationOpen = kotlinx.coroutines.flow.MutableStateFlow<NavKey.Chat?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationOpen.value = chatFromNotification(intent)
+    }
+
+    private fun chatFromNotification(intent: android.content.Intent?): NavKey.Chat? {
+        val sink = com.openmychat.mobile.data.notifications.SystemNotificationSink
+        val type = intent?.getStringExtra(sink.EXTRA_CONVERSATION_TYPE) ?: return null
+        val targetId = intent.getLongExtra(sink.EXTRA_TARGET_ID, 0L).takeIf { it > 0 } ?: return null
+        if (type != "direct" && type != "channel") return null
+        return NavKey.Chat(type, targetId, intent.getStringExtra(sink.EXTRA_TITLE).orEmpty())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (savedInstanceState == null) notificationOpen.value = chatFromNotification(intent)
+        installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-
-        // Start WebSocket connection if token exists
-        if (app.sessionManager.token != null) {
-            app.webSocketClient.connect(lifecycleScope)
-        }
+        connectionManager.start()
 
         setContent {
             CentyChatTheme {
-                val initialKey = when {
-                    app.sessionManager.token != null && app.sessionManager.currentUser != null -> NavKey.Conversations
-                    app.sessionManager.serverUrl.isNotBlank() -> NavKey.Login
-                    else -> NavKey.ServerConnect
+                val navigationState = rememberAppNavigationState {
+                    if (SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
+                        AppNavigationState.authenticated()
+                    } else {
+                        AppNavigationState.signedOut()
+                    }
                 }
-
-                val backStack = rememberNavBackStack(initialKey = initialKey)
-                val mustChangePassword by app.sessionManager.mustChangePasswordFlow.collectAsState()
-                val coroutineScope = rememberCoroutineScope()
-                var changePasswordLoading by remember { mutableStateOf(false) }
-                var changePasswordError by remember { mutableStateOf<String?>(null) }
+                // A restored stack is re-checked against the session before it is ever rendered.
+                val navigator = remember(navigationState) {
+                    AppNavigator(navigationState).also {
+                        it.syncWithSession(appViewModel.routeState())
+                    }
+                }
+                val session by appViewModel.routeStates.collectAsState(initial = appViewModel.routeState())
+                val passwordChange by appViewModel.passwordChange.collectAsState()
+                // Transient feedback is a Material snackbar, never a Toast.
+                val snackbarHostState = remember { SnackbarHostState() }
 
                 // Runtime permission request for notifications on Android 13+ (API 33+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -75,90 +114,87 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Observe global WebSocket events (Wake, Calls, Server Disconnects)
-                LaunchedEffect(Unit) {
-                    app.sessionManager.tokenFlow.collectLatest { token ->
-                        if (token != null) {
-                            app.webSocketClient.connect(lifecycleScope)
-                        } else {
-                            app.webSocketClient.disconnect()
+                LaunchedEffect(navigator) {
+                    notificationOpen.collect { chat ->
+                        if (chat != null && SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
+                            notificationOpen.value = null
+                            navigator.navigate(chat)
+                        }
+                    }
+                }
+
+                // Session loss (logout elsewhere, revoked token, unavailable storage) clears all stacks.
+                LaunchedEffect(navigator) {
+                    appViewModel.routeStates.collect {
+                        // Re-read the live session: combined emissions can be intermediate states.
+                        val current = appViewModel.routeState()
+                        if (!SessionRouteGuard.hasAuthenticatedSession(current) && !navigator.state.isAuthFlow) {
+                            navigator.onLoggedOut()
                         }
                     }
                 }
 
                 LaunchedEffect(Unit) {
-                    app.webSocketClient.events.collect { event ->
+                    appViewModel.globalEvents.collect { event ->
                         when (event) {
                             is WsEvent.WakeRing -> {
                                 triggerWakeVibration()
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Вас вызывает: ${event.fromName}",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                val text = event.fromName.takeIf { it.isNotBlank() }
+                                    ?.let { getString(R.string.wake_received, it) }
+                                    ?: getString(R.string.wake_received_unknown)
+                                launch { snackbarHostState.showSnackbar(text, duration = SnackbarDuration.Long) }
                             }
                             is WsEvent.CallOffer -> {
-                                backStack.navigate(
-                                    NavKey.Call(
+                                if (appViewModel.acceptsIncomingCall()) {
+                                    val call = NavKey.Call(
                                         peerId = event.senderId,
                                         peerName = event.senderName,
                                         isIncoming = true
                                     )
-                                )
+                                    if (!navigator.showIncomingCall(call)) {
+                                        appViewModel.rejectBusy(event.senderId)
+                                    }
+                                }
                             }
                             is WsEvent.ServerDisconnect -> {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    event.reason,
-                                    Toast.LENGTH_LONG
-                                ).show()
-                                backStack.clearAndSet(NavKey.Login)
+                                // The socket reconnects; a revoked token comes back as auth_error and
+                                // is verified over HTTP, which signs out on 401. A still-valid session
+                                // (e.g. a role change) simply continues.
+                                if (event.reason.isNotBlank()) {
+                                    launch { snackbarHostState.showSnackbar(event.reason, duration = SnackbarDuration.Long) }
+                                }
                             }
                             else -> Unit
                         }
                     }
                 }
 
+                val snackbarAnchor = remember { SnackbarAnchor() }
+                CompositionLocalProvider(
+                    LocalSnackbarHostState provides snackbarHostState,
+                    LocalSnackbarAnchor provides snackbarAnchor
+                ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = CentyTheme.tokens.canvas
                 ) {
-                    CentyNavHost(
-                        backStack = backStack,
-                        apiClient = app.apiClient,
-                        webSocketClient = app.webSocketClient,
-                        sessionManager = app.sessionManager,
-                        audioEngine = app.audioEngine
+                    CentyNavigation(
+                        navigator = navigator,
+                        session = session,
+                        currentSession = appViewModel::routeState
                     )
 
                     // Global mandatory blocking password change dialog
-                    if (mustChangePassword && app.sessionManager.token != null) {
+                    val dialog = passwordChange
+                    if (dialog is PasswordChangeUiState.Visible) {
                         ChangePasswordDialog(
-                            isLoading = changePasswordLoading,
-                            errorMessage = changePasswordError,
+                            isLoading = dialog.isLoading,
+                            errorMessage = dialog.error,
                             onDismiss = null, // Undismissable until successfully changed
-                            onSubmit = { oldPass, newPass ->
-                                coroutineScope.launch {
-                                    changePasswordLoading = true
-                                    changePasswordError = null
-                                    try {
-                                        val resp = app.apiClient.changePassword(
-                                            ChangePasswordRequest(oldPassword = oldPass, newPassword = newPass)
-                                        )
-                                        if (resp.success) {
-                                            app.sessionManager.mustChangePassword = false
-                                        } else {
-                                            changePasswordError = resp.message.ifBlank { "Ошибка смены пароля" }
-                                        }
-                                    } catch (e: Exception) {
-                                        changePasswordError = e.message ?: "Ошибка смены пароля"
-                                    } finally {
-                                        changePasswordLoading = false
-                                    }
-                                }
-                            }
+                            onSubmit = appViewModel::changePassword
                         )
                     }
+                }
                 }
             }
         }
@@ -175,24 +211,19 @@ class MainActivity : ComponentActivity() {
             }
 
             if (vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val timings = longArrayOf(0, 250, 150, 250, 150, 400)
-                    val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
-                    val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
-                    vibrator.vibrate(effect)
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 250, 150, 250, 150, 400), -1)
-                }
+                val timings = longArrayOf(0, 250, 150, 250, 150, 400)
+                val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
             }
         } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        // Recreation (theme, locale) keeps the socket; leaving the app tears it down.
         if (isFinishing) {
-            app.webSocketClient.disconnect()
-            app.audioEngine.stop()
+            connectionManager.stop()
+            callAudio.stop()
         }
     }
 }

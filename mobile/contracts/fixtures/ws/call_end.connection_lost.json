@@ -1,0 +1,6 @@
+{
+  "type": "call_end",
+  "senderId": 3,
+  "senderName": "Боб Тестов",
+  "reason": "connection_lost"
+}

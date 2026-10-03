@@ -1,0 +1,6 @@
+{
+  "type": "wake_sent",
+  "targetUserId": 3,
+  "at": 1790931600000,
+  "retryAt": 1790931660000
+}

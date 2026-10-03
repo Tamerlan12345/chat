@@ -51,3 +51,7 @@ desktop/presentation/dist-deck/
 
 # Рабочие копии агентов
 .claude/worktrees/
+
+# Mobile dev stand: generated certs/private keys and seeded data
+mobile/dev/certs/
+mobile/dev/data/

@@ -1,4 +1,5 @@
 const { DatabaseSync } = require('node:sqlite');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
@@ -52,7 +53,9 @@ const TABLES = {
       metadata_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT,
-      is_deleted INTEGER DEFAULT 0
+      is_deleted INTEGER DEFAULT 0,
+      client_msg_id TEXT,              -- ключ идемпотентности отправки (уникален на отправителя)
+      change_seq INTEGER               -- номер последнего изменения: курсор /api/sync
     )`,
   message_statuses: `
     CREATE TABLE IF NOT EXISTS message_statuses (
@@ -93,7 +96,10 @@ const TABLES = {
       mime_type TEXT,
       sha256 TEXT,
       path TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      dominant_color TEXT
     )`,
   // История правок и удалений: единственное место, где остаётся исходный
   // текст и метаданные после того, как сообщение в messages уже заменено
@@ -108,6 +114,48 @@ const TABLES = {
       old_metadata_json TEXT,
       actor_id INTEGER NOT NULL,
       created_at TEXT NOT NULL
+    )`,
+  // Счётчик изменений для /api/sync — отдельно от строк messages. Номер,
+  // выведенный из MAX(change_seq) живых строк, откатывался бы назад после
+  // физического удаления (удаление канала, SQL-консоль), и уже выданные
+  // клиентам номера достались бы новым изменениям — клиент их бы не увидел.
+  // epoch — случайная метка этой базы: входит в курсор, и курсор чужой базы
+  // (или резервной копии, у которой эпоха своя) сервер не примет.
+  sync_state: `
+    CREATE TABLE IF NOT EXISTS sync_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_seq INTEGER NOT NULL,
+      epoch TEXT NOT NULL
+    )`,
+  // Отозванные автором ключи отправки (cancel_message): отправка с таким
+  // ключом отклоняется (CANCELLED). Живут сутки и не больше тысячи на
+  // отправителя (MessageService.recordCancelled) — в базе, а не в памяти,
+  // чтобы отзыв пережил перезапуск сервера.
+  cancelled_client_msgs: `
+    CREATE TABLE IF NOT EXISTS cancelled_client_msgs (
+      sender_id INTEGER NOT NULL,
+      client_msg_id TEXT NOT NULL,
+      cancelled_at INTEGER NOT NULL, -- epoch мс
+      PRIMARY KEY (sender_id, client_msg_id)
+    )`,
+  // Токены push-уведомлений мобильных устройств (задача 18). Токен привязан к
+  // сотруднику, устройству и сеансу, который его зарегистрировал: выход,
+  // отвязка устройства, смена пароля — и уведомления на это устройство больше
+  // не уходят (src/push/token-store.js). Через Google/Apple идут только id.
+  push_tokens: `
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      platform TEXT NOT NULL,          -- 'ios' | 'android'
+      kind TEXT NOT NULL,              -- 'alert' | 'voip' (PushKit, только iOS)
+      environment TEXT NOT NULL,       -- 'sandbox' | 'production' (узел APNs)
+      device_id TEXT,
+      session_jti TEXT,                -- jti токена сеанса, переносится при продлении
+      token_version INTEGER,           -- поколение токенов сотрудника на момент регистрации
+      auth_time INTEGER,               -- время входа сеанса (SESSION_MAX_DAYS)
+      app_version TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )`
 };
 
@@ -115,8 +163,128 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_messages_direct ON messages(conversation_type, sender_id, target_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(conversation_type, target_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_message_history_message ON message_history(message_id)`
+  `CREATE INDEX IF NOT EXISTS idx_message_history_message ON message_history(message_id)`,
+  // Идемпотентность отправки: один client_msg_id — одно сообщение, но только
+  // в пределах отправителя. Чужой id не совпадёт с вашим ни при каком угадывании.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg ON messages(sender_id, client_msg_id) WHERE client_msg_id IS NOT NULL`,
+  // Курсор синхронизации: каждое изменение строки получает следующий номер.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`,
+  `CREATE INDEX IF NOT EXISTS idx_cancelled_client_msgs_at ON cancelled_client_msgs(cancelled_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_device ON push_tokens(device_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_tokens_session ON push_tokens(session_jti)`
 ];
+
+// Колонки, добавленные к messages уже после первых установок. CREATE TABLE IF
+// NOT EXISTS существующую таблицу не меняет, поэтому они доводятся здесь, на
+// месте, при каждом открытии базы (повторно — без последствий).
+const MESSAGE_COLUMNS_ADDED = [
+  ['client_msg_id', 'TEXT'],
+  ['change_seq', 'INTEGER']
+];
+
+/**
+ * Доводит messages до текущей схемы. Новым колонкам нужен один шаг заполнения:
+ * change_seq у строк, которых ещё не было при его появлении, ставится по
+ * возрастанию id и ВЫШЕ уже выданных номеров — так курсор синхронизации не
+ * пропустит ни одну строку. updated_at не заполняется намеренно: настольный
+ * клиент по непустому updated_at рисует «Изменено», и заполнение пометило бы
+ * отредактированной всю историю.
+ */
+function migrateMessages(db) {
+  const present = new Set(db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name));
+  for (const [name, type] of MESSAGE_COLUMNS_ADDED) {
+    if (!present.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
+  }
+
+  const maxSeq = () => Number(db.prepare('SELECT COALESCE(MAX(change_seq), 0) AS m FROM messages').get().m);
+  // Счётчик заводится один раз — по наибольшему уже выданному номеру.
+  db.prepare('INSERT OR IGNORE INTO sync_state (id, last_seq, epoch) VALUES (1, ?, ?)').run(maxSeq(), newSyncEpoch());
+  // Счётчик никогда не ниже выданного (база собрана руками, перенесены строки).
+  db.prepare('UPDATE sync_state SET last_seq = MAX(last_seq, ?) WHERE id = 1').run(maxSeq());
+
+  const pending = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE change_seq IS NULL').get();
+  if (Number(pending?.n || 0) > 0) {
+    const base = Number(db.prepare('SELECT last_seq FROM sync_state WHERE id = 1').get().last_seq);
+    db.prepare('UPDATE messages SET change_seq = id + ? WHERE change_seq IS NULL').run(base);
+    db.prepare('UPDATE sync_state SET last_seq = MAX(last_seq, ?) WHERE id = 1').run(maxSeq());
+  }
+}
+
+// Размеры и преобладающий цвет картинки-вложения (задача 20): мобильный
+// клиент рисует по ним заглушку нужной формы, пока грузится миниатюра. У
+// старых вложений пусто — заполняется при первой миниатюре.
+const FILE_COLUMNS_ADDED = [
+  ['width', 'INTEGER'],
+  ['height', 'INTEGER'],
+  ['dominant_color', 'TEXT']
+];
+
+function migrateFiles(db) {
+  const present = new Set(db.prepare('PRAGMA table_info(files)').all().map((c) => c.name));
+  for (const [name, type] of FILE_COLUMNS_ADDED) {
+    if (!present.has(name)) db.exec(`ALTER TABLE files ADD COLUMN ${name} ${type}`);
+  }
+}
+
+function newSyncEpoch() {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+/**
+ * Выполняет запись, которой нужен номер изменения: номер берётся из
+ * sync_state (только растёт) и запись делается в той же точке сохранения —
+ * не удалась запись, не расходуется и номер. write(seq) получает номер.
+ */
+function withChangeSeq(db, write) {
+  db.exec('SAVEPOINT change_seq');
+  try {
+    const seq = Number(
+      db.prepare('UPDATE sync_state SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq').get().last_seq
+    );
+    const result = write(seq);
+    db.exec('RELEASE change_seq');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK TO change_seq');
+    db.exec('RELEASE change_seq');
+    throw err;
+  }
+}
+
+/** { lastSeq, epoch } — голова последовательности изменений и эпоха базы. */
+function getSyncState(db = getDatabase()) {
+  const row = db.prepare('SELECT last_seq, epoch FROM sync_state WHERE id = 1').get();
+  return { lastSeq: Number(row.last_seq), epoch: String(row.epoch) };
+}
+
+/**
+ * Новая эпоха в файле резервной копии (сразу после VACUUM INTO). Копия —
+ * снимок прошлого: восстановленная из неё база выдала бы заново номера,
+ * которые клиенты уже видели. С другой эпохой их курсоры не примутся
+ * (HTTP 410), и клиенты синхронизируются с нуля.
+ */
+function rotateSyncEpoch(filePath) {
+  const db = new DatabaseSync(filePath);
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'").get()) {
+      db.prepare('UPDATE sync_state SET epoch = ? WHERE id = 1').run(newSyncEpoch());
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Свёртка текста для поиска: нижний регистр по Юникоду и «ё» → «е». SQLite
+ * LIKE без учёта регистра сравнивает только ASCII, поэтому кириллица
+ * сравнивается свёрнутой с обеих сторон: в SQL — функцией fold_text, в JS —
+ * этой же функцией для строки поиска.
+ */
+function foldText(text) {
+  if (text === null || text === undefined) return null;
+  return String(text).toLowerCase().replace(/ё/g, 'е');
+}
 
 let dbInstance = null;
 
@@ -128,6 +296,7 @@ function getDatabase() {
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA synchronous = NORMAL;');
     dbInstance.exec('PRAGMA busy_timeout = 5000;');
+    dbInstance.function('fold_text', { deterministic: true }, foldText);
 
     initSchema(dbInstance);
   }
@@ -145,6 +314,8 @@ function closeDatabase() {
 
 function initSchema(db) {
   for (const ddl of Object.values(TABLES)) db.exec(ddl);
+  migrateMessages(db);
+  migrateFiles(db);
   for (const ddl of INDEXES) db.exec(ddl);
 }
 
@@ -322,7 +493,11 @@ function seedChatDefaults(db, ownerId = null) {
 
 module.exports = {
   getDatabase,
+  foldText,
   closeDatabase,
+  withChangeSeq,
+  getSyncState,
+  rotateSyncEpoch,
   finalizeIdentitySplit,
   seedChatDefaults,
   TABLES_REFERENCING_USERS,

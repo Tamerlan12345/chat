@@ -1,6 +1,7 @@
 package com.openmychat.mobile.core.network
 
 import android.util.Base64
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 class ApiClient(
     private val sessionManager: SessionManager,
@@ -27,6 +29,12 @@ class ApiClient(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val refreshCoordinator = RefreshCoordinator()
 
+    /**
+     * The same client for avatar images (Coil): bearer credentials go only to the fixed HTTPS
+     * server ([BearerCredentialsInterceptor]); any other host is fetched without them.
+     */
+    val imageHttpClient: OkHttpClient get() = client
+
     private val client: OkHttpClient by lazy {
         okHttpClient ?: OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -34,6 +42,7 @@ class ApiClient(
             .writeTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(BearerCredentialsInterceptor(
                 tokenProvider = { sessionManager.token },
+                trustedApiBaseUrlProvider = ::trustedApiBaseUrl,
                 markMustChangePassword = { sessionManager.mustChangePassword = true }
             ))
             .authenticator(object : Authenticator {
@@ -47,7 +56,7 @@ class ApiClient(
                         return null
                     }
 
-                    if (!ServerEndpointPolicy.canSendBearerCredentials(response.request.url)) return null
+                    if (!canSendCurrentSessionCredentials(response.request.url)) return null
 
                     val requestToken = response.request.header("Authorization")
                         ?.removePrefix("Bearer ")
@@ -67,6 +76,11 @@ class ApiClient(
             .build()
     }
 
+    private fun trustedApiBaseUrl(): HttpUrl? = sessionManager.serverEndpoint.apiBaseUrl.toHttpUrlOrNull()
+
+    private fun canSendCurrentSessionCredentials(url: HttpUrl): Boolean =
+        ServerEndpointPolicy.canSendBearerCredentials(url, trustedApiBaseUrl())
+
     private fun responseCount(response: Response): Int {
         var result = 1
         var prior = response.priorResponse
@@ -79,7 +93,7 @@ class ApiClient(
 
     private fun refreshTokenForAuthenticator(currentToken: String): String? {
         val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return null
-        if (!ServerEndpointPolicy.canSendBearerCredentials(refreshUrl)) return null
+        if (!canSendCurrentSessionCredentials(refreshUrl)) return null
 
         return try {
             val refreshRequest = Request.Builder()
@@ -101,8 +115,7 @@ class ApiClient(
                     }
                     return null
                 }
-                val authSuccess = json.decodeFromString<AuthSuccessResponse>(response.body?.string().orEmpty())
-                authSuccess.token
+                json.decodeFromString<RefreshResponse>(response.body?.string().orEmpty()).token
             }
         } catch (_: Exception) {
             null
@@ -183,14 +196,14 @@ class ApiClient(
         response
     }
 
-    suspend fun refreshToken(): AuthSuccessResponse = withContext(Dispatchers.IO) {
+    suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
         try {
             val httpRequest = Request.Builder()
                 .url("${getBaseUrl()}/auth/refresh")
                 .post("{}".toRequestBody(jsonMediaType))
                 .build()
 
-            val response: AuthSuccessResponse = executeRequest(httpRequest)
+            val response: RefreshResponse = executeRequest(httpRequest)
             sessionManager.token = response.token
             response
         } catch (error: ApiException) {
@@ -202,16 +215,20 @@ class ApiClient(
     }
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        try {
-            val httpRequest = Request.Builder()
-                .url("${getBaseUrl()}/auth/logout")
-                .post("{}".toRequestBody(jsonMediaType))
-                .build()
-
-            executeRequestNoContent(httpRequest)
-        } finally {
-            sessionManager.clearSession()
+        val tokenForRemoteLogout = sessionManager.token
+        if (!sessionManager.clearSession()) {
+            throw SecureStorageUnavailableException()
         }
+
+        if (tokenForRemoteLogout.isNullOrBlank()) return@withContext
+
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/logout")
+            .header("Authorization", "Bearer $tokenForRemoteLogout")
+            .post("{}".toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
     }
 
     suspend fun getMe(): User = withContext(Dispatchers.IO) {
@@ -221,7 +238,7 @@ class ApiClient(
             .get()
             .build()
 
-        val user: User = executeRequest(httpRequest)
+        val user = executeRequest<MeResponse>(httpRequest).user
         sessionManager.currentUser = user
         user
     }
@@ -234,10 +251,15 @@ class ApiClient(
             .build()
 
         val response: ChangePasswordResponse = executeRequest(httpRequest)
-        if (response.success && !response.token.isNullOrBlank()) {
-            sessionManager.token = response.token
-            sessionManager.mustChangePassword = false
-            response.user?.let { sessionManager.currentUser = it }
+        if (response.success) {
+            val replacementToken = response.token?.takeIf { it.isNotBlank() }
+                ?: sessionManager.token?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("The password was changed but no authenticated session is available")
+            sessionManager.replaceAuthenticatedSession(
+                user = response.user,
+                token = replacementToken,
+                mustChangePassword = false
+            )
         }
         response
     }
@@ -272,12 +294,36 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    /** Справочник сотрудников (поля, открытые любому вошедшему). */
+    suspend fun getUsers(): List<User> = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users").get().build())
+    }
+
+    /** Карточка сотрудника: себе — полная запись, коллеге — поля справочника. */
+    suspend fun getUser(id: Long): User = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users/$id").get().build())
+    }
+
+    suspend fun getOrgTree(): OrgTree = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/org/tree").get().build())
+    }
+
+    /** Поиск по сообщениям, доступным сотруднику: до 30 последних совпадений (сервер: 30 запросов в минуту). */
+    suspend fun searchMessages(query: String): List<Message> = withContext(Dispatchers.IO) {
+        val url = "${getBaseUrl()}/messages/search".toHttpUrlOrNull()?.newBuilder()
+            ?.addQueryParameter("q", query)
+            ?.build()
+            ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/search")
+        executeRequest(Request.Builder().url(url).get().build())
+    }
+
+    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/direct/$targetId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/direct/$targetId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()
@@ -288,12 +334,13 @@ class ApiClient(
             executeRequest(httpRequest)
         }
 
-    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/channels/$channelId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/channels/$channelId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()
@@ -332,13 +379,18 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+    /** Public server settings (no authentication). Has no side effects. */
+    suspend fun fetchServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
         val httpRequest = Request.Builder()
             .url("${getBaseUrl()}/settings/info")
             .get()
             .build()
 
-        val info: ServerInfo = executeRequest(httpRequest)
+        executeRequest(httpRequest)
+    }
+
+    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+        val info = fetchServerInfo()
         sessionManager.messageEditWindowMinutes = info.messageEditWindowMinutes
         sessionManager.messageDeleteWindowMinutes = info.messageDeleteWindowMinutes
         info
@@ -353,17 +405,16 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    private inline fun <reified T> executeRequest(request: Request): T {
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
-        }
+    private inline fun <reified T> executeRequest(
+        request: Request,
+        requestClient: OkHttpClient = client
+    ): T {
+        val response = execute(requestClient, request)
 
         val bodyString = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
         }
 
         return try {
@@ -374,19 +425,28 @@ class ApiClient(
     }
 
     private fun executeRequestNoContent(request: Request) {
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
-        }
+        val response = execute(client, request)
 
         if (!response.isSuccessful) {
             val bodyString = response.body?.string() ?: ""
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
         }
     }
 
-    private fun handleErrorResponse(code: Int, bodyString: String): Nothing {
+    /** Transport failures: a refused certificate is reported apart from being offline. */
+    private fun execute(requestClient: OkHttpClient, request: Request): Response = try {
+        requestClient.newCall(request).execute()
+    } catch (e: SSLException) {
+        throw ApiException(0, "TLS_ERROR", e.message ?: "Ошибка защищённого соединения")
+    } catch (e: IOException) {
+        throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
+    }
+
+    /** `Retry-After` in delta-seconds (the form the server sends on 429/503); anything else is ignored. */
+    private fun retryAfterSeconds(response: Response): Long? =
+        response.header("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+
+    private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long? = null): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"
 
@@ -404,9 +464,12 @@ class ApiClient(
         }
 
         if (code == 401) {
+            // A protected request reached the server and the session was rejected.
+            // Clear local credentials so the navigation guard can return to sign-in.
+            sessionManager.clearSession()
             throw UnauthorizedException(errorMessage)
         }
 
-        throw ApiException(code, errorCode, errorMessage)
+        throw ApiException(code, errorCode, errorMessage, retryAfterSeconds)
     }
 }

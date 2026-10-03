@@ -26,48 +26,47 @@ public struct ChannelRowView: View {
         HStack(spacing: 12) {
             // Иконка канала
             ZStack {
-                Circle()
-                    .fill(Color(uiColor: .tertiarySystemFill))
-                    .frame(width: 50, height: 50)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(CentyColors.primarySoft)
+                    .frame(width: 48, height: 48)
                 
                 Image(systemName: channel.type == .private ? "lock.fill" : "number")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(CentyColors.primaryBlue)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(CentyColors.accentText)
             }
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(channel.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.body.weight(channel.unreadCount > 0 ? .semibold : .medium))
                         .lineLimit(1)
                     
                     Spacer()
                     
                     Text(formattedTime)
-                        .font(.caption2)
-                        .foregroundColor(channel.unreadCount > 0 ? CentyColors.primaryBlue : .secondary)
+                        .font(.caption.weight(channel.unreadCount > 0 ? .semibold : .regular))
+                        .foregroundColor(channel.unreadCount > 0 ? CentyColors.accentText : .secondary)
                 }
                 
                 HStack {
-                    Text(channel.lastMessageText ?? (channel.topic ?? "Канал"))
+                    Text(channel.lastMessageText ?? channel.topic ?? String(localized: "Канал"))
                         .font(.subheadline)
-                        .foregroundColor(channel.unreadCount > 0 ? Color(uiColor: .label) : .secondary)
-                        .lineLimit(2)
+                        .foregroundColor(channel.unreadCount > 0 ? .primary : .secondary)
+                        .lineLimit(1)
                     
                     Spacer()
                     
                     if channel.unreadCount > 0 {
                         Text("\(channel.unreadCount)")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.caption2.weight(.bold))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .frame(minWidth: 20, minHeight: 20)
                             .background(CentyColors.primaryBlue)
                             .clipShape(Capsule())
                     }
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 }
