@@ -73,7 +73,8 @@ final class ScreenshotTourTests: XCTestCase {
         let dialog = application.staticTexts["Боб Тестов"]
         if dialog.waitForExistence(timeout: 30) {
             pause(2)
-            dialog.tap()
+            // The label sits inside a row that XCUI may report as not hittable: tap by coordinate.
+            dialog.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             pause(3)
             let back = application.navigationBars.buttons.firstMatch
             if back.exists { back.tap() }
