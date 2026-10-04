@@ -124,9 +124,21 @@ final class RegistrationFlowUITests: XCTestCase {
         signIn(application, username: Self.standLogin, password: Self.standPassword)
         XCTAssertTrue(application.tabBars.firstMatch.waitForExistence(timeout: 30), "Alice must reach the tabs")
 
-        application.tabBars.buttons["Профиль"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let profileBar = application.navigationBars["Профиль"]
+        for _ in 0..<4 where !profileBar.exists {
+            application.tabBars.buttons["Профиль"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            _ = profileBar.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(profileBar.exists, "The profile tab must open")
         let deleteEntry = application.buttons["profile-delete-account"]
-        scrollTo(deleteEntry, in: application)
+        let profileList = application.collectionViews.firstMatch
+        for _ in 0..<12 where !(deleteEntry.exists && deleteEntry.frame.maxY < application.frame.height - 110) {
+            if profileList.exists {
+                profileList.swipeUp(velocity: .slow)
+            } else {
+                application.swipeUp(velocity: .slow)
+            }
+        }
         XCTAssertTrue(deleteEntry.exists, "The profile must offer account deletion")
         // The row can sit under the tab bar edge: a coordinate tap does not need it to be hittable.
         RunLoop.current.run(until: Date().addingTimeInterval(1))
