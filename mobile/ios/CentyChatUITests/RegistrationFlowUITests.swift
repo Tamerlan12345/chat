@@ -128,7 +128,8 @@ final class RegistrationFlowUITests: XCTestCase {
         let deleteEntry = application.buttons["profile-delete-account"]
         scrollTo(deleteEntry, in: application)
         XCTAssertTrue(deleteEntry.exists, "The profile must offer account deletion")
-        deleteEntry.tap()
+        // The row can sit under the tab bar edge: a coordinate tap does not need it to be hittable.
+        deleteEntry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
         let passwordField = application.secureTextFields["delete-password"]
         XCTAssertTrue(passwordField.waitForExistence(timeout: 10))
@@ -254,7 +255,7 @@ final class RegistrationFlowUITests: XCTestCase {
 
     /// Swipes the screen up until the element is on screen (at most a few times).
     private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
-        for _ in 0..<8 where !(element.exists && element.isHittable) {
+        for _ in 0..<8 where !(element.exists && element.isHittable && element.frame.maxY < application.frame.height - 110) {
             application.swipeUp(velocity: .slow)
         }
     }
