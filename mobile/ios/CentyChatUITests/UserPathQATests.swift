@@ -157,6 +157,15 @@ final class UserPathQATests: XCTestCase {
     /// Rows and labels inside SwiftUI lists are reported as not hittable (and asking
     /// isHittable itself raises a failure), so they are tapped at the centre of their frame.
     private func tap(_ element: XCUIElement) {
+        // A list row is exposed as one Button whose label merges its texts: tap that button.
+        let label = element.label
+        if !label.isEmpty {
+            let row = XCUIApplication().buttons.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
+            if row.exists {
+                row.tap()
+                return
+            }
+        }
         let frame = element.frame
         XCTAssertFalse(frame.isEmpty, "Cannot tap an element without a frame")
         let window = XCUIApplication().windows.firstMatch
