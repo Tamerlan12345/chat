@@ -291,14 +291,16 @@ final class RegistrationFlowTests: XCTestCase {
         await model.verify()
 
         XCTAssertEqual(model.step, .code)
-        XCTAssertEqual(model.failure, .wrongCode("Неверный код"))
+        XCTAssertEqual(model.failure, .wrongCode("Неверный код", attemptsLeft: nil))
         XCTAssertEqual(model.code, "")
         XCTAssertTrue(signedIn.value.isEmpty)
     }
 
-    func testTooManyAttemptsAsksForANewCode() async {
+    func testAttemptsLeftAreShownAndAnExhaustedCodeAsksForANewOne() async {
         account.state.withValue {
-            $0.verifyResult = .failure(APIError.httpError(statusCode: 429, message: "x", code: nil))
+            $0.verifyResult = .failure(APIError.rejectedWithAttempts(
+                statusCode: 400, message: "Неверный код", code: "CODE_INVALID", attemptsLeft: 2
+            ))
         }
         let model = makeModel()
         await reachCodeStep(model)
@@ -306,8 +308,19 @@ final class RegistrationFlowTests: XCTestCase {
 
         await model.verify()
 
-        XCTAssertEqual(model.failure, .tooManyCodeAttempts)
+        XCTAssertEqual(model.errorMessage(at: t0), "Неверный код. Осталось попыток: 2.")
+        XCTAssertEqual(model.step, .code)
+
+        // Attempts used up: the server answers 410 CODE_EXPIRED.
+        account.state.withValue {
+            $0.verifyResult = .failure(APIError.httpError(statusCode: 410, message: "x", code: "CODE_EXPIRED"))
+        }
+        model.updateCode("111111")
+        await model.verify()
+
+        XCTAssertEqual(model.failure, .codeExpired)
         XCTAssertTrue(model.errorMessage(at: t0)?.contains("новый код") == true)
+        XCTAssertEqual(model.code, "", "A dead code is cleared")
     }
 
     func testAnExpiredCodeIsNotSentToTheServer() async {

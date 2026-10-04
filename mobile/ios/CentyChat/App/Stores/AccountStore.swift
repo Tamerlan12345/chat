@@ -14,6 +14,9 @@ public final class AccountStore {
     @ObservationIgnored private let repository: any AccountRepository
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private let now: @MainActor () -> Date
+    /// Runs after a block or unblock went through: the server now hides or shows that person's
+    /// direct messages, so lists and open chats are reloaded.
+    @ObservationIgnored var onBlocksChanged: (@MainActor () async -> Void)?
 
     init(
         repository: any AccountRepository,
@@ -55,6 +58,7 @@ public final class AccountStore {
             if !isBlocked(userId) {
                 blocked.append(BlockedUser(id: userId, name: name))
             }
+            await onBlocksChanged?()
             return nil
         } catch {
             return AccountFailure(error, context: .generic, now: now())
@@ -69,6 +73,7 @@ public final class AccountStore {
         do {
             try await repository.unblockUser(id: userId)
             blocked.removeAll { $0.id == userId }
+            await onBlocksChanged?()
             return nil
         } catch {
             return AccountFailure(error, context: .generic, now: now())

@@ -84,6 +84,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         self.account = account
         self.accountRepository = accountRepository
 
+        account.onBlocksChanged = { [weak conversations, weak chats] in
+            await conversations?.loadDirectConversations()
+            await chats?.reloadLoaded()
+        }
         session.delegate = self
         realtime.register(session)
         realtime.register(presence)

@@ -56,6 +56,17 @@
         }
       }
     },
+    ". Осталось попыток: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ". Осталось попыток: %@."
+          }
+        }
+      }
+    },
     "АО \"Страховая компания \"Сентрас Иншуранс\"" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -991,6 +1002,17 @@
         }
       }
     },
+    "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код."
+          }
+        }
+      }
+    },
     "Кому отправить сигнал" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1134,6 +1156,17 @@
         }
       }
     },
+    "Логин: от 3 до 64 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логин: от 3 до 64 символов"
+          }
+        }
+      }
+    },
     "Мы отправили 6-значный код на %@." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1152,6 +1185,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "На что жалоба"
+          }
+        }
+      }
+    },
+    "На этот адрес почты уже подана заявка или есть аккаунт." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этот адрес почты уже подана заявка или есть аккаунт."
           }
         }
       }
@@ -1361,6 +1405,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось надёжно удалить данные сессии с этого устройства."
+          }
+        }
+      }
+    },
+    "Не удалось отправить письмо с кодом. Повторите попытку позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отправить письмо с кодом. Повторите попытку позже."
           }
         }
       }
@@ -3253,6 +3308,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Это действие нельзя отменить."
+          }
+        }
+      }
+    },
+    "Этот логин уже занят. Выберите другой." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот логин уже занят. Выберите другой."
           }
         }
       }

@@ -61,6 +61,9 @@ final class RegistrationAPITests: XCTestCase {
             (.init(status: 400, body: #"{"error":"Пароль должен быть не короче 8 символов"}"#),
              .invalidInput("Пароль должен быть не короче 8 символов")),
             (.init(status: 409, body: #"{"error":"Логин уже занят"}"#), .conflict("Логин уже занят")),
+            (.init(status: 409, body: #"{"error":"x","code":"USERNAME_TAKEN"}"#),
+             .conflict("Этот логин уже занят. Выберите другой.")),
+            (.init(status: 503, body: #"{"error":"Не удалось отправить письмо","code":"EMAIL_SEND_FAILED"}"#), .mailSendFailed),
             (.init(status: 429, headers: ["Retry-After": "30"], body: #"{"error":"Слишком часто"}"#),
              .throttled(until: Date(timeIntervalSince1970: 1_030))),
             (.init(status: 503, body: #"{"error":"Отправка почты не настроена"}"#), .mailNotConfigured),
@@ -137,10 +140,13 @@ final class RegistrationAPITests: XCTestCase {
 
     func testVerifyErrorsAreMapped() async {
         let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
-            (.init(status: 400, body: #"{"error":"Неверный код"}"#), .wrongCode("Неверный код")),
-            (.init(status: 410, body: #"{"error":"Код истёк"}"#), .codeExpired),
+            (.init(status: 400, body: #"{"error":"Неверный код"}"#), .wrongCode("Неверный код", attemptsLeft: nil)),
+            (.init(status: 400, body: #"{"error":"Неверный код","code":"CODE_INVALID","attemptsLeft":3}"#),
+             .wrongCode("Неверный код", attemptsLeft: 3)),
+            (.init(status: 410, body: #"{"error":"Код истёк","code":"CODE_EXPIRED"}"#), .codeExpired),
             (.init(status: 400, body: #"{"error":"x","code":"CODE_EXPIRED"}"#), .codeExpired),
-            (.init(status: 429, body: #"{"error":"Слишком много попыток"}"#), .tooManyCodeAttempts),
+            (.init(status: 429, headers: ["Retry-After": "20"], body: #"{"error":"Слишком много запросов"}"#),
+             .throttled(until: Date(timeIntervalSince1970: 1_020))),
             (.init(status: 409, body: #"{"error":"Логин уже занят"}"#), .conflict("Логин уже занят")),
         ]
         for (response, expected) in cases {
@@ -322,8 +328,8 @@ final class RegistrationAPITests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_000)
         let failures: [AccountFailure] = [
             .offline, .mailNotConfigured, .throttled(until: now.addingTimeInterval(10)),
-            .invalidInput(""), .conflict(""), .wrongCode(""), .codeExpired, .tooManyCodeAttempts,
-            .wrongPassword, .unavailable,
+            .invalidInput(""), .conflict(""), .wrongCode("", attemptsLeft: nil), .wrongCode("Неверный код", attemptsLeft: 2),
+            .codeExpired, .mailSendFailed, .wrongPassword, .unavailable,
         ]
         for item in failures {
             let text = item.message(at: now) ?? ""
@@ -331,6 +337,11 @@ final class RegistrationAPITests: XCTestCase {
         }
         XCTAssertTrue(AccountFailure.mailNotConfigured.message(at: now)?.contains("почта не настроена") == true)
         XCTAssertNil(AccountFailure.throttled(until: now).message(at: now.addingTimeInterval(1)), "A finished wait shows nothing")
+        XCTAssertEqual(
+            AccountFailure.wrongCode("Неверный код", attemptsLeft: 3).message(at: now),
+            "Неверный код. Осталось попыток: 3."
+        )
+        XCTAssertEqual(AccountFailure.wrongCode("Неверный код.", attemptsLeft: nil).message(at: now), "Неверный код.")
     }
 
     func testServerMessagesAreCappedAndFlattened() {

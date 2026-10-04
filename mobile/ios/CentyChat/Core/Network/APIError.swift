@@ -7,6 +7,8 @@ public enum APIError: Error, LocalizedError, Sendable {
     case invalidResponse
     /// `retryAfter` is the server's `Retry-After` in seconds, when it sent one.
     case httpError(statusCode: Int, message: String, code: String?, retryAfter: TimeInterval? = nil)
+    /// A refusal that says how many attempts remain (a wrong registration code).
+    case rejectedWithAttempts(statusCode: Int, message: String, code: String?, attemptsLeft: Int)
     case mustChangePassword(message: String)
     case unauthorized
     case decodingError(String)
@@ -22,6 +24,8 @@ public enum APIError: Error, LocalizedError, Sendable {
         case .invalidResponse:
             return String(localized: "Некорректный ответ от сервера")
         case .httpError(let statusCode, let message, _, _):
+            return String(localized: "Ошибка сервера (\(statusCode)): \(message)")
+        case .rejectedWithAttempts(let statusCode, let message, _, _):
             return String(localized: "Ошибка сервера (\(statusCode)): \(message)")
         case .mustChangePassword(let message):
             return message

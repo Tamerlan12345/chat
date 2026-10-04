@@ -163,6 +163,14 @@ public actor APIClient {
             if let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data) {
                 errorMessage = serverError.error
                 errorCode = serverError.code
+                if let attemptsLeft = serverError.attemptsLeft {
+                    throw APIError.rejectedWithAttempts(
+                        statusCode: httpResponse.statusCode,
+                        message: errorMessage,
+                        code: errorCode,
+                        attemptsLeft: attemptsLeft
+                    )
+                }
             }
             throw APIError.httpError(
                 statusCode: httpResponse.statusCode,

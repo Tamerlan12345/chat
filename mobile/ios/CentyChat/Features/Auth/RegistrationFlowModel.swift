@@ -147,6 +147,10 @@ public final class RegistrationFlowModel {
             if case .wrongCode = mapped {
                 code = ""
             }
+            // Expired or used up: the same code can never work again, so type a new one.
+            if mapped == .codeExpired {
+                code = ""
+            }
         }
     }
 

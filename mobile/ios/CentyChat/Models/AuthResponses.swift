@@ -119,6 +119,8 @@ public struct ChangePasswordResponse: Codable, Sendable {
 public struct ServerErrorResponse: Codable, Sendable {
     public let error: String
     public let code: String?
+    /// Wrong e-mail code: attempts that are still left (400 CODE_INVALID).
+    public let attemptsLeft: Int?
 }
 
 /// Ответ привязки секрета устройства (POST /api/auth/device/claim)
