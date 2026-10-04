@@ -55,18 +55,15 @@ final class UserPathQATests: XCTestCase {
             tap(dialog)
             _ = chatBar.waitForExistence(timeout: 8)
         }
-        if !chatBar.exists { print("UI-DUMP list:
-" + app.debugDescription) }
+        if !chatBar.exists { print("UI-DUMP list:\n" + app.debugDescription) }
         XCTAssertTrue(chatBar.exists, "Tapping the dialog must open the chat.")
         let composer = app.descendants(matching: .any)
             .matching(NSPredicate(format: "placeholderValue == %@ OR label == %@", "Сообщение...", "Сообщение...")).firstMatch
-        if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:
-" + app.debugDescription) }
+        if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:\n" + app.debugDescription) }
         XCTAssertTrue(composer.exists, "The message composer must be shown.")
         let seededMessage = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
-        if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:
-" + app.debugDescription) }
+        if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:\n" + app.debugDescription) }
         XCTAssertTrue(seededMessage.exists, "The seeded history must load in the chat.")
 
         // 4. Send a message.
