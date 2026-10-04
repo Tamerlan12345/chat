@@ -40,6 +40,7 @@ private struct ChatDetailContent: View {
     @Environment(SessionStore.self) private var session
     @Environment(ConversationsStore.self) private var conversations
     @Environment(CallStore.self) private var calls
+    @Environment(AccountStore.self) private var account
     @Environment(\.scenePhase) private var scenePhase
 
     let store: ChatStore
@@ -49,6 +50,9 @@ private struct ChatDetailContent: View {
 
     @State private var inputText: String = ""
     @State private var editingMessage: Message? = nil
+    @State private var reportTarget: ReportTarget? = nil
+    @State private var blockCandidate: BlockCandidate? = nil
+    @State private var safetyError: String? = nil
 
     // Вложения
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
@@ -58,6 +62,32 @@ private struct ChatDetailContent: View {
 
     private var typingText: String? {
         conversations.typingUsers[ConversationsStore.typingKey(for: store.conversation)]
+    }
+
+    private struct BlockCandidate: Equatable {
+        let userId: Int64
+        let name: String
+    }
+
+    /// Messages of people the user blocked are hidden on this device.
+    private var visibleMessages: [Message] {
+        store.messages.filter { !account.isBlocked($0.senderId) }
+    }
+
+    private var blockSenderHandler: ((Message) -> Void)? {
+        guard conversationType == .channel else { return nil }
+        return { msg in
+            blockCandidate = BlockCandidate(userId: msg.senderId, name: msg.senderName)
+        }
+    }
+
+    private var isPeerBlocked: Bool {
+        conversationType == .direct && account.isBlocked(targetId)
+    }
+
+    /// The per-person menu exists only in a dialog with someone else.
+    private var showsPersonMenu: Bool {
+        conversationType == .direct && targetId != session.currentUser?.id
     }
 
     private var isCallingAllowed: Bool {
@@ -70,7 +100,7 @@ private struct ChatDetailContent: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(store.messages) { message in
+                        ForEach(visibleMessages) { message in
                             MessageBubbleView(
                                 message: message,
                                 isCurrentUser: message.senderId == session.currentUser?.id,
@@ -84,7 +114,11 @@ private struct ChatDetailContent: View {
                                         await store.delete(msg)
                                         CentyHaptics.warning()
                                     }
-                                }
+                                },
+                                onReport: { msg in
+                                    reportTarget = ReportTarget(type: .message, id: msg.id, subject: reportExcerpt(of: msg))
+                                },
+                                onBlockSender: blockSenderHandler
                             )
                             .id(message.id)
                         }
@@ -145,6 +179,26 @@ private struct ChatDetailContent: View {
                 .background(Color(uiColor: .secondarySystemBackground))
             }
 
+            // Баннер блокировки собеседника
+            if isPeerBlocked {
+                HStack(spacing: 8) {
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundColor(CentyColors.dangerText)
+                        .accessibilityHidden(true)
+                    Text("Вы заблокировали этого пользователя. Его сообщения скрыты.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Разблокировать") { unblockPeer() }
+                        .font(.footnote.weight(.semibold))
+                        .accessibilityIdentifier("chat-unblock-banner")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color(uiColor: .secondarySystemBackground))
+                .accessibilityElement(children: .contain)
+            }
+
             // Панель ввода сообщения
             inputBar
         }
@@ -169,6 +223,33 @@ private struct ChatDetailContent: View {
 
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
+                    if showsPersonMenu {
+                        Menu {
+                            if isPeerBlocked {
+                                Button {
+                                    unblockPeer()
+                                } label: {
+                                    Label("Разблокировать", systemImage: "hand.raised.slash")
+                                }
+                            } else {
+                                Button(role: .destructive) {
+                                    blockCandidate = BlockCandidate(userId: targetId, name: title)
+                                } label: {
+                                    Label("Заблокировать", systemImage: "hand.raised")
+                                }
+                            }
+                            Button {
+                                reportTarget = ReportTarget(type: .user, id: targetId, subject: title)
+                            } label: {
+                                Label("Пожаловаться на пользователя", systemImage: "flag")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .foregroundColor(CentyColors.primaryBlue)
+                        }
+                        .accessibilityLabel("Действия с пользователем")
+                        .accessibilityIdentifier("chat-person-menu")
+                    }
                     if isCallingAllowed {
                         Button(action: {
                             Task {
@@ -197,6 +278,56 @@ private struct ChatDetailContent: View {
         .task {
             await store.load()
             await store.markAsRead()
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheetView(target: target)
+        }
+        .alert(
+            "Заблокировать пользователя?",
+            isPresented: Binding(get: { blockCandidate != nil }, set: { if !$0 { blockCandidate = nil } })
+        ) {
+            Button("Отмена", role: .cancel) { blockCandidate = nil }
+            Button("Заблокировать", role: .destructive) { confirmBlock() }
+        } message: {
+            Text("Сообщения «\(blockCandidate?.name ?? "")» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле.")
+        }
+        .alert(
+            "Не удалось выполнить действие",
+            isPresented: Binding(get: { safetyError != nil }, set: { if !$0 { safetyError = nil } })
+        ) {
+            Button("ОК", role: .cancel) {}
+        } message: {
+            Text(safetyError ?? "")
+        }
+    }
+
+    // MARK: - Safety actions
+
+    private func reportExcerpt(of message: Message) -> String {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = text.isEmpty ? String(localized: "Вложение") : String(text.prefix(160))
+        return "\(message.senderName): \(body)"
+    }
+
+    private func confirmBlock() {
+        guard let candidate = blockCandidate else { return }
+        blockCandidate = nil
+        Task {
+            if let failure = await account.block(userId: candidate.userId, name: candidate.name) {
+                safetyError = failure.message(at: .now)
+                CentyHaptics.error()
+            } else {
+                CentyHaptics.warning()
+            }
+        }
+    }
+
+    private func unblockPeer() {
+        Task {
+            if let failure = await account.unblock(userId: targetId) {
+                safetyError = failure.message(at: .now)
+                CentyHaptics.error()
+            }
         }
     }
 

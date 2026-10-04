@@ -16,6 +16,8 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let chats: ChatRegistry
     public let presence: PresenceController
     public let notifications: MessageNotificationsStore
+    public let account: AccountStore
+    let accountRepository: any AccountRepository
 
     init(
         server: any ServerRepository,
@@ -28,7 +30,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         deviceDescriptor: @escaping @MainActor () -> DeviceDescriptor = SessionStore.currentDevice,
         handshake: RealtimeHandshakeState = RealtimeHandshakeState(deviceId: { nil }),
         startsInBackground: Bool = false,
-        notificationCenter: any LocalNotificationCenter = SilentNotificationCenter()
+        notificationCenter: any LocalNotificationCenter = SilentNotificationCenter(),
+        accountRepository: any AccountRepository = UnavailableAccountRepository()
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -57,6 +60,7 @@ public final class AppContainer: SessionLifecycleDelegate {
             conversations: conversations,
             presence: presence
         )
+        let account = AccountStore(repository: accountRepository, session: session)
         let chats = ChatRegistry { conversation in
             ChatStore(
                 conversation: conversation,
@@ -77,6 +81,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         self.chats = chats
         self.presence = presence
         self.notifications = notifications
+        self.account = account
+        self.accountRepository = accountRepository
 
         session.delegate = self
         realtime.register(session)
@@ -96,6 +102,16 @@ public final class AppContainer: SessionLifecycleDelegate {
     public static func live() -> AppContainer {
         let client = APIClient.shared
         let keychain = KeychainManager.shared
+        let accountRepository: any AccountRepository
+#if DEBUG
+        if LaunchTestFixture.stubsAccountBackend {
+            accountRepository = UITestAccountRepository(client: client, keychain: keychain)
+        } else {
+            accountRepository = LiveAccountRepository(client: client, keychain: keychain)
+        }
+#else
+        accountRepository = LiveAccountRepository(client: client, keychain: keychain)
+#endif
         return AppContainer(
             server: LiveServerRepository(client: client),
             auth: LiveAuthRepository(client: client, keychain: keychain),
@@ -105,7 +121,8 @@ public final class AppContainer: SessionLifecycleDelegate {
             environment: .current,
             handshake: .shared,
             startsInBackground: UIApplication.shared.applicationState == .background,
-            notificationCenter: UserNotificationCenterBridge()
+            notificationCenter: UserNotificationCenterBridge(),
+            accountRepository: accountRepository
         )
     }
 
@@ -118,7 +135,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         async let channels: Void = conversations.loadChannels()
         async let users: Void = conversations.loadUsers()
         async let announcementItems: Void = announcements.load()
-        _ = await (direct, channels, users, announcementItems)
+        async let blocks: Void = account.loadBlocks()
+        _ = await (direct, channels, users, announcementItems, blocks)
     }
 
     // MARK: - SessionLifecycleDelegate
@@ -139,6 +157,7 @@ public final class AppContainer: SessionLifecycleDelegate {
         profile.reset()
         presence.reset()
         notifications.reset()
+        account.reset()
         calls.stopCallSession()
     }
 }
@@ -156,5 +175,6 @@ extension View {
             .environment(container.profile)
             .environment(container.presence)
             .environment(container.notifications)
+            .environment(container.account)
     }
 }

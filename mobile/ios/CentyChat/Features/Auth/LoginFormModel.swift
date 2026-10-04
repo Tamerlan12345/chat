@@ -12,6 +12,10 @@ public enum LoginFailure: Equatable, Sendable {
     case throttled(until: Date)
     /// `503` (`LOGIN_BUSY`, `PASSWORD_HASH_BUSY`): the server is busy checking passwords.
     case serverBusy(until: Date)
+    /// `403 ACCOUNT_PENDING`: a registration the administrator has not approved yet.
+    case accountPending
+    /// `403 ACCOUNT_REJECTED`: a registration the administrator declined.
+    case accountRejected
     case offline
     /// The session could not be stored securely on this device.
     case storage
@@ -35,7 +39,9 @@ public enum LoginFailure: Equatable, Sendable {
 
     private static func classify(_ error: APIError, now: Date) -> LoginFailure {
         switch error {
-        case .httpError(let status, _, _, let retryAfter):
+        case .httpError(let status, _, let code, let retryAfter):
+            if status == 403, code == AccountStateCode.pending { return .accountPending }
+            if status == 403, code == AccountStateCode.rejected { return .accountRejected }
             switch status {
             case 429:
                 return .throttled(until: now.addingTimeInterval(retryAfter ?? defaultThrottleWait))
@@ -76,6 +82,10 @@ public enum LoginFailure: Equatable, Sendable {
         case .serverBusy(let until):
             guard let wait = Self.remaining(until: until, at: date) else { return nil }
             return String(localized: "Сервер обрабатывает много входов. Повторите через \(wait).")
+        case .accountPending:
+            return String(localized: "Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения.")
+        case .accountRejected:
+            return String(localized: "Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании.")
         case .offline:
             return String(localized: "Нет связи с сервером. Проверьте подключение к интернету.")
         case .storage:

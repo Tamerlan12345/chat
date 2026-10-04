@@ -40,7 +40,8 @@ public actor APIClient {
         body: Data? = nil,
         headers: [String: String]? = nil,
         requiresAuth: Bool = true,
-        isRetry: Bool = false
+        isRetry: Bool = false,
+        unauthorizedMeansRejected: Bool = false
     ) async throws -> T {
         try await performRequest(
             endpoint: endpoint,
@@ -50,6 +51,7 @@ public actor APIClient {
             headers: headers,
             requiresAuth: requiresAuth,
             isRetry: isRetry,
+            unauthorizedMeansRejected: unauthorizedMeansRejected,
             serverURL: environment.serverURL
         )
     }
@@ -62,6 +64,7 @@ public actor APIClient {
         headers: [String: String]? = nil,
         requiresAuth: Bool = true,
         isRetry: Bool = false,
+        unauthorizedMeansRejected: Bool = false,
         serverURL: URL
     ) async throws -> T {
         guard var components = URLComponents(url: try apiURL(serverURL: serverURL, endpoint: endpoint), resolvingAgainstBaseURL: false) else {
@@ -117,7 +120,7 @@ public actor APIClient {
             throw APIError.invalidResponse
         }
 
-        if httpResponse.statusCode == 401 && requiresAuth {
+        if httpResponse.statusCode == 401 && requiresAuth && !unauthorizedMeansRejected {
             guard let requestToken else {
                 throw APIError.unauthorized
             }
@@ -137,6 +140,7 @@ public actor APIClient {
                     headers: headers,
                     requiresAuth: requiresAuth,
                     isRetry: true,
+                    unauthorizedMeansRejected: unauthorizedMeansRejected,
                     serverURL: serverURL
                 )
             } catch APIError.unauthorized {
@@ -168,6 +172,9 @@ public actor APIClient {
             )
         }
 
+        if let ignored = IgnoredBody() as? T {
+            return ignored
+        }
         do {
             return try jsonDecoder.decode(T.self, from: data)
         } catch {
@@ -260,6 +267,57 @@ public actor APIClient {
         return res
     }
     
+    // MARK: - Registration
+
+    /// Шаг 1: код подтверждения на почту. Сессии ещё нет.
+    public func requestRegistration(_ body: RegisterRequestBody) async throws -> RegistrationChallenge {
+        let data = try jsonEncoder.encode(body)
+        return try await request(endpoint: "/auth/register/request", method: "POST", body: data, requiresAuth: false)
+    }
+
+    /// Шаг 2: код из письма. 200 — вход (токен сохраняется), 202 — заявка ждёт администратора.
+    public func verifyRegistration(registrationId: String, code: String) async throws -> RegistrationOutcome {
+        let data = try jsonEncoder.encode(RegisterVerifyBody(registrationId: registrationId, code: code))
+        let response: RegisterVerifyResponse = try await request(
+            endpoint: "/auth/register/verify", method: "POST", body: data, requiresAuth: false
+        )
+        if case .signedIn(let auth) = response.outcome {
+            try keychain.saveAuthToken(auth.token)
+        }
+        return response.outcome
+    }
+
+    // MARK: - Account, reports, blocks
+
+    /// Безвозвратное удаление своей учётной записи. После успеха локальные учётные данные стираются.
+    /// 401 здесь означает отказ (неверный пароль), а не истёкшую сессию: сессия не сбрасывается.
+    public func deleteAccount(password: String) async throws {
+        let data = try jsonEncoder.encode(DeleteAccountBody(password: password))
+        let _: IgnoredBody = try await request(
+            endpoint: "/users/me", method: "DELETE", body: data, unauthorizedMeansRejected: true
+        )
+        try keychain.clearAllUserData()
+    }
+
+    public func report(_ body: ReportBody) async throws {
+        let data = try jsonEncoder.encode(body)
+        let _: IgnoredBody = try await request(endpoint: "/reports", method: "POST", body: data)
+    }
+
+    public func blockUser(id: Int64) async throws {
+        let data = try jsonEncoder.encode(BlockBody(userId: id))
+        let _: IgnoredBody = try await request(endpoint: "/blocks", method: "POST", body: data)
+    }
+
+    public func unblockUser(id: Int64) async throws {
+        let _: IgnoredBody = try await request(endpoint: "/blocks/\(id)", method: "DELETE")
+    }
+
+    public func getBlockedUsers() async throws -> [BlockedUser] {
+        let response: BlockListResponse = try await request(endpoint: "/blocks")
+        return response.blocked
+    }
+
     /// Выход из системы
     public func logout() async throws {
         let deviceId = try keychain.deviceID()

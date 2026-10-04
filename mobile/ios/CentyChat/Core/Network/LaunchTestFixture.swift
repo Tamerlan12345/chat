@@ -15,6 +15,16 @@ enum LaunchTestFixture {
         isUITestProcess && ProcessInfo.processInfo.arguments.contains("-allow-insecure-loopback")
     }
 
+    /// UI tests that cannot reach a real mail server: registration, reports, blocks and account
+    /// deletion are answered by `UITestAccountRepository` (`-centychat-stub-account`).
+    static var stubsAccountBackend: Bool {
+        isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-stub-account")
+    }
+
+    /// UI tests must not meet the system «Save Password?» sheet: password fields then carry a
+    /// content type that never offers or saves credentials.
+    static var suppressesPasswordAutofill: Bool { isUITestProcess }
+
     /// The app is hosting XCTest unit tests (not a UI test launch).
     static var isUnitTestHost: Bool {
         let environment = ProcessInfo.processInfo.environment
@@ -40,5 +50,6 @@ enum LaunchTestFixture {
 #else
     static let shouldResetSecureState = false
     static let allowsInsecureLoopback = false
+    static let suppressesPasswordAutofill = false
 #endif
 }

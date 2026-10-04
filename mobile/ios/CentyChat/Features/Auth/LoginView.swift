@@ -12,7 +12,9 @@ public struct LoginView: View {
     }
 
     @Environment(SessionStore.self) private var session
+    @Environment(AppContainer.self) private var container
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsRegistration = false
 
     @State private var form = LoginFormModel()
     @State private var isPasswordVisible = false
@@ -32,6 +34,7 @@ public struct LoginView: View {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     card(at: context.date)
                 }
+                registrationEntry
                 Text("Забыли пароль? Обратитесь к администратору.")
                     .font(.footnote)
                     .foregroundStyle(CentyColors.textDim)
@@ -51,6 +54,34 @@ public struct LoginView: View {
         .onAppear {
             form.prefill(username: session.savedUsername)
             presentMark()
+        }
+        .fullScreenCover(isPresented: $showsRegistration) {
+            RegistrationFlowView(
+                account: container.accountRepository,
+                signIn: { auth in await session.completeRegistration(auth) },
+                onClose: { showsRegistration = false }
+            )
+        }
+    }
+
+    // MARK: - Registration entry
+
+    private var registrationEntry: some View {
+        VStack(spacing: 4) {
+            Text("Нет аккаунта?")
+                .font(.footnote)
+                .foregroundStyle(CentyColors.textDim)
+            Button {
+                showsRegistration = true
+            } label: {
+                Text("Зарегистрироваться")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(CentyColors.accentText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityHint("Откроется форма регистрации с подтверждением почты")
+            .accessibilityIdentifier("login-register")
         }
     }
 
@@ -179,7 +210,7 @@ public struct LoginView: View {
                 SecureField("Пароль", text: $form.password)
             }
         }
-        .textContentType(.password)
+        .passwordContent(.password)
         .submitLabel(.go)
         .focused($focusedField, equals: .password)
         .onSubmit(submit)
@@ -220,8 +251,9 @@ public struct LoginView: View {
 }
 
 /// Error box styled like desktop `.login-error-box`: danger-soft fill, danger hairline.
-private struct LoginErrorBox: View {
+struct LoginErrorBox: View {
     let message: String
+    var identifier: String = "login-error"
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -242,11 +274,11 @@ private struct LoginErrorBox: View {
                 .strokeBorder(CentyColors.dangerLine, lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("login-error")
+        .accessibilityIdentifier(identifier)
     }
 }
 
-private struct LoginFieldStyle: ViewModifier {
+struct LoginFieldStyle: ViewModifier {
     let isFocused: Bool
     var trailingPadding: CGFloat = 12
 
@@ -265,11 +297,16 @@ private struct LoginFieldStyle: ViewModifier {
     }
 }
 
-private struct LoginPrimaryButtonStyle: ButtonStyle {
+struct LoginPrimaryButtonStyle: ButtonStyle {
     /// A request is in flight: the button shows progress at full strength, not as disabled.
     let isBusy: Bool
     let reduceMotion: Bool
     @Environment(\.isEnabled) private var isEnabled
+
+    init(isBusy: Bool, reduceMotion: Bool) {
+        self.isBusy = isBusy
+        self.reduceMotion = reduceMotion
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

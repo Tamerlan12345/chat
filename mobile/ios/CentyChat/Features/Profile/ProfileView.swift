@@ -5,9 +5,11 @@ public struct ProfileView: View {
     @Environment(SessionStore.self) private var session
     @Environment(ProfileStore.self) private var profile
     @Environment(ConversationsStore.self) private var conversations
+    @Environment(AccountStore.self) private var account
 
     @State private var showChangePasswordSheet: Bool = false
     @State private var showWakeColleagueSheet: Bool = false
+    @State private var showDeleteAccountSheet: Bool = false
     @State private var selectedStatus: UserStatus = .online
     @State private var customStatusText: String = ""
 
@@ -127,6 +129,51 @@ public struct ProfileView: View {
                         }
                     }
                 }
+
+                // Конфиденциальность и поддержка
+                Section(header: Text("Конфиденциальность")) {
+                    NavigationLink {
+                        BlockedUsersView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundColor(CentyColors.primaryBlue)
+                            Text("Заблокированные пользователи")
+                            Spacer()
+                            if !account.blocked.isEmpty {
+                                Text("\(account.blocked.count)")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("profile-blocked-users")
+                }
+
+                if let supportURL = SupportContact.url(from: session.serverInfo.supportContact) {
+                    Section(header: Text("Поддержка")) {
+                        Link(destination: supportURL) {
+                            HStack {
+                                Image(systemName: "lifepreserver")
+                                    .foregroundColor(CentyColors.primaryBlue)
+                                Text("Связаться с поддержкой")
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                        .accessibilityIdentifier("profile-support")
+                    }
+                }
+
+                Section(header: Text("Аккаунт"), footer: Text("Удаление аккаунта необратимо.")) {
+                    Button(role: .destructive, action: {
+                        showDeleteAccountSheet = true
+                    }) {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("Удалить аккаунт")
+                        }
+                    }
+                    .accessibilityIdentifier("profile-delete-account")
+                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Профиль")
@@ -137,6 +184,9 @@ public struct ProfileView: View {
             }
             .sheet(isPresented: $showChangePasswordSheet) {
                 ChangePasswordModalView(isMandatory: false)
+            }
+            .sheet(isPresented: $showDeleteAccountSheet) {
+                DeleteAccountView()
             }
             .sheet(isPresented: $showWakeColleagueSheet) {
                 wakeColleaguePickerSheet

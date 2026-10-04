@@ -229,6 +229,21 @@ public final class SessionStore: RealtimeEventHandling {
         return phase == .passwordChangeRequired ? .passwordChangeRequired : .authenticated
     }
 
+    // MARK: - Registration and account deletion
+
+    /// A registration confirmed by e-mail came back with a session (the e-mail is on the
+    /// administrator's allow-list); the token is already stored.
+    public func completeRegistration(_ response: AuthSuccessResponse) async {
+        await auth.claimDevice()
+        await enter(response.user)
+    }
+
+    /// The server deleted the account: forget everything stored here and return to login.
+    func finishAccountDeletion() async {
+        clearStoredCredentials()
+        await endSession()
+    }
+
     // MARK: - Password change
 
     public func changePassword(oldPassword: String, newPassword: String) async throws {

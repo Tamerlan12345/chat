@@ -9,19 +9,27 @@ public struct MessageBubbleView: View {
     public let showSenderHeader: Bool
     public let onEdit: (Message) -> Void
     public let onDelete: (Message) -> Void
+    /// Complaint about someone else's message; nil hides the menu item.
+    public let onReport: ((Message) -> Void)?
+    /// Blocks the author (channels, where there is no per-person chat menu); nil hides the item.
+    public let onBlockSender: ((Message) -> Void)?
 
     public init(
         message: Message,
         isCurrentUser: Bool,
         showSenderHeader: Bool = false,
         onEdit: @escaping (Message) -> Void,
-        onDelete: @escaping (Message) -> Void
+        onDelete: @escaping (Message) -> Void,
+        onReport: ((Message) -> Void)? = nil,
+        onBlockSender: ((Message) -> Void)? = nil
     ) {
         self.message = message
         self.isCurrentUser = isCurrentUser
         self.showSenderHeader = showSenderHeader
         self.onEdit = onEdit
         self.onDelete = onDelete
+        self.onReport = onReport
+        self.onBlockSender = onBlockSender
     }
 
     private var formattedTime: String {
@@ -171,6 +179,23 @@ public struct MessageBubbleView: View {
                                 onDelete(message)
                             }) {
                                 Label("Удалить", systemImage: "trash")
+                            }
+                        }
+
+                        if !isCurrentUser, message.id > 0 {
+                            if let onReport {
+                                Button(action: {
+                                    onReport(message)
+                                }) {
+                                    Label("Пожаловаться", systemImage: "flag")
+                                }
+                            }
+                            if let onBlockSender {
+                                Button(role: .destructive, action: {
+                                    onBlockSender(message)
+                                }) {
+                                    Label("Заблокировать автора", systemImage: "hand.raised")
+                                }
                             }
                         }
                     }

@@ -170,6 +170,12 @@ public final class KeychainManager: @unchecked Sendable {
         try delete(key: Keys.authToken)
     }
 
+    /// Account deletion: the session, the device secret and the remembered login name.
+    public func clearAllUserData() throws {
+        try clearAllAuthData()
+        try delete(key: Keys.savedUsername)
+    }
+
 #if DEBUG
     func resetForUITesting() throws {
         try delete(key: Keys.authToken)

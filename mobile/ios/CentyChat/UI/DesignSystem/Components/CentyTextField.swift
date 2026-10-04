@@ -40,7 +40,7 @@ public struct CentyTextField: View {
             
             if isSecure && !isShowingPassword {
                 SecureField(placeholder, text: $text)
-                    .textContentType(textContentType)
+                    .textContentType(LaunchTestFixture.suppressesPasswordAutofill ? .oneTimeCode : textContentType)
             } else {
                 TextField(placeholder, text: $text)
                     .keyboardType(keyboardType)
