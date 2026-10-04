@@ -24,6 +24,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import androidx.lifecycle.SavedStateHandle
@@ -36,6 +41,9 @@ private const val KEY_FOCUS_DONE = "chat.focus_done"
 
 /** Сколько ждать эхо отправленного кадра до «не отправлено» (delivery-state.md `ACK_TIMEOUT_MS`). */
 private const val ACK_TIMEOUT_MS = 10_000L
+
+/** Сколько связь должна продержаться после переподключения, прежде чем догружать пропущенное. */
+private const val RESYNC_DEBOUNCE_MS = 1_000L
 
 /** Локальные записи ещё не подтверждённых сообщений: отрицательные id не пересекаются с серверными. */
 private val nextLocalId = AtomicLong(0)
@@ -145,6 +153,15 @@ class ChatViewModel @AssistedInject constructor(
         observeWebSocketEvents()
         viewModelScope.launch {
             connectionState.collect { onConnectionChanged(connected = it == ConnectionState.Connected) }
+        }
+        // After a drop the history is reloaded once the link is stable: what arrived meanwhile appears,
+        // unconfirmed local sends are kept by loadMessages. A flapping link restarts the wait.
+        viewModelScope.launch {
+            connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged().drop(1).filter { it }
+                .collectLatest {
+                    delay(RESYNC_DEBOUNCE_MS)
+                    loadMessages()
+                }
         }
     }
 

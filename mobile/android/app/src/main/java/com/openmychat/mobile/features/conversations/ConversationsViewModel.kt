@@ -23,6 +23,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -108,6 +113,18 @@ class ConversationsViewModel @Inject constructor(
         loadData()
         observeWebSocketEvents()
         observeOpenConversation()
+        resyncAfterReconnect()
+    }
+
+    /** After a drop the list is reloaded once the link is stable: gap messages, previews and counters catch up. */
+    private fun resyncAfterReconnect() {
+        viewModelScope.launch {
+            connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged().drop(1).filter { it }
+                .collectLatest {
+                    delay(RESYNC_DEBOUNCE_MS)
+                    loadData(showLoading = false)
+                }
+        }
     }
 
     fun selectTab(tab: ConversationsTab) {
@@ -278,5 +295,8 @@ class ConversationsViewModel @Inject constructor(
     private companion object {
         /** Same as the chat header: typing without a fresh signal ends after 3 s. */
         const val TYPING_TIMEOUT_MILLIS = 3_000L
+
+        /** How long the link must hold after a reconnect before the list is reloaded (flapping coalesces). */
+        const val RESYNC_DEBOUNCE_MS = 1_000L
     }
 }
