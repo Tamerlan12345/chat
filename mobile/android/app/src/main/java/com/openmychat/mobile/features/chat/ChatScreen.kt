@@ -146,6 +146,9 @@ fun ChatScreen(
             override fun onStartEdit(message: Message) = viewModel.startEditing(message)
             override fun onCancelEdit() = viewModel.cancelEditing()
             override fun onDelete(message: Message) = viewModel.deleteMessage(message)
+            override fun localMark(message: Message) = sendStateMark(message)
+            override fun onRetrySend(message: Message) = viewModel.retrySend(message)
+            override fun onDiscardFailed(message: Message) = viewModel.discardFailed(message)
         }
     }
 

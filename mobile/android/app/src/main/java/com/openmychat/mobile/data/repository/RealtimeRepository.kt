@@ -19,7 +19,11 @@ interface RealtimeRepository {
 
     val connectionState: StateFlow<ConnectionState>
 
-    fun sendMessage(conversationType: ConversationType, targetId: Long, text: String): Boolean
+    /** [clientMsgId] — ключ идемпотентности: при каждом повторе шлётся тот же. */
+    fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean
+
+    /** Отозвать отправку по ключу (удаление неотправленного сообщения, исход которого неизвестен). */
+    fun cancelMessage(clientMsgId: String): Boolean
     fun editMessage(messageId: Long, text: String): Boolean
     fun deleteMessage(messageId: Long): Boolean
     fun markRead(conversationType: ConversationType, targetId: Long): Boolean
@@ -50,8 +54,15 @@ class DefaultRealtimeRepository @Inject constructor(
     override val audioFrames: Flow<WsEvent.AudioFrameReceived> get() = webSocketClient.audioFrames
     override val connectionState: StateFlow<ConnectionState> get() = webSocketClient.connectionState
 
-    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String) =
-        webSocketClient.sendTextMessage(conversationType = conversationType, targetId = targetId, text = text)
+    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String) =
+        webSocketClient.sendTextMessage(
+            conversationType = conversationType,
+            targetId = targetId,
+            text = text,
+            clientMsgId = clientMsgId
+        )
+
+    override fun cancelMessage(clientMsgId: String) = webSocketClient.cancelMessage(clientMsgId)
 
     override fun editMessage(messageId: Long, text: String) = webSocketClient.editMessage(messageId, text)
     override fun deleteMessage(messageId: Long) = webSocketClient.deleteMessage(messageId)

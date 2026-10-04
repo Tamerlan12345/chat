@@ -3,6 +3,7 @@ package com.openmychat.mobile.data.model
 import com.openmychat.mobile.data.serializer.BooleanIntSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 enum class ConversationType(val value: String) {
@@ -136,8 +137,27 @@ data class Message(
 
     /** Только в результатах `GET /api/messages/search`: имя канала сообщения. */
     @SerialName("channel_name")
-    val channelName: String? = null
+    val channelName: String? = null,
+
+    /** Только локально: отправка ещё не подтверждена сервером ([SendState]); у записей сервера — SENT. */
+    @Transient
+    val sendState: SendState = SendState.SENT
 )
+
+/** Состояние отправки своего сообщения на этом устройстве (delivery-state.md §3.4). */
+enum class SendState {
+    /** В очереди: нет связи, уйдёт само после переподключения. */
+    QUEUED,
+
+    /** Кадр ушёл, ждём эхо сервера. */
+    SENDING,
+
+    /** Не отправлено: «Повторить» / «Удалить». */
+    FAILED,
+
+    /** Подтверждено сервером (или пришло от сервера). */
+    SENT
+}
 
 /** One page of `GET /api/sync`. [nextCursor] is opaque and must be sent back unchanged. */
 @Serializable

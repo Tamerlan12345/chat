@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.chat
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.ui.components.BubblePosition
 import com.openmychat.mobile.ui.components.DeliveryMark
 import java.time.Instant
@@ -59,7 +60,8 @@ sealed interface ChatItem {
         val showsMeta: Boolean,
         override val day: LocalDate
     ) : ChatItem {
-        override val key: String get() = "msg-${message.id}"
+        // A sent bubble keeps its row when the server's echo replaces the local record.
+        override val key: String get() = message.clientMsgId?.let { "msg-$it" } ?: "msg-${message.id}"
 
         /** First of a run from one sender: carries the tail corner and, in channels, the name. */
         val startsGroup: Boolean get() = position.startsGroup
@@ -119,6 +121,14 @@ fun buildChatItems(
         )
     }
     return items
+}
+
+/** Отметка для ещё не подтверждённого сервером своего сообщения; null — решает статус сервера. */
+fun sendStateMark(message: Message): DeliveryMark? = when (message.sendState) {
+    SendState.QUEUED -> DeliveryMark.QUEUED
+    SendState.SENDING -> DeliveryMark.SENDING
+    SendState.FAILED -> DeliveryMark.FAILED
+    SendState.SENT -> null
 }
 
 /**

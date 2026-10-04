@@ -27,8 +27,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import androidx.lifecycle.SavedStateHandle
+import com.openmychat.mobile.data.model.SendState
+import java.time.Instant
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 private const val KEY_FOCUS_DONE = "chat.focus_done"
+
+/** Сколько ждать эхо отправленного кадра до «не отправлено» (delivery-state.md `ACK_TIMEOUT_MS`). */
+private const val ACK_TIMEOUT_MS = 10_000L
+
+/** Локальные записи ещё не подтверждённых сообщений: отрицательные id не пересекаются с серверными. */
+private val nextLocalId = AtomicLong(0)
 
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
@@ -114,14 +124,28 @@ class ChatViewModel @AssistedInject constructor(
     private val messages: List<Message>
         get() = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty()
 
+    /** Ключи отправок, кадр которых хоть раз ушёл: сервер мог сохранить сообщение (delivery-state.md `maybe_stored`). */
+    private val maybeStored = HashSet<String>()
+
+    /** Ждём эхо отправленного кадра; по истечении времени сообщение «не отправлено». */
+    private val ackJobs = HashMap<String, Job>()
+
     init {
-        // A chat opened before shows its last history at once and refreshes underneath.
-        historyCache.get(currentUserId, conversation)?.let { _uiState.value = ChatUiState.Content(it) }
+        // A chat opened before shows its last history at once and refreshes underneath. Messages that
+        // were still unconfirmed when it was left come back queued: no frame of a closed chat is in flight.
+        historyCache.get(currentUserId, conversation)?.let { cached ->
+            _uiState.value = ChatUiState.Content(
+                cached.map { if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED) else it }
+            )
+        }
         viewModelScope.launch {
             _uiState.collect { state -> if (state is ChatUiState.Content) historyCache.put(currentUserId, conversation, state.messages) }
         }
         loadMessages()
         observeWebSocketEvents()
+        viewModelScope.launch {
+            connectionState.collect { onConnectionChanged(connected = it == ConnectionState.Connected) }
+        }
     }
 
     /** Called by the screen on resume/pause. A chat kept in the back stack must not read messages. */
@@ -166,7 +190,13 @@ class ChatViewModel @AssistedInject constructor(
                     // Keep realtime messages that arrived while the history request was in flight.
                     val live = (state as? ChatUiState.Content)?.messages.orEmpty()
                     val historyIds = history.mapTo(HashSet()) { it.id }
-                    ChatUiState.Content(history + live.filter { it.id !in historyIds && it.id !in shownBefore })
+                    // Own messages the server has not confirmed stay; one it already stored comes in the history.
+                    val storedKeys = history.mapNotNullTo(HashSet()) { it.clientMsgId }
+                    val unconfirmed = live.filter { it.sendState != SendState.SENT && it.clientMsgId !in storedKeys }
+                    storedKeys.forEach(::forgetSend)
+                    ChatUiState.Content(
+                        history + live.filter { it.sendState == SendState.SENT && it.id !in historyIds && it.id !in shownBefore } + unconfirmed
+                    )
                 }
                 if (jump != null && window != null) _focus.value = jump
             } catch (e: Exception) {
@@ -206,7 +236,17 @@ class ChatViewModel @AssistedInject constructor(
                             (msg.conversationType == ConversationType.CHANNEL) && (msg.targetId == targetId)
                         }
 
-                        if (matches && messages.none { it.id == msg.id }) {
+                        val key = msg.clientMsgId
+                        val isEchoOfLocal = matches && key != null && msg.senderId == currentUserId &&
+                            messages.any { it.clientMsgId == key && it.sendState != SendState.SENT }
+                        if (isEchoOfLocal) {
+                            // The server's record replaces the local one in its place (§3.4: the row keeps its identity).
+                            forgetSend(key!!)
+                            updateMessages { list ->
+                                list.filter { it.id != msg.id }
+                                    .map { if (it.clientMsgId == key && it.sendState != SendState.SENT) msg else it }
+                            }
+                        } else if (matches && messages.none { it.id == msg.id }) {
                             _uiState.update { state ->
                                 when (state) {
                                     is ChatUiState.Content -> state.copy(messages = state.messages + msg)
@@ -283,6 +323,7 @@ class ChatViewModel @AssistedInject constructor(
                             startWakeCooldown(remainingSeconds.coerceAtLeast(60))
                         }
                     }
+                    is WsEvent.GenericError -> if (event.context == "send_message") onSendRejected(event)
                     else -> Unit
                 }
             }
@@ -296,8 +337,98 @@ class ChatViewModel @AssistedInject constructor(
             realtimeRepository.editMessage(editing.id, text.trim())
             _editingMessage.value = null
         } else {
-            realtimeRepository.sendMessage(conversationType, targetId, text.trim())
+            // The bubble is on screen before anything goes to the network: a send never vanishes.
+            val key = UUID.randomUUID().toString()
+            val local = Message(
+                id = -nextLocalId.incrementAndGet(),
+                conversationType = conversationType,
+                targetId = targetId,
+                senderId = currentUserId,
+                text = text.trim(),
+                createdAt = Instant.now().toString(),
+                senderName = sessionRepository.currentUser.value?.fullName.orEmpty(),
+                clientMsgId = key,
+                sendState = SendState.QUEUED
+            )
+            _uiState.update { state ->
+                when (state) {
+                    is ChatUiState.Content -> state.copy(messages = state.messages + local)
+                    else -> ChatUiState.Content(listOf(local))
+                }
+            }
+            transmit(key)
         }
+    }
+
+    /** «Повторить»: тот же ключ, сервер не создаст копию, если уже сохранил. */
+    fun retrySend(message: Message) {
+        val key = message.clientMsgId ?: return
+        if (message.sendState != SendState.FAILED) return
+        setSendState(key, SendState.QUEUED)
+        transmit(key)
+    }
+
+    /** «Удалить» у неотправленного: убрать из ленты и отозвать ключ, если сервер мог его сохранить. */
+    fun discardFailed(message: Message) {
+        val key = message.clientMsgId ?: return
+        if (message.sendState != SendState.FAILED) return
+        val mayBeStored = key in maybeStored
+        forgetSend(key)
+        if (mayBeStored) realtimeRepository.cancelMessage(key)
+        updateMessages { list -> list.filter { it.clientMsgId != key } }
+    }
+
+    /** Кадр уходит, только пока сокет авторизован; иначе (или при отказе записи) сообщение ждёт переподключения. */
+    private fun transmit(key: String) {
+        val message = messages.firstOrNull { it.clientMsgId == key && it.sendState != SendState.SENT } ?: return
+        val written = connectionState.value == ConnectionState.Connected &&
+            realtimeRepository.sendMessage(conversationType, targetId, message.text, key)
+        if (!written) {
+            setSendState(key, SendState.QUEUED)
+            return
+        }
+        maybeStored += key
+        setSendState(key, SendState.SENDING)
+        ackJobs.remove(key)?.cancel()
+        ackJobs[key] = viewModelScope.launch {
+            delay(ACK_TIMEOUT_MS)
+            ackJobs.remove(key)
+            setSendState(key, SendState.FAILED)
+        }
+    }
+
+    private fun onConnectionChanged(connected: Boolean) {
+        if (connected) {
+            messages.filter { it.sendState == SendState.QUEUED }.forEach { it.clientMsgId?.let(::transmit) }
+        } else {
+            // The frame in flight is unanswered: wait for the connection and send it again with the same key.
+            ackJobs.values.forEach { it.cancel() }
+            ackJobs.clear()
+            updateMessages { list ->
+                list.map { if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED) else it }
+            }
+        }
+    }
+
+    private fun onSendRejected(error: WsEvent.GenericError) {
+        // Старый сервер не возвращает ключ: тогда опознаём отправку по возвращённому тексту.
+        val key = error.clientMsgId ?: messages.firstOrNull {
+            it.sendState == SendState.SENDING && it.text == error.originalText
+        }?.clientMsgId
+        if (key == null || messages.none { it.clientMsgId == key && it.sendState != SendState.SENT }) return
+        // A refusal means the server stored nothing: there is no key to revoke.
+        forgetSend(key)
+        setSendState(key, SendState.FAILED)
+    }
+
+    private fun setSendState(key: String, state: SendState) {
+        updateMessages { list -> list.map { if (it.clientMsgId == key && it.sendState != SendState.SENT) it.copy(sendState = state) else it } }
+    }
+
+    /** Отправка закончена (подтверждена, отказана, удалена): ни таймера, ни отзыва ключа не нужно. */
+    private fun forgetSend(key: String) {
+        ackJobs.remove(key)?.cancel()
+        maybeStored.remove(key)
     }
 
     fun startEditing(message: Message) {
@@ -309,6 +440,7 @@ class ChatViewModel @AssistedInject constructor(
     }
 
     fun deleteMessage(message: Message) {
+        if (message.sendState != SendState.SENT) return
         realtimeRepository.deleteMessage(message.id)
     }
 
@@ -334,6 +466,7 @@ class ChatViewModel @AssistedInject constructor(
     }
 
     fun canEditMessage(message: Message): Boolean {
+        if (message.sendState != SendState.SENT) return false
         if (message.senderId != currentUserId) return false
         if (message.isDeleted) return false
         if (message.type != MessageType.TEXT) return false
@@ -346,6 +479,7 @@ class ChatViewModel @AssistedInject constructor(
     }
 
     fun canDeleteMessage(message: Message): Boolean {
+        if (message.sendState != SendState.SENT) return false
         val isAuthor = message.senderId == currentUserId
         val isAdmin = sessionRepository.isAdmin
         if (!isAuthor && !isAdmin) return false

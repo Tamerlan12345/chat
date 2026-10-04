@@ -117,5 +117,11 @@ sealed interface WsEvent {
     data class WakeError(val code: String, val message: String) : WsEvent
 
     // Generic error
-    data class GenericError(val context: String?, val message: String, val originalText: String? = null) : WsEvent
+    data class GenericError(
+        val context: String?,
+        val message: String,
+        val originalText: String? = null,
+        /** Ключ отправки, к которой относится ошибка (`send_message`), если сервер его вернул. */
+        val clientMsgId: String? = null
+    ) : WsEvent
 }

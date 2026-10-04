@@ -173,7 +173,8 @@ object WsEventParser {
         "error" -> WsEvent.GenericError(
             context = root.string("context"),
             message = root.string("message") ?: "Server error",
-            originalText = root.string("text")
+            originalText = root.string("text"),
+            clientMsgId = root.string("client_msg_id")
         )
         else -> null
     }

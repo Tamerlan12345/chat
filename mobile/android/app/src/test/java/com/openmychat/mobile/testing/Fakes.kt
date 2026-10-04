@@ -44,8 +44,15 @@ class FakeRealtimeRepository : RealtimeRepository {
         return true
     }
 
-    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String) =
-        record("send_message ${conversationType.value} $targetId $text")
+    /** Ключи отправок в порядке ухода кадров `send_message`. */
+    val sentClientMsgIds = mutableListOf<String>()
+
+    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean {
+        val written = record("send_message ${conversationType.value} $targetId $text")
+        if (written) sentClientMsgIds += clientMsgId
+        return written
+    }
+    override fun cancelMessage(clientMsgId: String) = record("cancel_message $clientMsgId")
     override fun editMessage(messageId: Long, text: String) = record("edit_message $messageId")
     override fun deleteMessage(messageId: Long) = record("delete_message $messageId")
     override fun markRead(conversationType: ConversationType, targetId: Long) =

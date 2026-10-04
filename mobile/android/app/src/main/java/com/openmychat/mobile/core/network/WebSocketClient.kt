@@ -273,7 +273,9 @@ class WebSocketClient(
         targetId: Long,
         text: String,
         replyToId: Long? = null,
-        metadata: MessageMetadata? = null
+        metadata: MessageMetadata? = null,
+        /** Ключ идемпотентности: повтор с тем же ключом не создаёт копию (ws-protocol §3.2). */
+        clientMsgId: String? = null
     ): Boolean {
         val payload = buildJsonObject {
             put("type", "send_message")
@@ -285,6 +287,16 @@ class WebSocketClient(
             if (metadata != null) {
                 put("metadata", json.encodeToJsonElement(metadata))
             }
+            if (clientMsgId != null) put("client_msg_id", clientMsgId)
+        }
+        return sendJson(payload.toString())
+    }
+
+    /** Отзыв отправки по ключу: сервер не сохранит её позже и удалит, если уже сохранил (ws-protocol §3.4.1). */
+    fun cancelMessage(clientMsgId: String): Boolean {
+        val payload = buildJsonObject {
+            put("type", "cancel_message")
+            put("client_msg_id", clientMsgId)
         }
         return sendJson(payload.toString())
     }
