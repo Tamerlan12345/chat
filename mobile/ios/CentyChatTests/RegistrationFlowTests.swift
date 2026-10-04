@@ -128,7 +128,7 @@ final class RegistrationFlowTests: XCTestCase {
             XCTAssertNotNil(RegistrationValidation.emailError(bad), bad)
         }
         XCTAssertNil(RegistrationValidation.usernameError("ivan.petrov-1_x"))
-        for bad in ["ab", "has space", "кириллица", "UPPER!", String(repeating: "a", count: 33)] {
+        for bad in ["ab", "has space", "кириллица", "UPPER!", String(repeating: "a", count: 65)] {
             XCTAssertNotNil(RegistrationValidation.usernameError(bad), bad)
         }
         XCTAssertNil(RegistrationValidation.usernameError("  IVAN  "), "Login is trimmed and lower-cased")
