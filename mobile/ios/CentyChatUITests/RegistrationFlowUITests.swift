@@ -129,7 +129,15 @@ final class RegistrationFlowUITests: XCTestCase {
         scrollTo(deleteEntry, in: application)
         XCTAssertTrue(deleteEntry.exists, "The profile must offer account deletion")
         // The row can sit under the tab bar edge: a coordinate tap does not need it to be hittable.
-        deleteEntry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        for _ in 0..<4 where !application.buttons["delete-confirm"].exists {
+            if deleteEntry.isHittable {
+                deleteEntry.tap()
+            } else {
+                deleteEntry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+            _ = application.buttons["delete-confirm"].waitForExistence(timeout: 4)
+        }
 
         let passwordField = application.secureTextFields["delete-password"]
         XCTAssertTrue(passwordField.waitForExistence(timeout: 10))
