@@ -45,6 +45,9 @@ const SecurityMonitor = require('../services/security-monitor.service');
 const BackupService = require('../services/backup.service');
 const PushService = require('../push/push.service');
 const PushTokens = require('../push/token-store');
+const Registration = require('../services/registration.service');
+const Safety = require('../services/safety.service');
+const Account = require('../services/account.service');
 
 // Публичный STUN Google — прежнее поведение, пока администратор не задал свой
 // список. Пустой список в настройке — только локальная сеть.
@@ -579,6 +582,14 @@ router.post('/auth/login', route(async (req, res) => {
           res.set('Retry-After', String(jitterSeconds(3)));
           return res.status(503).json({ error: err.message, code: err.code });
         }
+        // Заявка (самостоятельная регистрация): пароль верен, учётная запись
+        // ещё не допущена. Мобильные клиенты ветвятся по code.
+        if (err.code === 'ACCOUNT_PENDING') {
+          return res.status(403).json({ error: 'Заявка на рассмотрении', code: 'ACCOUNT_PENDING' });
+        }
+        if (err.code === 'ACCOUNT_REJECTED') {
+          return res.status(403).json({ error: 'Заявка отклонена', code: 'ACCOUNT_REJECTED' });
+        }
         // Подтверждённая неудача входа (неверный пароль, нет такого/отключён) —
         // только теперь она идёт в предел неудач с адреса. Отказ по «заявка
         // ещё не подтверждена» входом не является (пароль-то верный) и в
@@ -636,6 +647,60 @@ router.post('/auth/register', route(async (req, res) => {
       return res.status(503).json({ error: err.message, code: err.code });
     }
     res.status(400).json({ error: publicErrorMessage(err, 'Не удалось подать заявку. Повторите позже.') });
+  }
+}));
+
+// ── Самостоятельная регистрация по коду из письма (контракт: mobile/contracts/registration.md) ──
+function sendRegistrationError(res, err) {
+  if (err instanceof Registration.RegistrationError) {
+    if (err.status === 429) res.set('Retry-After', String(err.extra?.retryAfter || 600));
+    const body = { error: err.message };
+    if (err.code) body.code = err.code;
+    if (err.extra?.attemptsLeft !== undefined) body.attemptsLeft = err.extra.attemptsLeft;
+    return res.status(err.status).json(body);
+  }
+  if (err?.code === 'PASSWORD_HASH_BUSY') {
+    res.set('Retry-After', '5');
+    return res.status(503).json({ error: err.message, code: err.code });
+  }
+  console.error('[Registration] внутренняя ошибка:', err?.message || err);
+  return res.status(500).json({ error: 'Не удалось обработать запрос. Повторите позже.' });
+}
+
+router.post('/auth/register/request', route(async (req, res) => {
+  const ip = getClientIp(req) || '127.0.0.1';
+  const ipKey = rateLimitIpKey(ip);
+  try {
+    // Тот же предел одновременных scrypt, что и у входа: заявка считает хэш пароля.
+    if (!acquireHashSlot(ipKey, false)) {
+      res.set('Retry-After', String(busyRetryAfterSeconds()));
+      return res.status(503).json({ error: 'Сервер сейчас занят. Повторите через несколько секунд.', code: 'BUSY' });
+    }
+    try {
+      const result = await Registration.requestRegistration(req.body, { ip });
+      res.status(202).json(result);
+    } finally {
+      releaseHashSlot(ipKey, false);
+    }
+  } catch (err) {
+    sendRegistrationError(res, err);
+  }
+}));
+
+router.post('/auth/register/verify', route(async (req, res) => {
+  const ip = getClientIp(req) || '127.0.0.1';
+  try {
+    const result = await Registration.verifyRegistration(req.body, { ip });
+    if (result.status === 'pending') {
+      AuditService.log({ userId: result.user.id, action: 'registration_pending', ip, details: { username: result.user.username } });
+      wsServer.broadcastToAdmins({ type: 'registration_pending', username: result.user.username, fullName: result.user.full_name });
+      return res.status(202).json({ status: 'pending' });
+    }
+    AuditService.log({ userId: result.user.id, action: 'registration_auto_approved', ip, details: { username: result.user.username } });
+    wsServer.broadcast({ type: 'user_created', user: UserService.toPublicUser(result.user) });
+    res.status(200).json({ user: result.user, token: result.token });
+  } catch (err) {
+    sendRegistrationError(res, err);
   }
 }));
 
@@ -1481,7 +1546,7 @@ const AFTER_ID_ERROR = 'afterId — неотрицательное целое (i
 function sendErrorResponse(res, err) {
   const { code, retryable, message } = MessageService.describeError(err);
   if (retryable) return res.status(503).json({ error: message, code });
-  if (code === 'NOT_CHANNEL_MEMBER') return res.status(403).json({ error: message, code });
+  if (code === 'NOT_CHANNEL_MEMBER' || code === 'DM_NOT_ALLOWED') return res.status(403).json({ error: message, code });
   if (code === 'CLIENT_MSG_ID_CONFLICT' || code === 'CANCELLED') return res.status(409).json({ error: message, code });
   return res.status(400).json({ error: message, code });
 }
@@ -1774,14 +1839,19 @@ router.get('/settings/departments', route(async (req, res) => {
 // подтверждения. Администратору не нужно заводить каждого руками, при этом
 // посторонний в корпоративный чат не попадает.
 router.get('/admin/registrations', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
+  const wanted = req.query.status === undefined ? 'pending' : String(req.query.status);
+  if (!['pending', 'rejected', 'approved'].includes(wanted)) {
+    return res.status(400).json({ error: 'status: pending, rejected или approved' });
+  }
   const rows = await identity().all(`
-    SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title,
+    SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title, u.approval_status,
            u.department_id, d.name AS department_name, u.registered_at
     FROM users u
     LEFT JOIN departments d ON d.id = u.department_id
-    WHERE u.approval_status = 'pending'
+    WHERE u.approval_status = $1 AND u.registered_at IS NOT NULL
     ORDER BY u.registered_at ASC
-  `);
+    LIMIT 500
+  `, [wanted]);
 
   // Администратор подразделения, у которого подразделение сняли (например,
   // его удалили), не видит ничего — а не заявки всей компании.
@@ -1818,11 +1888,131 @@ router.post('/admin/registrations/:id/reject', requireAuth, requireAdminOrScoped
       userId: req.user.id,
       action: 'registration_rejected',
       ip: getClientIp(req),
-      details: { rejectedUserId: Number(req.params.id) }
+      details: {
+        rejectedUserId: Number(req.params.id),
+        reason: typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : undefined
+      }
     });
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+}));
+
+// Список разрешённых адресов самостоятельной регистрации: адрес из списка
+// активируется сразу после кода, остальные ждут решения. Только суперадминистратор.
+router.get('/admin/registration-allowlist', requireAuth, requireAdmin, route(async (req, res) => {
+  res.json(await Registration.listAllowlist());
+}));
+
+router.post('/admin/registration-allowlist', requireAuth, requireAdmin, route(async (req, res) => {
+  try {
+    const row = await Registration.addAllowlist(req.body?.pattern, req.user.id);
+    AuditService.log({ userId: req.user.id, action: 'registration_allowlist_added', ip: getClientIp(req), details: { pattern: row.pattern } });
+    res.status(201).json(row);
+  } catch (err) {
+    if (err instanceof Registration.RegistrationError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+}));
+
+router.delete('/admin/registration-allowlist/:id', requireAuth, requireAdmin, route(async (req, res) => {
+  const removed = await Registration.removeAllowlist(req.params.id);
+  if (!removed) return res.status(404).json({ error: 'Запись не найдена' });
+  AuditService.log({ userId: req.user.id, action: 'registration_allowlist_removed', ip: getClientIp(req), details: { id: Number(req.params.id) } });
+  res.json({ success: true });
+}));
+
+// ── Жалобы, блокировки, удаление аккаунта (App Store 1.2, 5.1.1(v)) ──
+function sendSafetyError(res, err) {
+  if (err instanceof Safety.SafetyError || err instanceof Account.AccountError) {
+    const body = { error: err.message };
+    if (err.code) body.code = err.code;
+    return res.status(err.status).json(body);
+  }
+  throw err;
+}
+
+router.post('/reports', requireAuth, route(async (req, res) => {
+  if (!checkRateLimit(`report:${req.user.id}`, { maxAttempts: 30, windowMs: 3600000 })) {
+    res.set('Retry-After', '600');
+    return res.status(429).json({ error: 'Слишком много жалоб. Повторите позже.' });
+  }
+  try {
+    const report = await Safety.createReport(req.user.id, req.body);
+    AuditService.log({ userId: req.user.id, action: 'report_created', ip: getClientIp(req), details: { reportId: report.id, targetType: req.body.targetType, targetId: Number(req.body.targetId) } });
+    res.status(201).json(report);
+  } catch (err) {
+    sendSafetyError(res, err);
+  }
+}));
+
+router.get('/admin/reports', requireAuth, requireAdmin, route(async (req, res) => {
+  const status = req.query.status === undefined ? null : String(req.query.status);
+  if (status !== null && status !== 'open' && status !== 'closed') {
+    return res.status(400).json({ error: 'status: open или closed' });
+  }
+  res.json(await Safety.listReports({ status }));
+}));
+
+router.post('/admin/reports/:id/close', requireAuth, requireAdmin, route(async (req, res) => {
+  if (!Safety.closeReport(req.params.id)) return res.status(404).json({ error: 'Жалоба не найдена' });
+  res.json({ success: true });
+}));
+
+router.post('/blocks', requireAuth, route(async (req, res) => {
+  try {
+    const result = await Safety.blockUser(req.user.id, req.body?.userId);
+    res.status(201).json(result);
+  } catch (err) {
+    sendSafetyError(res, err);
+  }
+}));
+
+router.delete('/blocks/:userId', requireAuth, route(async (req, res) => {
+  try {
+    Safety.unblockUser(req.user.id, req.params.userId);
+    res.json({ success: true });
+  } catch (err) {
+    sendSafetyError(res, err);
+  }
+}));
+
+router.get('/blocks', requireAuth, route(async (req, res) => {
+  res.json({ blocks: await Safety.listBlocks(req.user.id) });
+}));
+
+router.delete('/users/me', requireAuth, route(async (req, res) => {
+  const ip = getClientIp(req) || '127.0.0.1';
+  const ipKey = rateLimitIpKey(ip);
+  // Пароль проверяется, поэтому подбор с украденным токеном ограничен так же,
+  // как у смены пароля: неверные попытки на сотрудника и общий предел.
+  const failKey = `acct-delete-fail:${req.user.id}`;
+  const failLimit = { maxAttempts: 5, windowMs: config.LOGIN_LOCKOUT_MINUTES * 60000 };
+  if (isRateLimited(failKey, failLimit) || !checkRateLimit(`acct-delete:${req.user.id}`, { maxAttempts: 10, windowMs: 3600000 })) {
+    res.set('Retry-After', '600');
+    return res.status(429).json({ error: 'Слишком много попыток. Повторите позже.' });
+  }
+  if (!acquireHashSlot(ipKey, true)) {
+    res.set('Retry-After', String(busyRetryAfterSeconds()));
+    return res.status(503).json({ error: 'Сервер сейчас занят. Повторите через несколько секунд.', code: 'BUSY' });
+  }
+  try {
+    await Account.deleteOwnAccount(req.user.id, req.body?.password);
+    AuditService.log({ action: 'account_deleted', ip, details: { deletedUserId: req.user.id } });
+    wsServer.disconnectUser(req.user.id, 'Учётная запись удалена');
+    wsServer.forgetPushedChats(req.user.id);
+    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser({ ...req.user, full_name: 'Удалённый сотрудник', is_active: 0, status: 'offline', avatar_url: null }) });
+    res.json({ success: true });
+  } catch (err) {
+    if (err instanceof Account.AccountError && err.code === 'INVALID_PASSWORD') registerFailure(failKey, failLimit);
+    if (err?.code === 'PASSWORD_HASH_BUSY') {
+      res.set('Retry-After', '5');
+      return res.status(503).json({ error: err.message, code: err.code });
+    }
+    sendSafetyError(res, err);
+  } finally {
+    releaseHashSlot(ipKey, true);
   }
 }));
 

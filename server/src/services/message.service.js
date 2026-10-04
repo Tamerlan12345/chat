@@ -76,10 +76,12 @@ const PENDING_DELIVERY_SCAN = 1000;
 
 // Видимость сообщения пользователю — одна и та же для поиска и синхронизации:
 // канал — только при участии (как assertChannelMember в getMessages), личное —
-// только своё (отправитель или получатель). Параметры: user_id трижды.
+// только своё (отправитель или получатель) и не с тем, кого пользователь
+// заблокировал. Параметры: user_id пять раз.
 const VISIBLE_TO_USER_SQL = `(
   (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
-  (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
+  (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?)
+    AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = ? AND b.blocked_id = m.sender_id + m.target_id - ?))
 )`;
 
 // Номер изменения выдаёт счётчик sync_state (db/index.js withChangeSeq), а не
@@ -118,7 +120,7 @@ const PERMANENT_ERROR_CODES = new Set([
   'INVALID_CLIENT_MSG_ID', 'CLIENT_MSG_ID_CONFLICT', 'CANCELLED',
   'INVALID_CONVERSATION', 'INVALID_MESSAGE_TYPE', 'INVALID_TARGET', 'RECIPIENT_NOT_FOUND',
   'NOT_CHANNEL_MEMBER', 'EMPTY_TEXT', 'TEXT_TOO_LONG', 'INVALID_METADATA', 'ATTACHMENT_NOT_ACCESSIBLE',
-  'NOT_FOUND', 'NOT_OWNER', 'MESSAGE_DELETED', 'NOT_TEXT_MESSAGE', 'EDIT_WINDOW_EXPIRED', 'DELETE_WINDOW_EXPIRED'
+  'DM_NOT_ALLOWED', 'NOT_FOUND', 'NOT_OWNER', 'MESSAGE_DELETED', 'NOT_TEXT_MESSAGE', 'EDIT_WINDOW_EXPIRED', 'DELETE_WINDOW_EXPIRED'
 ]);
 
 const INTERNAL_ERROR_MESSAGE = 'Не удалось обработать запрос — повторите позже';
@@ -225,11 +227,12 @@ class MessageService {
           WHERE conversation_type = 'direct' AND (sender_id = ? OR target_id = ?)
         )
         WHERE partner_id <> ?
+          AND partner_id NOT IN (SELECT blocked_id FROM user_blocks WHERE blocker_id = ?)
         GROUP BY partner_id
         ORDER BY last_message_id DESC
         LIMIT ?
       `)
-      .all(me, me, me, me, Number(limit) || DIALOG_LIST_LIMIT);
+      .all(me, me, me, me, me, Number(limit) || DIALOG_LIST_LIMIT);
 
     if (!partners.length) return [];
 
@@ -315,6 +318,8 @@ class MessageService {
       query = `SELECT m.* FROM messages m WHERE m.conversation_type = 'channel' AND m.target_id = ?`;
       params.push(target);
     } else {
+      // Заблокированный мной собеседник: его сообщения (и мои ему) не показываются.
+      if (db.prepare('SELECT 1 FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').get(me, target)) return [];
       query = `
         SELECT m.*,
                (SELECT status FROM message_statuses
@@ -414,6 +419,13 @@ class MessageService {
       const recipient = await UserService.getUserById(Number(targetId));
       if (!recipient || !recipient.is_active || recipient.approval_status !== 'approved') {
         throw codedError('RECIPIENT_NOT_FOUND', 'Получатель не найден');
+      }
+      // Блокировка в любую сторону закрывает личную переписку. Текст не
+      // говорит, кто кого заблокировал.
+      if (db.prepare(
+        'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+      ).get(Number(targetId), Number(senderId), Number(senderId), Number(targetId))) {
+        throw codedError('DM_NOT_ALLOWED', 'Сообщение не может быть доставлено');
       }
     }
 
@@ -866,7 +878,7 @@ class MessageService {
       // % и _ в строке поиска — буквально, а не шаблон: «100%» ищет «100%», а
       // строка из сотни «%» не превращается в дорогой перебор (Р4-10). Обе
       // стороны свёрнуты (foldText): кириллица — без учёта регистра, «ё» = «е».
-      .all(me, me, me, `%${escapeLike(foldText(String(query)))}%`);
+      .all(me, me, me, me, me, `%${escapeLike(foldText(String(query)))}%`);
 
     return this.attachSenders(rows);
   }
@@ -1074,7 +1086,7 @@ class MessageService {
         ORDER BY m.change_seq ASC
         LIMIT ?
       `)
-      .all(me, me, from, me, me, me, capped + 1);
+      .all(me, me, from, me, me, me, me, me, capped + 1);
 
     const hasMore = rows.length > capped;
     const page = hasMore ? rows.slice(0, capped) : rows;

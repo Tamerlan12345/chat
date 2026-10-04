@@ -306,5 +306,10 @@ module.exports = {
   SMTP_FROM: (process.env.SMTP_FROM || '').trim(),
   SMTP_REPLY_TO: (process.env.SMTP_REPLY_TO || '').trim(),
 
+  // Самостоятельная регистрация: адреса и @домены, которым учётная запись
+  // активируется сразу после кода из письма (через запятую). Дополняет список,
+  // заданный администратором в базе; остальные адреса попадают на рассмотрение.
+  REGISTRATION_ALLOWED_EMAILS: (process.env.REGISTRATION_ALLOWED_EMAILS || '').trim(),
+
   SERVER_VERSION: '2026.1.0-pro'
 };

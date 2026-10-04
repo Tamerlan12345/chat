@@ -348,8 +348,9 @@ test('18. после включения заявка создаётся, но в
   const login = await api('POST', '/api/auth/login', {
     body: { username: 'newcomer', password: 'парольновичка' }
   });
-  assert.strictEqual(login.status, 400);
-  assert.match(login.json.error, /не подтверждена/);
+  // Заявка: 403 с кодом (контракт mobile/contracts/registration.md).
+  assert.strictEqual(login.status, 403);
+  assert.strictEqual(login.json.code, 'ACCOUNT_PENDING');
 });
 
 test('19. администратор видит заявку и одобряет её', async () => {
@@ -410,7 +411,8 @@ test('19б. отклонённая заявка исчезает из списк
   const login = await api('POST', '/api/auth/login', {
     body: { username: 'kandidat', password: 'парольканидата' }
   });
-  assert.strictEqual(login.status, 400);
+  assert.strictEqual(login.status, 403);
+  assert.strictEqual(login.json.code, 'ACCOUNT_REJECTED');
 });
 
 test('19в. решение по заявке попадает в журнал', async () => {

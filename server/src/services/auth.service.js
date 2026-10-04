@@ -455,11 +455,12 @@ class AuthService {
       // Проверяется ПОСЛЕ пароля: иначе по разным ответам можно было бы
       // перебором выяснять, какие заявки поданы.
       if (row.approval_status === 'pending') {
-        throw new Error('Заявка на регистрацию ещё не подтверждена администратором');
+        throw Object.assign(new Error('Заявка на регистрацию ещё не подтверждена администратором'), { code: 'ACCOUNT_PENDING' });
       }
       if (row.approval_status === 'rejected') {
-        throw new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.');
+        throw Object.assign(new Error('Заявка на регистрацию отклонена. Обратитесь к администратору.'), { code: 'ACCOUNT_REJECTED' });
       }
+      if (row.approval_status === 'deleted') throw invalidCredentials();
 
       return await this.completeLogin(row, password, { ip, nameKey, ipKey, needsRehash });
     } finally {
@@ -629,7 +630,11 @@ class AuthService {
 
   static async approveUser(userId) {
     const db = identity();
-    await db.run(`UPDATE users SET approval_status = 'approved' WHERE id = $1`, [Number(userId)]);
+    const res = await db.run(
+      `UPDATE users SET approval_status = 'approved' WHERE id = $1 AND approval_status IN ('pending', 'rejected')`,
+      [Number(userId)]
+    );
+    if (!res.changes) throw new Error('Заявка не найдена');
 
     // Каналы лежат в базе переписки — участие добавляется там.
     require('./message.service').addToDefaultChannels([userId]);
@@ -639,8 +644,8 @@ class AuthService {
 
   static async rejectUser(userId) {
     await identity().run(
-      `UPDATE users SET approval_status = 'rejected', is_active = 0, token_version = token_version + 1
-       WHERE id = $1`,
+      `UPDATE users SET approval_status = 'rejected', token_version = token_version + 1
+       WHERE id = $1 AND approval_status <> 'deleted'`,
       [Number(userId)]
     );
     return true;

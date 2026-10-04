@@ -142,6 +142,29 @@ const TABLES = {
   // сотруднику, устройству и сеансу, который его зарегистрировал: выход,
   // отвязка устройства, смена пароля — и уведомления на это устройство больше
   // не уходят (src/push/token-store.js). Через Google/Apple идут только id.
+  // Блокировки пользователей (App Store 1.2): blocker не видит личных
+  // сообщений blocked, и переписка между ними закрыта.
+  user_blocks: `
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      blocker_id INTEGER NOT NULL,
+      blocked_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (blocker_id, blocked_id)
+    )`,
+  // Жалобы на сообщения и пользователей; разбирает администратор.
+  reports: `
+    CREATE TABLE IF NOT EXISTS reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reporter_id INTEGER NOT NULL,
+      target_type TEXT NOT NULL,       -- 'message' | 'user'
+      target_id INTEGER NOT NULL,
+      reported_user_id INTEGER,        -- автор сообщения / пользователь
+      reason TEXT NOT NULL,
+      details TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      UNIQUE (reporter_id, target_type, target_id)
+    )`,
   push_tokens: `
     CREATE TABLE IF NOT EXISTS push_tokens (
       token TEXT PRIMARY KEY,
@@ -171,6 +194,7 @@ const INDEXES = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_change_seq ON messages(change_seq)`,
   `CREATE INDEX IF NOT EXISTS idx_cancelled_client_msgs_at ON cancelled_client_msgs(cancelled_at)`,
   `CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id)`,
   `CREATE INDEX IF NOT EXISTS idx_push_tokens_device ON push_tokens(device_id)`,
   `CREATE INDEX IF NOT EXISTS idx_push_tokens_session ON push_tokens(session_jti)`
 ];
