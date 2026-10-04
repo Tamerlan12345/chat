@@ -144,18 +144,20 @@ final class UserPathQATests: XCTestCase {
         field.typeText(text)
     }
 
-    /// Plain tap, by coordinate only when XCUI reports the element as not hittable.
+    /// Rows and labels inside SwiftUI lists are reported as not hittable (and asking
+    /// isHittable itself raises a failure), so they are tapped at the centre of their frame.
     private func tap(_ element: XCUIElement) {
-        if element.isHittable {
-            element.tap()
-        } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
+        let frame = element.frame
+        XCTAssertFalse(frame.isEmpty, "Cannot tap an element without a frame")
+        let window = XCUIApplication().windows.firstMatch
+        window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
+            .tap()
     }
 
     private func goBack(_ app: XCUIApplication) {
         let back = app.navigationBars.buttons.element(boundBy: 0)
-        if back.waitForExistence(timeout: 5), back.isHittable {
+        if back.waitForExistence(timeout: 5) {
             back.tap()
         } else {
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
