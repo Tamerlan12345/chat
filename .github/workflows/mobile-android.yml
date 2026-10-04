@@ -69,6 +69,8 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
+          cores: 4
+          ram-size: 4096M
           script: bash mobile/android/scripts/run-ui-tests-recorded.sh
       - name: Upload UI test video
         if: always()

@@ -10,7 +10,7 @@ stop_file="$(mktemp)"
 record_loop() {
   local i=0
   while [ -f "$stop_file" ]; do
-    adb shell screenrecord --time-limit 170 --bit-rate 2000000 "/data/local/tmp/seg$(printf '%02d' "$i").mp4" || sleep 5
+    adb shell screenrecord --time-limit 170 --size 540x1200 --bit-rate 1000000 "/data/local/tmp/seg$(printf '%02d' "$i").mp4" || sleep 5
     i=$((i + 1))
   done
 }
@@ -18,6 +18,12 @@ record_loop() {
 chmod +x mobile/android/gradlew
 # Build first so the recording covers only the test run, not the Gradle build.
 mobile/android/gradlew -p mobile/android --no-daemon assembleDebug assembleDebugAndroidTest || exit 1
+
+# Keep the emulator quiet: no ANR/system dialogs stealing window focus from the tests.
+adb shell settings put secure anr_show_background 0 || true
+adb shell settings put global hide_error_dialogs 1 || true
+adb shell input keyevent 82 || true
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null || true
 
 record_loop &
 loop_pid=$!
