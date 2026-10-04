@@ -162,7 +162,7 @@ final class UserPathQATests: XCTestCase {
         if !label.isEmpty {
             let row = XCUIApplication().buttons.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
             if row.exists {
-                row.tap()
+                row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 return
             }
         }
