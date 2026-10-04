@@ -120,7 +120,12 @@ final class UserPathQATests: XCTestCase {
 
         // 9. Logout.
         let logout = app.buttons["Выйти из аккаунта"]
-        XCTAssertTrue(logout.waitForExistence(timeout: 10))
+        // The settings form is lazy: scroll until the row is built.
+        for _ in 0..<6 where !logout.exists {
+            app.swipeUp()
+            _ = logout.waitForExistence(timeout: 2)
+        }
+        XCTAssertTrue(logout.exists, "The profile must offer logout.")
         tap(logout)
         let confirm = app.alerts.buttons["Выйти"]
         if confirm.waitForExistence(timeout: 3) { confirm.tap() }
