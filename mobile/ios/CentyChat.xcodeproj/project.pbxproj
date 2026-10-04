@@ -12,6 +12,7 @@
 		A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* PrivacyInfo.xcprivacy */; };
 		A10000000000000000000005 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* fixtures */; };
 		A10000000000000000000025 /* AppLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* AppLaunchTests.swift */; };
+		A10000000000000000000201 /* UserPathQATests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000202 /* UserPathQATests.swift */; };
 		A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000039 /* ScreenshotTourTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -31,6 +32,7 @@
 		A10000000000000000000017 /* CentyChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CentyChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000018 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = ../contracts/fixtures; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000035 /* AppLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000202 /* UserPathQATests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserPathQATests.swift; sourceTree = "<group>"; };
 		A10000000000000000000039 /* ScreenshotTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTourTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -80,7 +82,7 @@
 			sourceTree = "<group>";
 		};
 		A10000000000000000000081 /* CentyChatMobileApp */ = {isa = PBXGroup; children = (A10000000000000000000012 /* CentyChatMobileApp.swift */); path = CentyChatMobileApp; sourceTree = "<group>"; };
-		A10000000000000000000084 /* CentyChatUITests */ = {isa = PBXGroup; children = (A10000000000000000000035 /* AppLaunchTests.swift */, A10000000000000000000039 /* ScreenshotTourTests.swift */); path = CentyChatUITests; sourceTree = "<group>"; };
+		A10000000000000000000084 /* CentyChatUITests */ = {isa = PBXGroup; children = (A10000000000000000000035 /* AppLaunchTests.swift */, A10000000000000000000039 /* ScreenshotTourTests.swift */, A10000000000000000000202 /* UserPathQATests.swift */); path = CentyChatUITests; sourceTree = "<group>"; };
 		A10000000000000000000083 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000015 /* CentyChat.app */, A10000000000000000000016 /* CentyChatTests.xctest */, A10000000000000000000017 /* CentyChatUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -151,7 +153,7 @@
 		A10000000000000000000091 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 
 		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */, A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */, A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */, A10000000000000000000201 /* UserPathQATests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
