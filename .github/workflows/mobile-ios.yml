@@ -130,6 +130,20 @@ jobs:
           ls -l mobile/ios/build/video/ || true
           file mobile/ios/build/video/ios-ui.mp4 || true
           test -s mobile/ios/build/video/ios-ui.mp4
+      # simctl's h264 is huge (~90 MB for the UI run): re-encode with the built-in avconvert.
+      - name: Compress UI test video
+        if: always()
+        run: |
+          v=mobile/ios/build/video
+          if [ -s "$v/ios-ui.mp4" ] && avconvert --preset Preset960x540 --source "$v/ios-ui.mp4" --output "$v/ios-ui-small.mp4" --replace; then
+            ls -l "$v"
+            if [ -s "$v/ios-ui-small.mp4" ] && [ "$(stat -f%z "$v/ios-ui-small.mp4")" -lt "$(stat -f%z "$v/ios-ui.mp4")" ]; then
+              mv -f "$v/ios-ui-small.mp4" "$v/ios-ui.mp4"
+            fi
+          else
+            echo "avconvert failed, keeping the original recording"
+          fi
+          ls -l "$v"
       - name: Upload UI test video
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
