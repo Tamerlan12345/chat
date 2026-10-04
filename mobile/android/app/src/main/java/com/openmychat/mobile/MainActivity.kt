@@ -39,6 +39,7 @@ import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
 import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.SnackbarAnchor
+import com.openmychat.mobile.ui.theme.AppLocale
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.launch
@@ -52,6 +53,10 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var callAudio: CallAudio
 
     private val appViewModel: AppViewModel by viewModels()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
 
     /** Переписка из нажатого уведомления — открывается, когда навигация готова и вход выполнен. */
     private val notificationOpen = kotlinx.coroutines.flow.MutableStateFlow<NavKey.Chat?>(null)

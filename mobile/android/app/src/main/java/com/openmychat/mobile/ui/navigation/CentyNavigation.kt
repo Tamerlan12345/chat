@@ -68,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -285,7 +286,7 @@ fun CentyNavigation(
                     selected = selected,
                     onClick = { navigator.navigate(route) },
                     icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
-                    // Font scale is capped at 1.3x for the labels (Material guidance); one line, ellipsized.
+                    // Font scale is capped at 1.3x for the labels (Material guidance), then shrink-to-fit on one line (see NavLabelScale).
                     label = {
                         val density = LocalDensity.current
                         CompositionLocalProvider(
@@ -294,8 +295,13 @@ fun CentyNavigation(
                             Text(
                                 text = stringResource(item.label),
                                 maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelMedium,
+                                autoSize = TextAutoSize.StepBased(
+                                    minFontSize = NavLabelScale.MIN_SP.sp,
+                                    maxFontSize = MaterialTheme.typography.labelMedium.fontSize,
+                                    stepSize = 0.5.sp
+                                )
                             )
                         }
                     },

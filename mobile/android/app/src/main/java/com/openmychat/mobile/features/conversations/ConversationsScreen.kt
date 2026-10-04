@@ -134,7 +134,8 @@ fun ConversationsScreen(
     val selectedTab by viewModel.selectedTab.collectAsState()
     val search by searchViewModel.state.collectAsState()
     // Поиск — своё состояние экрана, не фильтр поверх списка (спецификация «Universal search»).
-    var searchFocused by rememberSaveable { mutableStateOf(false) }
+    // Настоящий фокус поля (не сохраняется: после пересоздания фокуса нет, режим тогда держит запрос).
+    var searchFocused by remember { mutableStateOf(false) }
     // Одно правило для поля и выдачи: есть текст или фокус — показываем поиск.
     val searchActive = SearchMode.isActive(searchFocused, search.query)
     LaunchedEffect(searchActive) { if (searchActive) searchViewModel.onOpened() }
@@ -197,6 +198,7 @@ fun ConversationsScreen(
         selectedTab = selectedTab,
         searchQuery = search.query,
         searchActive = searchActive,
+        onSearchFocusChange = { searchFocused = it },
         onSearchActiveChange = { active ->
             searchFocused = active
             if (!active) searchViewModel.clear()
@@ -230,6 +232,7 @@ fun ConversationsContent(
     currentUserId: Long? = null,
     searchActive: Boolean = false,
     onSearchActiveChange: (Boolean) -> Unit = {},
+    onSearchFocusChange: (Boolean) -> Unit = {},
     search: UniversalSearchState = UniversalSearchState(query = searchQuery),
     searchActions: UniversalSearchActions = object : UniversalSearchActions {}
 ) {
@@ -270,6 +273,7 @@ fun ConversationsContent(
                         onSearchActiveChange(active)
                         if (!active) focus.clearFocus()
                     },
+                    onFocusChange = onSearchFocusChange,
                     onSearch = { openFirstResult(search, searchActions) },
                     testTag = "inbox-search",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
