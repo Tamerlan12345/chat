@@ -63,6 +63,18 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertTrue(app.auth.hasStoredToken)
     }
 
+    func testLastAdministratorCannotDeleteTheAccount() async throws {
+        let (store, app, account) = try await makeStore()
+        account.state.withValue {
+            $0.deleteError = APIError.httpError(statusCode: 400, message: "x", code: "LAST_ADMIN")
+        }
+
+        let failure = await store.deleteAccount(password: "Str0ng-Passw0rd")
+
+        XCTAssertEqual(failure, .lastAdmin)
+        XCTAssertEqual(app.session.phase, .authenticated)
+    }
+
     func testOfflineDeletionKeepsTheSessionAndSaysSo() async throws {
         let (store, app, account) = try await makeStore()
         account.state.withValue { $0.deleteError = APIError.noConnection }

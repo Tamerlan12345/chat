@@ -28,6 +28,8 @@ public enum AccountFailure: Equatable, Sendable {
     /// `503 EMAIL_SEND_FAILED`: mail is configured but sending failed.
     case mailSendFailed
     case wrongPassword
+    /// 400 LAST_ADMIN: the only administrator cannot delete the account.
+    case lastAdmin
     case unavailable
 
     static let defaultThrottleWait: TimeInterval = 60
@@ -81,6 +83,7 @@ public enum AccountFailure: Equatable, Sendable {
                 default: return .unavailable
                 }
             case .deleteAccount:
+                if code == "LAST_ADMIN" { return .lastAdmin }
                 switch status {
                 case 400, 401, 403: return .wrongPassword
                 case 429: return .throttled(until: throttle)
@@ -141,6 +144,8 @@ public enum AccountFailure: Equatable, Sendable {
             return String(localized: "Не удалось отправить письмо с кодом. Повторите попытку позже.")
         case .wrongPassword:
             return String(localized: "Неверный пароль.")
+        case .lastAdmin:
+            return String(localized: "Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт.")
         case .unavailable:
             return String(localized: "Не удалось выполнить действие. Повторите попытку позже.")
         }
