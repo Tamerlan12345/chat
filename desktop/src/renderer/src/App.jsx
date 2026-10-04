@@ -27,6 +27,7 @@ import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
 import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
+import { conversationSnippet, registrationToast } from './lib/live-events.mjs';
 import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
 import { viewingKey, viewingFrame, applyConversationRead, shouldNotify, authFrame, toastIsForConversation } from './lib/multi-device.mjs';
@@ -192,6 +193,8 @@ export default function App() {
   const [newChannelTopic, setNewChannelTopic] = useState('');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  // Растёт с каждым registration_pending: открытая консоль перечитывает заявки.
+  const [registrationTick, setRegistrationTick] = useState(0);
   // Сотрудник, чью карточку надо открыть сразу при входе в консоль.
   const [adminFocusUserId, setAdminFocusUserId] = useState(null);
   // Отказ при загрузке базовых данных. Без него боковая панель показывала
@@ -1495,6 +1498,11 @@ export default function App() {
         break;
       }
 
+      case 'registration_pending':
+        setRegistrationTick((n) => n + 1);
+        addToast(registrationToast(event));
+        break;
+
       case 'user_status_changed':
       case 'user_status': {
         const targetId = Number(event.userId || event.user_id);
@@ -2406,7 +2414,7 @@ export default function App() {
                 const displayName = u.full_name || u.username;
 
                 const lastConvo = directConvos.find((c) => c.user_id === u.id);
-                const snippet = lastConvo?.last_message_text || 'Нажмите для беседы';
+                const snippet = conversationSnippet(lastConvo);
                 const timeStr = lastConvo?.last_message_time ? formatDialogTime(lastConvo.last_message_time) : '';
                 const unreadBadge = unreadMap[u.id] !== undefined ? unreadMap[u.id] : (lastConvo?.unread_count || 0);
 
@@ -2805,6 +2813,7 @@ export default function App() {
           serverInfo={serverInfo}
           serverUrl={serverUrl}
           focusUserId={adminFocusUserId}
+          registrationTick={registrationTick}
           onClose={() => {
             setShowAdminModal(false);
             setAdminFocusUserId(null);

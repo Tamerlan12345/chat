@@ -56,6 +56,7 @@ export default function AdminUserModal({
   onClose,
   onRefreshData,
   focusUserId = null,
+  registrationTick = 0,
   securityAlerts = [],
   onSecurityAlertAcknowledged
 }) {
@@ -322,6 +323,12 @@ export default function AdminUserModal({
       setParserLoading(false);
     }
   };
+
+  // Новая заявка пришла по WebSocket: обновляем список и бейдж, не дожидаясь
+  // повторного открытия консоли (первичную загрузку делает эффект ниже).
+  useEffect(() => {
+    if (registrationTick > 0) loadRegistrations();
+  }, [registrationTick]);
 
   // Initial load
   useEffect(() => {
