@@ -44,6 +44,7 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["login-screen"].waitForExistence(timeout: 20), "Login must open first.")
         signIn(app, username: alice.username, password: alice.password)
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 40), "Alice must reach the tabs.")
+        dismissSavePasswordPrompt(app)
 
         // 2. Conversations list.
         let dialog = app.staticTexts["Боб Тестов"]
@@ -181,6 +182,15 @@ final class UserPathQATests: XCTestCase {
         } else {
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        }
+    }
+
+    /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
+    private func dismissSavePasswordPrompt(_ app: XCUIApplication) {
+        let notNow = app.buttons.matching(NSPredicate(format: "label IN %@", ["Not Now", "Не сейчас"])).firstMatch
+        if notNow.waitForExistence(timeout: 10) {
+            notNow.tap()
+            _ = notNow.waitForNonExistence(timeout: 5)
         }
     }
 
