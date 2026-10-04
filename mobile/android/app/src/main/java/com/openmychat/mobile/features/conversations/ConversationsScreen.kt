@@ -16,6 +16,7 @@ import com.openmychat.mobile.features.people.Person
 import com.openmychat.mobile.features.search.MessageHit
 import com.openmychat.mobile.features.search.MessageResults
 import com.openmychat.mobile.features.search.RecentItem
+import com.openmychat.mobile.features.search.SearchMode
 import com.openmychat.mobile.features.search.UniversalSearchActions
 import com.openmychat.mobile.features.search.UniversalSearchContent
 import com.openmychat.mobile.features.search.UniversalSearchState
@@ -133,7 +134,10 @@ fun ConversationsScreen(
     val selectedTab by viewModel.selectedTab.collectAsState()
     val search by searchViewModel.state.collectAsState()
     // Поиск — своё состояние экрана, не фильтр поверх списка (спецификация «Universal search»).
-    var searchActive by rememberSaveable { mutableStateOf(false) }
+    var searchFocused by rememberSaveable { mutableStateOf(false) }
+    // Одно правило для поля и выдачи: есть текст или фокус — показываем поиск.
+    val searchActive = SearchMode.isActive(searchFocused, search.query)
+    LaunchedEffect(searchActive) { if (searchActive) searchViewModel.onOpened() }
     val uiState by viewModel.uiState.collectAsState()
     val connection by viewModel.connectionState.collectAsState()
     val refreshing by viewModel.isRefreshing.collectAsState()
@@ -194,8 +198,8 @@ fun ConversationsScreen(
         searchQuery = search.query,
         searchActive = searchActive,
         onSearchActiveChange = { active ->
-            searchActive = active
-            if (active) searchViewModel.onOpened() else searchViewModel.clear()
+            searchFocused = active
+            if (!active) searchViewModel.clear()
         },
         search = search,
         searchActions = searchActions,
