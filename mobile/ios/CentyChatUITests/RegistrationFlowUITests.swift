@@ -137,7 +137,6 @@ final class RegistrationFlowUITests: XCTestCase {
 
         // A wrong password: confirmed in the alert, refused, still signed in.
         type("wrong-password", into: passwordField, of: application)
-        application.buttons["delete-confirm"].tap()
         confirmDeletionAlert(application)
         XCTAssertTrue(
             application.descendants(matching: .any)["delete-error"].waitForExistence(timeout: 10),
@@ -149,7 +148,6 @@ final class RegistrationFlowUITests: XCTestCase {
         passwordField.tap()
         passwordField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "wrong-password".count))
         passwordField.typeText(Self.standPassword)
-        application.buttons["delete-confirm"].tap()
         confirmDeletionAlert(application)
         XCTAssertTrue(loginScreen(application).waitForExistence(timeout: 30), "A deleted account must return to login")
         XCTAssertFalse(application.tabBars.firstMatch.exists)
@@ -227,8 +225,18 @@ final class RegistrationFlowUITests: XCTestCase {
     }
 
     private func confirmDeletionAlert(_ application: XCUIApplication) {
+        // The first tap may only dismiss the keyboard: retry until the alert shows.
         let alert = application.alerts.firstMatch
-        XCTAssertTrue(alert.waitForExistence(timeout: 10), "Deletion must ask for a final confirmation")
+        for _ in 0..<4 where !alert.exists {
+            let button = application.buttons["delete-confirm"]
+            if button.isHittable {
+                button.tap()
+            } else {
+                button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+            _ = alert.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(alert.exists, "Deletion must ask for a final confirmation")
         alert.buttons["Удалить"].tap()
     }
 
