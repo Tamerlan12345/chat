@@ -23,12 +23,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import com.openmychat.mobile.data.realtime.resyncRequests
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -70,7 +66,9 @@ class ConversationsViewModel @Inject constructor(
     private val activeConversations: ActiveConversationRegistry,
     /** Прочитано на другом устройстве (conversation_read, push read) — обнулить счётчик переписки. */
     private val readElsewhere: com.openmychat.mobile.data.notifications.ConversationReadBus =
-        com.openmychat.mobile.data.notifications.ConversationReadBus()
+        com.openmychat.mobile.data.notifications.ConversationReadBus(),
+    /** Процесс вышел на передний план: список догружаем (как после переподключения). */
+    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal()
 ) : ViewModel() {
 
     val currentUserId: Long? get() = sessionRepository.currentUserId
@@ -116,14 +114,10 @@ class ConversationsViewModel @Inject constructor(
         resyncAfterReconnect()
     }
 
-    /** After a drop the list is reloaded once the link is stable: gap messages, previews and counters catch up. */
+    /** After a drop or on foreground entry the list is reloaded once: gap messages, previews and counters catch up. */
     private fun resyncAfterReconnect() {
         viewModelScope.launch {
-            connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged().drop(1).filter { it }
-                .collectLatest {
-                    delay(RESYNC_DEBOUNCE_MS)
-                    loadData(showLoading = false)
-                }
+            connectionState.resyncRequests(foreground.entered).collect { loadData(showLoading = false) }
         }
     }
 
@@ -296,7 +290,6 @@ class ConversationsViewModel @Inject constructor(
         /** Same as the chat header: typing without a fresh signal ends after 3 s. */
         const val TYPING_TIMEOUT_MILLIS = 3_000L
 
-        /** How long the link must hold after a reconnect before the list is reloaded (flapping coalesces). */
-        const val RESYNC_DEBOUNCE_MS = 1_000L
+
     }
 }

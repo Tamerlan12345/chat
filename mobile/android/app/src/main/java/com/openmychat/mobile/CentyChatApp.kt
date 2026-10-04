@@ -18,6 +18,7 @@ class CentyChatApp : Application(), SingletonImageLoader.Factory {
 
     @Inject lateinit var apiClient: ApiClient
     @Inject lateinit var presence: PresenceController
+    @Inject lateinit var foregroundSignal: com.openmychat.mobile.data.realtime.ForegroundSignal
 
     /** Создаётся сразу: при конце сессии (выход, 401, отозванный токен) он стирает кэш справочника. */
     @Inject lateinit var people: com.openmychat.mobile.data.repository.PeopleRepository
@@ -31,7 +32,10 @@ class CentyChatApp : Application(), SingletonImageLoader.Factory {
         // Сигнал — жизненный цикл всего процесса: системный диалог разрешения, окно «Поделиться»
         // или экран звонка внутри приложения его не останавливают, а поворот экрана сглажен.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = presence.onForeground()
+            override fun onStart(owner: LifecycleOwner) {
+                presence.onForeground()
+                foregroundSignal.enter()
+            }
             override fun onStop(owner: LifecycleOwner) = presence.onBackground()
         })
     }

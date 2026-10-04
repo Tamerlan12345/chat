@@ -24,12 +24,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import com.openmychat.mobile.data.realtime.resyncRequests
 import kotlinx.coroutines.launch
 import androidx.lifecycle.SavedStateHandle
 import com.openmychat.mobile.data.model.SendState
@@ -42,8 +38,6 @@ private const val KEY_FOCUS_DONE = "chat.focus_done"
 /** Сколько ждать эхо отправленного кадра до «не отправлено» (delivery-state.md `ACK_TIMEOUT_MS`). */
 private const val ACK_TIMEOUT_MS = 10_000L
 
-/** Сколько связь должна продержаться после переподключения, прежде чем догружать пропущенное. */
-private const val RESYNC_DEBOUNCE_MS = 1_000L
 
 /** Локальные записи ещё не подтверждённых сообщений: отрицательные id не пересекаются с серверными. */
 private val nextLocalId = AtomicLong(0)
@@ -68,7 +62,9 @@ class ChatViewModel @AssistedInject constructor(
     /** Переход к сообщению уже показан: после восстановления процесса его не повторяем. */
     private val saved: SavedStateHandle = SavedStateHandle(),
     /** Открыть на этом сообщении (переход из поиска). */
-    @Assisted("focus") focusMessageId: Long? = null
+    @Assisted("focus") focusMessageId: Long? = null,
+    /** Процесс вышел на передний план: историю догружаем (как после переподключения). */
+    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal()
 ) : ViewModel() {
 
     @AssistedFactory
@@ -154,14 +150,10 @@ class ChatViewModel @AssistedInject constructor(
         viewModelScope.launch {
             connectionState.collect { onConnectionChanged(connected = it == ConnectionState.Connected) }
         }
-        // After a drop the history is reloaded once the link is stable: what arrived meanwhile appears,
-        // unconfirmed local sends are kept by loadMessages. A flapping link restarts the wait.
+        // After a drop or on foreground entry the history is reloaded once (unconfirmed local sends are kept
+        // by loadMessages), only if the link is up.
         viewModelScope.launch {
-            connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged().drop(1).filter { it }
-                .collectLatest {
-                    delay(RESYNC_DEBOUNCE_MS)
-                    loadMessages()
-                }
+            connectionState.resyncRequests(foreground.entered).collect { loadMessages() }
         }
     }
 

@@ -74,3 +74,63 @@ class ConversationsViewModelResyncTest {
         assertEquals(1, chats.directConversationRequests)
     }
 }
+
+/** QA D1 follow-up: foreground entry and a link that drops inside the debounce window. */
+@OptIn(ExperimentalCoroutinesApi::class)
+class ConversationsViewModelForegroundResyncTest {
+
+    @get:Rule val mainDispatcher = MainDispatcherRule()
+
+    private val realtime = FakeRealtimeRepository()
+    private val foreground = com.openmychat.mobile.data.realtime.ForegroundSignal()
+    private val chats = FakeChatRepository(direct = listOf(DirectConversation(userId = 7, fullName = "Alice")))
+
+    private fun viewModel() = ConversationsViewModel(
+        chats, realtime, FakeSessionRepository(), ActiveConversationRegistry(),
+        foreground = foreground
+    )
+
+    private fun elapse(ms: Long) {
+        mainDispatcher.dispatcher.scheduler.advanceTimeBy(ms)
+        mainDispatcher.dispatcher.scheduler.runCurrent()
+    }
+
+    @Test
+    fun foregroundWhileConnectedReloadsOnce() {
+        viewModel()
+        val before = chats.directConversationRequests
+        foreground.enter()
+        elapse(2_000)
+        assertEquals(1, chats.directConversationRequests - before)
+    }
+
+    @Test
+    fun foregroundAndReconnectTogetherAreOneReload() {
+        viewModel()
+        val before = chats.directConversationRequests
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+        foreground.enter()
+        elapse(2_000)
+        assertEquals(1, chats.directConversationRequests - before)
+    }
+
+    @Test
+    fun aLinkThatDropsInsideTheWindowDoesNotReload() {
+        viewModel()
+        val before = chats.directConversationRequests
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+        elapse(300)
+        realtime.connectionState.value = ConnectionState.Connecting
+        elapse(2_000)
+        assertEquals(0, chats.directConversationRequests - before)
+    }
+
+    @Test
+    fun theFirstStartDoesNotRefreshTwice() {
+        viewModel()
+        elapse(2_000)
+        assertEquals(1, chats.directConversationRequests)
+    }
+}

@@ -116,3 +116,74 @@ class ChatViewModelResyncTest {
         assertEquals(listOf(1L), flapped.shown.map { it.id })
     }
 }
+
+/** QA D1 follow-up: foreground entry and a link that drops inside the debounce window. */
+@OptIn(ExperimentalCoroutinesApi::class)
+class ChatViewModelForegroundResyncTest {
+
+    @get:Rule val mainDispatcher = MainDispatcherRule()
+
+    private val alice = 7L
+    private val realtime = FakeRealtimeRepository()
+    private val foreground = com.openmychat.mobile.data.realtime.ForegroundSignal()
+    private var requests = 0
+    private val chat = object : FakeChatRepository(history = listOf(message(id = 1, from = alice, to = ME))) {
+        override suspend fun messages(conversationType: ConversationType, targetId: Long) =
+            super.messages(conversationType, targetId).also { requests++ }
+    }
+
+    private fun directChat() = ChatViewModel(
+        conversationType = ConversationType.DIRECT,
+        targetId = alice,
+        chatRepository = chat,
+        realtimeRepository = realtime,
+        sessionRepository = FakeSessionRepository(),
+        activeConversations = ActiveConversationRegistry(),
+        historyCache = ChatHistoryCache(FakeSessionRepository()),
+        foreground = foreground
+    )
+
+    private fun elapse(ms: Long) {
+        mainDispatcher.dispatcher.scheduler.advanceTimeBy(ms)
+        mainDispatcher.dispatcher.scheduler.runCurrent()
+    }
+
+    @Test
+    fun foregroundWhileConnectedReloadsOnce() {
+        directChat()
+        val before = requests
+        foreground.enter()
+        elapse(2_000)
+        assertEquals(1, requests - before)
+    }
+
+    @Test
+    fun foregroundAndReconnectTogetherAreOneReload() {
+        directChat()
+        val before = requests
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+        foreground.enter()
+        elapse(2_000)
+        assertEquals(1, requests - before)
+    }
+
+    @Test
+    fun aLinkThatDropsInsideTheWindowDoesNotReload() {
+        directChat()
+        val before = requests
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+        elapse(300)
+        realtime.connectionState.value = ConnectionState.Connecting
+        elapse(2_000)
+        assertEquals(0, requests - before)
+    }
+
+    @Test
+    fun theFirstStartDoesNotRefreshTwice() {
+        directChat()
+        elapse(2_000)
+        assertEquals(1, requests)
+    }
+}
