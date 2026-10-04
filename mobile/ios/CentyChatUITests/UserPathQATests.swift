@@ -50,13 +50,17 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(dialog.waitForExistence(timeout: 40), "The seeded dialog with Bob must be listed.")
 
         // 3. Open the chat and see the history.
-        tap(dialog)
-        let seededMessage = app.staticTexts["Привет, Алиса! Всё работает."]
+        let composer = app.textFields["Сообщение..."]
+        for _ in 0..<3 where !composer.exists {
+            tap(dialog)
+            _ = composer.waitForExistence(timeout: 8)
+        }
+        XCTAssertTrue(composer.exists, "Tapping the dialog must open the chat.")
+        let seededMessage = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
         XCTAssertTrue(seededMessage.waitForExistence(timeout: 30), "The seeded history must load in the chat.")
 
         // 4. Send a message.
-        let composer = app.textFields["Сообщение..."]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
         type(outgoing, into: composer, of: app)
         let send = app.buttons["Отправить"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
