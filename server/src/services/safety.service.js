@@ -19,6 +19,8 @@ const MAX_BLOCKS_PER_USER = 1000;
 const MAX_OPEN_REPORTS_PER_USER = 200;
 
 function positiveInt(value) {
+  // Только число или строка из цифр: Number([1]) === 1 пропустил бы массив.
+  if (typeof value !== 'number' && !(typeof value === 'string' && /^\d{1,15}$/.test(value))) return null;
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
 }

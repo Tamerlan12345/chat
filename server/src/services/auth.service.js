@@ -643,11 +643,14 @@ class AuthService {
   }
 
   static async rejectUser(userId) {
-    await identity().run(
+    // Только заявки: уже одобренную учётную запись (в том числе администратора)
+    // этим маршрутом не отключить — для этого есть отключение и удаление.
+    const res = await identity().run(
       `UPDATE users SET approval_status = 'rejected', token_version = token_version + 1
-       WHERE id = $1 AND approval_status <> 'deleted'`,
+       WHERE id = $1 AND approval_status IN ('pending', 'rejected')`,
       [Number(userId)]
     );
+    if (!res.changes) throw new Error('Заявка не найдена');
     return true;
   }
 

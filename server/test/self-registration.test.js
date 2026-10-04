@@ -463,3 +463,57 @@ test('единственного администратора удалить н�
   assert.strictEqual(res.status, 400);
   assert.strictEqual(res.json.code, 'LAST_ADMIN');
 });
+
+// Находки QA (end-to-end прогон): отклонение не должно отключать действующую
+// учётную запись, идентификатор не должен приниматься в виде массива, а
+// «печатает…» не должно проходить через блокировку.
+test('reject применим только к заявке: действующего администратора отклонить нельзя', async () => {
+  const res = await api('POST', `/api/admin/registrations/${people.admin.id}/reject`, { token: people.admin.token, body: {} });
+  assert.strictEqual(res.status, 400);
+  const me = await api('GET', '/api/auth/me', { token: people.admin.token });
+  assert.strictEqual(me.status, 200);
+  const row = await identity.get('SELECT approval_status FROM users WHERE id = $1', [people.admin.id]);
+  assert.strictEqual(row.approval_status, 'approved');
+});
+
+test('блокировка и жалоба: идентификатор — только число или строка цифр', async () => {
+  for (const bad of [[people.bob.id], true, { id: 1 }, '1 OR 1=1']) {
+    const res = await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: bad } });
+    assert.strictEqual(res.status, 400, `userId=${JSON.stringify(bad)}`);
+  }
+  const rep = await api('POST', '/api/reports', { token: people.alice.token, body: { targetType: 'user', targetId: [people.bob.id], reason: 'x' } });
+  assert.strictEqual(rep.status, 400);
+  assert.strictEqual((await api('GET', '/api/blocks', { token: people.alice.token })).json.blocks.length, 0);
+});
+
+test('«печатает…» не доходит через блокировку в обе стороны', async () => {
+  const open = (token) => new Promise((resolve) => {
+    const sock = new WebSocket(wsUrl);
+    sock.frames = [];
+    sock.on('message', (raw) => {
+      let m; try { m = JSON.parse(raw.toString('utf8')); } catch { return; }
+      sock.frames.push(m);
+      if (m.type === 'auth_success') resolve(sock);
+    });
+    sock.on('open', () => sock.send(JSON.stringify({ type: 'auth', token })));
+    sock.on('error', () => {});
+  });
+  const a = await open(people.alice.token);
+  const b = await open(people.bob.token);
+  const typing = (from, to) => from.send(JSON.stringify({ type: 'typing', conversationType: 'direct', targetId: to, isTyping: true }));
+  try {
+    typing(b, people.alice.id);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(a.frames.some((f) => f.type === 'user_typing'), 'без блокировки «печатает…» доходит');
+    a.frames.length = 0;
+    await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+    typing(b, people.alice.id);
+    typing(a, people.bob.id);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!a.frames.some((f) => f.type === 'user_typing'), 'заблокированный не должен «печатать» блокировщику');
+    assert.ok(!b.frames.some((f) => f.type === 'user_typing'), 'блокировщик не должен «печатать» заблокированному');
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    a.terminate(); b.terminate();
+  }
+});

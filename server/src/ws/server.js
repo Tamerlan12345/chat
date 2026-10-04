@@ -1167,6 +1167,9 @@ class WsServer {
           if (memberId !== currentUser.id) this.sendToUser(memberId, payload);
         }
       } else if (targetId !== currentUser.id) {
+        // Блокировка (в любую сторону) глушит и «печатает…»: заблокированный
+        // не должен знать, что его читают, а блокировщик — видеть его.
+        if (require('../services/safety.service').isBlockedEitherWay(currentUser.id, targetId)) return;
         this.sendToUser(targetId, payload);
       }
       return;
