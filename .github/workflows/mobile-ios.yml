@@ -58,6 +58,7 @@ jobs:
       # Ad-hoc ("Sign to Run Locally") signing, no team needed: an unsigned simulator app has
       # no entitlements, so every Keychain write fails with errSecMissingEntitlement.
       - name: Build for testing (ad-hoc signed)
+        id: build
         run: |
           set -o pipefail
           mkdir -p mobile/ios/build
@@ -73,6 +74,7 @@ jobs:
            CENTYCHAT_SERVER_URL=https://localhost:8443 \
            2>&1 | tee "$RUNNER_TEMP/xcodebuild-build.log"
       - name: Run unit tests
+        id: unit
         run: |
           set -o pipefail
           xcodebuild \
@@ -88,6 +90,7 @@ jobs:
       # Only the UI-test part is recorded (not the build), to keep the video small.
       # simctl writes an mp4 (h264) and only finalises it on SIGINT, see the stop step below.
       - name: Start simulator screen recording
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           mkdir -p mobile/ios/build/video
           nohup xcrun simctl io "$SIMULATOR_UDID" recordVideo --codec=h264 --force mobile/ios/build/video/ios-ui.mp4 > "$RUNNER_TEMP/recordvideo.log" 2>&1 &
@@ -96,6 +99,7 @@ jobs:
           sleep 2
           kill -0 "$(cat "$RUNNER_TEMP/recordvideo.pid")" && echo "Recording started (pid $(cat "$RUNNER_TEMP/recordvideo.pid"))"
       - name: Run UI tests (user path, recorded)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           # xcodebuild forwards TEST_RUNNER_* variables to the test processes (prefix stripped).
           TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
