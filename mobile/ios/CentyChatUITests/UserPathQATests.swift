@@ -50,15 +50,24 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(dialog.waitForExistence(timeout: 40), "The seeded dialog with Bob must be listed.")
 
         // 3. Open the chat and see the history.
-        let composer = app.textFields["Сообщение..."]
-        for _ in 0..<3 where !composer.exists {
+        let chatBar = app.navigationBars["Боб Тестов"]
+        for _ in 0..<3 where !chatBar.exists {
             tap(dialog)
-            _ = composer.waitForExistence(timeout: 8)
+            _ = chatBar.waitForExistence(timeout: 8)
         }
-        XCTAssertTrue(composer.exists, "Tapping the dialog must open the chat.")
+        if !chatBar.exists { print("UI-DUMP list:
+" + app.debugDescription) }
+        XCTAssertTrue(chatBar.exists, "Tapping the dialog must open the chat.")
+        let composer = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "placeholderValue == %@ OR label == %@", "Сообщение...", "Сообщение...")).firstMatch
+        if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:
+" + app.debugDescription) }
+        XCTAssertTrue(composer.exists, "The message composer must be shown.")
         let seededMessage = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
-        XCTAssertTrue(seededMessage.waitForExistence(timeout: 30), "The seeded history must load in the chat.")
+        if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:
+" + app.debugDescription) }
+        XCTAssertTrue(seededMessage.exists, "The seeded history must load in the chat.")
 
         // 4. Send a message.
         type(outgoing, into: composer, of: app)
