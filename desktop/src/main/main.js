@@ -429,6 +429,9 @@ function createMainWindow() {
     // устанавливается и уведомления приходят, но работа не перекрывается.
     show: !launchedAtLogin,
     frame: true, // Native Windows form frame
+    // В разработке системное меню (File/Edit/View/Window) оставлено ради DevTools,
+    // но дублировало собственную строку меню приложения: скрыто, Alt показывает.
+    autoHideMenuBar: !app.isPackaged,
     title: 'CentyChat',
     // Фон до загрузки интерфейса — в цвет темы по часам, чтобы утром окно
     // не вспыхивало тёмным (см. renderer lib/theme.mjs).
