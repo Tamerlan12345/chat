@@ -45,34 +45,15 @@ class ApiClient(
                 trustedApiBaseUrlProvider = ::trustedApiBaseUrl,
                 markMustChangePassword = { sessionManager.mustChangePassword = true }
             ))
-            .authenticator(object : Authenticator {
-                override fun authenticate(route: Route?, response: Response): Request? {
-                    val path = response.request.url.encodedPath
-                    if (path.contains("/auth/refresh") || path.contains("/auth/login") || path.contains("/auth/knock")) {
-                        return null
-                    }
-
-                    if (responseCount(response) >= 3) {
-                        return null
-                    }
-
-                    if (!canSendCurrentSessionCredentials(response.request.url)) return null
-
-                    val requestToken = response.request.header("Authorization")
-                        ?.removePrefix("Bearer ")
-                        ?.trim()
-                    val validToken = refreshCoordinator.refreshIfNeeded(
-                        requestToken = requestToken,
-                        currentToken = { sessionManager.token },
-                        refresh = ::refreshTokenForAuthenticator,
-                        updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
-                    ) ?: return null
-
-                    return response.request.newBuilder()
-                        .header("Authorization", "Bearer $validToken")
-                        .build()
-                }
-            })
+            // A refresh that gets no definitive answer fails the request as a network error instead of
+            // ending the session (which would also have dropped the unsent messages).
+            .authenticator(SessionAuthenticator(
+                coordinator = refreshCoordinator,
+                currentToken = { sessionManager.token },
+                updateToken = { refreshedToken -> sessionManager.token = refreshedToken },
+                canSendCredentials = ::canSendCurrentSessionCredentials,
+                refresh = ::refreshTokenForAuthenticator
+            ))
             .build()
     }
 
@@ -81,19 +62,9 @@ class ApiClient(
     private fun canSendCurrentSessionCredentials(url: HttpUrl): Boolean =
         ServerEndpointPolicy.canSendBearerCredentials(url, trustedApiBaseUrl())
 
-    private fun responseCount(response: Response): Int {
-        var result = 1
-        var prior = response.priorResponse
-        while (prior != null) {
-            result++
-            prior = prior.priorResponse
-        }
-        return result
-    }
-
-    private fun refreshTokenForAuthenticator(currentToken: String): String? {
-        val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return null
-        if (!canSendCurrentSessionCredentials(refreshUrl)) return null
+    private fun refreshTokenForAuthenticator(currentToken: String): RefreshOutcome {
+        val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return RefreshOutcome.Rejected
+        if (!canSendCurrentSessionCredentials(refreshUrl)) return RefreshOutcome.Rejected
 
         return try {
             val refreshRequest = Request.Builder()
@@ -109,16 +80,18 @@ class ApiClient(
                 .build()
 
             unauthenticatedClient.newCall(refreshRequest).execute().use { response ->
-                if (!response.isSuccessful) {
-                    if (RefreshFailurePolicy.shouldClearSession(response.code)) {
-                        sessionManager.clearSession()
-                    }
-                    return null
+                val token = if (response.isSuccessful) {
+                    runCatching { json.decodeFromString<RefreshResponse>(response.body?.string().orEmpty()).token }.getOrNull()
+                } else {
+                    null
                 }
-                json.decodeFromString<RefreshResponse>(response.body?.string().orEmpty()).token
+                RefreshFailurePolicy.classify(response.code, token).also {
+                    if (it == RefreshOutcome.Rejected) sessionManager.clearSession()
+                }
             }
         } catch (_: Exception) {
-            null
+            // No answer (network, TLS, timeout): nothing is known about the session — it stands.
+            RefreshFailurePolicy.classify(null, null)
         }
     }
 
@@ -138,7 +111,7 @@ class ApiClient(
                     expiresAtEpochSeconds = exp,
                     nowEpochSeconds = nowSeconds,
                     currentToken = { sessionManager.token },
-                    refresh = ::refreshTokenForAuthenticator,
+                    refresh = { current -> (refreshTokenForAuthenticator(current) as? RefreshOutcome.Renewed)?.token },
                     updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
                 )
             }
