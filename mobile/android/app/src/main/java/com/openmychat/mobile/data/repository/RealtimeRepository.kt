@@ -4,6 +4,8 @@ import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ConversationType
+import com.openmychat.mobile.data.model.MessageType
+import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
@@ -21,6 +23,19 @@ interface RealtimeRepository {
 
     /** [clientMsgId] — ключ идемпотентности: при каждом повторе шлётся тот же. */
     fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean
+
+    /**
+     * A file or image message (msgType file/image) for an uploaded file; [text] is the file name, as
+     * the desktop sends it, so every client shows a caption. Same key rules as [sendMessage].
+     */
+    fun sendAttachment(
+        conversationType: ConversationType,
+        targetId: Long,
+        text: String,
+        type: MessageType,
+        metadata: JsonObject,
+        clientMsgId: String
+    ): Boolean
 
     /** Отозвать отправку по ключу (удаление неотправленного сообщения, исход которого неизвестен). */
     fun cancelMessage(clientMsgId: String): Boolean
@@ -61,6 +76,22 @@ class DefaultRealtimeRepository @Inject constructor(
             text = text,
             clientMsgId = clientMsgId
         )
+
+    override fun sendAttachment(
+        conversationType: ConversationType,
+        targetId: Long,
+        text: String,
+        type: MessageType,
+        metadata: JsonObject,
+        clientMsgId: String
+    ) = webSocketClient.sendTextMessage(
+        conversationType = conversationType,
+        targetId = targetId,
+        text = text,
+        clientMsgId = clientMsgId,
+        msgType = type,
+        rawMetadata = metadata
+    )
 
     override fun cancelMessage(clientMsgId: String) = webSocketClient.cancelMessage(clientMsgId)
 

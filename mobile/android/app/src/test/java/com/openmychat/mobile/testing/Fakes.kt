@@ -16,6 +16,15 @@ import com.openmychat.mobile.data.model.RegistrationChallenge
 import com.openmychat.mobile.data.model.RegistrationOutcome
 import com.openmychat.mobile.data.model.ReportBody
 import com.openmychat.mobile.data.repository.AccountRepository
+import com.openmychat.mobile.data.repository.AttachmentRepository
+import com.openmychat.mobile.data.repository.PickedFile
+import com.openmychat.mobile.data.model.FilePolicy
+import com.openmychat.mobile.data.model.FileUploadResponse
+import com.openmychat.mobile.data.model.MessageType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.JsonObject
+import java.io.File
 import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.LoginResult
@@ -56,6 +65,24 @@ class FakeRealtimeRepository : RealtimeRepository {
     override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean {
         val written = record("send_message ${conversationType.value} $targetId $text")
         if (written) sentClientMsgIds += clientMsgId
+        return written
+    }
+    /** Metadata of the last `send_message` with a file. */
+    var lastAttachmentMetadata: JsonObject? = null
+
+    override fun sendAttachment(
+        conversationType: ConversationType,
+        targetId: Long,
+        text: String,
+        type: MessageType,
+        metadata: JsonObject,
+        clientMsgId: String
+    ): Boolean {
+        val written = record("send_message ${type.value} ${conversationType.value} $targetId $text")
+        if (written) {
+            sentClientMsgIds += clientMsgId
+            lastAttachmentMetadata = metadata
+        }
         return written
     }
     override fun cancelMessage(clientMsgId: String) = record("cancel_message $clientMsgId")
@@ -261,4 +288,61 @@ class FakeAccountRepository : AccountRepository {
     }
 
     override suspend fun refreshBlocked(): List<BlockedUser> = onRefreshBlocked().also { blocked.value = it }
+}
+
+/** Scriptable [AttachmentRepository]: picked files, policy, a gated upload and download. */
+class FakeAttachmentRepository : AttachmentRepository {
+    val picked = mutableMapOf<String, PickedFile>()
+    var policyValue: FilePolicy? = null
+
+    /** When set, uploads wait for it; otherwise they succeed at once. */
+    var uploadGate: CompletableDeferred<FileUploadResponse>? = null
+
+    /** The next upload fails with it (once). */
+    var uploadFailure: Exception? = null
+    val uploads = mutableListOf<PickedFile>()
+    var uploadProgress: ((Float) -> Unit)? = null
+    var cancelledUploads = 0
+    private var nextId = 30L
+
+    /** When set, downloads wait for it. */
+    var downloadGate: CompletableDeferred<File>? = null
+    var downloadFailure: Exception? = null
+    val downloads = mutableListOf<Long>()
+    var downloadProgress: ((Float?) -> Unit)? = null
+
+    override suspend fun describe(uri: String): PickedFile? = picked[uri]
+    override suspend fun policy(): FilePolicy? = policyValue
+
+    override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse {
+        uploads += file
+        uploadProgress = onProgress
+        uploadFailure?.let {
+            uploadFailure = null
+            throw it
+        }
+        try {
+            return uploadGate?.await() ?: uploaded(file)
+        } catch (e: CancellationException) {
+            cancelledUploads++
+            throw e
+        }
+    }
+
+    fun uploaded(file: PickedFile, id: Long = nextId++) = FileUploadResponse(
+        id = id.toString(), originalName = file.name, storedFilename = "stored-$id", fileSize = file.size ?: 0,
+        mimeType = file.mimeType ?: "application/octet-stream", url = "/api/files/download/$id"
+    )
+
+    override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File {
+        downloads += fileId
+        downloadProgress = onProgress
+        downloadFailure?.let {
+            downloadFailure = null
+            throw it
+        }
+        return downloadGate?.await() ?: File(name)
+    }
+
+    override fun thumbnailUrl(fileId: Long): String = "https://chat.example.com/api/files/thumb/$fileId?size=m"
 }

@@ -7,6 +7,8 @@ import com.openmychat.mobile.data.model.Channel
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DirectConversation
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.MessageType
+import kotlinx.serialization.json.JsonObject
 import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
@@ -30,6 +32,14 @@ class ConnectedRealtimeRepository : RealtimeRepository {
     override val audioFrames: Flow<WsEvent.AudioFrameReceived> = emptyFlow()
     override val connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
     override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String) = true
+    override fun sendAttachment(
+        conversationType: ConversationType,
+        targetId: Long,
+        text: String,
+        type: MessageType,
+        metadata: JsonObject,
+        clientMsgId: String
+    ) = true
     override fun cancelMessage(clientMsgId: String) = true
     override fun editMessage(messageId: Long, text: String) = true
     override fun deleteMessage(messageId: Long) = true
