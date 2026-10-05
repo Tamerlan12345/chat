@@ -53,6 +53,9 @@ public enum CentyColors {
     public static let dangerText = adaptive(rgb(0xB4232A), dark: rgb(0xFF8F8F))
     public static let dangerSoft = adaptive(rgb(0xD9363B, 0.08), dark: rgb(0xE5484D, 0.14))
     public static let dangerLine = adaptive(rgb(0xD9363B, 0.30), dark: rgb(0xE5484D, 0.40))
+    /// «3/9 в сети» counters: online green that keeps contrast on its soft pill.
+    public static let successText = adaptive(rgb(0x1A7F37), dark: rgb(0x56D364))
+    public static let successSoft = adaptive(rgb(0x2DA44E, 0.12), dark: rgb(0x2DA44E, 0.20))
 
     /// Brand gradient, 135°: only for the C mark.
     public static let brandGradient = LinearGradient(

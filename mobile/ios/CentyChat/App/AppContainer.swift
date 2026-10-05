@@ -17,6 +17,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let presence: PresenceController
     public let notifications: MessageNotificationsStore
     public let account: AccountStore
+    /// The colleague directory of the session («Сотрудники», search, person cards).
+    public let people: PeopleStore
+    /// «Недавние» of the search in «Чаты».
+    public let searchRecents: SearchRecentsStore
     let accountRepository: any AccountRepository
 
     init(
@@ -31,7 +35,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         handshake: RealtimeHandshakeState = RealtimeHandshakeState(deviceId: { nil }),
         startsInBackground: Bool = false,
         notificationCenter: any LocalNotificationCenter = SilentNotificationCenter(),
-        accountRepository: any AccountRepository = UnavailableAccountRepository()
+        accountRepository: any AccountRepository = UnavailableAccountRepository(),
+        peopleSource: (any PeopleSource)? = nil,
+        peopleCache: (any PeopleCache)? = nil,
+        recentsDefaults: UserDefaults? = nil
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -82,6 +89,12 @@ public final class AppContainer: SessionLifecycleDelegate {
         self.presence = presence
         self.notifications = notifications
         self.account = account
+        self.people = PeopleStore(
+            source: peopleSource ?? UnavailablePeopleSource(),
+            cache: peopleCache ?? InMemoryPeopleCache(),
+            ownerId: { [weak session] in session?.currentUser?.id }
+        )
+        self.searchRecents = SearchRecentsStore(defaults: recentsDefaults)
         self.accountRepository = accountRepository
 
         account.onBlocksChanged = { [weak conversations, weak chats] in
@@ -97,6 +110,7 @@ public final class AppContainer: SessionLifecycleDelegate {
         realtime.register(calls)
         realtime.register(profile)
         realtime.register(notifications)
+        realtime.register(people)
         realtime.audioSink = { [weak calls] frame in
             calls?.receiveAudio(frame)
         }
@@ -126,7 +140,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             handshake: .shared,
             startsInBackground: UIApplication.shared.applicationState == .background,
             notificationCenter: UserNotificationCenterBridge(),
-            accountRepository: accountRepository
+            accountRepository: accountRepository,
+            peopleSource: APIPeopleSource(client: client),
+            peopleCache: PeopleDiskCache(),
+            recentsDefaults: .standard
         )
     }
 
@@ -162,6 +179,9 @@ public final class AppContainer: SessionLifecycleDelegate {
         presence.reset()
         notifications.reset()
         account.reset()
+        // The directory and the search recents belong to the account that signed out.
+        people.signOut()
+        searchRecents.clear()
         calls.stopCallSession()
     }
 }

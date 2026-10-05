@@ -10,19 +10,23 @@ public struct ChatDetailView: View {
     public let title: String
     public let avatarUrl: String?
     public let status: UserStatus?
+    /// Open the chat at this message (a search hit) and pulse it.
+    public let highlightMessageId: Int64?
 
     public init(
         conversationType: ConversationType,
         targetId: Int64,
         title: String,
         avatarUrl: String? = nil,
-        status: UserStatus? = nil
+        status: UserStatus? = nil,
+        highlightMessageId: Int64? = nil
     ) {
         self.conversationType = conversationType
         self.targetId = targetId
         self.title = title
         self.avatarUrl = avatarUrl
         self.status = status
+        self.highlightMessageId = highlightMessageId
     }
 
     public var body: some View {
@@ -30,9 +34,16 @@ public struct ChatDetailView: View {
             store: container.chats.store(for: ConversationKey(type: conversationType, targetId: targetId)),
             title: title,
             avatarUrl: avatarUrl,
-            status: status
+            status: status,
+            highlightMessageId: highlightMessageId
         )
     }
+}
+
+/// Where the message list should scroll once: the jump target (pulsed) or the bottom.
+private struct ScrollRequest: Equatable {
+    let messageId: Int64
+    let pulses: Bool
 }
 
 /// The chat screen bound to one `ChatStore`.
@@ -47,8 +58,15 @@ private struct ChatDetailContent: View {
     let title: String
     let avatarUrl: String?
     let status: UserStatus?
+    let highlightMessageId: Int64?
 
     @State private var inputText: String = ""
+    /// The search hit was looked up (found or not); from then on the list follows new messages.
+    @State private var jumpHandled = false
+    @State private var scrollRequest: ScrollRequest?
+    /// The message pulsing for 1.2 s after a jump.
+    @State private var pulsingMessageId: Int64?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editingMessage: Message? = nil
     @State private var reportTarget: ReportTarget? = nil
     @State private var blockCandidate: BlockCandidate? = nil
@@ -120,6 +138,13 @@ private struct ChatDetailContent: View {
                                 },
                                 onBlockSender: blockSenderHandler
                             )
+                            // The search hit pulses once the chat scrolled to it.
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(CentyColors.primarySoft)
+                                    .padding(-4)
+                                    .opacity(pulsingMessageId == message.id ? 1 : 0)
+                            )
                             .id(message.id)
                         }
                     }
@@ -128,14 +153,19 @@ private struct ChatDetailContent: View {
                 }
                 .background(CentyColors.chatBackground)
                 .onChange(of: store.messages.count) {
-                    if let last = store.messages.last {
-                        withAnimation {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                    // Opening at a search hit: the list waits for the history around it.
+                    guard isFollowingBottom, let last = store.messages.last else { return }
+                    withAnimation {
+                        proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
+                .onChange(of: scrollRequest) { _, request in
+                    guard let request else { return }
+                    proxy.scrollTo(request.messageId, anchor: request.pulses ? .center : .bottom)
+                    if request.pulses { pulse(request.messageId) }
+                }
                 .onAppear {
-                    if let last = store.messages.last {
+                    if isFollowingBottom, let last = store.messages.last {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
@@ -277,6 +307,15 @@ private struct ChatDetailContent: View {
         }
         .task {
             await store.load()
+            if let target = highlightMessageId, !jumpHandled {
+                let found = await store.loadAround(target)
+                jumpHandled = true
+                if found {
+                    scrollRequest = ScrollRequest(messageId: target, pulses: true)
+                } else if let last = store.messages.last {
+                    scrollRequest = ScrollRequest(messageId: last.id, pulses: false)
+                }
+            }
             await store.markAsRead()
         }
         .sheet(item: $reportTarget) { target in
@@ -298,6 +337,27 @@ private struct ChatDetailContent: View {
             Button("ОК", role: .cancel) {}
         } message: {
             Text(safetyError ?? "")
+        }
+    }
+
+    // MARK: - Jump to a search hit
+
+    /// New messages scroll the list down, except while the chat is still opening at a search hit.
+    private var isFollowingBottom: Bool {
+        highlightMessageId == nil || jumpHandled
+    }
+
+    /// A 1.2 s highlight on the bubble the search led to (a plain fade with Reduce Motion).
+    private func pulse(_ messageId: Int64) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            pulsingMessageId = messageId
+        }
+        Task {
+            try? await Task.sleep(for: .milliseconds(1_200))
+            guard pulsingMessageId == messageId else { return }
+            withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.4)) {
+                pulsingMessageId = nil
+            }
         }
     }
 

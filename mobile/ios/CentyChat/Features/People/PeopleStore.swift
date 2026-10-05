@@ -163,6 +163,12 @@ public final class PeopleStore: RealtimeEventHandling {
         }
     }
 
+    /// Обновить и дождаться ответа сервера («потянуть, чтобы обновить»).
+    public func refreshAndWait() async {
+        refresh()
+        await refreshTask?.value
+    }
+
     private func load(owner: Int64?) async {
         let source = self.source
         let treeTask = Task { @MainActor in try? await source.orgTree() }
@@ -228,6 +234,32 @@ public final class PeopleStore: RealtimeEventHandling {
         person.customStatus = customStatus.cleaned
         state.people[index] = person
     }
+}
+
+/// Справочник только в памяти: тесты, превью и сборки без диска.
+@MainActor
+public final class InMemoryPeopleCache: PeopleCache {
+    public var value: CachedPeople?
+
+    public init() {}
+
+    public func read() -> CachedPeople? { value }
+
+    public func write(_ value: CachedPeople) {
+        self.value = value
+    }
+
+    public func clear() {
+        value = nil
+    }
+}
+
+/// Источник, когда сеть не подключена (превью, тесты, которым справочник не нужен).
+@MainActor
+struct UnavailablePeopleSource: PeopleSource {
+    func users() async throws -> [PublicUser] { throw APIError.noConnection }
+    func orgTree() async throws -> OrgTree { throw APIError.noConnection }
+    func user(id: Int64) async throws -> PublicUser { throw APIError.noConnection }
 }
 
 /// Живой источник поверх `APIClient`. Временный адаптер UI-слоя: перенести в

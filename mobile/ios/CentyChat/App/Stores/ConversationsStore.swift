@@ -72,6 +72,11 @@ public final class ConversationsStore: RealtimeEventHandling {
         }
     }
 
+    /// Server-side message search for the search in «Чаты».
+    public func searchMessages(_ query: String) async throws -> [Message] {
+        try await repository.searchMessages(query)
+    }
+
     // MARK: - Mutations
 
     func setConversation(_ conversation: ConversationKey, visible: Bool) {

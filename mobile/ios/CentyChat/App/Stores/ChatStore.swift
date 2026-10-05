@@ -84,14 +84,55 @@ public final class ChatStore: RealtimeEventHandling {
         loadState = .loading
         do {
             let loaded = try await repository.messages(in: conversation, limit: 50, beforeId: nil)
-            // Keep what arrived over realtime (or is still pending) while the page was loading.
-            let loadedIDs = Set(loaded.map(\.id))
-            messages = loaded + messages.filter { !loadedIDs.contains($0.id) }
+            // Keep what arrived over realtime (or is still pending) while the page was loading, and
+            // history loaded around a search hit, in order.
+            messages = Self.merged(page: loaded, into: messages)
             loadState = .loaded
         } catch {
             Log.chat.error("Loading messages failed: \(error.localizedDescription, privacy: .public)")
             loadState = .failed(error.userMessage)
         }
+    }
+
+    /// Opens the conversation at `messageId` (a search hit): the history around it is loaded next to
+    /// the newest page. Returns false when the message is not there (deleted, no access).
+    public func loadAround(_ messageId: Int64) async -> Bool {
+        // What is on screen is already continuous up to the newest message.
+        if messages.contains(where: { $0.id == messageId }) { return true }
+        let repository = self.repository
+        let conversation = self.conversation
+        let window: [Message]?
+        do {
+            window = try await HistoryWindow.around(
+                messageId,
+                before: { beforeId, limit in
+                    try await repository.messages(in: conversation, limit: limit, beforeId: beforeId)
+                },
+                after: { afterId, limit in
+                    try await repository.messages(in: conversation, limit: limit, afterId: afterId)
+                }
+            )
+        } catch {
+            Log.chat.error("Loading the history around a message failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        // Gone or too far back: the chat stays on its newest page, without a second stretch.
+        guard let window, let newest = window.last?.id else { return false }
+        // The window replaces the history; what arrived meanwhile (newer ids, pending) stays.
+        let arrived = messages.filter { $0.id <= 0 || $0.id > newest }
+        messages = Self.merged(page: window, into: arrived)
+        return true
+    }
+
+    /// Server history merged with what is on screen: one copy per id (the page wins), ordered by
+    /// id, optimistic messages (negative ids) last in the order they were sent.
+    static func merged(page: [Message], into current: [Message]) -> [Message] {
+        var seen = Set<Int64>()
+        var stored: [Message] = []
+        for message in page + current where message.id > 0 && seen.insert(message.id).inserted {
+            stored.append(message)
+        }
+        return stored.sorted { $0.id < $1.id } + current.filter { $0.id <= 0 }
     }
 
     public func markAsRead() async {

@@ -1,9 +1,13 @@
 import SwiftUI
 
-/// Главный экран с вкладками после успешной авторизации
+/// Главный экран с вкладками после успешной авторизации: Чаты, Сотрудники, Объявления, Профиль.
+/// Каждая вкладка держит свой стек и своё состояние (прокрутку, поиск).
 public struct MainTabView: View {
     @Environment(ConversationsStore.self) private var conversations
     @Environment(AnnouncementsStore.self) private var announcements
+
+    @State private var navigation = AppNavigation()
+    @State private var peopleRequests = PeopleRequests()
 
     private var totalChatUnread: Int {
         conversations.totalDirectUnread + conversations.totalChannelUnread
@@ -16,27 +20,39 @@ public struct MainTabView: View {
     public init() {}
 
     public var body: some View {
-        TabView {
-            // Вкладка 1: Чаты
+        TabView(selection: $navigation.selectedTab) {
             ChatListView()
                 .tabItem {
-                    Label("Сообщения", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("Чаты", systemImage: "bubble.left.and.bubble.right")
                 }
                 .badge(totalChatUnread > 0 ? "\(totalChatUnread)" : nil)
+                .tag(AppTab.chats)
 
-            // Вкладка 2: Корпоративные распоряжения
+            PeopleView()
+                .tabItem {
+                    Label("Сотрудники", systemImage: "person.2")
+                }
+                .tag(AppTab.people)
+
             AnnouncementsView()
                 .tabItem {
-                    Label("Объявления", systemImage: "megaphone.fill")
+                    Label("Объявления", systemImage: "megaphone")
                 }
                 .badge(unconfirmedAnnouncementsCount > 0 ? "\(unconfirmedAnnouncementsCount)" : nil)
+                .tag(AppTab.announcements)
 
-            // Вкладка 3: Профиль сотрудника
             ProfileView()
                 .tabItem {
-                    Label("Профиль", systemImage: "person.crop.circle.fill")
+                    Label("Профиль", systemImage: "person.crop.circle")
                 }
+                .tag(AppTab.profile)
         }
         .tint(CentyColors.primaryBlue)
+        .environment(navigation)
+        .environment(peopleRequests)
+        // «Все сотрудники (N)» from the search, «Отдел» from a card: show «Сотрудники».
+        .onChange(of: peopleRequests.serial) {
+            navigation.selectedTab = .people
+        }
     }
 }

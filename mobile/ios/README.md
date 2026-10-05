@@ -31,7 +31,8 @@ mobile/ios/
 │   ├── App/
 │   │   ├── AppContainer.swift                   # Composition root: репозитории, сторы, внедрение в Environment
 │   │   ├── RootView.swift                       # Выбор экрана по фазе сессии, звонок и алерты
-│   │   ├── MainTabView.swift                    # Основной экран с вкладками (Чаты / Распоряжения / Профиль)
+│   │   ├── MainTabView.swift                    # Вкладки: Чаты / Сотрудники / Объявления / Профиль, у каждой свой стек
+│   │   ├── AppNavigation.swift                  # Выбор вкладки, стек вкладки (NavigationRouter), маршруты чата и карточки
 │   │   └── Stores/                              # Session/Realtime/Conversations/Chat/Announcements/Call/Profile
 │   ├── Models/
 │   │   ├── User.swift                           # Модель сотрудника и прав RolePermissions
@@ -76,6 +77,8 @@ mobile/ios/
 │   │   ├── ChatDetail/
 │   │   │   ├── ChatDetailView.swift             # Экран чата, тайпинг, звонки, отправка фото
 │   │   │   └── MessageBubbleView.swift          # Пузыри сообщений, контекстное меню с проверкой окон
+│   │   ├── People/                          # «Сотрудники»: справочник (кэш + /api/users, /api/org/tree), поиск, «Отделы», карточка сотрудника
+│   │   ├── Search/                          # Общий поиск в «Чатах»: люди, каналы, сообщения (/api/messages/search), «Недавние»
 │   │   ├── Announcements/
 │   │   │   └── AnnouncementsView.swift          # Распоряжения руководства и подпись ознакомления
 │   │   ├── Call/

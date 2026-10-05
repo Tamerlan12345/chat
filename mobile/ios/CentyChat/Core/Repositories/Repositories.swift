@@ -60,6 +60,10 @@ public protocol ChatRepository: Sendable {
     func users() async throws -> [PublicUser]
     func createChannel(name: String, topic: String?, type: ChannelType) async throws -> Channel
     func messages(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [Message]
+    /// The oldest `limit` messages newer than `afterId`, oldest first (history after a search hit).
+    func messages(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [Message]
+    /// `GET /api/messages/search?q=` — newest first, at most 30, rate-limited to 30 a minute.
+    func searchMessages(_ query: String) async throws -> [Message]
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse
 }
 

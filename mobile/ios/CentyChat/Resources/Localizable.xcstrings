@@ -1,13 +1,13 @@
 {
   "sourceLanguage" : "ru",
   "strings" : {
-    "%@ %@ · %@ в сети" : {
+    "%lld %@ · %lld в сети" : {
       "extractionState" : "manual",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ %@ · %@ в сети"
+            "value" : "%lld %@ · %lld в сети"
           }
         }
       }
@@ -19,6 +19,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ печатает..."
+          }
+        }
+      }
+    },
+    "%@, %lld из %lld в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %lld из %lld в сети"
+          }
+        }
+      }
+    },
+    "%lld/%lld в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld/%lld в сети"
           }
         }
       }
@@ -144,6 +166,17 @@
         }
       }
     },
+    "Алфавитный указатель" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Алфавитный указатель"
+          }
+        }
+      }
+    },
     "Аудиосвязь прервалась. Проверьте микрофон и попробуйте снова." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -188,6 +221,17 @@
         }
       }
     },
+    "Будить можно не чаще раза в минуту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Будить можно не чаще раза в минуту"
+          }
+        }
+      }
+    },
     "Был(а) в сети %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -228,6 +272,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В сети"
+          }
+        }
+      }
+    },
+    "В сообщениях ничего не нашли" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В сообщениях ничего не нашли"
+          }
+        }
+      }
+    },
+    "В справочнике пока никого нет" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В справочнике пока никого нет"
           }
         }
       }
@@ -331,6 +397,17 @@
         }
       }
     },
+    "Вн. номер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вн. номер"
+          }
+        }
+      }
+    },
     "Внутренний номер" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -353,6 +430,17 @@
         }
       }
     },
+    "Все" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все"
+          }
+        }
+      }
+    },
     "Все распоряжения подписаны" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -360,6 +448,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Все распоряжения подписаны"
+          }
+        }
+      }
+    },
+    "Все сотрудники (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все сотрудники (%lld)"
           }
         }
       }
@@ -404,6 +503,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вход…"
+          }
+        }
+      }
+    },
+    "Вы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы"
           }
         }
       }
@@ -529,6 +639,17 @@
         }
       }
     },
+    "Выключите фильтр «В сети», чтобы увидеть всех." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключите фильтр «В сети», чтобы увидеть всех."
+          }
+        }
+      }
+    },
     "Выполняется вход" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -602,6 +723,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Документ"
+          }
+        }
+      }
+    },
+    "Должность" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Должность"
           }
         }
       }
@@ -925,6 +1057,17 @@
         }
       }
     },
+    "Здесь появятся люди и каналы, которые вы открывали из поиска." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь появятся люди и каналы, которые вы открывали из поиска."
+          }
+        }
+      }
+    },
     "Идентификатор (UIN)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -958,6 +1101,28 @@
         }
       }
     },
+    "Имя, должность, отдел, вн. номер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Имя, должность, отдел, вн. номер"
+          }
+        }
+      }
+    },
+    "Ищем сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищем сообщения"
+          }
+        }
+      }
+    },
     "Канал" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -987,6 +1152,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Каналы (%lld)"
+          }
+        }
+      }
+    },
+    "Когда администратор добавит сотрудников, они появятся здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Когда администратор добавит сотрудников, они появятся здесь."
           }
         }
       }
@@ -1178,6 +1354,39 @@
         }
       }
     },
+    "Люди" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Люди"
+          }
+        }
+      }
+    },
+    "Люди, каналы, сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Люди, каналы, сообщения"
+          }
+        }
+      }
+    },
+    "Мобильный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мобильный"
+          }
+        }
+      }
+    },
     "Мы отправили 6-значный код на %@." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1229,6 +1438,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Название (например: #Проект)"
+          }
+        }
+      }
+    },
+    "Написать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Написать"
+          }
+        }
+      }
+    },
+    "Написать письмо" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Написать письмо"
           }
         }
       }
@@ -1365,6 +1596,17 @@
         }
       }
     },
+    "Не удалось загрузить сотрудников" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить сотрудников"
+          }
+        }
+      }
+    },
     "Не удалось загрузить файл" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1416,6 +1658,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось надёжно удалить данные сессии с этого устройства."
+          }
+        }
+      }
+    },
+    "Не удалось найти сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось найти сообщения"
+          }
+        }
+      }
+    },
+    "Не удалось обновить список" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить список"
           }
         }
       }
@@ -1530,6 +1794,17 @@
         }
       }
     },
+    "Недавние" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние"
+          }
+        }
+      }
+    },
     "Недопустимое содержимое" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1640,6 +1915,17 @@
         }
       }
     },
+    "Никого не нашли по «%@»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никого не нашли по «%@»"
+          }
+        }
+      }
+    },
     "Ничего не найдено" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1647,6 +1933,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ничего не найдено"
+          }
+        }
+      }
+    },
+    "Ничего не нашли по «%@»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ничего не нашли по «%@»"
           }
         }
       }
@@ -1790,6 +2087,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Оскорбления или травля"
+          }
+        }
+      }
+    },
+    "Отдел" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отдел"
+          }
+        }
+      }
+    },
+    "Отделы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отделы"
           }
         }
       }
@@ -1981,6 +2300,17 @@
         }
       }
     },
+    "Очистить поиск" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистить поиск"
+          }
+        }
+      }
+    },
     "Ошибка" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2135,6 +2465,17 @@
         }
       }
     },
+    "Побудить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудить"
+          }
+        }
+      }
+    },
     "Повторите новый пароль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2278,6 +2619,17 @@
         }
       }
     },
+    "Позвонить по номеру" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позвонить по номеру"
+          }
+        }
+      }
+    },
     "Поиск по переписке и сотрудникам" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2289,6 +2641,28 @@
         }
       }
     },
+    "Показать в «Отделах»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать в «Отделах»"
+          }
+        }
+      }
+    },
+    "Показать всех" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать всех"
+          }
+        }
+      }
+    },
     "Показать пароль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2296,6 +2670,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показать пароль"
+          }
+        }
+      }
+    },
+    "Показывать только тех, кто в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать только тех, кто в сети"
           }
         }
       }
@@ -2487,6 +2872,39 @@
         }
       }
     },
+    "Проверьте написание или поищите по должности, отделу и внутреннему номеру." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте написание или поищите по должности, отделу и внутреннему номеру."
+          }
+        }
+      }
+    },
+    "Проверьте написание: ищем по людям, каналам и тексту сообщений." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте написание: ищем по людям, каналам и тексту сообщений."
+          }
+        }
+      }
+    },
+    "Проверьте подключение и попробуйте ещё раз." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте подключение и попробуйте ещё раз."
+          }
+        }
+      }
+    },
     "Профиль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2527,6 +2945,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разблокировать %@"
+          }
+        }
+      }
+    },
+    "Развернуть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развернуть"
+          }
+        }
+      }
+    },
+    "Развёрнут" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развёрнут"
           }
         }
       }
@@ -2608,6 +3048,39 @@
         }
       }
     },
+    "Редактировать профиль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать профиль"
+          }
+        }
+      }
+    },
+    "Роль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Роль"
+          }
+        }
+      }
+    },
+    "Свернуть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свернуть"
+          }
+        }
+      }
+    },
     "Связаться с поддержкой" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2626,6 +3099,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Связь потеряна"
+          }
+        }
+      }
+    },
+    "Свёрнут" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свёрнут"
+          }
+        }
+      }
+    },
+    "Сейчас никого нет в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас никого нет в сети"
           }
         }
       }
@@ -2718,6 +3213,17 @@
         }
       }
     },
+    "Сигнал и вибрация на устройстве коллеги" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сигнал и вибрация на устройстве коллеги"
+          }
+        }
+      }
+    },
     "Сигнал от коллеги" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2736,6 +3242,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Системный"
+          }
+        }
+      }
+    },
+    "Скопировано" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано"
+          }
+        }
+      }
+    },
+    "Скопировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать"
           }
         }
       }
@@ -2769,6 +3297,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Слишком много неверных попыток. Запросите новый код."
+          }
+        }
+      }
+    },
+    "Слишком много поисков подряд — повторите через минуту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много поисков подряд — повторите через минуту"
           }
         }
       }
@@ -2938,6 +3477,17 @@
         }
       }
     },
+    "Сообщения ищутся от двух символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения ищутся от двух символов"
+          }
+        }
+      }
+    },
     "Сотрудник" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2945,6 +3495,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сотрудник"
+          }
+        }
+      }
+    },
+    "Сотрудник больше не работает" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сотрудник больше не работает"
+          }
+        }
+      }
+    },
+    "Сотрудники" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сотрудники"
           }
         }
       }
@@ -3279,6 +3851,28 @@
         }
       }
     },
+    "Чаты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты"
+          }
+        }
+      }
+    },
+    "Через %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через %lld с"
+          }
+        }
+      }
+    },
     "Что произошло (необязательно)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3367,6 +3961,28 @@
         }
       }
     },
+    "вн. %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вн. %@"
+          }
+        }
+      }
+    },
+    "внутренний номер %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "внутренний номер %@"
+          }
+        }
+      }
+    },
     "дек." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3422,6 +4038,28 @@
         }
       }
     },
+    "канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "канал"
+          }
+        }
+      }
+    },
+    "личная переписка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "личная переписка"
+          }
+        }
+      }
+    },
     "марта" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3462,6 +4100,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "окт."
+          }
+        }
+      }
+    },
+    "переписка с %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "переписка с %@"
           }
         }
       }
