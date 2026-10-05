@@ -149,7 +149,7 @@ final class PeopleModelTests: XCTestCase {
 final class PeopleWiringTests: XCTestCase {
     func testPresenceReachesTheDirectoryAndSignOutWipesItWithTheRecents() async throws {
         let app = TestApp()
-        app.peopleSource.users = [PublicUser(id: 8, username: "bob", fullName: "Боб Тестов", status: .online)]
+        app.peopleSource.listed = [PublicUser(id: 8, username: "bob", fullName: "Боб Тестов", status: .online)]
         await app.session.bootstrap()
         _ = try await app.session.login(username: "qa", password: "password")
         await app.container.people.refreshAndWait()

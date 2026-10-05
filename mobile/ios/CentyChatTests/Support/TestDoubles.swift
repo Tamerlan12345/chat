@@ -421,21 +421,21 @@ struct TestApp {
 /// `/api/users`, `/api/org/tree` and `/api/users/:id` for the people directory.
 @MainActor
 final class FakePeopleSource: PeopleSource {
-    var users: [PublicUser]
+    var listed: [PublicUser]
     var tree = OrgTree()
     var failure: (any Error)?
     /// When set, `users()` waits for it (a request still in flight).
     var gate: TestGate?
 
     init(users: [PublicUser], gate: TestGate? = nil) {
-        self.users = users
+        listed = users
         self.gate = gate
     }
 
     func users() async throws -> [PublicUser] {
         if let gate { await gate.wait() }
         if let failure { throw failure }
-        return users
+        return listed
     }
 
     func orgTree() async throws -> OrgTree {
@@ -445,7 +445,7 @@ final class FakePeopleSource: PeopleSource {
 
     func user(id: Int64) async throws -> PublicUser {
         if let failure { throw failure }
-        guard let user = users.first(where: { $0.id == id }) else { throw APIError.httpError(statusCode: 404, message: "Не найден", code: nil) }
+        guard let user = listed.first(where: { $0.id == id }) else { throw APIError.httpError(statusCode: 404, message: "Не найден", code: nil) }
         return user
     }
 }
