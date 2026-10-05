@@ -275,7 +275,7 @@ private struct MessageHitRow: View {
                         .foregroundStyle(CentyColors.textStrong)
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(hit.message.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    Text(SearchHitTime.text(for: hit.message.createdAt))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(CentyColors.textDim)
                         .lineLimit(1)

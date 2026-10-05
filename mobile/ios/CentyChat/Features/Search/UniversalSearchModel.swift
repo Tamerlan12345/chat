@@ -298,3 +298,10 @@ public enum Snippet {
         return (snippet, ranges.sorted { $0.lowerBound < $1.lowerBound })
     }
 }
+
+/// When a found message was written, for the result row.
+public enum SearchHitTime {
+    public static func text(for date: Date, now: Date = Date(), timeZone: TimeZone = .current) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
