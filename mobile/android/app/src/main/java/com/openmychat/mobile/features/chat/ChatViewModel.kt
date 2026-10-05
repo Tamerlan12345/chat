@@ -28,6 +28,17 @@ import kotlinx.coroutines.flow.update
 import com.openmychat.mobile.data.realtime.resyncRequests
 import kotlinx.coroutines.launch
 import androidx.lifecycle.SavedStateHandle
+import com.openmychat.mobile.data.model.ReportTargetType
+import com.openmychat.mobile.data.repository.AccountRepository
+import com.openmychat.mobile.data.repository.UnavailableAccountRepository
+import com.openmychat.mobile.features.account.BlockController
+import com.openmychat.mobile.features.account.ReportController
+import com.openmychat.mobile.features.account.ReportTarget
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import com.openmychat.mobile.data.model.SendState
 import java.time.Instant
 import java.util.UUID
@@ -39,9 +50,27 @@ private const val KEY_FOCUS_DONE = "chat.focus_done"
 private const val ACK_TIMEOUT_MS = 10_000L
 
 
+/** Отказ сервера в доставке личного сообщения (блокировка с любой стороны), contracts/registration.md §4. */
+private const val DM_NOT_ALLOWED = "DM_NOT_ALLOWED"
+
+/** Сколько текста сообщения показать в жалобе. */
+private const val REPORT_EXCERPT = 160
+private const val ATTACHMENT_SUBJECT = "Вложение"
+
 /** Локальные записи ещё не подтверждённых сообщений: отрицательные id не пересекаются с серверными. */
 private val nextLocalId = AtomicLong(0)
 
+
+/** Why the composer of a direct chat is closed. */
+enum class ComposerLock {
+    NONE,
+
+    /** I blocked this person: nothing goes either way until I unblock. */
+    BLOCKED_BY_ME,
+
+    /** The server refused a send with `DM_NOT_ALLOWED` (the other side blocked me, or I them elsewhere). */
+    NOT_DELIVERABLE
+}
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -64,7 +93,9 @@ class ChatViewModel @AssistedInject constructor(
     /** Открыть на этом сообщении (переход из поиска). */
     @Assisted("focus") focusMessageId: Long? = null,
     /** Процесс вышел на передний план: историю догружаем (как после переподключения). */
-    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal()
+    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal(),
+    /** Reports and blocks (contracts/registration.md §4). */
+    account: AccountRepository = UnavailableAccountRepository
 ) : ViewModel() {
 
     @AssistedFactory
@@ -133,6 +164,38 @@ class ChatViewModel @AssistedInject constructor(
 
     /** Ждём эхо отправленного кадра; по истечении времени сообщение «не отправлено». */
     private val ackJobs = HashMap<String, Job>()
+
+    /** «Заблокировать» / «Разблокировать» the peer; null in channels and in a chat with oneself. */
+    val blocks: BlockController? =
+        if (conversationType == ConversationType.DIRECT && targetId != currentUserId) BlockController(account, viewModelScope, targetId) else null
+
+    /** «Пожаловаться» on a message or on the peer. */
+    val reports = ReportController(account, viewModelScope)
+
+    private val notDeliverable = MutableStateFlow(false)
+
+    /** The composer is closed while the peer is blocked or the server refuses delivery. */
+    val composerLock: StateFlow<ComposerLock> = combine(blocks?.blocked ?: flowOf(false), notDeliverable) { blocked, refused ->
+        lockOf(blocked, refused)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, lockOf(blocks?.blocked?.value == true, false))
+
+    private fun lockOf(blocked: Boolean, refused: Boolean) = when {
+        blocked -> ComposerLock.BLOCKED_BY_ME
+        refused -> ComposerLock.NOT_DELIVERABLE
+        else -> ComposerLock.NONE
+    }
+
+    init {
+        // A block hides the person's messages on the server; an unblock shows them again and reopens sending.
+        blocks?.let { controller ->
+            viewModelScope.launch {
+                controller.blocked.drop(1).collect { blocked ->
+                    if (!blocked) notDeliverable.value = false
+                    loadMessages()
+                }
+            }
+        }
+    }
 
     init {
         // A chat opened before shows its last history at once and refreshes underneath. Messages that
@@ -342,6 +405,7 @@ class ChatViewModel @AssistedInject constructor(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         val editing = _editingMessage.value
+        if (editing == null && composerLock.value != ComposerLock.NONE) return
         if (editing != null) {
             realtimeRepository.editMessage(editing.id, text.trim())
             _editingMessage.value = null
@@ -428,6 +492,31 @@ class ChatViewModel @AssistedInject constructor(
         // A refusal means the server stored nothing: there is no key to revoke.
         forgetSend(key)
         setSendState(key, SendState.FAILED)
+        if (error.code == DM_NOT_ALLOWED && conversationType == ConversationType.DIRECT) notDeliverable.value = true
+    }
+
+    /** Someone else's message the server has (not a local, failed or deleted one). */
+    fun canReportMessage(message: Message): Boolean =
+        message.sendState == SendState.SENT && message.id > 0 && message.senderId != currentUserId && !message.isDeleted
+
+    fun reportMessage(message: Message) {
+        if (!canReportMessage(message)) return
+        val body = message.text.trim().take(REPORT_EXCERPT).ifEmpty { ATTACHMENT_SUBJECT }
+        val subject = if (message.senderName.isBlank()) body else "${message.senderName}: $body"
+        reports.open(ReportTarget(ReportTargetType.MESSAGE, message.id, subject))
+    }
+
+    fun reportPeer(name: String) {
+        if (blocks == null) return
+        reports.open(ReportTarget(ReportTargetType.USER, targetId, name))
+    }
+
+    fun block(name: String) {
+        blocks?.block(name)
+    }
+
+    fun unblock() {
+        blocks?.unblock()
     }
 
     private fun setSendState(key: String, state: SendState) {

@@ -174,7 +174,8 @@ object WsEventParser {
             context = root.string("context"),
             message = root.string("message") ?: "Server error",
             originalText = root.string("text"),
-            clientMsgId = root.string("client_msg_id")
+            clientMsgId = root.string("client_msg_id"),
+            code = root.string("code")
         )
         else -> null
     }

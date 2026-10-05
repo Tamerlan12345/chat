@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -30,7 +31,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -47,6 +50,9 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -79,6 +85,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import com.openmychat.mobile.R
+import com.openmychat.mobile.features.account.BlockConfirmDialog
+import com.openmychat.mobile.features.account.ReportSheet
+import com.openmychat.mobile.features.account.SafetyNotices
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyAvatar
 import com.openmychat.mobile.ui.components.CentyPrimaryButton
@@ -104,6 +113,12 @@ interface PersonCardActions {
     fun onWake() {}
     fun onOpenDepartment(person: Person) {}
     fun onEditProfile() {}
+
+    /** «Пожаловаться» на сотрудника. */
+    fun onReport(person: Person) {}
+
+    /** «Заблокировать» (после подтверждения) или «Разблокировать». */
+    fun onToggleBlock(person: Person) {}
 }
 
 @Composable
@@ -117,7 +132,9 @@ fun PersonCardScreen(
     actions: PersonCardActions
 ) {
     val state by viewModel.state.collectAsState()
+    val reportSheet by viewModel.reports.sheet.collectAsState()
     val haptics = rememberHaptics()
+    var confirmBlock by rememberSaveable { mutableStateOf(false) }
     val wrapped = remember(viewModel, actions) {
         object : PersonCardActions by actions {
             override fun onWake() {
@@ -125,7 +142,23 @@ fun PersonCardScreen(
                 haptics.confirm()
                 actions.onWake()
             }
+            override fun onReport(person: Person) = viewModel.report()
+            override fun onToggleBlock(person: Person) {
+                if (viewModel.state.value.blocked) viewModel.unblock() else confirmBlock = true
+            }
         }
+    }
+    SafetyNotices(viewModel.blocks)
+    reportSheet?.let { ReportSheet(viewModel.reports, it) }
+    if (confirmBlock) {
+        BlockConfirmDialog(
+            name = state.person?.fullName ?: placeholderName,
+            onConfirm = {
+                confirmBlock = false
+                viewModel.block()
+            },
+            onDismiss = { confirmBlock = false }
+        )
     }
     PersonCardContent(
         state = state,
@@ -230,6 +263,10 @@ fun PersonCardContent(
                 }
                 Spacer(Modifier.height(20.dp))
                 InfoGroup(person, actions)
+                if (!state.isSelf) {
+                    Spacer(Modifier.height(20.dp))
+                    SafetyGroup(person, state, actions)
+                }
             }
         }
     }
@@ -517,6 +554,55 @@ private fun copyToClipboard(context: android.content.Context, value: String, sen
         }
     }
     manager.setPrimaryClip(clip)
+}
+
+/** «Пожаловаться» и «Заблокировать» / «Разблокировать» — внизу карточки, отдельно от основных действий. */
+@Composable
+private fun SafetyGroup(person: Person, state: PersonCardState, actions: PersonCardActions) {
+    val tokens = CentyTheme.tokens
+    val shape = RoundedCornerShape(CentyRadius.card)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(tokens.elevated)
+            .border(1.dp, tokens.border, shape)
+    ) {
+        SafetyRow(
+            icon = Icons.Outlined.Flag,
+            text = stringResource(R.string.safety_report),
+            color = tokens.textStrong,
+            enabled = true,
+            onClick = { actions.onReport(person) },
+            tag = "person-report"
+        )
+        HorizontalDivider(Modifier.padding(start = 52.dp), color = tokens.border)
+        SafetyRow(
+            icon = Icons.Outlined.Block,
+            text = stringResource(if (state.blocked) R.string.safety_unblock else R.string.safety_block),
+            color = if (state.blocked) tokens.accentText else tokens.dangerText,
+            enabled = !state.blockBusy,
+            onClick = { actions.onToggleBlock(person) },
+            tag = "person-block"
+        )
+    }
+}
+
+@Composable
+private fun SafetyRow(icon: ImageVector, text: String, color: Color, enabled: Boolean, onClick: () -> Unit, tag: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = color)
+    }
 }
 
 /** Сотрудник не найден (удалён из справочника, нет сети и кэша). */

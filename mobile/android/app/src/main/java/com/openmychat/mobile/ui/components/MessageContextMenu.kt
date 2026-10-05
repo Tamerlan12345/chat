@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -47,7 +48,7 @@ import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import kotlin.math.roundToInt
 
 /** Actions of the message menu, in the brief's order. */
-enum class MessageAction { REPLY, COPY, EDIT, DELETE }
+enum class MessageAction { REPLY, COPY, EDIT, DELETE, REPORT }
 
 /** A bubble lifted over the scrim while its menu is open. */
 class LiftedMessage(
@@ -196,6 +197,7 @@ val MessageAction.label: Int
         MessageAction.COPY -> R.string.action_copy
         MessageAction.EDIT -> R.string.action_edit
         MessageAction.DELETE -> R.string.action_delete
+        MessageAction.REPORT -> R.string.safety_report
     }
 
 private val MessageAction.icon
@@ -204,4 +206,5 @@ private val MessageAction.icon
         MessageAction.COPY -> Icons.Outlined.ContentCopy
         MessageAction.EDIT -> Icons.Outlined.Edit
         MessageAction.DELETE -> Icons.Outlined.Delete
+        MessageAction.REPORT -> Icons.Outlined.Flag
     }

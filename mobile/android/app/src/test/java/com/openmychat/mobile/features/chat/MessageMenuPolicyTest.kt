@@ -19,8 +19,8 @@ class MessageMenuPolicyTest {
         type = type, createdAt = "2026-10-02T09:00:00.000Z", isDeleted = deleted
     )
 
-    private fun actions(m: Message, canEdit: Boolean = false, canDelete: Boolean = false, failed: Boolean = false): List<MessageAction> =
-        MessageMenuPolicy.actionsFor(m, canEdit = canEdit, canDelete = canDelete, failed = failed)
+    private fun actions(m: Message, canEdit: Boolean = false, canDelete: Boolean = false, failed: Boolean = false, canReport: Boolean = false): List<MessageAction> =
+        MessageMenuPolicy.actionsFor(m, canEdit = canEdit, canDelete = canDelete, failed = failed, canReport = canReport)
 
     @Test
     fun anOwnEditableMessageOffersAllFourInOrder() {
@@ -50,5 +50,12 @@ class MessageMenuPolicyTest {
     @Test
     fun blankTextIsNotCopied() {
         assertEquals(listOf(REPLY), actions(msg(text = "   ")))
+    }
+
+    @Test
+    fun someoneElsesMessageCanBeReportedLast() {
+        assertEquals(listOf(REPLY, COPY, MessageAction.REPORT), actions(msg(), canReport = true))
+        assertEquals(listOf(REPLY, MessageAction.REPORT), actions(msg(text = "отчёт.pdf", type = MessageType.FILE), canReport = true))
+        assertEquals("a deleted message offers nothing", emptyList<MessageAction>(), actions(msg(deleted = true), canReport = true))
     }
 }

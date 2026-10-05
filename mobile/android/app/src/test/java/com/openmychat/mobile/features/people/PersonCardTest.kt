@@ -1,6 +1,11 @@
 package com.openmychat.mobile.features.people
 
+import com.openmychat.mobile.data.model.BlockedUser
 import com.openmychat.mobile.data.model.OrgTree
+import com.openmychat.mobile.data.model.ReportTargetType
+import com.openmychat.mobile.features.account.ReportTarget
+import com.openmychat.mobile.features.account.SafetyNotice
+import com.openmychat.mobile.testing.FakeAccountRepository
 import com.openmychat.mobile.data.model.RolePermissions
 import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.model.UserStatus
@@ -12,6 +17,8 @@ import com.openmychat.mobile.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -118,5 +125,46 @@ class PersonCardTest {
         vm.wake()
         assertEquals(listOf("wake_send 8"), realtime.sent)
         assertTrue(vm.state.value.wakeCooldown > 0)
+    }
+
+    // --- report and block (contracts/registration.md §4) -------------------------------------
+
+    @Test
+    fun theCardBlocksAndUnblocksThePerson() {
+        val account = FakeAccountRepository()
+        val vm = PersonViewModel(8, FakePeople(listOf(bob)), FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests(), account)
+        assertFalse(vm.state.value.blocked)
+
+        vm.block()
+
+        assertEquals(listOf("block 8"), account.blockCalls)
+        assertEquals(BlockedUser(8, "Боб Тестов"), account.blocked.value.single())
+        assertTrue(vm.state.value.blocked)
+        assertEquals(SafetyNotice.Blocked, vm.blocks.notice.value)
+
+        vm.unblock()
+        assertFalse(vm.state.value.blocked)
+    }
+
+    @Test
+    fun reportingThePersonOpensTheSheetForThem() {
+        val account = FakeAccountRepository()
+        val vm = PersonViewModel(8, FakePeople(listOf(bob)), FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests(), account)
+
+        vm.report()
+
+        assertEquals(ReportTarget(ReportTargetType.USER, 8, "Боб Тестов"), vm.reports.sheet.value?.target)
+    }
+
+    @Test
+    fun theOwnCardOffersNeitherReportNorBlock() {
+        val account = FakeAccountRepository()
+        val vm = PersonViewModel(FakeSessionRepository.ME, FakePeople(emptyList()), FakeSessionRepository(), FakeRealtimeRepository(), PeopleRequests(), account)
+
+        vm.block()
+        vm.report()
+
+        assertTrue(account.blockCalls.isEmpty())
+        assertNull(vm.reports.sheet.value)
     }
 }
