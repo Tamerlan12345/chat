@@ -23,7 +23,7 @@ final class DeliveryEngineTests: XCTestCase {
         logged = Locked([])
     }
 
-    private func makeEngine(store: InMemoryDeliveryStore? = nil) -> DeliveryEngine {
+    private func makeEngine(store: InMemoryDeliveryStore? = nil, start: Bool = true) -> DeliveryEngine {
         let logged = self.logged!
         let engine = DeliveryEngine(
             store: store ?? self.store,
@@ -32,7 +32,7 @@ final class DeliveryEngineTests: XCTestCase {
             clock: clock,
             log: { line in logged.withValue { $0.append(line) } }
         )
-        engine.start()
+        if start { engine.start() }
         return engine
     }
 
@@ -301,6 +301,8 @@ final class DeliveryEngineTests: XCTestCase {
         try? await engine.reset()
 
         XCTAssertTrue(engine.ready, "an emptied store is readable")
+        // The next account signs in (adopt), then writes.
+        try? await engine.adopt(bob)
         let (outcome, _) = await enqueue(engine, "После выхода", owner: bob)
         XCTAssertTrue(outcome.persisted)
     }
@@ -350,24 +352,146 @@ final class DeliveryEngineTests: XCTestCase {
         XCTAssertEqual(stored.me, carol)
     }
 
-    func testAWipeThatFailsIsLoudAndSendsNothing() async {
+    func testASignOutWhoseWipeFailsKeepsTheQueueAndItStillGoes() async {
         let engine = makeEngine()
         await settle(engine)
-        let (_, key) = await enqueue(engine, "Удалить при выходе", owner: alice)
+        try? await engine.adopt(alice)
+        let (_, key) = await enqueue(engine, "Останусь", owner: alice)
         await store.fail(.clear, times: 1)
 
         do {
             try await engine.reset()
-            XCTFail("a failed wipe must reach the sign-out")
+            XCTFail("a failed wipe must reach the sign-out, which is then cancelled")
         } catch {}
+
+        // The sign-out was cancelled: nothing of the account was deleted, in memory or on disk.
+        XCTAssertEqual(engine.state.outbox.map(\.clientMsgId), [key])
+        XCTAssertEqual(engine.state.me, alice)
         engine.receive(DeliveryFixtures.authSuccess(alice))
         await settle(engine)
-        XCTAssertEqual(link.sends(of: key), 0, "emptied in memory at once: nothing of it is sent")
+        XCTAssertEqual(link.sends(of: key), 1, "the user stays signed in and the message still goes")
+        clock.advance(by: 60_000)
+        await settle(engine)
+        let stored = await store.contents
+        XCTAssertEqual(stored.outbox.map(\.clientMsgId), [key], "no wipe is retried behind the user's back")
+    }
+
+    func testAnAccountSwitchWhoseWipeFailsSendsNothingOfThePreviousAccount() async {
+        let engine = makeEngine()
+        await settle(engine)
+        let (_, key) = await enqueue(engine, "Алисино", owner: alice)
+        await store.fail(.clear, times: 1)
+
+        do {
+            try await engine.adopt(carol)
+            XCTFail("a failed wipe must be reported")
+        } catch {}
+        engine.receive(DeliveryFixtures.authSuccess(carol))
+        await settle(engine)
+        XCTAssertEqual(link.sends(of: key), 0, "emptied in memory at once: nothing of it is sent under another account")
 
         clock.advance(by: 1_000)
         await settle(engine)
         let stored = await store.contents
-        XCTAssertTrue(stored.outbox.isEmpty, "the wipe is retried")
+        XCTAssertTrue(stored.outbox.isEmpty, "the wipe of the other account is retried")
+    }
+
+    // MARK: - After an explicit sign-out
+
+    func testFramesOfTheSignedOutSocketAreNeitherTakenNorStored() async throws {
+        let engine = makeEngine()
+        await settle(engine)
+        try await engine.adopt(alice)
+        await connect(engine, as: alice)
+        _ = await enqueue(engine, "раз", owner: alice)
+        try await engine.reset()
+        let persistsAfterSignOut = await store.persisted.count
+
+        // The old socket is still open for a moment: its frames must not land in the empty store.
+        engine.receive(DeliveryFixtures.authSuccess(alice))
+        engine.receive(DeliveryFixtures.echo(DeliveryFixtures.record(id: 70, from: bob, to: alice, text: "после выхода")))
+        await settle(engine)
+
+        XCTAssertNil(engine.state.me, "an auth_success never claims the model after a sign-out")
+        XCTAssertTrue(engine.state.messages.isEmpty)
+        XCTAssertEqual(engine.state.connection, DeliveryState.offline)
+        let persists = await store.persisted.count
+        XCTAssertEqual(persists, persistsAfterSignOut, "nothing is written after the sign-out")
+        let stored = await store.contents
+        XCTAssertNil(stored.me)
+        XCTAssertTrue(stored.cache.isEmpty)
+    }
+
+    func testTheNextAccountTakesUpTheSocketThatAuthenticatedBeforeItWasAdopted() async throws {
+        let engine = makeEngine()
+        await settle(engine)
+        try await engine.adopt(alice)
+        try await engine.reset()
+
+        link.setAuthenticated(carol)
+        engine.receive(DeliveryFixtures.authSuccess(carol))
+        await settle(engine)
+        XCTAssertEqual(engine.state.connection, DeliveryState.offline)
+
+        try await engine.adopt(carol)
+        await settle(engine)
+        XCTAssertEqual(engine.state.me, carol)
+        XCTAssertEqual(engine.state.connection, DeliveryState.online, "the socket that came up meanwhile is picked up")
+    }
+
+    // MARK: - Stated owners
+
+    func testALatePageOfAPreviousAccountIsDroppedAndTheQueueStays() async throws {
+        let engine = makeEngine()
+        await settle(engine)
+        try await engine.adopt(carol)
+        let (_, key) = await enqueue(engine, "Кэрол пишет", owner: carol)
+
+        do {
+            try await engine.replaceHistory("direct:3", records: [DeliveryFixtures.record(id: 80, from: bob, to: alice)], stale: [], owner: alice)
+            XCTFail("a page loaded for another account must be refused")
+        } catch {}
+        let older = await engine.historyPage([DeliveryFixtures.record(id: 81, from: bob, to: alice)], owner: alice)
+
+        XCTAssertFalse(older.persisted)
+        XCTAssertEqual(engine.state.me, carol)
+        XCTAssertEqual(engine.state.outbox.map(\.clientMsgId), [key], "the signed-in account's queue is never wiped for a stale owner")
+        XCTAssertNil(engine.state.messages["direct:3"])
+    }
+
+    func testAnEnqueueOfAStaleOwnerIsRefused() async throws {
+        let engine = makeEngine()
+        await settle(engine)
+        try await engine.adopt(carol)
+        let (_, carols) = await enqueue(engine, "Кэрол", owner: carol)
+
+        let (outcome, _) = await enqueue(engine, "Алиса из прошлой сессии", owner: alice)
+
+        XCTAssertFalse(outcome.persisted)
+        XCTAssertFalse(outcome.composerCleared)
+        XCTAssertEqual(engine.state.me, carol)
+        XCTAssertEqual(engine.state.outbox.map(\.clientMsgId), [carols])
+    }
+
+    func testAnotherAccountsStoredModelIsNeverPublished() async throws {
+        let queued = OutboxEntry(clientMsgId: "a0000001-0000-4000-8000-000000000007", conversation: "direct:3", seq: 1, text: "Алисино")
+        let stored = InMemoryDeliveryStore(StoredDelivery(me: alice, seq: 1, outbox: [queued], cache: ["direct:3": [DeliveryFixtures.record(id: 5, from: bob, to: alice)]]))
+        await stored.fail(.load, times: 1)
+        let engine = makeEngine(store: stored, start: false)
+        var published: [DeliveryState] = []
+        engine.onStateChange.append { published.append($0) }
+        engine.start()
+        await settle(engine)
+        try? await engine.adopt(carol)
+
+        clock.advance(by: 1_000)
+        await settle(engine)
+
+        XCTAssertTrue(engine.ready)
+        XCTAssertEqual(engine.state.me, carol)
+        XCTAssertFalse(published.contains { $0.me == alice || !$0.outbox.isEmpty || !$0.messages.isEmpty }, "the other account's model is wiped before anything of it is shown")
+        let left = await stored.contents
+        XCTAssertTrue(left.outbox.isEmpty)
     }
 
     func testEveryCommandAnswersItsCallerEvenWhenItFails() async {

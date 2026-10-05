@@ -51,6 +51,8 @@ public final class DeliveryEngine {
     public enum EngineError: Error, Equatable {
         /// The store cannot be read or emptied right now (it is retried).
         case storeUnavailable(String)
+        /// Loaded or typed for an account that is not the signed-in one (a late answer after a switch).
+        case notTheSignedInAccount
     }
 
     /// The model after the last processed event. Changed only by the engine.
@@ -114,6 +116,12 @@ public final class DeliveryEngine {
     /// wipe that succeeds later applies it, and an enqueue is stamped with it.
     @ObservationIgnored private var signedIn: Int64?
 
+    /// An explicit sign-out emptied the model; until an account is adopted nothing is taken: frames of
+    /// the old socket are dropped (a later sync re-reads them), actions and pages refused, and an
+    /// `auth_success` claims nothing. Unlike a cold launch, where `signedIn` is nil too.
+    @ObservationIgnored private var signedOut = false
+    @ObservationIgnored private var readyWaiters: [CheckedContinuation<Void, Never>] = []
+
     public init(
         store: any DeliveryStore,
         link: any DeliveryLink,
@@ -152,6 +160,19 @@ public final class DeliveryEngine {
         draining = false
         let waiters = idleWaiters
         idleWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    /// Returns once the stored model is loaded (at once when it is).
+    public func waitUntilReady() async {
+        guard !ready else { return }
+        await withCheckedContinuation { readyWaiters.append($0) }
+    }
+
+    private func markReady() {
+        ready = true
+        let waiters = readyWaiters
+        readyWaiters.removeAll()
         waiters.forEach { $0.resume() }
     }
 
@@ -333,12 +354,17 @@ public final class DeliveryEngine {
             let outcome = await dispatchNow(event, owner: owner)
             continuation?.resume(returning: outcome)
         case .replaceHistory(let conversation, let records, let stale, let owner, let continuation):
-            // What enters the model is the loading account's (another account's leftovers go first).
-            if blocked == nil, let owner { _ = await claimFor(owner) }
             guard blocked == nil else {
                 continuation.resume(throwing: EngineError.storeUnavailable(blocked ?? ""))
                 return
             }
+            // Only the signed-in account's pages enter its model; a late page of another is dropped.
+            guard !signedOut, owner.map(ownerMatches) ?? true else {
+                log("a history page of another account was dropped")
+                continuation.resume(throwing: EngineError.notTheSignedInAccount)
+                return
+            }
+            if let owner, state.me == nil { _ = await claimFor(owner) }
             if let list = state.messages[conversation] {
                 let pageIds = Set(records.compactMap { $0["id"]?.int64 })
                 let kept = list.filter { !stale.contains($0.id) || pageIds.contains($0.id) }
@@ -351,21 +377,38 @@ public final class DeliveryEngine {
             }
             continuation.resume(returning: await process(["type": "history_page", "body": .array(records.map(JSONValue.object))]))
         case .reset(let continuation):
-            signedIn = nil
-            // Loud: the caller (sign-out) must not go on as if the messages were gone.
-            if let error = await wipe() {
+            // Explicit sign-out or account deletion: the disk first. If it cannot be emptied the
+            // sign-out is cancelled, so nothing is touched — the model stays as it was and keeps
+            // going out for the account that is still signed in; no wipe is retried behind its back.
+            do {
+                try await store.clear()
+            } catch {
+                log("the unsent messages could not be deleted; the sign-out is cancelled: \(error)")
                 continuation.resume(throwing: error)
-            } else {
-                continuation.resume()
+                return
             }
+            signedIn = nil
+            signedOut = true
+            forgetInMemory()
+            blocked = nil
+            repairAttempts = 0
+            markReady()
+            continuation.resume()
         case .adopt(let userId, let continuation):
             signedIn = userId
+            let wasSignedOut = signedOut
+            signedOut = false
             // While the store cannot be read, the owner is checked once it can (restore).
             if blocked != "load", let error = await claimFor(userId) {
                 continuation.resume(throwing: error)
-            } else {
-                continuation.resume()
+                return
             }
+            // A socket that authenticated while the model was signed out was ignored: take it up now.
+            if wasSignedOut, blocked == nil, state.connection != DeliveryState.online,
+               let id = await link.authenticatedUserId(), id == userId {
+                _ = await process(authSuccess(id))
+            }
+            continuation.resume()
         case .closeIfVisible(let conversation):
             guard blocked == nil, state.visible == conversation else { return }
             _ = await process(["type": "conversation_closed"])
@@ -384,14 +427,24 @@ public final class DeliveryEngine {
     private func dispatchNow(_ event: JSONObject, owner: Int64?) async -> Outcome {
         // Refused, not lost: the composer keeps the text; frames come again with the next sync.
         guard blocked == nil else { return .refused }
+        let type = event["type"]?.string ?? ""
+        if signedOut && (owner != nil || Self.takenOnlyForAnAccount.contains(type)) {
+            // After an explicit sign-out nothing is taken before an account is adopted.
+            return .refused
+        }
+        // A stated owner must be the signed-in account (an answer that arrives after a switch is not).
+        if let owner {
+            guard ownerMatches(owner) else {
+                log("an action of another account was refused (\(type))")
+                return .refused
+            }
+            if state.me == nil { _ = await claimFor(owner) }
+        }
         // A socket of another account: that account never sees, nor sends, this one's data.
         if let user = authenticatedAs(event) { _ = await claimFor(user) }
-        if let owner, event["type"]?.string != "enqueue" { _ = await claimFor(owner) }
-        if event["type"]?.string == "enqueue" {
+        if type == "enqueue" {
             // A new entry is always stamped with its account; without one it is not taken.
-            if let owner {
-                _ = await claimFor(owner)
-            } else if state.me == nil {
+            if owner == nil && state.me == nil {
                 guard let signedIn else { return .refused }
                 _ = await claimFor(signedIn)
             }
@@ -399,6 +452,12 @@ public final class DeliveryEngine {
         }
         guard blocked == nil else { return .refused }
         return await process(event)
+    }
+
+    /// `owner` may act on the model now: it is the signed-in account (when one is known) and the
+    /// model's own account (when it has one). Never a reason to wipe the model.
+    private func ownerMatches(_ owner: Int64) -> Bool {
+        (signedIn == nil || signedIn == owner) && (state.me == nil || state.me == owner)
     }
 
     /// The model is `user`'s: another account's queue — or one that names no account but holds
@@ -418,9 +477,14 @@ public final class DeliveryEngine {
         return nil
     }
 
-    /// Forgets everything of the current account — in memory at once (so nothing of it can be sent),
-    /// then on disk. A failed delete keeps the engine blocked and retries; the caller hears of it.
+    /// Forgets everything of another account — in memory at once (so nothing of it can be sent under
+    /// this one), then on disk. A failed delete keeps the engine blocked and retries; the caller hears of it.
     private func wipe() async -> (any Error)? {
+        forgetInMemory()
+        return await clearStore()
+    }
+
+    private func forgetInMemory() {
         for task in work.values { task.cancel() }
         work.removeAll()
         epoch += 1
@@ -428,7 +492,6 @@ public final class DeliveryEngine {
         dirtyCache.removeAll()
         setState(DeliveryState())
         for handler in onWipe { handler() }
-        return await clearStore()
     }
 
     /// Nil when the store is empty now; otherwise the failure (the engine stays blocked and retries).
@@ -438,7 +501,7 @@ public final class DeliveryEngine {
             blocked = nil
             repairAttempts = 0
             // The store is empty and readable now: whatever blocked the engine (a failed load) is over.
-            ready = true
+            markReady()
             return nil
         } catch {
             log("delivery store could not be wiped: \(error)")
@@ -467,7 +530,7 @@ public final class DeliveryEngine {
     }
 
     private func restore() async {
-        let stored: StoredDelivery
+        var stored: StoredDelivery
         do {
             stored = try await store.load()
         } catch {
@@ -479,6 +542,24 @@ public final class DeliveryEngine {
         }
         blocked = nil
         repairAttempts = 0
+        // The owner rule before anything is published: another account's model (or one that names no
+        // account but holds something) is deleted unseen when an account is known.
+        let authenticated = await link.authenticatedUserId()
+        if let target = signedIn ?? authenticated {
+            let holds = !stored.outbox.isEmpty || !stored.ops.isEmpty || !stored.cancelled.isEmpty || !stored.cache.isEmpty
+            if (stored.me != nil && stored.me != target) || (stored.me == nil && holds) {
+                do {
+                    try await store.clear()
+                } catch {
+                    log("another account's stored model could not be deleted: \(error)")
+                    blocked = "wipe"
+                    scheduleRepair(.retryWipe)
+                    return
+                }
+                for handler in onWipe { handler() }
+                stored = StoredDelivery()
+            }
+        }
         var restored = DeliveryState(me: stored.me)
         restored.sync.cursor = stored.cursor
         restored.seq = stored.seq
@@ -495,10 +576,9 @@ public final class DeliveryEngine {
         // The owner rule of a live auth_success applies to what was just read: a queue of another
         // account (signed in meanwhile, or with a socket already up) is wiped, never sent or synced.
         if let signedIn { _ = await claimFor(signedIn) }
-        let authenticated = await link.authenticatedUserId()
         if let authenticated { _ = await claimFor(authenticated) }
         guard blocked == nil else { return }
-        ready = true
+        markReady()
         // Started while a socket was already up (it never sends auth_success again).
         if let authenticated { _ = await process(authSuccess(authenticated)) }
     }
@@ -697,6 +777,11 @@ public final class DeliveryEngine {
 
     static let persistRetryMs: Int64 = 1_000
     private static let userEvents: Set<String> = ["enqueue", "edit", "delete", "cancel", "retry"]
+    /// Events that need an account: refused after an explicit sign-out until one is adopted.
+    private static let takenOnlyForAnAccount: Set<String> = [
+        "ws", "enqueue", "edit", "delete", "cancel", "retry", "history_page", "sync_page", "sync_reset_410",
+        "http_send_result", "unread_snapshot", "background_flush",
+    ]
     private static let serverEvents: Set<String> = ["ws", "sync_page", "sync_reset_410", "sync_failed", "history_page", "http_send_result", "unread_snapshot"]
     private static let messageEvents: Set<String> = ["ws", "sync_page", "sync_reset_410", "history_page", "http_send_result"]
 
