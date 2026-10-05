@@ -23,6 +23,9 @@ data class DeleteAccountState(
     val deleted: Boolean = false
 ) {
     val canDelete: Boolean get() = password.isNotEmpty() && !deleting && !deleted
+
+    /** [canDelete], and the server's wait (429) is over at [now] (or there is none). */
+    fun canDeleteAt(now: Long): Boolean = canDelete && failure?.retryDeadline?.let { now < it } != true
 }
 
 /** «Удалить аккаунт»: the password again, an irreversible warning, then `DELETE /api/users/me`. */
@@ -43,11 +46,13 @@ class DeleteAccountViewModel(
     private val _state = MutableStateFlow(DeleteAccountState())
     val state: StateFlow<DeleteAccountState> = _state.asStateFlow()
 
-    fun onPasswordChange(value: String) = _state.update { it.copy(password = value, failure = null) }
+    /** A new password clears the old error, but not a wait the server asked for. */
+    fun onPasswordChange(value: String) =
+        _state.update { it.copy(password = value, failure = it.failure as? AccountFailure.Throttled) }
 
     fun delete() {
         val current = _state.value
-        if (!current.canDelete) return
+        if (!current.canDeleteAt(clock())) return
         _state.update { it.copy(deleting = true, failure = null) }
         viewModelScope.launch {
             try {
@@ -63,6 +68,9 @@ class DeleteAccountViewModel(
                     }
                 }
                 _state.update { it.copy(deleting = false, deleted = true, password = "") }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(deleting = false) }
+                throw error
             } catch (error: Exception) {
                 val failure = AccountFailure.from(error, AccountFailure.Context.DELETE_ACCOUNT, clock())
                 _state.update { it.copy(deleting = false, failure = failure) }

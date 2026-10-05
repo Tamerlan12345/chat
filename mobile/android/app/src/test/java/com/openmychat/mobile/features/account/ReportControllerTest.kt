@@ -48,7 +48,8 @@ class ReportControllerTest {
     @Test
     fun aFailureStaysOnTheSheetAndCanBeRetried() = runTest(UnconfinedTestDispatcher()) {
         account.onReport = { throw ApiException(429, null, "Слишком много жалоб", retryAfterSeconds = 600) }
-        val reports = ReportController(account, backgroundScope) { 5_000L }
+        var now = 5_000L
+        val reports = ReportController(account, backgroundScope) { now }
         reports.open(message)
 
         reports.send()
@@ -59,6 +60,11 @@ class ReportControllerTest {
         assertFalse(sheet.sending)
 
         account.onReport = {}
+        reports.send()
+        assertFalse("«Отправить жалобу» waits out the server's 429", reports.sheet.value!!.sent)
+        assertEquals(1, account.reports.size)
+
+        now = 605_000L
         reports.send()
         assertTrue(reports.sheet.value!!.sent)
         assertNull(reports.sheet.value!!.failure)
@@ -78,5 +84,29 @@ class ReportControllerTest {
         assertEquals(1, account.reports.size)
         reports.dismiss()
         assertNull(reports.sheet.value)
+    }
+
+    @Test
+    fun theSheetKnowsWhenSendingIsAllowedAgain() = runTest(UnconfinedTestDispatcher()) {
+        account.onReport = { throw ApiException(429, null, "Слишком много жалоб", retryAfterSeconds = 60) }
+        val reports = ReportController(account, backgroundScope) { 0L }
+        reports.open(message)
+        reports.send()
+
+        val sheet = reports.sheet.value!!
+        assertFalse(sheet.canSendAt(59_000L))
+        assertTrue(sheet.canSendAt(60_000L))
+    }
+
+    @Test
+    fun aCancelledReportIsNotAFailure() = runTest(UnconfinedTestDispatcher()) {
+        account.onReport = { throw kotlinx.coroutines.CancellationException("closed") }
+        val reports = ReportController(account, backgroundScope) { 0L }
+        reports.open(message)
+
+        reports.send()
+
+        assertNull(reports.sheet.value!!.failure)
+        assertFalse(reports.sheet.value!!.sending)
     }
 }

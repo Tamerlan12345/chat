@@ -6,6 +6,9 @@ import android.content.SharedPreferences
 class InMemorySharedPreferences : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
 
+    /** True: every commit is refused, like a keystore that is locked or gone. */
+    var failCommits = false
+
     override fun getAll(): MutableMap<String, *> = values
     override fun getString(key: String, defValue: String?): String? = values[key] as? String ?: defValue
     override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = defValues
@@ -30,6 +33,7 @@ class InMemorySharedPreferences : SharedPreferences {
         override fun remove(key: String) = apply { pending[key] = null }
         override fun clear() = apply { clearAll = true }
         override fun commit(): Boolean {
+            if (failCommits) return false
             if (clearAll) values.clear()
             pending.forEach { (key, value) -> if (value == null) values.remove(key) else values[key] = value }
             return true

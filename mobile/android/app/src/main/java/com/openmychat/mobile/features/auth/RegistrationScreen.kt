@@ -168,7 +168,7 @@ fun RegistrationContent(state: RegistrationState, now: Long, actions: Registrati
                 .consumeWindowInsets(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
                 .padding(top = 8.dp, bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -318,7 +318,7 @@ private fun CodeStep(state: RegistrationState, now: Long, actions: RegistrationA
             shape = RoundedCornerShape(8.dp),
             colors = centyFieldColors(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { if (state.canVerify) verify() }),
+            keyboardActions = KeyboardActions(onDone = { if (state.canVerifyAt(now)) verify() }),
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentType = ContentType.SmsOtpCode }
@@ -337,7 +337,7 @@ private fun CodeStep(state: RegistrationState, now: Long, actions: RegistrationA
         CentyPrimaryButton(
             text = stringResource(R.string.register_verify),
             onClick = verify,
-            enabled = state.canVerify && !expired,
+            enabled = state.canVerifyAt(now) && !expired,
             loading = state.busy,
             loadingDescription = stringResource(R.string.register_verifying),
             modifier = Modifier.fillMaxWidth().testTag("register-verify")
@@ -424,6 +424,6 @@ private fun Card(content: @Composable ColumnScope.() -> Unit) {
         color = tokens.card,
         border = BorderStroke(1.dp, tokens.border)
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }

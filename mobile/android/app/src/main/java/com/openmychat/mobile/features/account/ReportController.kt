@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.account
 import com.openmychat.mobile.data.model.ReportBody
 import com.openmychat.mobile.data.model.ReportTargetType
 import com.openmychat.mobile.data.repository.AccountRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +31,10 @@ data class ReportSheetState(
     val sending: Boolean = false,
     val failure: AccountFailure? = null,
     val sent: Boolean = false
-)
+) {
+    /** «Отправить жалобу» is possible: not sending, not sent, and no server wait (429) running at [now]. */
+    fun canSendAt(now: Long): Boolean = !sending && !sent && failure?.retryDeadline?.let { now < it } != true
+}
 
 /**
  * «Пожаловаться» on a person or a message (`POST /api/reports`). One instance per screen that offers
@@ -54,7 +58,7 @@ class ReportController(
 
     fun send() {
         val current = _sheet.value ?: return
-        if (current.sending || current.sent) return
+        if (!current.canSendAt(clock())) return
         _sheet.value = current.copy(sending = true, failure = null)
         val details = current.details.trim().takeIf { it.isNotEmpty() }
         val body = ReportBody(current.target.type, current.target.id, current.reason.code, details)
@@ -62,6 +66,9 @@ class ReportController(
             val failure = try {
                 account.report(body)
                 null
+            } catch (error: CancellationException) {
+                _sheet.update { it?.copy(sending = false) }
+                throw error
             } catch (error: Exception) {
                 AccountFailure.from(error, AccountFailure.Context.GENERIC, clock())
             }

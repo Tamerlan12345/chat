@@ -109,4 +109,19 @@ class AccountSafetyViewModelsTest {
         assertEquals(AccountFailure.Unavailable, vm.state.value.actionFailure)
         assertTrue(vm.state.value.busyIds.isEmpty())
     }
+
+    @Test
+    fun aCancelledListLoadOrUnblockIsNotAFailure() = runTest {
+        account.blocked.value = listOf(BlockedUser(7, "Боб"))
+        account.onRefreshBlocked = { throw kotlinx.coroutines.CancellationException("left") }
+        account.onUnblock = { throw kotlinx.coroutines.CancellationException("left") }
+        val vm = BlockedUsersViewModel(account) { 0L }
+
+        vm.unblock(7)
+
+        assertNull(vm.state.value.loadFailure)
+        assertNull(vm.state.value.actionFailure)
+        assertTrue("the row is usable again", vm.state.value.busyIds.isEmpty())
+        assertFalse(vm.state.value.loading)
+    }
 }

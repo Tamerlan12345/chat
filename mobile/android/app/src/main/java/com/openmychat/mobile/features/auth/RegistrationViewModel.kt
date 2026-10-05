@@ -10,6 +10,7 @@ import com.openmychat.mobile.features.account.AccountFailure
 import com.openmychat.mobile.features.auth.RegistrationValidation.Field
 import com.openmychat.mobile.features.auth.RegistrationValidation.Problem
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +44,9 @@ data class RegistrationState(
     fun visibleProblem(field: Field): Problem? = if (showsValidation) problems[field] else null
 
     val canVerify: Boolean get() = step == Step.CODE && !busy && code.length == RegistrationValidation.CODE_LENGTH
+
+    /** [canVerify] and no server wait (429) running at [now]. */
+    fun canVerifyAt(now: Long): Boolean = canVerify && !isWaiting(now)
 
     /** A rate-limit wait is on at [now]. */
     fun isWaiting(now: Long): Boolean = failure?.retryDeadline?.let { now < it } == true
@@ -101,7 +105,7 @@ class RegistrationViewModel(
     fun verify() {
         val current = _state.value
         val challenge = current.challenge ?: return
-        if (!current.canVerify) return
+        if (!current.canVerifyAt(clock())) return
         if (current.isCodeExpired(clock())) {
             _state.update { it.copy(failure = AccountFailure.CodeExpired, code = "") }
             return
@@ -113,6 +117,9 @@ class RegistrationViewModel(
                     is RegistrationOutcome.SignedIn -> _state.update { it.cleared().copy(signedIn = true) }
                     RegistrationOutcome.Pending -> _state.update { it.cleared().copy(step = RegistrationState.Step.PENDING) }
                 }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(busy = false) }
+                throw error
             } catch (error: Exception) {
                 val failure = AccountFailure.from(error, AccountFailure.Context.REGISTRATION_VERIFY, clock())
                 // A wrong or dead code can never work again: the field is emptied for a new one.
@@ -160,6 +167,9 @@ class RegistrationViewModel(
                         resendAvailableAt = sentAt + RESEND_INTERVAL_MS
                     )
                 }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(busy = false) }
+                throw error
             } catch (error: Exception) {
                 val failure = AccountFailure.from(error, AccountFailure.Context.REGISTRATION_REQUEST, clock())
                 _state.update { state ->

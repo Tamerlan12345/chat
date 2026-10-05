@@ -23,7 +23,11 @@ import org.junit.Test
 
 class AccountRepositoryTest {
 
-    private val session = TestSessions.authenticated().apply { deviceSecret = "device-secret" }
+    private val prefs = com.openmychat.mobile.testing.InMemorySharedPreferences()
+    private val session = com.openmychat.mobile.core.session.SessionManager(prefs = prefs, serverEndpoint = TestSessions.CHAT_EXAMPLE).apply {
+        saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token")
+        deviceSecret = "device-secret"
+    }
     private val preferences = FakeLoginPreferences().apply { lastUsername = "alice" }
     private val answers = ArrayDeque<Pair<Int, String>>()
     private val paths = mutableListOf<String>()
@@ -165,5 +169,48 @@ class AccountRepositoryTest {
         runCurrent()
 
         assertEquals(emptyList<BlockedUser>(), repository.blocked.value)
+    }
+
+    @Test
+    fun aLocalWipeThatFailsAfterTheServersDeletionSaysTheStorageIsUnavailable() = runTest(UnconfinedTestDispatcher()) {
+        val repository = repository()
+        var followed = false
+        try {
+            repository.deleteAccount("Secret-12") {
+                followed = true
+                prefs.failCommits = true // the keystore locks before the local clear
+            }
+            fail("a local wipe that failed must be reported")
+        } catch (_: com.openmychat.mobile.core.session.SecureStorageUnavailableException) {
+        }
+
+        assertEquals(listOf("DELETE /api/users/me"), paths)
+        assertEquals("what follows the deletion still ran", true, followed)
+        assertNull("the session is still cleared from memory", session.token)
+    }
+
+    @Test
+    fun deletingTheAccountWipesTheCachedPeopleDirectory() = runTest(UnconfinedTestDispatcher()) {
+        val cache = object : PeopleCache {
+            var stored: CachedPeople? = CachedPeople(ownerId = 1, savedAt = 1, people = listOf(com.openmychat.mobile.features.people.Person(id = 2, fullName = "Боб")))
+            override suspend fun read(): CachedPeople? = stored
+            override suspend fun write(value: CachedPeople) { stored = value }
+            override suspend fun clear() { stored = null }
+        }
+        val source = object : PeopleSource {
+            override suspend fun users(): List<User> = emptyList()
+            override suspend fun orgTree() = com.openmychat.mobile.data.model.OrgTree()
+            override suspend fun user(id: Long): User = error("unused")
+        }
+        DefaultPeopleRepository(source, cache, com.openmychat.mobile.testing.FakeRealtimeRepository(), DefaultSessionRepository(session), backgroundScope) { 0L }
+        val repository = repository()
+
+        repository.deleteAccount("Secret-12")
+        // The HTTP call resumes off the test thread: wait (real time, bounded) for the directory's collector.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.withTimeoutOrNull(2_000) { while (cache.stored != null) kotlinx.coroutines.delay(10) }
+        }
+
+        assertNull("the deleted account's colleagues are gone from this device", cache.stored)
     }
 }

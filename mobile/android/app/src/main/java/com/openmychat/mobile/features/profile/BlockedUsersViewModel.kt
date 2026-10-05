@@ -6,6 +6,7 @@ import com.openmychat.mobile.data.model.BlockedUser
 import com.openmychat.mobile.data.repository.AccountRepository
 import com.openmychat.mobile.features.account.AccountFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,6 +49,9 @@ class BlockedUsersViewModel(
             try {
                 account.refreshBlocked()
                 _state.update { it.copy(loading = false, loaded = true, loadFailure = null) }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(loading = false) }
+                throw error
             } catch (error: Exception) {
                 val failure = AccountFailure.from(error, AccountFailure.Context.GENERIC, clock())
                 _state.update { it.copy(loading = false, loadFailure = failure) }
@@ -62,6 +66,9 @@ class BlockedUsersViewModel(
             val failure = try {
                 account.unblock(userId)
                 null
+            } catch (error: CancellationException) {
+                _state.update { it.copy(busyIds = it.busyIds - userId) }
+                throw error
             } catch (error: Exception) {
                 AccountFailure.from(error, AccountFailure.Context.GENERIC, clock())
             }
