@@ -355,11 +355,13 @@ fun ChatContent(
                         }
                     }
                 }
-                AnimatedVisibility(visible = composerLock != ComposerLock.NONE) {
-                    ComposerLockBanner(composerLock, onUnblock = actions::onUnblockPeer)
-                }
                 ChatComposer(
                     enabled = composerLock == ComposerLock.NONE || editingMessage != null,
+                    lockBanner = {
+                        AnimatedVisibility(visible = composerLock != ComposerLock.NONE) {
+                            ComposerLockBanner(composerLock, onUnblock = actions::onUnblockPeer)
+                        }
+                    },
                     editingMessage = editingMessage,
                     replyTo = replyTo,
                     replyToIsOwn = replyTo?.senderId == currentUserId,

@@ -121,7 +121,9 @@ internal fun ChatComposer(
     landing: LandingState? = null,
     onAttach: (() -> Unit)? = null,
     /** False while the chat is closed for sending (a block, or the server's `DM_NOT_ALLOWED`). */
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    /** Why sending is closed; inside the composer, so snackbars float above it too. */
+    lockBanner: (@Composable () -> Unit)? = null
 ) {
     val tokens = CentyTheme.tokens
     val haptics = rememberHaptics()
@@ -179,6 +181,7 @@ internal fun ChatComposer(
             .bottomBarAwareInsetsPadding()
     ) {
         Column(Modifier.onSizeChanged { anchor.bottom = with(density) { it.height.toDp() } }) {
+            lockBanner?.invoke()
             val banner: ComposerBanner? = when {
                 editingMessage != null -> ComposerBanner.Editing(editingMessage)
                 replyTo != null -> ComposerBanner.Replying(replyTo)
