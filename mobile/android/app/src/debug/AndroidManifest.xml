@@ -12,5 +12,15 @@
             android:label="Компоненты"
             android:theme="@style/Theme.CentyChat"
             android:windowSoftInputMode="adjustResize" />
+        <!--
+          DEBUG BUILDS ONLY: fixed registration steps for screenshots (the dev stand has no SMTP, so the
+          code and pending steps cannot be reached against it). Nothing is sent to any server.
+        -->
+        <activity
+            android:name=".debug.RegistrationPreviewActivity"
+            android:exported="true"
+            android:label="Регистрация (превью)"
+            android:theme="@style/Theme.CentyChat"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>
