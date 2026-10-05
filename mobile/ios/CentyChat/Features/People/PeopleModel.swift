@@ -82,6 +82,8 @@ public struct PeopleFilters: Codable, Equatable, Sendable {
         return (try? JSONEncoder().encode(envelope)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
 
+    static func retained(_ stored: String, signedInUser: Int64?) -> String { stored }
+
     static func restored(from text: String, owner: Int64?) -> PeopleFilters {
         guard let owner, let data = text.data(using: .utf8),
               let envelope = try? JSONDecoder().decode(OwnedPeopleFilters.self, from: data),

@@ -144,17 +144,15 @@ final class PushTokenRegistrarTests: XCTestCase {
         XCTAssertEqual(service.registrations.map(\.token), ["abcd0102", "01"], "The same token is not sent twice")
     }
 
-    func testSignOutRemovesTheTokenAndStopsRegistering() async {
+    func testSignOutStopsRegistering() async {
         let service = FakePushTokenService()
         let registrar = makeRegistrar(service)
         await registrar.deviceTokenChanged(apnsToken)
         await registrar.sessionDidAuthenticate()
 
-        await registrar.sessionWillSignOut()
         registrar.sessionDidEnd()
         await registrar.deviceTokenChanged(Data([0x02]))
 
-        XCTAssertEqual(service.removals, ["abcd0102"])
         XCTAssertEqual(service.registrations.count, 1, "No registration after sign-out")
     }
 
@@ -175,7 +173,9 @@ final class PushTokenRegistrarTests: XCTestCase {
 
     // MARK: - Session wiring
 
-    func testSignInRegistersAndSignOutRemovesTheToken() async throws {
+    /// `/auth/logout` with `device_id` removes the token on the server (`push.md` §2:
+    /// «отдельно звать не нужно»): no separate DELETE that could hang an offline logout.
+    func testSignInRegistersAndSignOutLeavesRemovalToTheServer() async throws {
         let service = FakePushTokenService()
         let app = TestApp(pushTokens: service)
         service.auth = app.auth
@@ -187,9 +187,9 @@ final class PushTokenRegistrarTests: XCTestCase {
         XCTAssertEqual(service.registrations.map(\.token), ["abcd0102"])
 
         await app.session.logout()
-        XCTAssertEqual(service.removals, ["abcd0102"])
-        XCTAssertEqual(service.removalsBeforeLogout, 1, "Removed while the session is still valid")
+        XCTAssertEqual(service.removals, [], "No separate DELETE /devices/push-token")
         XCTAssertEqual(app.auth.state.value.logoutCount, 1)
+        XCTAssertEqual(app.session.phase, .signedOut)
     }
 
     func testALaunchWithALiveSessionRegistersAgain() async {

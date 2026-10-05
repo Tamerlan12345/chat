@@ -7,6 +7,8 @@ final class AvatarStubURLProtocol: URLProtocol {
         var status: Int
         var headers: [String: String] = [:]
         var body = Data()
+        /// Answer with a redirect to this URL (the session asks its delegate whether to follow).
+        var redirectTo: URL?
     }
 
     private static let state = Locked<(requests: [URLRequest], replies: [String: [Reply]])>(([], [:]))
@@ -48,6 +50,9 @@ final class AvatarStubURLProtocol: URLProtocol {
               let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers) else {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
             return
+        }
+        if let target = reply.redirectTo {
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: target), redirectResponse: response)
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !reply.body.isEmpty {

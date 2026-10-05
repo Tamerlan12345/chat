@@ -61,10 +61,13 @@ final class AvatarTests: XCTestCase {
     }
 
     func testOnlyHTTPSImagesAreLoaded() {
-        XCTAssertEqual(
-            AvatarImageLoader.resolve("https://cdn.example.org/photo.jpg", serverURL: server, diameter: 40)?.absoluteString,
-            "https://cdn.example.org/photo.jpg",
-            "Another host keeps its URL (and never gets the token)"
+        XCTAssertNil(
+            AvatarImageLoader.resolve("https://cdn.example.org/photo.jpg", serverURL: server, diameter: 40),
+            "Another host is never contacted: initials"
+        )
+        XCTAssertNil(
+            AvatarImageLoader.resolve("/api/files/download/1", serverURL: server, diameter: 40),
+            "Only the server's avatar path is loaded with the token"
         )
         XCTAssertNil(AvatarImageLoader.resolve("http://chat.example.com/api/users/1/avatar", serverURL: server, diameter: 40))
         XCTAssertNil(AvatarImageLoader.resolve("//evil.example.org/x.jpg", serverURL: server, diameter: 40))

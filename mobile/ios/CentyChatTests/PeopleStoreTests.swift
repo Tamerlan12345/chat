@@ -155,6 +155,15 @@ final class PeopleModelTests: XCTestCase {
                        "Filters saved without an owner (older builds) are not handed to anyone")
         XCTAssertEqual(PeopleFilters.restored(from: "", owner: 7), PeopleFilters())
     }
+
+    /// Ruling D: on sign-out the scene's stored filters are cleared, not only ignored.
+    func testSignOutClearsTheStoredFilters() {
+        let stored = PeopleFilters(query: "боб").stored(for: 7)
+
+        XCTAssertEqual(PeopleFilters.retained(stored, signedInUser: 7), stored, "Kept while the same account is signed in")
+        XCTAssertEqual(PeopleFilters.retained(stored, signedInUser: nil), "", "Cleared when the session ends")
+        XCTAssertEqual(PeopleFilters.retained(stored, signedInUser: 8), "", "Never kept for another account")
+    }
 }
 
 /// The container wires the directory and the search recents into the session lifecycle.

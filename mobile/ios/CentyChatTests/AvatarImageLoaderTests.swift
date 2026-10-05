@@ -62,16 +62,38 @@ final class AvatarImageLoaderTests: XCTestCase {
         XCTAssertNil(request.value(forHTTPHeaderField: "If-None-Match"), "Nothing cached yet")
     }
 
-    func testAnotherHostNeverGetsTheToken() async throws {
+    /// No request to a third-party host at all: it would learn the device's address (initials instead).
+    func testAnotherHostIsNeverRequested() async {
         let foreign = URL(string: "https://cdn.example.org/photo.jpg")!
         AvatarStubURLProtocol.enqueue(foreign, jpeg(photo))
-        let loader = makeLoader()
 
-        let data = await loader.data(for: foreign)
+        let data = await makeLoader().data(for: foreign)
 
-        XCTAssertEqual(data, photo)
-        let request = try XCTUnwrap(AvatarStubURLProtocol.requests.first)
-        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(data)
+        XCTAssertTrue(AvatarStubURLProtocol.requests.isEmpty)
+    }
+
+    /// The token goes only to the avatar path of the configured server, not to any URL there.
+    func testAnotherPathOnTheServerIsNeverRequested() async {
+        let download = URL(string: "https://chat.example.com/api/files/download/1")!
+        AvatarStubURLProtocol.enqueue(download, jpeg(photo))
+
+        let data = await makeLoader().data(for: download)
+
+        XCTAssertNil(data)
+        XCTAssertTrue(AvatarStubURLProtocol.requests.isEmpty)
+    }
+
+    /// A redirect would carry the Bearer token to another host: it is not followed.
+    func testTheTokenNeverFollowsARedirect() async throws {
+        let elsewhere = URL(string: "https://cdn.example.org/stolen.jpg")!
+        AvatarStubURLProtocol.enqueue(avatarURL, .init(status: 302, headers: ["Location": elsewhere.absoluteString], redirectTo: elsewhere))
+        AvatarStubURLProtocol.enqueue(elsewhere, jpeg(photo))
+
+        let data = await makeLoader().data(for: avatarURL)
+
+        XCTAssertNil(data, "No photo from a redirect")
+        XCTAssertEqual(AvatarStubURLProtocol.requests.map(\.url), [avatarURL], "No second request to the redirect target")
     }
 
     func testAPlainHTTPAddressIsNeverRequested() async {
@@ -214,10 +236,38 @@ final class AvatarImageLoaderTests: XCTestCase {
 
         await app.session.logout()
 
-        let wiped = await eventually { await loader.cachedData(for: avatarURL) == nil }
-        XCTAssertTrue(wiped, "Sign-out must wipe the cached photos")
+        // Wiped by the time logout returns: a new sign-in can never interleave with the wipe.
+        let memory = await loader.cachedData(for: avatarURL)
+        XCTAssertNil(memory, "Sign-out must wipe the cached photos")
         let disk = await makeLoader().cachedData(for: avatarURL)
         XCTAssertNil(disk)
+    }
+
+    /// A session that ends at launch (stored token rejected, no device secret) is a sign-out too:
+    /// the previous user's photos, directory and search recents must not stay behind.
+    @MainActor
+    func testASessionRejectedAtLaunchWipesTheSessionCaches() async throws {
+        AvatarStubURLProtocol.enqueue(avatarURL, jpeg(photo))
+        let loader = makeLoader()
+        _ = await loader.data(for: avatarURL)
+        let app = TestApp(avatarLoader: loader)
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.currentUserResult = .failure(APIError.unauthorized)
+            $0.knockStatus = .loginRequired
+        }
+        app.peopleCache.value = CachedPeople(ownerId: 1, savedAt: Date(), people: [], tree: nil, selfPerson: nil)
+        app.container.searchRecents.add(RecentItem(kind: .person, targetId: 8, title: "Боб Тестов"))
+
+        await app.session.bootstrap()
+
+        XCTAssertEqual(app.session.phase, .signedOut)
+        let memory = await loader.cachedData(for: avatarURL)
+        XCTAssertNil(memory, "The previous user's photos must be wiped")
+        let disk = await makeLoader().cachedData(for: avatarURL)
+        XCTAssertNil(disk)
+        XCTAssertNil(app.peopleCache.value, "The previous user's directory must be wiped")
+        XCTAssertEqual(app.container.searchRecents.items, [])
     }
 
     @MainActor
@@ -231,7 +281,7 @@ final class AvatarImageLoaderTests: XCTestCase {
 
         await app.session.finishAccountDeletion()
 
-        let wiped = await eventually { await loader.cachedData(for: avatarURL) == nil }
-        XCTAssertTrue(wiped, "Account deletion must wipe the cached photos")
+        let memory = await loader.cachedData(for: avatarURL)
+        XCTAssertNil(memory, "Account deletion must wipe the cached photos")
     }
 }
