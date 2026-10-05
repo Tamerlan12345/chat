@@ -9,7 +9,7 @@
     <string name="action_delete">Удалить</string>
     <string name="action_copy">Копировать</string>
     <string name="action_reply">Ответить</string>
-    <string name="action_edit">Изменить</string>
+    <string name="action_edit">Редактировать</string>
     <string name="action_back">Назад</string>
     <string name="action_refresh">Обновить</string>
     <string name="loading">Загрузка…</string>
@@ -147,6 +147,17 @@
     <string name="attachment_failed">Не загрузилось</string>
     <string name="attachment_uploading">Загрузка: %1$d%%</string>
     <string name="attachment_open">Открыть «%1$s»</string>
+    <string name="attachment_open_image">Открыть картинку «%1$s»</string>
+    <string name="attachment_downloading">Скачивание: %1$d%%</string>
+    <string name="attachment_download_waiting">Скачивание…</string>
+    <string name="attachment_cancel">Отменить загрузку</string>
+    <string name="attachment_pick_title">Прикрепить</string>
+    <string name="attachment_pick_photo">Фото</string>
+    <string name="attachment_pick_photo_hint">Из галереи, без доступа ко всем файлам</string>
+    <string name="attachment_pick_file">Файл</string>
+    <string name="attachment_pick_file_hint">Документ, таблица, архив</string>
+    <string name="attachment_no_app">Нет приложения, чтобы открыть этот файл</string>
+    <string name="viewer_image">Картинка «%1$s»</string>
     <string name="call_level_meter">Громкость собеседника</string>
     <string name="chat_file">Файл</string>
     <string name="file_size_bytes">%1$d Б</string>

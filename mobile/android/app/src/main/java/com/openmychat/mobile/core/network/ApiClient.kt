@@ -520,6 +520,10 @@ class ApiClient(
     private fun retryAfterSeconds(response: Response): Long? =
         response.header("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
 
+    /** A refusal of a request made outside this class (attachments): the same session rules and Russian text. */
+    internal fun raise(code: Int, bodyString: String, retryAfterSeconds: Long?): Nothing =
+        handleErrorResponse(code, bodyString, retryAfterSeconds)
+
     private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long? = null): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"

@@ -6,7 +6,7 @@ import com.openmychat.mobile.ui.components.MessageAction
 
 /**
  * What the long-press menu offers for a message, in the brief's order (Ответить, Копировать,
- * Изменить, Удалить, Пожаловаться). Edit and delete follow the server's rules ([canEdit], [canDelete]); a failed
+ * Редактировать, Удалить, Пожаловаться). Edit and delete follow the server's rules ([canEdit], [canDelete]); a failed
  * send can only be copied or discarded; a deleted message offers nothing.
  */
 object MessageMenuPolicy {

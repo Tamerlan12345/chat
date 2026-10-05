@@ -73,3 +73,19 @@ data class FilePolicy(
         return allowed.isEmpty() || allowed.any { it.trim().removePrefix(".").lowercase() == cleanExt }
     }
 }
+
+/**
+ * A file picked on this device for sending (only local). [fileId] is set once the upload is done;
+ * [progress] runs 0..1 while it uploads; [error] is the server's reason when it refused the file.
+ */
+data class LocalUpload(
+    val uri: String,
+    val name: String,
+    val size: Long?,
+    val mimeType: String?,
+    val width: Int? = null,
+    val height: Int? = null,
+    val fileId: Long? = null,
+    val progress: Float? = null,
+    val error: String? = null
+)

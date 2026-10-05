@@ -40,6 +40,17 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import com.openmychat.mobile.data.model.SendState
+import com.openmychat.mobile.data.model.LocalUpload
+import com.openmychat.mobile.data.repository.AttachmentRepository
+import com.openmychat.mobile.data.repository.UnavailableAttachments
+import com.openmychat.mobile.core.network.ApiException
+import com.openmychat.mobile.features.attachments.AttachmentOpener
+import com.openmychat.mobile.features.attachments.Attachments
+import com.openmychat.mobile.features.attachments.UploadRules
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -56,6 +67,7 @@ private const val DM_NOT_ALLOWED = "DM_NOT_ALLOWED"
 /** Сколько текста сообщения показать в жалобе. */
 private const val REPORT_EXCERPT = 160
 private const val ATTACHMENT_SUBJECT = "Вложение"
+private const val CANNOT_READ_FILE = "Не удалось прочитать файл"
 
 /** Локальные записи ещё не подтверждённых сообщений: отрицательные id не пересекаются с серверными. */
 private val nextLocalId = AtomicLong(0)
@@ -95,7 +107,9 @@ class ChatViewModel @AssistedInject constructor(
     /** Процесс вышел на передний план: историю догружаем (как после переподключения). */
     private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal(),
     /** Reports and blocks (contracts/registration.md §4). */
-    account: AccountRepository = UnavailableAccountRepository
+    account: AccountRepository = UnavailableAccountRepository,
+    /** Upload, download and policy of files. */
+    private val attachments: AttachmentRepository = UnavailableAttachments
 ) : ViewModel() {
 
     @AssistedFactory
@@ -165,6 +179,26 @@ class ChatViewModel @AssistedInject constructor(
     /** Ждём эхо отправленного кадра; по истечении времени сообщение «не отправлено». */
     private val ackJobs = HashMap<String, Job>()
 
+    /** Файлы в пути на сервер, по ключу отправки. */
+    private val uploads = UploadJobs()
+
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /** Короткие сообщения для снекбара: отказ в файле, сбой загрузки или скачивания. */
+    val notices: SharedFlow<String> = _notices.asSharedFlow()
+
+    /** Скачать и открыть вложение; картинки — во встроенном просмотре. */
+    val opener = AttachmentOpener(attachments, viewModelScope, ::notice)
+
+    /** Роль разрешает загрузку файлов (сервер: can_upload_files или администратор). */
+    val canAttach: Boolean
+        get() = sessionRepository.isAdmin || sessionRepository.currentUser.value?.permissions?.canUploadFiles != false
+
+    /** Тап по плитке вложения. */
+    fun openAttachment(message: Message) {
+        Attachments.of(message)?.let(opener::open)
+    }
+
     /** «Заблокировать» / «Разблокировать» the peer; null in channels and in a chat with oneself. */
     val blocks: BlockController? =
         if (conversationType == ConversationType.DIRECT && targetId != currentUserId) BlockController(account, viewModelScope, targetId) else null
@@ -202,7 +236,10 @@ class ChatViewModel @AssistedInject constructor(
         // were still unconfirmed when it was left come back queued: no frame of a closed chat is in flight.
         historyCache.get(currentUserId, conversation)?.let { cached ->
             _uiState.value = ChatUiState.Content(
-                cached.map { if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED) else it }
+                cached.map {
+                    // No upload of a closed chat is running either: its ring is gone until it starts again.
+                    if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED, upload = it.upload?.copy(progress = null)) else it
+                }
             )
         }
         viewModelScope.launch {
@@ -423,13 +460,105 @@ class ChatViewModel @AssistedInject constructor(
                 clientMsgId = key,
                 sendState = SendState.QUEUED
             )
-            _uiState.update { state ->
-                when (state) {
-                    is ChatUiState.Content -> state.copy(messages = state.messages + local)
-                    else -> ChatUiState.Content(listOf(local))
-                }
-            }
+            appendLocal(local)
             transmit(key)
+        }
+    }
+
+    private fun appendLocal(local: Message) {
+        _uiState.update { state ->
+            when (state) {
+                is ChatUiState.Content -> state.copy(messages = state.messages + local)
+                else -> ChatUiState.Content(listOf(local))
+            }
+        }
+    }
+
+    /**
+     * Отправка выбранного файла: проверка политики администратора, пузырь сразу, загрузка с прогрессом,
+     * затем сообщение `file`/`image` с именем файла в тексте (как у настольного клиента). Очередь — та
+     * же, что у текста: без связи ждёт, при отказе — «Повторить» / «Удалить».
+     */
+    fun sendAttachment(uri: String) {
+        if (composerLock.value != ComposerLock.NONE) return
+        viewModelScope.launch {
+            val picked = attachments.describe(uri) ?: return@launch notice(CANNOT_READ_FILE)
+            UploadRules.problem(picked.name, picked.size, attachments.policy())?.let { return@launch notice(it) }
+            if (composerLock.value != ComposerLock.NONE) return@launch
+            val key = UUID.randomUUID().toString()
+            appendLocal(
+                Message(
+                    id = -nextLocalId.incrementAndGet(),
+                    conversationType = conversationType,
+                    targetId = targetId,
+                    senderId = currentUserId,
+                    text = picked.name,
+                    type = if (Attachments.isImage(picked.name, picked.mimeType)) MessageType.IMAGE else MessageType.FILE,
+                    createdAt = Instant.now().toString(),
+                    senderName = sessionRepository.currentUser.value?.fullName.orEmpty(),
+                    clientMsgId = key,
+                    sendState = SendState.QUEUED,
+                    upload = picked.toLocalUpload()
+                )
+            )
+            transmit(key)
+        }
+    }
+
+    /** «Отменить» у файла, который ещё не загружен: загрузка останавливается, пузырь уходит. */
+    fun cancelUpload(message: Message) {
+        val key = message.clientMsgId ?: return
+        val current = messages.firstOrNull { it.clientMsgId == key && it.sendState != SendState.SENT } ?: return
+        if (current.upload == null || current.upload.fileId != null) return
+        uploads.cancel(key)
+        updateMessages { list -> list.filter { it.clientMsgId != key } }
+    }
+
+    private fun notice(text: String) {
+        _notices.tryEmit(text)
+    }
+
+    /** Файл уходит на сервер только при живой связи; результат — кадр сообщения или «не отправлено». */
+    private fun startUpload(key: String) {
+        if (uploads.isRunning(key)) return
+        val upload = messages.firstOrNull { it.clientMsgId == key && it.sendState != SendState.SENT }?.upload ?: return
+        if (connectionState.value != ConnectionState.Connected) {
+            setSendState(key, SendState.QUEUED)
+            return
+        }
+        updateUpload(key) { it.copy(progress = 0f, error = null) }
+        setSendState(key, SendState.SENDING)
+        uploads.start(key, viewModelScope) {
+            try {
+                val done = attachments.upload(upload.toPicked()) { progress -> onUploadProgress(key, progress) }
+                val fileId = done.id.toLongOrNull() ?: throw ApiException(0, "SERIALIZATION_ERROR", UploadRules.REFUSED)
+                updateUpload(key) { it.copy(fileId = fileId, size = done.fileSize, mimeType = done.mimeType, progress = null) }
+                transmit(key)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Связь пропала посреди загрузки: файл ждёт её, как текст; иначе — причина сервера.
+                val offline = e is ApiException && e.statusCode == 0 && connectionState.value != ConnectionState.Connected
+                val reason = if (offline) null else UploadRules.failureText(e)
+                updateUpload(key) { it.copy(progress = null, error = reason) }
+                setSendState(key, if (offline) SendState.QUEUED else SendState.FAILED)
+                reason?.let(::notice)
+            }
+        }
+    }
+
+    private fun onUploadProgress(key: String, progress: Float) {
+        val current = messages.firstOrNull { it.clientMsgId == key }?.upload?.progress
+        if (current != null && (current * 100).toInt() == (progress * 100).toInt()) return
+        updateUpload(key) { if (it.fileId == null) it.copy(progress = progress) else it }
+    }
+
+    private fun updateUpload(key: String, transform: (LocalUpload) -> LocalUpload) {
+        updateMessages { list ->
+            list.map { msg ->
+                val upload = msg.upload
+                if (msg.clientMsgId == key && msg.sendState != SendState.SENT && upload != null) msg.copy(upload = transform(upload)) else msg
+            }
         }
     }
 
@@ -446,6 +575,7 @@ class ChatViewModel @AssistedInject constructor(
         val key = message.clientMsgId ?: return
         if (message.sendState != SendState.FAILED) return
         val mayBeStored = key in maybeStored
+        uploads.cancel(key)
         forgetSend(key)
         if (mayBeStored) realtimeRepository.cancelMessage(key)
         updateMessages { list -> list.filter { it.clientMsgId != key } }
@@ -454,8 +584,15 @@ class ChatViewModel @AssistedInject constructor(
     /** Кадр уходит, только пока сокет авторизован; иначе (или при отказе записи) сообщение ждёт переподключения. */
     private fun transmit(key: String) {
         val message = messages.firstOrNull { it.clientMsgId == key && it.sendState != SendState.SENT } ?: return
-        val written = connectionState.value == ConnectionState.Connected &&
+        val upload = message.upload
+        val fileId = upload?.fileId
+        // A file goes up first; its message follows once the server has it.
+        if (upload != null && fileId == null) return startUpload(key)
+        val written = connectionState.value == ConnectionState.Connected && if (upload != null && fileId != null) {
+            realtimeRepository.sendAttachment(conversationType, targetId, message.text, message.type, attachmentMetadata(upload, fileId), key)
+        } else {
             realtimeRepository.sendMessage(conversationType, targetId, message.text, key)
+        }
         if (!written) {
             setSendState(key, SendState.QUEUED)
             return
@@ -478,7 +615,11 @@ class ChatViewModel @AssistedInject constructor(
             ackJobs.values.forEach { it.cancel() }
             ackJobs.clear()
             updateMessages { list ->
-                list.map { if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED) else it }
+                // An upload runs over HTTP, apart from the socket: it settles on its own.
+                list.map {
+                    val uploading = it.clientMsgId?.let(uploads::isRunning) == true
+                    if (it.sendState == SendState.SENDING && !uploading) it.copy(sendState = SendState.QUEUED) else it
+                }
             }
         }
     }

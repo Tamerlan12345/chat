@@ -275,16 +275,22 @@ class WebSocketClient(
         replyToId: Long? = null,
         metadata: MessageMetadata? = null,
         /** Ключ идемпотентности: повтор с тем же ключом не создаёт копию (ws-protocol §3.2). */
-        clientMsgId: String? = null
+        clientMsgId: String? = null,
+        /** file / image for an attachment message (ws-protocol §3.2 msgType). */
+        msgType: MessageType = MessageType.TEXT,
+        /** Metadata as the desktop sends it (file_id, size, mimeType, url); wins over [metadata]. */
+        rawMetadata: JsonObject? = null
     ): Boolean {
         val payload = buildJsonObject {
             put("type", "send_message")
             put("conversationType", conversationType.value)
             put("targetId", targetId)
             put("text", text)
-            put("msgType", "text")
+            put("msgType", msgType.value)
             if (replyToId != null) put("replyToId", replyToId)
-            if (metadata != null) {
+            if (rawMetadata != null) {
+                put("metadata", rawMetadata)
+            } else if (metadata != null) {
                 put("metadata", json.encodeToJsonElement(metadata))
             }
             if (clientMsgId != null) put("client_msg_id", clientMsgId)
