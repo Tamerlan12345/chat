@@ -29,10 +29,10 @@ protocol SessionLifecycleDelegate: AnyObject {
     func sessionDidAuthenticate() async
     /// The realtime socket re-authenticated after a reconnect; state may have been missed.
     func sessionDidResume() async
-    /// The user asked to sign out; the session is still valid (best-effort clean-up on the server).
-    func sessionWillSignOut() async
-    /// The session ended (logout or revoked token).
-    func sessionDidEnd()
+    /// The session ended (logout, revoked token, deleted account, or stored credentials that
+    /// turned out unusable at launch): forget everything it left on this device. Awaited before
+    /// the login screen appears, so a new sign-in never interleaves with the wipe.
+    func sessionDidEnd() async
 }
 
 /// Authentication and the session lifecycle against the build's fixed server.
@@ -96,11 +96,16 @@ public final class SessionStore: RealtimeEventHandling {
 
     public func bootstrap() async {
         // Credentials issued by another server are wiped before anything is sent.
-        guard bindStoredCredentials() else {
+        guard let binding = bindStoredCredentials() else {
             // Fail closed: the foreign credentials could not be removed, so they are not used.
+            await delegate?.sessionDidEnd()
             phase = .signedOut
             await refreshServerInfo()
             return
+        }
+        if binding == .wiped {
+            // Another server's session: what it left on this device goes with it.
+            await delegate?.sessionDidEnd()
         }
         if phase == .launching && !auth.hasStoredToken && !auth.hasDeviceSecret {
             phase = .signedOut
@@ -111,20 +116,21 @@ public final class SessionStore: RealtimeEventHandling {
         if auth.hasStoredToken {
             await restoreStoredSession()
         } else {
-            await enterWithDeviceSecret()
+            await enterWithDeviceSecret(discardsSession: auth.hasDeviceSecret)
         }
     }
 
-    /// Returns false when credentials from another server are stored and could not be wiped.
-    private func bindStoredCredentials() -> Bool {
+    /// nil when credentials from another server are stored and could not be wiped.
+    private func bindStoredCredentials() -> StoredCredentialDecision? {
         do {
-            if try auth.bindStoredCredentials(to: environment.origin) == .wiped {
+            let decision = try auth.bindStoredCredentials(to: environment.origin)
+            if decision == .wiped {
                 Log.session.notice("Discarded credentials issued by another server")
             }
-            return true
+            return decision
         } catch {
             Log.session.error("Wiping foreign credentials failed: \(error.localizedDescription, privacy: .public)")
-            return false
+            return nil
         }
     }
 
@@ -152,7 +158,7 @@ public final class SessionStore: RealtimeEventHandling {
         } catch APIError.unauthorized {
             // An expired token cannot be refreshed: try the device secret, else sign in again.
             clearStoredCredentials()
-            await enterWithDeviceSecret()
+            await enterWithDeviceSecret(discardsSession: true)
         } catch {
             Log.session.error("Session validation failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = error.userMessage
@@ -176,14 +182,20 @@ public final class SessionStore: RealtimeEventHandling {
 
     /// Launch-time knock. The login screen may already be in use, so a late answer
     /// never overrides a login the user started or finished meanwhile.
-    private func enterWithDeviceSecret() async {
+    /// `discardsSession`: a stored session (token or device secret) existed; if the device
+    /// cannot re-enter, that session is over and its local data is wiped before the login screen.
+    private func enterWithDeviceSecret(discardsSession: Bool) async {
         let user = await knock()
         guard !isSigningIn, phase != .authenticated, phase != .passwordChangeRequired else { return }
         if let user {
             await enter(user)
-        } else {
-            phase = .signedOut
+            return
         }
+        if discardsSession {
+            await delegate?.sessionDidEnd()
+            guard !isSigningIn, phase != .authenticated, phase != .passwordChangeRequired else { return }
+        }
+        phase = .signedOut
     }
 
     /// Moves to the authenticated phase, or to the mandatory password change when the server demands it.
@@ -263,7 +275,6 @@ public final class SessionStore: RealtimeEventHandling {
     // MARK: - Logout
 
     public func logout() async {
-        await delegate?.sessionWillSignOut()
         do {
             try await auth.logout()
         } catch {
@@ -277,8 +288,9 @@ public final class SessionStore: RealtimeEventHandling {
     private func endSession() async {
         await realtime.stop()
         currentUser = nil
+        // The wipe finishes before the login screen can start another session.
+        await delegate?.sessionDidEnd()
         phase = .signedOut
-        delegate?.sessionDidEnd()
     }
 
     private func clearStoredCredentials() {

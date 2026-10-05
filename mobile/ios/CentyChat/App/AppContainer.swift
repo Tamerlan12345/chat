@@ -191,15 +191,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         await chats.reloadLoaded()
     }
 
-    func sessionWillSignOut() async {
-        await pushTokens.sessionWillSignOut()
-    }
-
-    func sessionDidEnd() {
+    func sessionDidEnd() async {
         pushTokens.sessionDidEnd()
-        // Colleagues' photos belong to the session that saw them.
-        let avatars = avatars
-        Task { await avatars.removeAll() }
         conversations.reset()
         announcements.reset()
         chats.reset()
@@ -211,6 +204,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         people.signOut()
         searchRecents.clear()
         calls.stopCallSession()
+        // Colleagues' photos belong to the session that saw them.
+        await avatars.removeAll()
     }
 }
 

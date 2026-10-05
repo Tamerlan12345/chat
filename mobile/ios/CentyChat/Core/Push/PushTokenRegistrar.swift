@@ -49,10 +49,10 @@ struct PushTokenRegistration: Encodable, Equatable, Sendable {
     }
 }
 
-/// The server side of push-token registration.
+/// The server side of push-token registration. Removal needs no call: `/auth/logout` with
+/// `device_id`, account deletion and a newer token of the same device drop it (`push.md` §2).
 protocol PushTokenService: Sendable {
     func register(_ registration: PushTokenRegistration) async throws -> PushTokenRegisterResponse
-    func unregister(token: String) async throws -> Bool
 }
 
 struct LivePushTokenService: PushTokenService {
@@ -61,10 +61,6 @@ struct LivePushTokenService: PushTokenService {
     func register(_ registration: PushTokenRegistration) async throws -> PushTokenRegisterResponse {
         try await client.registerPushToken(registration)
     }
-
-    func unregister(token: String) async throws -> Bool {
-        try await client.unregisterPushToken(token)
-    }
 }
 
 /// Registers nothing (unit tests that do not look at push).
@@ -72,14 +68,12 @@ struct DisabledPushTokenService: PushTokenService {
     func register(_ registration: PushTokenRegistration) async throws -> PushTokenRegisterResponse {
         PushTokenRegisterResponse(registered: false, pushEnabled: false)
     }
-
-    func unregister(token: String) async throws -> Bool { false }
 }
 
 /// Keeps this device's APNs token registered with the server for the signed-in session
 /// (`push.md` §2): after every sign-in and launch with a live session, and on every new token
-/// from `didRegisterForRemoteNotificationsWithDeviceToken`. On sign-out the token is removed
-/// (the server also drops it on `/auth/logout` and on account deletion).
+/// from `didRegisterForRemoteNotificationsWithDeviceToken`. On sign-out nothing more is sent:
+/// the server drops the token on `/auth/logout` (with `device_id`) and on account deletion.
 ///
 /// Without an Apple developer account the build has no `aps-environment` entitlement: APNs
 /// never hands out a token, so nothing is registered.
@@ -123,18 +117,6 @@ final class PushTokenRegistrar {
     func sessionDidAuthenticate() async {
         hasSession = true
         await registerIfPossible()
-    }
-
-    /// Called while the session is still valid, before `/auth/logout`. Best effort.
-    func sessionWillSignOut() async {
-        hasSession = false
-        guard let token = registeredToken else { return }
-        registeredToken = nil
-        do {
-            _ = try await service.unregister(token: token)
-        } catch {
-            Log.session.notice("Push token removal failed: \(error.localizedDescription, privacy: .public)")
-        }
     }
 
     /// The session is gone (sign-out, revoked token, deleted account): nothing more is sent.
