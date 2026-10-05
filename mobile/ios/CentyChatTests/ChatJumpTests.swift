@@ -12,8 +12,13 @@ final class ChatJumpTests: XCTestCase {
         app = TestApp()
         app.session.currentUser = TestModels.me
         // 200 messages in the dialog; the newest page holds 151...200.
-        let history = (1...200).map { TestModels.message(id: Int64($0), from: $0 % 2 == 0 ? 1 : 12, to: $0 % 2 == 0 ? 12 : 1) }
-        app.chat.state.withValue { $0.messages[key] = history }
+        var history: [Message] = []
+        for id in Int64(1)...Int64(200) {
+            let mine = id % 2 == 0
+            history.append(TestModels.message(id: id, from: mine ? 1 : 12, to: mine ? 12 : 1))
+        }
+        let messages = history
+        app.chat.state.withValue { $0.messages[key] = messages }
     }
 
     override func tearDown() async throws {
