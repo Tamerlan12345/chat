@@ -136,7 +136,7 @@ final class PeopleSearchUITests: XCTestCase {
         dismissSavePasswordPrompt(app)
         // The inbox has loaded (as in the other signed-in tests) before anything is tapped.
         if !app.staticTexts["Боб Тестов"].waitForExistence(timeout: 30) {
-            print("UI-DUMP after sign-in: " + app.debugDescription)
+            printTree(app, "after sign-in")
         }
         return app
     }
@@ -147,7 +147,7 @@ final class PeopleSearchUITests: XCTestCase {
         XCTAssertTrue(tab.waitForExistence(timeout: 10), "The tab «\(title)» must exist")
         tapCentre(tab)
         if !waitUntil(tab, "isSelected == true", timeout: 5) {
-            print("UI-DUMP tab \(title): " + app.debugDescription)
+            printTree(app, "tab \(title)")
             tapCentre(tab)
         }
     }
@@ -181,7 +181,7 @@ final class PeopleSearchUITests: XCTestCase {
             }
             if app.keyboards.firstMatch.waitForExistence(timeout: 3) { break }
         }
-        if !app.keyboards.firstMatch.exists { print("UI-DUMP focus: " + app.debugDescription) }
+        if !app.keyboards.firstMatch.exists { printTree(app, "focus") }
         XCTAssertTrue(app.keyboards.firstMatch.exists, "The field must receive keyboard focus")
         field.typeText(text)
     }
@@ -202,12 +202,31 @@ final class PeopleSearchUITests: XCTestCase {
     }
 
     /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
-    private func dismissSavePasswordPrompt(_ app: XCUIApplication) {
-        let notNow = app.buttons.matching(NSPredicate(format: "label IN %@", ["Not Now", "Не сейчас"])).firstMatch
-        if notNow.waitForExistence(timeout: 10) {
-            notNow.tap()
-            _ = notNow.waitForNonExistence(timeout: 5)
-        }
+    /// Private copy of `XCUIApplication.dismissSystemPrompts()` (integration branch): the sheet's
+    /// buttons can live in SpringBoard, outside the app's tree. Replace with the shared helper
+    /// once the lanes are merged.
+    private func dismissSavePasswordPrompt(_ app: XCUIApplication, timeout: TimeInterval = 10) {
+        let labels = ["Not Now", "Не сейчас", "Не сохранять", "Never for This App", "Никогда для этого приложения"]
+        let predicate = NSPredicate(format: "label IN %@", labels)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for host in [app, springboard] {
+                let button = host.buttons.matching(predicate).firstMatch
+                if button.exists {
+                    button.tap()
+                    _ = button.waitForNonExistence(timeout: 5)
+                    return
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+    }
+
+    /// The app and SpringBoard trees in the CI log, so a failure shows what covered the screen.
+    private func printTree(_ app: XCUIApplication, _ moment: String) {
+        print("UI-DUMP \(moment) app: " + app.debugDescription)
+        print("UI-DUMP \(moment) springboard: " + XCUIApplication(bundleIdentifier: "com.apple.springboard").debugDescription)
     }
 
     private func waitUntil(_ element: XCUIElement, _ format: String, timeout: TimeInterval = 10) -> Bool {
