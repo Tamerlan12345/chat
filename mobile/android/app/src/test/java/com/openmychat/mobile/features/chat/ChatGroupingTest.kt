@@ -3,6 +3,7 @@ package com.openmychat.mobile.features.chat
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.ui.components.BubblePosition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,6 +94,28 @@ class ChatGroupingTest {
 
         val caughtUp = bubbles(msg(1, me, 0, DeliveryStatus.READ), msg(2, me, 1, DeliveryStatus.READ, edited = true), msg(3, me, 2, DeliveryStatus.READ))
         caughtUp.keys.forEach { id -> assertEquals("message $id keeps its geometry", b.getValue(id).showsMeta, caughtUp.getValue(id).showsMeta) }
+    }
+
+    @Test
+    fun aStalledEarlierSendShowsItsStateEvenInsideAGroup() {
+        // Principle «never lose a message»: a queued or sending bubble behind a later one that is
+        // further along must not hide its clock (ledger 2026-10-02, out-of-order QUEUED/SENDING).
+        fun local(id: Long, minute: Int, state: SendState) = msg(id, me, minute).copy(clientMsgId = "k$id", sendState = state)
+        fun marked(vararg messages: Message) = buildChatItems(messages.toList(), currentUserId = me, zone = ZoneOffset.UTC, markOverride = ::sendStateMark)
+            .filterIsInstance<ChatItem.Bubble>().associateBy { it.message.id }
+
+        val stalled = marked(local(1, 0, SendState.QUEUED), local(2, 1, SendState.SENDING), msg(3, me, 2, DeliveryStatus.READ))
+        assertTrue("queued before a read bubble shows its clock", stalled.getValue(1).showsMeta)
+        assertTrue("sending before a read bubble shows it too", stalled.getValue(2).showsMeta)
+        assertTrue(stalled.getValue(3).showsMeta)
+
+        val inOrder = marked(local(1, 0, SendState.SENDING), local(2, 1, SendState.QUEUED), local(3, 2, SendState.QUEUED))
+        assertFalse("the head going out ahead of the queue says nothing new", inOrder.getValue(1).showsMeta)
+        assertFalse("the same state as the group's last", inOrder.getValue(2).showsMeta)
+        assertTrue(inOrder.getValue(3).showsMeta)
+
+        val beforeFailed = marked(local(1, 0, SendState.QUEUED), local(2, 1, SendState.FAILED))
+        assertTrue("a failed last bubble says nothing about the queued one", beforeFailed.getValue(1).showsMeta)
     }
 
     @Test
