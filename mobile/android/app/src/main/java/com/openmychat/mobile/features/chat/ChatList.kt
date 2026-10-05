@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.mutableStateMapOf
+import com.openmychat.mobile.ui.components.BubbleContour
+import com.openmychat.mobile.ui.components.DeliveryMark
+import com.openmychat.mobile.ui.theme.CentySpace
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -112,6 +116,9 @@ internal fun MessageList(
     LaunchedEffect(atBottom) { if (atBottom) unseen = 0 }
 
     val animated = remember { HashSet<Long>() }
+
+    // Measured bubble widths by row key: a bubble's group contour is cut where its neighbours touch it.
+    val bubbleWidths = remember { mutableStateMapOf<String, Int>() }
 
     // Two snapshots, taken before the next measure:
     // - when the newest *row* changes (a message, or the typing bubble) and the reader was at the
@@ -225,7 +232,7 @@ internal fun MessageList(
                 .testTag("message-list"),
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp)
         ) {
-            items(items, key = { it.key }, contentType = { it::class }) { item ->
+            itemsIndexed(items, key = { _, it -> it.key }, contentType = { _, it -> it::class }) { index, item ->
                 val placement = Modifier.animateItem(
                     fadeInSpec = null,
                     placementSpec = if (reduce) null else tween(CentyMotion.SEND, easing = CentyMotion.EaseOutExpo),
@@ -233,13 +240,19 @@ internal fun MessageList(
                 )
                 when (item) {
                     is ChatItem.Day -> DaySeparatorRow(item.day, placement)
-                    is ChatItem.Typing -> Box(placement.fillMaxWidth().padding(top = 10.dp)) {
+                    is ChatItem.Typing -> Box(placement.fillMaxWidth().padding(top = CentySpace.chatGroupGap)) {
                         TypingBubble(label = typingLabel.orEmpty())
                     }
                     is ChatItem.Bubble -> {
                         val id = item.message.id
                         val fresh = remember(id) { id !in baseline && animated.add(id) }
                         val pulsing = pulseId == id
+                        // Newest first: the older neighbour is the next row, the newer one the previous.
+                        val older = touching(item, items.getOrNull(index + 1), item.startsGroup)
+                        val newer = touching(item, items.getOrNull(index - 1), item.position.endsGroup)
+                        val contour = remember(older, newer) {
+                            BubbleContour(aboveWidth = { older?.let { bubbleWidths[it] } }, belowWidth = { newer?.let { bubbleWidths[it] } })
+                        }
                         ChatBubbleRow(
                             item = item,
                             strings = strings,
@@ -251,7 +264,9 @@ internal fun MessageList(
                             onReply = onReply,
                             onEdit = onEdit,
                             onRequestDelete = onRequestDelete,
-                            modifier = placement.highlightPulse(pulsing) { if (pulseId == id) pulseId = null }
+                            modifier = placement.highlightPulse(pulsing) { if (pulseId == id) pulseId = null },
+                            contour = contour,
+                            onWidth = { bubbleWidths[item.key] = it }
                         )
                     }
                 }
@@ -271,6 +286,16 @@ internal fun MessageList(
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 12.dp)
         )
     }
+}
+
+/**
+ * The key of [neighbour] when it shares an edge with [item] in one group: not across a group edge
+ * ([edge]), and not past a failed bubble, whose «Повторить / Удалить» row sits between them.
+ */
+private fun touching(item: ChatItem.Bubble, neighbour: ChatItem?, edge: Boolean): String? {
+    if (edge || neighbour !is ChatItem.Bubble) return null
+    if (item.mark == DeliveryMark.FAILED || neighbour.mark == DeliveryMark.FAILED) return null
+    return neighbour.key
 }
 
 /**

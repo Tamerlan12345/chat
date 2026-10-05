@@ -1,5 +1,6 @@
 package com.openmychat.mobile.chat
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -62,13 +63,13 @@ class ChatSafetyUiTest {
         }
     }
 
-    private fun show(lock: ComposerLock = ComposerLock.NONE) {
+    private fun show(lock: ComposerLock = ComposerLock.NONE, messages: List<Message> = listOf(incoming)) {
         compose.setContent {
             CentyChatTheme(darkTheme = false, reduceMotion = true) {
                 ChatContent(
                     title = "Боб Тестов",
                     isDirect = true,
-                    uiState = ChatUiState.Content(listOf(incoming)),
+                    uiState = ChatUiState.Content(messages),
                     currentUserId = me,
                     connectionState = ConnectionState.Connected,
                     actions = actions,
@@ -159,5 +160,29 @@ class ChatSafetyUiTest {
         compose.onNodeWithTag("composer-field").assertIsNotEnabled()
         compose.onNode(hasContentDescription("Ещё")).performClick()
         compose.onNode(hasTestTag("chat-block")).assertTextContains("Разблокировать", substring = true)
+    }
+
+    @Test
+    fun anEmptyChatThatCannotBeWrittenToDoesNotAskForAFirstMessage() {
+        show(ComposerLock.BLOCKED_BY_ME, messages = emptyList())
+
+        compose.onAllNodes(hasText("Напишите", substring = true)).assertCountEquals(0)
+        compose.onNodeWithTag("chat-empty-locked").assertIsDisplayed()
+        compose.onNodeWithText("Вы заблокировали этого пользователя", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun anEmptyChatTheServerRefusesStaysNeutralToo() {
+        show(ComposerLock.NOT_DELIVERABLE, messages = emptyList())
+
+        compose.onAllNodes(hasText("Напишите", substring = true)).assertCountEquals(0)
+        compose.onNodeWithTag("chat-empty-locked").assertIsDisplayed()
+    }
+
+    @Test
+    fun anEmptyOpenChatInvitesTheFirstMessage() {
+        show(ComposerLock.NONE, messages = emptyList())
+
+        compose.onNodeWithText("Напишите первое сообщение", substring = true).assertIsDisplayed()
     }
 }

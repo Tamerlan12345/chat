@@ -119,7 +119,7 @@ internal fun ChatTopBar(
                         typing = isDirect && typingUser != null,
                         modifier = Modifier.sharedConversationElement(sharedKey?.let(SharedKeys::avatar))
                     )
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.semantics(mergeDescendants = true) { heading() }) {
                         Text(
                             title,

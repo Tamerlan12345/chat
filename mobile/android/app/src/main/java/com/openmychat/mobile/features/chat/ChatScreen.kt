@@ -35,9 +35,7 @@ import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.ChatSkeleton
 import com.openmychat.mobile.ui.components.ConnectionBanner
 import com.openmychat.mobile.ui.components.DeliveryMark
-import com.openmychat.mobile.ui.components.EmptyState
 import com.openmychat.mobile.ui.components.ErrorState
-import com.openmychat.mobile.ui.components.Illustration
 import com.openmychat.mobile.ui.components.InlineNotice
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.MessageMenuHost
@@ -50,20 +48,6 @@ import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Block
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import com.openmychat.mobile.features.account.BlockConfirmDialog
 import com.openmychat.mobile.features.attachments.AttachmentChooserSheet
 import com.openmychat.mobile.features.attachments.AttachmentIntents
@@ -74,7 +58,6 @@ import com.openmychat.mobile.features.attachments.rememberAttachmentPickers
 import androidx.compose.ui.platform.LocalContext
 import com.openmychat.mobile.features.account.ReportSheet
 import com.openmychat.mobile.features.account.SafetyNotices
-import com.openmychat.mobile.ui.components.CentyTextButton
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -393,7 +376,7 @@ fun ChatContent(
                         text = stringResource(R.string.chat_refresh_failed),
                         actionLabel = stringResource(R.string.action_retry),
                         onAction = actions::onRetry,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp).testTag("refresh-failed")
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).testTag("refresh-failed")
                     )
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -404,11 +387,7 @@ fun ChatContent(
                             onRetry = actions::onRetry
                         )
                         is ChatUiState.Content -> if (uiState.messages.isEmpty() && typingUser == null) {
-                            EmptyState(
-                                illustration = Illustration.INBOX,
-                                title = stringResource(R.string.chat_empty),
-                                message = stringResource(R.string.chat_empty_message)
-                            )
+                            ChatEmptyState(composerLock)
                         } else if (historyReady) {
                             MessageList(
                                 listState = listState,
@@ -501,39 +480,6 @@ fun ChatContent(
             },
             onDismiss = { pendingDelete = null }
         )
-    }
-}
-
-/**
- * Why nothing can be sent here: the server's `DM_NOT_ALLOWED` in Russian, or my own block with
- * «Разблокировать». Sits right above the (disabled) composer.
- */
-@Composable
-private fun ComposerLockBanner(lock: ComposerLock, onUnblock: () -> Unit) {
-    val tokens = CentyTheme.tokens
-    // The action sits under the text, so neither is squeezed at large font sizes.
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(tokens.dangerSoft)
-            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = if (lock == ComposerLock.BLOCKED_BY_ME) 0.dp else 10.dp)
-            .semantics { liveRegion = LiveRegionMode.Polite }
-            .testTag("composer-lock")
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            Icon(Icons.Outlined.Block, contentDescription = null, tint = tokens.dangerText, modifier = Modifier.padding(top = 1.dp).size(20.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(
-                stringResource(if (lock == ComposerLock.BLOCKED_BY_ME) R.string.chat_blocked_banner else R.string.chat_dm_not_allowed),
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.dangerText
-            )
-        }
-        if (lock == ComposerLock.BLOCKED_BY_ME) {
-            CentyTextButton(onClick = onUnblock, modifier = Modifier.align(Alignment.End).testTag("chat-unblock")) {
-                Text(stringResource(R.string.safety_unblock))
-            }
-        }
     }
 }
 
