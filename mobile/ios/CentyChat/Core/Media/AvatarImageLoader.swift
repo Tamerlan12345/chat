@@ -21,8 +21,9 @@ enum AvatarOptIn {
     }
 }
 
-/// Loads avatar photos: the server's own (`/api/users/<id>/avatar`) with the session's Bearer
-/// token, any other HTTPS address without it; plain HTTP never.
+/// Loads avatar photos from the configured server's `/api/users/<id>/avatar` over HTTPS, with the
+/// session's Bearer token. Nothing else is fetched: another host would learn the device's
+/// address and another path must not get the token (initials instead).
 ///
 /// Cache keyed by URL: memory (NSCache) and disk (Caches, excluded from backup). An entry is
 /// fresh for the answer's `max-age`; after that it is revalidated with `If-None-Match` (304 keeps
@@ -116,8 +117,8 @@ actor AvatarImageLoader {
         Self.resolve(raw, serverURL: serverURL, diameter: diameter)
     }
 
-    /// Server-relative paths resolve against the server; only HTTPS is loaded. The server's own
-    /// avatar path gets `size` for the diameter (other hosts keep their URL).
+    /// Server-relative paths resolve against the server. Only the server's own avatar path over
+    /// HTTPS is loaded, with `size` for the diameter; anything else is nil (initials).
     static func resolve(_ raw: String?, serverURL: URL, diameter: CGFloat) -> URL? {
         guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         let resolved: URL?
@@ -127,16 +128,19 @@ actor AvatarImageLoader {
         } else {
             resolved = URL(string: value)
         }
-        guard let url = resolved, url.scheme?.lowercased() == "https", url.host != nil else { return nil }
-        guard isOwnServer(url, serverURL: serverURL),
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              isAvatarPath(components.path) else {
-            return url
+        guard let url = resolved, isLoadable(url, serverURL: serverURL),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
         }
         var items = (components.queryItems ?? []).filter { $0.name != "size" }
         items.append(URLQueryItem(name: "size", value: AvatarOptIn.Size(diameter: diameter).rawValue))
         components.queryItems = items
         return components.url
+    }
+
+    /// HTTPS, the configured origin, the avatar path.
+    private static func isLoadable(_ url: URL, serverURL: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && isOwnServer(url, serverURL: serverURL) && isAvatarPath(url.path)
     }
 
     private static func isOwnServer(_ url: URL, serverURL: URL) -> Bool {
@@ -157,7 +161,7 @@ actor AvatarImageLoader {
 
     /// The photo's bytes, from the cache when fresh, otherwise from the network.
     func data(for url: URL) async -> Data? {
-        guard url.scheme?.lowercased() == "https", url.host != nil else { return nil }
+        guard Self.isLoadable(url, serverURL: serverURL) else { return nil }
         let date = now()
         let cached = cachedEntry(for: url)
         if let cached, cached.metadata.isFresh(at: date) {
@@ -201,13 +205,11 @@ actor AvatarImageLoader {
     private func fetch(_ url: URL, cached: Cached?, generation: Int) async -> Data? {
         var request = URLRequest(url: url)
         request.setValue("image/*", forHTTPHeaderField: "Accept")
-        if Self.isOwnServer(url, serverURL: serverURL) {
-            // The session token goes only to the configured server, and only over HTTPS.
-            guard ServerEndpointPolicy.allowsAuthorization(to: url), let token = token() else {
-                return cached?.data
-            }
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Only reached for the configured server's avatar path over HTTPS (`isLoadable`).
+        guard ServerEndpointPolicy.allowsAuthorization(to: url), let token = token() else {
+            return cached?.data
         }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let etag = cached?.metadata.etag {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
