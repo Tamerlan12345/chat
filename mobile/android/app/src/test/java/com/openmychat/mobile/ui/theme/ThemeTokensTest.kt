@@ -123,6 +123,27 @@ class ThemeTokensTest {
     }
 
     @Test
+    fun filledFieldsWithoutAnOutlineStayReadable() {
+        // Polish pass: the search field (on the list plane) and the composer (on L3) are bg-sunken fills.
+        assertEquals(Color(0x09181838), LightCentyTokens.sunken)
+        assertEquals(Color(0x29000000), DarkCentyTokens.sunken)
+        listOf(LightCentyTokens, DarkCentyTokens).forEach { t ->
+            val theme = if (t.isDark) "dark" else "light"
+            listOf(
+                Triple("search placeholder", t.textDim, t.sunken.compositeOver(t.list)),
+                Triple("search text", t.textMain, t.sunken.compositeOver(t.list)),
+                Triple("composer placeholder", t.textDim, t.sunken.compositeOver(t.elevated)),
+                Triple("day pill", t.textDim, t.sunken.compositeOver(t.canvas))
+            ).forEach { (name, fg, bg) ->
+                val ratio = contrast(fg, bg)
+                assertTrue("$theme $name: ${"%.2f".format(ratio)}:1", ratio >= 4.5)
+            }
+            // The field still reads as a field: a visible tone step from its plane.
+            assertTrue("$theme search field vs list", contrast(t.sunken.compositeOver(t.list), t.list) >= 1.05)
+        }
+    }
+
+    @Test
     fun theScrimDimsLikeTheBrief() {
         assertEquals(Color(0x57141428), LightCentyTokens.scrim)
         assertEquals(Color(0xA308080C), DarkCentyTokens.scrim)

@@ -35,6 +35,8 @@ data class CentyTokens(
     /** `bg-hover` / `bg-active`: skeleton blocks, pressed rows, day pills. */
     val hover: Color,
     val active: Color,
+    /** `bg-sunken`: filled fields without an outline (search, composer) and the quiet day pill. */
+    val sunken: Color,
     val primary: Color,
     /** Нажатая основная кнопка (desktop `--primary-pressed`). */
     val primaryPressed: Color,
@@ -113,6 +115,7 @@ internal val LightCentyTokens = CentyTokens(
     borderStrong = Color(0x2B181838), // rgba(24,24,56,.17)
     hover = Color(0x0B181838), // rgba(24,24,56,.045)
     active = Color(0x14181838), // rgba(24,24,56,.08)
+    sunken = Color(0x09181838), // rgba(24,24,56,.035)
     primary = Color(0xFF5B4EE6),
     primaryPressed = Color(0xFF4336C2),
     primarySoft = Color(0x1A5B4EE6), // rgba(91,78,230,.10)
@@ -156,6 +159,7 @@ internal val DarkCentyTokens = CentyTokens(
     borderStrong = Color(0x26FFFFFF), // rgba(255,255,255,.15)
     hover = Color(0x0EFFFFFF), // rgba(255,255,255,.055)
     active = Color(0x17FFFFFF), // rgba(255,255,255,.09)
+    sunken = Color(0x29000000), // rgba(0,0,0,.16)
     primary = Color(0xFF6457EE),
     primaryPressed = Color(0xFF5549DE),
     primarySoft = Color(0x29968CFF), // rgba(150,140,255,.16)

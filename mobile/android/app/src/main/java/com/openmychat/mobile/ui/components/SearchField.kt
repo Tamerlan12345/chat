@@ -44,9 +44,10 @@ import com.openmychat.mobile.ui.theme.CentyRadius
 import com.openmychat.mobile.ui.theme.CentyTheme
 
 /**
- * Поле поиска в верхней панели («Чаты», «Сотрудники»): карточка с тонкой рамкой, как поле
- * настольного клиента, высота 48. В режиме поиска лупа сменяется стрелкой «Закрыть поиск»;
- * крестик очищает строку. Return — [onSearch] (открыть первый результат).
+ * Поле поиска в верхней панели («Чаты», «Сотрудники»): заливка bg-sunken без рамки (бриф,
+ * полировка, п. 1), высота 48; рамка primary-line — только в режиме поиска, как у поля в фокусе.
+ * В режиме поиска лупа сменяется стрелкой «Закрыть поиск»; крестик очищает строку. Return —
+ * [onSearch] (открыть первый результат).
  */
 @Composable
 fun CentySearchField(
@@ -85,8 +86,8 @@ fun CentySearchField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
-                    .background(tokens.card, shape)
-                    .border(1.dp, if (active) tokens.primaryLine else tokens.border, shape)
+                    .background(tokens.sunken, shape)
+                    .then(if (active) Modifier.border(1.dp, tokens.primaryLine, shape) else Modifier)
                     .padding(end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

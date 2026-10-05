@@ -225,7 +225,7 @@ private fun EmptyStates() {
             if (kind == Illustration.OFFLINE) {
                 ErrorState(title = title, onRetry = {}, message = message)
             } else {
-                EmptyState(illustration = kind, title = title, message = message, actionLabel = if (i == 0) "Обновить" else null, onAction = {})
+                EmptyState(illustration = kind, title = title, message = message, actionLabel = if (i == 0) "Найти сотрудника" else null, onAction = {})
             }
         }
     }

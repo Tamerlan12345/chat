@@ -19,20 +19,27 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Day separator: an L3 pill (elevated tone and a hairline). Inline in the history and, as the
- * sticky copy, floating at the top of the chat while that day scrolls by.
+ * Day separator. Inline in the history it is quiet (polish pass, rule 7): a bg-sunken pill, caption
+ * size in text-dim, no border. The sticky copy floats over bubbles while that day scrolls by, so it
+ * is an L3 pill (elevated tone and a hairline) to stay readable on top of them.
  */
 @Composable
 fun DateSeparator(label: String, modifier: Modifier = Modifier, floating: Boolean = false) {
     val tokens = CentyTheme.tokens
     Text(
         text = label,
-        style = MaterialTheme.typography.labelMedium,
-        color = tokens.textSecondary,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (floating) tokens.textSecondary else tokens.textDim,
         modifier = modifier
-            .background(tokens.elevated, CircleShape)
-            // The floating copy sits over bubbles: a stronger hairline keeps it off the card tone.
-            .border(1.dp, if (floating) tokens.borderStrong else tokens.border, CircleShape)
+            .then(
+                if (floating) {
+                    Modifier
+                        .background(tokens.elevated, CircleShape)
+                        .border(1.dp, tokens.borderStrong, CircleShape)
+                } else {
+                    Modifier.background(tokens.sunken, CircleShape)
+                }
+            )
             .padding(horizontal = 12.dp, vertical = 4.dp)
             .semantics { heading() }
     )

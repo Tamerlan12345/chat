@@ -2,7 +2,6 @@ package com.openmychat.mobile.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -93,12 +92,12 @@ fun FileAttachmentTile(
         modifier = modifier
             .widthIn(min = 200.dp)
             .clip(shape)
-            .background(tokens.hover)
-            .border(1.dp, tokens.borderStrong, shape)
+            // A tile is a fill inside its bubble, not another outline (polish pass, rule 1).
+            .background(tokens.active)
             .padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)
             .testTag("attachment-file"),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
             Modifier
