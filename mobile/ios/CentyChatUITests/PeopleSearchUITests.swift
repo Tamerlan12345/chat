@@ -49,7 +49,7 @@ final class PeopleSearchUITests: XCTestCase {
         XCTAssertTrue(write.waitForExistence(timeout: 10))
 
         // «Написать» pushes the chat onto the same stack.
-        write.tap()
+        tapCentre(write)
         XCTAssertTrue(app.navigationBars["Боб Тестов"].waitForExistence(timeout: 15), "«Написать» must open the dialog")
         XCTAssertEqual(app.tabBars.buttons["Чаты"].isSelected, true, "No tab switch: the chat opens in «Чаты»")
 
@@ -60,7 +60,7 @@ final class PeopleSearchUITests: XCTestCase {
         XCTAssertTrue(results.waitForExistence(timeout: 10), "Back from the card returns to the search results")
 
         // «Сотрудники»: Bob is listed and his card opens from there too.
-        tabs.buttons["Сотрудники"].tap()
+        openTab("Сотрудники", in: app)
         let list = app.descendants(matching: .any)["people-list"]
         XCTAssertTrue(list.waitForExistence(timeout: 20), "«Сотрудники» must show the directory")
         XCTAssertTrue(
@@ -92,7 +92,7 @@ final class PeopleSearchUITests: XCTestCase {
         for (appearance, suffix, contentSize) in variants {
             let app = launchSignedIn(server: standURL, appearance: appearance, contentSize: contentSize)
 
-            app.tabBars.buttons["Сотрудники"].tap()
+            openTab("Сотрудники", in: app)
             let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "person-row-")).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 30), "The directory must load (\(suffix))")
             pause(1)
@@ -104,7 +104,7 @@ final class PeopleSearchUITests: XCTestCase {
             capture(app, named: "11-person-card-\(suffix)")
             goBack(app)
 
-            app.tabBars.buttons["Чаты"].tap()
+            openTab("Чаты", in: app)
             search("Боб", in: app)
             let person = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "search-person-")).firstMatch
             XCTAssertTrue(person.waitForExistence(timeout: 30), "The search must find Bob (\(suffix))")
@@ -134,7 +134,22 @@ final class PeopleSearchUITests: XCTestCase {
         signIn(app)
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 40), "Alice must reach the tabs.")
         dismissSavePasswordPrompt(app)
+        // The inbox has loaded (as in the other signed-in tests) before anything is tapped.
+        if !app.staticTexts["Боб Тестов"].waitForExistence(timeout: 30) {
+            print("UI-DUMP after sign-in: " + app.debugDescription)
+        }
         return app
+    }
+
+    /// Tab bar buttons are tapped at their centre: XCUI cannot always scroll them «to visible».
+    private func openTab(_ title: String, in app: XCUIApplication) {
+        let tab = app.tabBars.firstMatch.buttons[title]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), "The tab «\(title)» must exist")
+        tapCentre(tab)
+        if !waitUntil(tab, "isSelected == true", timeout: 5) {
+            print("UI-DUMP tab \(title): " + app.debugDescription)
+            tapCentre(tab)
+        }
     }
 
     private func signIn(_ app: XCUIApplication) {
@@ -149,20 +164,24 @@ final class PeopleSearchUITests: XCTestCase {
         submit.tap()
     }
 
-    /// The search field of «Чаты»: scoped to its navigation bar, other tabs keep theirs in the tree.
+    /// The search field of «Чаты», found by its prompt (other tabs keep theirs in the tree).
     private func search(_ text: String, in app: XCUIApplication) {
-        let scoped = app.navigationBars["Чаты"].searchFields.firstMatch
-        let field = scoped.waitForExistence(timeout: 5) ? scoped : app.searchFields.firstMatch
+        let field = app.searchFields["Люди, каналы, сообщения"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "The search field must be shown")
-        type(text, into: field, of: app)
+        type(text, into: field, of: app, tapAtCentre: true)
     }
 
     /// Focuses the field and waits for the keyboard before typing.
-    private func type(_ text: String, into field: XCUIElement, of app: XCUIApplication) {
+    private func type(_ text: String, into field: XCUIElement, of app: XCUIApplication, tapAtCentre: Bool = false) {
         for _ in 0..<3 {
-            field.tap()
+            if tapAtCentre {
+                tapCentre(field)
+            } else {
+                field.tap()
+            }
             if app.keyboards.firstMatch.waitForExistence(timeout: 3) { break }
         }
+        if !app.keyboards.firstMatch.exists { print("UI-DUMP focus: " + app.debugDescription) }
         XCTAssertTrue(app.keyboards.firstMatch.exists, "The field must receive keyboard focus")
         field.typeText(text)
     }
@@ -175,7 +194,7 @@ final class PeopleSearchUITests: XCTestCase {
     private func goBack(_ app: XCUIApplication) {
         let back = app.navigationBars.firstMatch.buttons.element(boundBy: 0)
         if back.waitForExistence(timeout: 5) {
-            back.tap()
+            tapCentre(back)
         } else {
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
@@ -185,7 +204,7 @@ final class PeopleSearchUITests: XCTestCase {
     /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
     private func dismissSavePasswordPrompt(_ app: XCUIApplication) {
         let notNow = app.buttons.matching(NSPredicate(format: "label IN %@", ["Not Now", "Не сейчас"])).firstMatch
-        if notNow.waitForExistence(timeout: 5) {
+        if notNow.waitForExistence(timeout: 10) {
             notNow.tap()
             _ = notNow.waitForNonExistence(timeout: 5)
         }
