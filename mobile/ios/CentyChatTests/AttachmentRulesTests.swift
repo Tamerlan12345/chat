@@ -65,6 +65,7 @@ final class AttachmentRulesTests: XCTestCase {
         )
         XCTAssertEqual(AttachmentRules.failureText(APIError.httpError(statusCode: 413, message: "", code: nil)), "Сервер не принял файл")
         XCTAssertTrue(AttachmentRules.isTransportFailure(APIError.noConnection))
+        XCTAssertTrue(AttachmentRules.isTransportFailure(APIError.unauthorized), "a session to renew is not the server refusing the file")
         XCTAssertTrue(AttachmentRules.isTransportFailure(URLError(.notConnectedToInternet)))
         XCTAssertFalse(AttachmentRules.isTransportFailure(APIError.httpError(statusCode: 415, message: "нет", code: nil)))
     }

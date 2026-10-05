@@ -2,7 +2,8 @@ import Foundation
 import XCTest
 @testable import CentyChat
 
-/// Server frames go through the single `RealtimeStore` pump, exactly as the socket delivers them.
+/// Server frames go through the single `RealtimeStore` pump and the delivery engine, exactly as the
+/// socket delivers them (`TestApp.deliver`: the raw frame to the engine, the parsed event to the stores).
 @MainActor
 final class RealtimeChatTests: XCTestCase {
     private var app: TestApp!
@@ -10,6 +11,8 @@ final class RealtimeChatTests: XCTestCase {
     override func setUp() async throws {
         app = TestApp()
         app.session.currentUser = TestModels.me
+        // The socket is authenticated: read receipts go out (delivery-state.md §7.8).
+        await app.goOnline()
     }
 
     override func tearDown() async throws {
@@ -27,30 +30,31 @@ final class RealtimeChatTests: XCTestCase {
         return store
     }
 
-    private func messageJSON(id: Int64, from senderId: Int64, to targetId: Int64, type: String = "direct", text: String = "Привет") -> String {
-        """
-        {"id":\(id),"conversation_type":"\(type)","target_id":\(targetId),"sender_id":\(senderId),"text":"\(text)","type":"text","created_at":"2026-09-30T09:40:00.000Z","updated_at":null,"is_deleted":0,"sender_name":"Данияр Нурпеисов"}
+    private func messageJSON(id: Int64, from senderId: Int64, to targetId: Int64, type: String = "direct", text: String = "Привет", clientMsgId: String? = nil) -> String {
+        let key = clientMsgId.map { "\"\($0)\"" } ?? "null"
+        return """
+        {"id":\(id),"conversation_type":"\(type)","target_id":\(targetId),"sender_id":\(senderId),"text":"\(text)","type":"text","created_at":"2026-09-30T09:40:00.000Z","updated_at":null,"is_deleted":0,"client_msg_id":\(key),"sender_name":"Данияр Нурпеисов"}
         """
     }
 
     // MARK: - Dedupe
 
-    func testDirectMessageAndNewMessageForTheSameIdCountAsOneUnread() {
+    func testDirectMessageAndNewMessageForTheSameIdCountAsOneUnread() async {
         conversations.directConversations = [TestModels.direct(with: 12)]
         let message = messageJSON(id: 512, from: 12, to: 1)
 
-        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"direct_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1)
     }
 
-    func testChannelMessageAndNewMessageForTheSameIdCountAsOneUnread() {
+    func testChannelMessageAndNewMessageForTheSameIdCountAsOneUnread() async {
         conversations.channels = [TestModels.channel(id: 8)]
         let message = messageJSON(id: 513, from: 12, to: 8, type: "channel")
 
-        realtime.dispatch(TestModels.event(#"{"type":"channel_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"channel_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(conversations.channels.first?.unreadCount, 1)
     }
@@ -60,10 +64,13 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12)
         chat.screenDidAppear(sceneIsActive: true)
         chat.screenDidDisappear()
+        await app.settleDelivery()
+        // Opening the chat read what was there (conversation_opened, §6.3); only what follows counts.
+        await app.realtime.clearSent()
         let message = messageJSON(id: 700, from: 12, to: 1)
 
-        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"direct_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1)
         await settle()
@@ -77,8 +84,8 @@ final class RealtimeChatTests: XCTestCase {
         chat.screenDidAppear(sceneIsActive: true)
         let message = messageJSON(id: 701, from: 12, to: 1)
 
-        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"direct_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 0)
         let realtimeRepository = app.realtime
@@ -91,10 +98,13 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12)
         chat.screenDidAppear(sceneIsActive: true)
         await chat.sceneActivityChanged(isActive: false)
+        await app.settleDelivery()
+        // Opening the chat read what was there (conversation_opened, §6.3); only what follows counts.
+        await app.realtime.clearSent()
         let message = messageJSON(id: 702, from: 12, to: 1)
 
-        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"direct_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1, "The user cannot see the chat in the background")
         await settle()
@@ -104,8 +114,9 @@ final class RealtimeChatTests: XCTestCase {
         await chat.sceneActivityChanged(isActive: true)
 
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 0)
-        let sentAfterReturn = await app.realtime.sentTypes
-        XCTAssertTrue(sentAfterReturn.contains("mark_read"), "Returning to the open chat marks what arrived meanwhile as read")
+        let realtimeRepository = app.realtime
+        let markedRead = await eventually { await realtimeRepository.sentTypes.contains("mark_read") }
+        XCTAssertTrue(markedRead, "Returning to the open chat marks what arrived meanwhile as read")
     }
 
     func testChatAppearingWhileTheSceneIsInactiveIsNotVisible() async {
@@ -113,7 +124,7 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12)
         chat.screenDidAppear(sceneIsActive: false)
 
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(messageJSON(id: 703, from: 12, to: 1))}"#))
+        await app.deliver(#"{"type":"new_message","message":\#(messageJSON(id: 703, from: 12, to: 1))}"#)
 
         XCTAssertFalse(chat.isVisible)
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 1)
@@ -132,18 +143,21 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12)
         let message = messageJSON(id: 600, from: 12, to: 1)
 
-        realtime.dispatch(TestModels.event(#"{"type":"direct_message","message":\#(message)}"#))
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(message)}"#))
+        await app.deliver(#"{"type":"direct_message","message":\#(message)}"#)
+        await app.deliver(#"{"type":"new_message","message":\#(message)}"#)
 
         XCTAssertEqual(chat.messages.map(\.id), [600])
     }
 
-    func testOwnEchoReplacesTheOptimisticMessage() async {
+    func testOwnEchoReplacesTheOptimisticMessage() async throws {
         let chat = await openChat(with: 12)
 
         await chat.send(text: "Отправил контракты")
         XCTAssertEqual(chat.messages.count, 1)
-        realtime.dispatch(TestModels.event(#"{"type":"new_message","message":\#(messageJSON(id: 601, from: 1, to: 12, text: "Отправил контракты"))}"#))
+        // The server echoes the key the message was sent with (ws-protocol §3.2, delivery-state §7.6):
+        // the echo is matched by it, not by guessing from the text.
+        let key = try XCTUnwrap(chat.messages.first?.clientMsgId)
+        await app.deliver(#"{"type":"new_message","message":\#(messageJSON(id: 601, from: 1, to: 12, text: "Отправил контракты", clientMsgId: key))}"#)
 
         XCTAssertEqual(chat.messages.map(\.id), [601])
         XCTAssertEqual(chat.messages.first?.text, "Отправил контракты")
@@ -152,9 +166,9 @@ final class RealtimeChatTests: XCTestCase {
     func testRealtimeEditUpdatesTheOpenChat() async {
         let chat = await openChat(with: 12, messages: [TestModels.message(id: 512, from: 12, to: 1, text: "Старый текст")])
 
-        realtime.dispatch(TestModels.event("""
+        await app.deliver("""
         {"type":"message_updated","message":{"id":512,"conversation_type":"direct","target_id":1,"sender_id":12,"text":"Новый текст","type":"text","created_at":"2026-09-30T09:40:00.000Z","updated_at":"2026-09-30T09:41:00.000Z","is_deleted":0}}
-        """))
+        """)
 
         XCTAssertEqual(chat.messages.first?.text, "Новый текст")
         XCTAssertNotNil(chat.messages.first?.updatedAt)
@@ -164,7 +178,7 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12, messages: [TestModels.message(id: 512, from: 12, to: 1, text: "Удалю")])
 
         // targetId is the stored target (me), not relative to the receiver: match by messageId.
-        realtime.dispatch(TestModels.event(#"{"type":"message_deleted","messageId":512,"conversationType":"direct","targetId":1}"#))
+        await app.deliver(#"{"type":"message_deleted","messageId":512,"conversationType":"direct","targetId":1}"#)
 
         XCTAssertEqual(chat.messages.first?.isDeleted, true)
         XCTAssertEqual(chat.messages.first?.text, "")
@@ -173,7 +187,7 @@ final class RealtimeChatTests: XCTestCase {
     func testDeliveryStatusUpdateReachesTheOpenChat() async {
         let chat = await openChat(with: 12, messages: [TestModels.message(id: 512, from: 1, to: 12, deliveryStatus: .sent)])
 
-        realtime.dispatch(TestModels.event(#"{"type":"message_status_updated","messageId":512,"status":"delivered","userId":12,"timestamp":"2026-09-30T09:40:01.000Z"}"#))
+        await app.deliver(#"{"type":"message_status_updated","messageId":512,"status":"delivered","userId":12,"timestamp":"2026-09-30T09:40:01.000Z"}"#)
 
         XCTAssertEqual(chat.messages.first?.deliveryStatus, .delivered)
     }
@@ -183,15 +197,15 @@ final class RealtimeChatTests: XCTestCase {
         let chat = await openChat(with: 12, messages: [TestModels.message(id: 512, from: 1, to: 12, deliveryStatus: .delivered)])
         conversations.directConversations[0].unreadCount = 3
 
-        realtime.dispatch(TestModels.event(#"{"type":"messages_read","byUserId":12,"messageIds":[512]}"#))
+        await app.deliver(#"{"type":"messages_read","byUserId":12,"messageIds":[512]}"#)
 
         XCTAssertEqual(chat.messages.first?.deliveryStatus, .read)
         XCTAssertEqual(conversations.directConversations.first?.unreadCount, 3)
     }
 
-    func testDirectTypingIsShownInTheDialogWithTheTypist() {
+    func testDirectTypingIsShownInTheDialogWithTheTypist() async {
         // For direct dialogs the server sends targetId = recipient (me); the dialog is keyed by the typist.
-        realtime.dispatch(TestModels.event(#"{"type":"user_typing","userId":12,"userName":"Данияр","conversationType":"direct","targetId":1,"isTyping":true}"#))
+        await app.deliver(#"{"type":"user_typing","userId":12,"userName":"Данияр","conversationType":"direct","targetId":1,"isTyping":true}"#)
 
         let key = ConversationsStore.typingKey(for: ConversationKey(type: .direct, targetId: 12))
         XCTAssertNotNil(conversations.typingUsers[key])

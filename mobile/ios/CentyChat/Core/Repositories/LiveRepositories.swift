@@ -136,6 +136,18 @@ struct LiveChatRepository: ChatRepository {
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
         try await client.uploadFile(fileData: data, fileName: fileName, mimeType: mimeType)
     }
+
+    func messageRecords(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [JSONObject] {
+        try await client.getMessageRecords(conversationType: conversation.type, targetId: conversation.targetId, limit: limit, beforeId: beforeId)
+    }
+
+    func messageRecords(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [JSONObject] {
+        try await client.getMessageRecords(conversationType: conversation.type, targetId: conversation.targetId, limit: limit, afterId: afterId)
+    }
+
+    func filePolicy() async throws -> FilePolicyEffectiveResponse {
+        try await client.getFilePolicy()
+    }
 }
 
 struct LiveAnnouncementsRepository: AnnouncementsRepository {

@@ -11,14 +11,14 @@ enum HistoryWindow {
     static let pageSize = 200
     static let maxPages = 5
 
-    static func around(
+    static func around<Item: Identifiable>(
         _ messageId: Int64,
-        before: (_ beforeId: Int64, _ limit: Int) async throws -> [Message],
-        after: (_ afterId: Int64, _ limit: Int) async throws -> [Message]
-    ) async throws -> [Message]? {
+        before: (_ beforeId: Int64, _ limit: Int) async throws -> [Item],
+        after: (_ afterId: Int64, _ limit: Int) async throws -> [Item]
+    ) async throws -> [Item]? where Item.ID == Int64 {
         let older = try await before(messageId + 1, olderCount + 1)
         guard older.contains(where: { $0.id == messageId }) else { return nil }
-        var newer: [Message] = []
+        var newer: [Item] = []
         var cursor = messageId
         for _ in 0..<maxPages {
             let page = try await after(cursor, pageSize)

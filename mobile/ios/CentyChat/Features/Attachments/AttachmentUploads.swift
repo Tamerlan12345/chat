@@ -105,12 +105,23 @@ final class AttachmentUploads {
     /// Pause before a queued file goes again while the connection stays up.
     static let retryDelayMs: Int64 = 15_000
 
-    private(set) var items: [Item] = []
+    private(set) var items: [Item] = [] {
+        didSet { onChange?() }
+    }
     /// Files already in the outbox (uploaded), until the server confirms them: the bubble keeps
     /// drawing the local copy instead of flashing to the server's thumbnail.
-    private(set) var handedOver: [String: PendingUpload] = [:]
+    private(set) var handedOver: [String: PendingUpload] = [:] {
+        didSet { onChange?() }
+    }
     /// The server refused a file (its reason, for the open chat).
-    private(set) var lastNotice: Notice?
+    private(set) var lastNotice: Notice? {
+        didSet { if let lastNotice { onNotice?(lastNotice) } }
+    }
+
+    /// Called after `items` or `handedOver` changed.
+    @ObservationIgnored var onChange: (@MainActor () -> Void)?
+    /// Called with every refused file.
+    @ObservationIgnored var onNotice: (@MainActor (Notice) -> Void)?
 
     @ObservationIgnored private let store: any PendingUploadStore
     @ObservationIgnored let files: AttachmentFiles

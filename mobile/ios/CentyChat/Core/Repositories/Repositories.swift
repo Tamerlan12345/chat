@@ -10,6 +10,11 @@ public struct ConversationKey: Hashable, Sendable {
         self.type = type
         self.targetId = targetId
     }
+
+    /// The delivery model's key (`delivery-state.md` §2): `direct:<peer>` / `channel:<id>`.
+    public var deliveryKey: String {
+        "\(type.rawValue):\(targetId)"
+    }
 }
 
 /// Describes this device for `/auth/knock`.
@@ -65,6 +70,12 @@ public protocol ChatRepository: Sendable {
     /// `GET /api/messages/search?q=` — newest first, at most 30, rate-limited to 30 a minute.
     func searchMessages(_ query: String) async throws -> [Message]
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse
+    /// The server's records of a page (`beforeId` — older than it; nil — the newest), oldest first.
+    func messageRecords(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [JSONObject]
+    /// The oldest `limit` records newer than `afterId`, oldest first.
+    func messageRecords(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [JSONObject]
+    /// `GET /api/files/policy`: what may be sent.
+    func filePolicy() async throws -> FilePolicyEffectiveResponse
 }
 
 public protocol AnnouncementsRepository: Sendable {

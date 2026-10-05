@@ -26,6 +26,13 @@ public final class AppContainer: SessionLifecycleDelegate {
     /// Colleagues' photos, cached on disk; wiped when the session ends.
     let avatars: AvatarImageLoader
     let accountRepository: any AccountRepository
+    /// The message queue (`delivery-state.md`), its files and its owner.
+    let delivery: DeliveryRuntime
+    /// Downloaded attachments in `Caches/Attachments`; wiped when the session ends.
+    let downloads: AttachmentDownloader
+    /// Image previews of attachments (memory only); wiped when the session ends.
+    let thumbnails: AttachmentThumbnails
+    private let networkPath = NetworkPathWatcher()
 
     init(
         server: any ServerRepository,
@@ -45,7 +52,16 @@ public final class AppContainer: SessionLifecycleDelegate {
         recentsDefaults: UserDefaults? = nil,
         pushTokenService: (any PushTokenService)? = nil,
         deviceId: @escaping @MainActor () -> String? = { nil },
-        avatarLoader: AvatarImageLoader? = nil
+        avatarLoader: AvatarImageLoader? = nil,
+        deliveryStore: any DeliveryStore = InMemoryDeliveryStore(),
+        uploadStore: any PendingUploadStore = InMemoryPendingUploadStore(),
+        deliveryBackend: any DeliveryBackend = UnavailableDeliveryBackend(),
+        uploader: any AttachmentUploader = UnavailableAttachmentUploader(),
+        downloadTransport: any DownloadTransport = UnavailableDownloadTransport(),
+        attachmentFiles: AttachmentFiles = AttachmentFiles(root: FileManager.default.temporaryDirectory.appendingPathComponent("Outbox-\(UUID().uuidString)", isDirectory: true)),
+        downloadsRoot: URL = FileManager.default.temporaryDirectory.appendingPathComponent("Attachments-\(UUID().uuidString)", isDirectory: true),
+        deliveryClock: any DeliveryClock = SystemDeliveryClock(),
+        thumbnails: AttachmentThumbnails? = nil
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -75,6 +91,31 @@ public final class AppContainer: SessionLifecycleDelegate {
             presence: presence
         )
         let account = AccountStore(repository: accountRepository, session: session)
+        let deliveryLog: @Sendable (String) -> Void = { line in Log.delivery.error("\(line, privacy: .public)") }
+        let engine = DeliveryEngine(
+            store: deliveryStore,
+            link: RealtimeDeliveryLink(repository: realtimeRepository),
+            backend: deliveryBackend,
+            clock: deliveryClock,
+            log: deliveryLog
+        )
+        let uploads = AttachmentUploads(
+            store: uploadStore,
+            files: attachmentFiles,
+            uploader: uploader,
+            engine: engine,
+            clock: deliveryClock,
+            owner: { [weak session] in session?.currentUser?.id },
+            log: deliveryLog
+        )
+        let delivery = DeliveryRuntime(
+            engine: engine,
+            uploads: uploads,
+            currentUser: { [weak session] in session?.currentUser?.id },
+            reconnect: { [weak realtime] in await realtime?.reconnectNow() },
+            clock: deliveryClock,
+            log: deliveryLog
+        )
         let chats = ChatRegistry { conversation in
             ChatStore(
                 conversation: conversation,
@@ -82,6 +123,7 @@ public final class AppContainer: SessionLifecycleDelegate {
                 realtime: realtime,
                 session: session,
                 conversations: conversations,
+                delivery: delivery,
                 presenceController: presence
             )
         }
@@ -110,6 +152,19 @@ public final class AppContainer: SessionLifecycleDelegate {
         )
         self.avatars = avatarLoader ?? AvatarImageLoader.inMemory(serverURL: environment.serverURL)
         self.accountRepository = accountRepository
+        self.delivery = delivery
+        self.downloads = AttachmentDownloader(root: downloadsRoot, transport: downloadTransport)
+        self.thumbnails = thumbnails ?? AttachmentThumbnails(environment: environment, token: { nil }, live: false)
+
+        // Every frame and close reaches the engine in order; its changes reach the open chats.
+        realtime.deliverySink = { [weak engine] frame in engine?.receive(frame) }
+        realtime.onConnectionStateChange = { [weak uploads] state in uploads?.setOnline(state == .connected) }
+        engine.onStateChange.append { [weak chats] _ in chats?.modelChanged() }
+        engine.onUserError.append { [weak chats] code in chats?.deliveryNotice(code: code) }
+        uploads.onChange = { [weak chats] in chats?.modelChanged() }
+        uploads.onNotice = { [weak chats] notice in chats?.uploadNotice(notice) }
+        engine.start()
+        uploads.start()
 
         account.onBlocksChanged = { [weak conversations, weak chats] in
             await conversations?.loadDirectConversations()
@@ -160,7 +215,15 @@ public final class AppContainer: SessionLifecycleDelegate {
             recentsDefaults: .standard,
             pushTokenService: LivePushTokenService(client: client),
             deviceId: { try? keychain.deviceID() },
-            avatarLoader: .live(keychain: keychain)
+            avatarLoader: .live(keychain: keychain),
+            deliveryStore: LiveDelivery.store,
+            uploadStore: LiveDelivery.store,
+            deliveryBackend: HTTPDeliveryBackend(client: client),
+            uploader: APIAttachmentUploader(client: client),
+            downloadTransport: URLSessionDownloadTransport(environment: .current, token: { keychain.authToken }),
+            attachmentFiles: AttachmentFiles(root: AttachmentFiles.defaultRoot()),
+            downloadsRoot: AttachmentDownloader.defaultRoot(),
+            thumbnails: AttachmentThumbnails(environment: .current, token: { keychain.authToken }, live: true)
         )
     }
 
@@ -180,15 +243,52 @@ public final class AppContainer: SessionLifecycleDelegate {
     // MARK: - SessionLifecycleDelegate
 
     func sessionDidAuthenticate() async {
+        // The queue is this account's: another account's leftovers are wiped before anything shows.
+        if let user = session.currentUser?.id { await delivery.adopt(user) }
         // After every sign-in and every launch with a live session (`push.md` §2).
         async let push: Void = pushTokens.sessionDidAuthenticate()
         await loadAllData()
         await push
+        _ = await delivery.flushInBackground()
     }
 
     func sessionDidResume() async {
         await loadAllData()
         await chats.reloadLoaded()
+    }
+
+    func sessionWillSignOut() async throws {
+        try await delivery.discardForSignOut()
+        LocalSendTimes.removeAll()
+    }
+
+    func sessionDidDiscardAccount() async {
+        do {
+            try await delivery.discardForSignOut()
+        } catch {
+            // Retried by the engine; the next account to sign in wipes it in any case.
+            Log.delivery.error("Unsent messages of a discarded account could not be deleted: \(error.localizedDescription, privacy: .public)")
+        }
+        LocalSendTimes.removeAll()
+    }
+
+    /// Starts watching the device's network (the app, not unit tests).
+    func startNetworkWatcher() {
+        networkPath.start { [weak self] in
+            Task { await self?.networkBecameAvailable() }
+        }
+    }
+
+    /// The app came to the foreground: what waits goes out (over HTTP until the socket is up).
+    func appBecameActive() async {
+        guard session.isAuthenticated else { return }
+        await delivery.appBecameActive()
+    }
+
+    /// The device has a network again.
+    func networkBecameAvailable() async {
+        guard session.isAuthenticated else { return }
+        await delivery.networkBecameAvailable()
     }
 
     func sessionDidEnd() async {
@@ -204,8 +304,16 @@ public final class AppContainer: SessionLifecycleDelegate {
         people.signOut()
         searchRecents.clear()
         calls.stopCallSession()
-        // Colleagues' photos belong to the session that saw them.
+        // Colleagues' photos and downloaded attachments belong to the session that saw them.
         await avatars.removeAll()
+        await thumbnails.removeAll()
+        do {
+            try await downloads.removeAll()
+        } catch {
+            Log.delivery.error("Downloaded attachments could not be deleted: \(error.localizedDescription, privacy: .public)")
+        }
+        // The unsent messages stay: they belong to the account and go out when it is back
+        // (an explicit sign-out has deleted them already, with the user's consent).
     }
 }
 

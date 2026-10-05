@@ -15,6 +15,8 @@ public final class RealtimeStore {
     @ObservationIgnored private var audioTask: Task<Void, Never>?
     @ObservationIgnored private var stateTask: Task<Void, Never>?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
+    /// Called with every connection state (the file queue goes up only while connected).
+    @ObservationIgnored var onConnectionStateChange: (@MainActor (RealtimeConnectionState) -> Void)?
     /// Receives every raw frame and every close, in order (the delivery engine).
     @ObservationIgnored var deliverySink: (@MainActor (DeliveryLinkFrame) -> Void)?
     @ObservationIgnored private var lifecycle = 0
@@ -61,6 +63,7 @@ public final class RealtimeStore {
         stateTask = Task { [weak self] in
             for await state in states {
                 self?.connectionState = state
+                self?.onConnectionStateChange?(state)
             }
         }
         audioTask = Task { [weak self] in
@@ -86,6 +89,7 @@ public final class RealtimeStore {
         frameTask = nil
         deliveredMessageIDs.removeAll()
         connectionState = .disconnected
+        onConnectionStateChange?(.disconnected)
         // The subscription is gone before the socket's own close could arrive.
         deliverySink?(.closed)
         await repository.disconnect()

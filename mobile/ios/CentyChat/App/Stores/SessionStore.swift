@@ -33,6 +33,12 @@ protocol SessionLifecycleDelegate: AnyObject {
     /// turned out unusable at launch): forget everything it left on this device. Awaited before
     /// the login screen appears, so a new sign-in never interleaves with the wipe.
     func sessionDidEnd() async
+    /// An explicit sign-out the user confirmed: the account's unsent messages are deleted first. Throws
+    /// when they could not be deleted — the sign-out is then cancelled (nothing is left half-done).
+    func sessionWillSignOut() async throws
+    /// The account's data must not outlive it (the account was deleted, or the stored credentials
+    /// were another server's): its unsent messages are deleted, best effort.
+    func sessionDidDiscardAccount() async
 }
 
 /// Authentication and the session lifecycle against the build's fixed server.
@@ -105,6 +111,7 @@ public final class SessionStore: RealtimeEventHandling {
         }
         if binding == .wiped {
             // Another server's session: what it left on this device goes with it.
+            await delegate?.sessionDidDiscardAccount()
             await delegate?.sessionDidEnd()
         }
         if phase == .launching && !auth.hasStoredToken && !auth.hasDeviceSecret {
@@ -255,6 +262,7 @@ public final class SessionStore: RealtimeEventHandling {
     /// The server deleted the account: forget everything stored here and return to login.
     func finishAccountDeletion() async {
         clearStoredCredentials()
+        await delegate?.sessionDidDiscardAccount()
         await endSession()
     }
 
@@ -275,6 +283,13 @@ public final class SessionStore: RealtimeEventHandling {
     // MARK: - Logout
 
     public func logout() async {
+        do {
+            // The user agreed to lose what was not sent; if it cannot be deleted, nothing is signed out.
+            try await delegate?.sessionWillSignOut()
+        } catch {
+            errorMessage = String(localized: "Не удалось удалить неотправленные сообщения — выход отменён")
+            return
+        }
         do {
             try await auth.logout()
         } catch {

@@ -60,11 +60,14 @@ enum AttachmentRules {
         return nil
     }
 
-    /// The server could not be reached: the file is not refused, it waits for the connection.
+    /// The server could not be reached (or the session must be renewed first): the file is not
+    /// refused, it waits for the connection and its account.
     static func isTransportFailure(_ error: any Error) -> Bool {
         if let api = error as? APIError {
-            if case .noConnection = api { return true }
-            return false
+            switch api {
+            case .noConnection, .unauthorized: return true
+            default: return false
+            }
         }
         return error is URLError
     }

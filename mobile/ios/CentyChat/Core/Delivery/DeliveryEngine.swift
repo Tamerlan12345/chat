@@ -71,12 +71,14 @@ public final class DeliveryEngine {
     @ObservationIgnored public var onWipe: [@MainActor () -> Void] = []
     /// Called after every change of the model.
     @ObservationIgnored public var onStateChange: [@MainActor (DeliveryState) -> Void] = []
+    /// Called with every `user_error` code (§5).
+    @ObservationIgnored public var onUserError: [@MainActor (String) -> Void] = []
 
     // MARK: - The queue
 
     private enum Command {
         case dispatch(JSONObject, owner: Int64?, CheckedContinuation<Outcome, Never>?)
-        case replaceHistory(String, [JSONObject], Set<Int64>, CheckedContinuation<Outcome, any Error>)
+        case replaceHistory(String, [JSONObject], Set<Int64>, owner: Int64?, CheckedContinuation<Outcome, any Error>)
         case reset(CheckedContinuation<Void, any Error>)
         case adopt(Int64, CheckedContinuation<Void, any Error>)
         case restore
@@ -235,19 +237,22 @@ public final class DeliveryEngine {
         post(["type": "conversation_closed"])
     }
 
-    /// An older page of a conversation (`beforeId`), or any other page the screen loaded.
+    /// An older page of a conversation (`beforeId`), or any other page the screen loaded, for `owner`
+    /// (the model is claimed for the account that loaded it).
     @discardableResult
-    public func historyPage(_ records: [JSONObject]) async -> Outcome {
-        await dispatch(["type": "history_page", "body": .array(records.map(JSONValue.object))])
+    public func historyPage(_ records: [JSONObject], owner: Int64? = nil) async -> Outcome {
+        await withCheckedContinuation { continuation in
+            submit(.dispatch(["type": "history_page", "body": .array(records.map(JSONValue.object))], owner: owner, continuation))
+        }
     }
 
     /// The latest page (or the window around a found message) of `conversation` replaces what was
     /// cached: messages in `stale` (shown before the request) that the page no longer has are dropped,
     /// then the page is applied as `history_page`. Throws while the store is unavailable.
     @discardableResult
-    public func replaceHistory(_ conversation: String, records: [JSONObject], stale: Set<Int64>) async throws -> Outcome {
+    public func replaceHistory(_ conversation: String, records: [JSONObject], stale: Set<Int64>, owner: Int64? = nil) async throws -> Outcome {
         try await withCheckedThrowingContinuation { continuation in
-            submit(.replaceHistory(conversation, records, stale, continuation))
+            submit(.replaceHistory(conversation, records, stale, owner: owner, continuation))
         }
     }
 
@@ -319,7 +324,9 @@ public final class DeliveryEngine {
             // Evaluated first: optional chaining would skip the whole call for a posted event.
             let outcome = await dispatchNow(event, owner: owner)
             continuation?.resume(returning: outcome)
-        case .replaceHistory(let conversation, let records, let stale, let continuation):
+        case .replaceHistory(let conversation, let records, let stale, let owner, let continuation):
+            // What enters the model is the loading account's (another account's leftovers go first).
+            if blocked == nil, let owner { _ = await claimFor(owner) }
             guard blocked == nil else {
                 continuation.resume(throwing: EngineError.storeUnavailable(blocked ?? ""))
                 return
@@ -368,6 +375,7 @@ public final class DeliveryEngine {
         guard blocked == nil else { return .refused }
         // A socket of another account: that account never sees, nor sends, this one's data.
         if let user = authenticatedAs(event) { _ = await claimFor(user) }
+        if let owner, event["type"]?.string != "enqueue" { _ = await claimFor(owner) }
         if event["type"]?.string == "enqueue" {
             // A new entry is always stamped with its account; without one it is not taken.
             if let owner {
@@ -635,6 +643,7 @@ public final class DeliveryEngine {
         case .userError(let code):
             errorSerial += 1
             lastUserError = UserError(code: code, serial: errorSerial)
+            for handler in onUserError { handler(code) }
         }
     }
 

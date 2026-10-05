@@ -261,6 +261,26 @@ final class FakeChatRepository: ChatRepository, @unchecked Sendable {
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
         throw TestError(message: "upload not supported in tests")
     }
+
+    /// The same pages as server records (the delivery model's input).
+    func messageRecords(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [JSONObject] {
+        try await messages(in: conversation, limit: limit, beforeId: beforeId).map(Self.record)
+    }
+
+    func messageRecords(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [JSONObject] {
+        try await messages(in: conversation, limit: limit, afterId: afterId).map(Self.record)
+    }
+
+    func filePolicy() async throws -> FilePolicyEffectiveResponse {
+        FilePolicyEffectiveResponse(enabled: false, allowed: [])
+    }
+
+    static func record(_ message: Message) -> JSONObject {
+        guard let data = try? JSONEncoder().encode(message), let object = JSONValue.parse(data)?.object else {
+            fatalError("a test message must encode")
+        }
+        return object
+    }
 }
 
 final class FakeAnnouncementsRepository: AnnouncementsRepository, @unchecked Sendable {
@@ -282,6 +302,11 @@ actor FakeRealtimeRepository: RealtimeRepository {
     private(set) var disconnectCount = 0
     private(set) var isConnected = false
     private(set) var sent: [WSClientMessage] = []
+    /// Delivery frames written by the engine (`send_message`, `mark_read`, …).
+    private(set) var sentFrames: [JSONObject] = []
+    private var frameContinuation: AsyncStream<DeliveryLinkFrame>.Continuation?
+    private(set) var restarts = 0
+    private(set) var reconnectNowCount = 0
     private(set) var eventSubscriptions = 0
     private(set) var audioSubscriptions = 0
     private var eventContinuation: AsyncStream<WSServerEvent>.Continuation?
@@ -331,6 +356,32 @@ actor FakeRealtimeRepository: RealtimeRepository {
 
     func clearSent() {
         sent.removeAll()
+        sentFrames.removeAll()
+    }
+
+    func deliveryFrames() -> AsyncStream<DeliveryLinkFrame> {
+        frameContinuation?.finish()
+        let (stream, continuation) = AsyncStream<DeliveryLinkFrame>.makeStream()
+        frameContinuation = continuation
+        return stream
+    }
+
+    func sendFrame(_ frame: JSONObject) -> Bool {
+        guard isAuthenticated else { return false }
+        sentFrames.append(frame)
+        return true
+    }
+
+    func restartLink() {
+        restarts += 1
+    }
+
+    func reconnectNow() {
+        reconnectNowCount += 1
+    }
+
+    func authenticatedUserId() -> Int64? {
+        nil
     }
 
     func sendAudioFrame(_ frame: Data) {}
@@ -374,7 +425,7 @@ actor FakeRealtimeRepository: RealtimeRepository {
             guard let data = message.toJSONData(),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
             return json["type"] as? String
-        }
+        } + sentFrames.compactMap { $0["type"]?.string }
     }
 }
 
@@ -390,6 +441,8 @@ struct TestApp {
     let realtime: FakeRealtimeRepository
     let peopleSource: FakePeopleSource
     let peopleCache: InMemoryPeopleCache
+    let deliveryStore: InMemoryDeliveryStore
+    let deliveryBackend: FakeDeliveryBackend
 
     init(
         environment: ServerEnvironment = .test,
@@ -403,6 +456,8 @@ struct TestApp {
         realtime = FakeRealtimeRepository()
         peopleSource = FakePeopleSource(users: [])
         peopleCache = InMemoryPeopleCache()
+        deliveryStore = InMemoryDeliveryStore()
+        deliveryBackend = FakeDeliveryBackend()
         container = AppContainer(
             server: server,
             auth: auth,
@@ -417,11 +472,36 @@ struct TestApp {
             peopleSource: peopleSource,
             peopleCache: peopleCache,
             pushTokenService: pushTokens,
-            avatarLoader: avatarLoader
+            avatarLoader: avatarLoader,
+            deliveryStore: deliveryStore,
+            deliveryBackend: deliveryBackend
         )
     }
 
     var session: SessionStore { container.session }
+    var engine: DeliveryEngine { container.delivery.engine }
+
+    /// A server frame as the socket delivers it: to the delivery engine (raw) and to the stores
+    /// (parsed), then processed.
+    func deliver(_ json: String) async {
+        guard let object = JSONValue.parse(json)?.object else { fatalError("Unparseable test frame: \(json)") }
+        engine.receive(.frame(object))
+        container.realtime.dispatch(TestModels.event(json))
+        await settleDelivery()
+    }
+
+    /// The socket authenticated as the signed-in user and the first sync finished.
+    func goOnline(as user: Int64 = TestModels.me.id) async {
+        await deliver(#"{"type":"auth_success","user":{"id":\#(user),"username":"user\#(user)","full_name":"Тест","is_active":1,"must_change_password":0}}"#)
+    }
+
+    /// Lets the engine work through its queue and the requests it started.
+    func settleDelivery() async {
+        for _ in 0..<10 {
+            await engine.idle()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
 }
 
 /// `/api/users`, `/api/org/tree` and `/api/users/:id` for the people directory.

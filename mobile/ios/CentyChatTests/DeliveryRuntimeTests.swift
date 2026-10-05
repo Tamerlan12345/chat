@@ -163,3 +163,16 @@ final class DeliveryRuntimeTests: XCTestCase {
         XCTAssertEqual(backend.postedBodies.count, 1)
     }
 }
+
+/// The line the sign-out and account-deletion confirmations add when messages wait.
+final class UnsentNoticeTests: XCTestCase {
+    func testTheCountIsSaidInProperRussian() {
+        XCTAssertNil(UnsentNotice.text(0))
+        XCTAssertEqual(UnsentNotice.text(1), "1 неотправленное сообщение будет удалено")
+        XCTAssertEqual(UnsentNotice.text(3), "3 неотправленных сообщения будут удалены")
+        XCTAssertEqual(UnsentNotice.text(5), "5 неотправленных сообщений будут удалены")
+        XCTAssertEqual(UnsentNotice.text(11), "11 неотправленных сообщений будут удалены")
+        XCTAssertEqual(UnsentNotice.text(21), "21 неотправленное сообщение будет удалено")
+        XCTAssertEqual(UnsentNotice.text(112), "112 неотправленных сообщений будут удалены")
+    }
+}

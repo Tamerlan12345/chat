@@ -11,6 +11,9 @@ struct CentyChatMobileApp: App {
 #if DEBUG
         if LaunchTestFixture.shouldResetSecureState {
             try? KeychainManager.shared.resetForUITesting()
+            // A fresh install: no queue, no waiting files of an earlier run.
+            try? SwiftDataDeliveryStore.removeFiles(at: SwiftDataDeliveryStore.defaultDirectory())
+            try? AttachmentFiles(root: AttachmentFiles.defaultRoot()).removeAll()
         }
 #endif
         let container = AppContainer.live()
