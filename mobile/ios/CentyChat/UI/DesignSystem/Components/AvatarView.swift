@@ -85,3 +85,9 @@ public struct AvatarView: View {
         }
     }
 }
+
+/// Skeleton.
+enum AvatarPalette {
+    static func colorHex(for name: String) -> UInt32 { 0 }
+    static func initials(of name: String) -> String { "" }
+}

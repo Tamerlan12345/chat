@@ -326,6 +326,16 @@ public actor APIClient {
         return response.blocked
     }
 
+    // MARK: - Push token
+
+    func registerPushToken(_ registration: PushTokenRegistration) async throws -> PushTokenRegisterResponse {
+        throw APIError.custom("not implemented")
+    }
+
+    func unregisterPushToken(_ token: String) async throws -> Bool {
+        throw APIError.custom("not implemented")
+    }
+
     /// Выход из системы
     public func logout() async throws {
         let deviceId = try keychain.deviceID()

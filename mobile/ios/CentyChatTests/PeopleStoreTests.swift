@@ -142,6 +142,19 @@ final class PeopleModelTests: XCTestCase {
         XCTAssertEqual(PeopleFilters.decoded(filters.encoded), filters)
         XCTAssertEqual(PeopleFilters.decoded("не json"), PeopleFilters())
     }
+
+    /// `@SceneStorage` outlives sign-out: the next account must not see the previous one's query.
+    func testStoredFiltersBelongToTheAccountThatSetThem() {
+        let filters = PeopleFilters(query: "боб", scope: .departments, onlineOnly: true, expanded: [1, 2])
+        let stored = filters.stored(for: 7)
+
+        XCTAssertEqual(PeopleFilters.restored(from: stored, owner: 7), filters, "The same account gets its filters back")
+        XCTAssertEqual(PeopleFilters.restored(from: stored, owner: 8), PeopleFilters(), "Another account starts clean")
+        XCTAssertEqual(PeopleFilters.restored(from: stored, owner: nil), PeopleFilters())
+        XCTAssertEqual(PeopleFilters.restored(from: filters.encoded, owner: 7), PeopleFilters(),
+                       "Filters saved without an owner (older builds) are not handed to anyone")
+        XCTAssertEqual(PeopleFilters.restored(from: "", owner: 7), PeopleFilters())
+    }
 }
 
 /// The container wires the directory and the search recents into the session lifecycle.

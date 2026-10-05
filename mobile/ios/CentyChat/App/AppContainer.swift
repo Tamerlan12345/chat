@@ -21,6 +21,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let people: PeopleStore
     /// «Недавние» of the search in «Чаты».
     public let searchRecents: SearchRecentsStore
+    /// This device's APNs token on the server (`push.md` §2).
+    let pushTokens: PushTokenRegistrar
+    /// Colleagues' photos, cached on disk; wiped when the session ends.
+    let avatars: AvatarImageLoader
     let accountRepository: any AccountRepository
 
     init(
@@ -38,7 +42,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         accountRepository: any AccountRepository = UnavailableAccountRepository(),
         peopleSource: (any PeopleSource)? = nil,
         peopleCache: (any PeopleCache)? = nil,
-        recentsDefaults: UserDefaults? = nil
+        recentsDefaults: UserDefaults? = nil,
+        pushTokenService: (any PushTokenService)? = nil,
+        deviceId: @escaping @MainActor () -> String? = { nil },
+        avatarLoader: AvatarImageLoader? = nil
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -95,6 +102,13 @@ public final class AppContainer: SessionLifecycleDelegate {
             ownerId: { [weak session] in session?.currentUser?.id }
         )
         self.searchRecents = SearchRecentsStore(defaults: recentsDefaults)
+        self.pushTokens = PushTokenRegistrar(
+            service: pushTokenService ?? DisabledPushTokenService(),
+            deviceId: deviceId,
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            environment: .current
+        )
+        self.avatars = avatarLoader ?? AvatarImageLoader.inMemory(serverURL: environment.serverURL)
         self.accountRepository = accountRepository
 
         account.onBlocksChanged = { [weak conversations, weak chats] in

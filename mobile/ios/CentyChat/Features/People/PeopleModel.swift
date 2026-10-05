@@ -73,6 +73,10 @@ public struct PeopleFilters: Codable, Equatable, Sendable {
         }
         return filters
     }
+
+    func stored(for owner: Int64?) -> String { "" }
+
+    static func restored(from text: String, owner: Int64?) -> PeopleFilters { PeopleFilters() }
 }
 
 public struct PeopleUIState: Equatable, Sendable {
