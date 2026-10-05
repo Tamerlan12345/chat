@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -85,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.components.CentyPrimaryButton
+import com.openmychat.mobile.ui.components.CentyTextButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyTheme
 import kotlinx.coroutines.coroutineScope
@@ -95,13 +97,17 @@ private val BrandEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 private const val MARK_INTRO_MS = 280
 
 /**
- * The app's front door: brand lockup, one card with login and password, full-width «Войти».
- * The server is fixed at build time, so there is no server field and no "change server" control.
+ * The app's front door: brand lockup, one card with login and password, full-width «Войти», and a
+ * quiet «Зарегистрироваться» under the card. The server is fixed at build time, so there is no
+ * server field and no "change server" control. A registration that is pending or rejected opens
+ * its own screen ([onAccountState]) instead of an error.
  */
 @Composable
 fun LoginScreen(
     viewModel: LoginViewModel,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: () -> Unit,
+    onRegister: () -> Unit = {},
+    onAccountState: (rejected: Boolean) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val canSubmit by viewModel.canSubmit.collectAsState()
@@ -133,7 +139,12 @@ fun LoginScreen(
         viewModel.password.collect { if (it.isEmpty()) password = "" }
     }
     LaunchedEffect(uiState) {
-        if (uiState is LoginUiState.Success) onLoginSuccess()
+        val state = uiState
+        if (state is LoginUiState.Success) onLoginSuccess()
+        if (state is LoginUiState.Error && (state.error == LoginError.AccountPending || state.error == LoginError.AccountRejected)) {
+            viewModel.onAccountStateShown()
+            onAccountState(state.error == LoginError.AccountRejected)
+        }
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -180,6 +191,19 @@ fun LoginScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) },
                     onSubmit = submit
                 )
+
+                Spacer(Modifier.height(12.dp))
+                // A text button: registering must not compete with «Войти».
+                CentyTextButton(
+                    onClick = onRegister,
+                    enabled = !isSigningIn,
+                    modifier = Modifier
+                        .widthIn(max = 440.dp)
+                        .fillMaxWidth()
+                        .testTag("login-register")
+                ) {
+                    Text(stringResource(R.string.login_register), style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
 
@@ -357,10 +381,10 @@ private fun SubmitButton(isSigningIn: Boolean, enabled: Boolean, onClick: () -> 
 
 /** Danger-soft box with a hairline, like desktop `.login-error-box`; announced politely. */
 @Composable
-private fun ErrorBox(text: String) {
+internal fun ErrorBox(text: String, modifier: Modifier = Modifier) {
     val tokens = CentyTheme.tokens
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(tokens.dangerSoft, RoundedCornerShape(8.dp))
             .border(1.dp, tokens.dangerLine, RoundedCornerShape(8.dp))
@@ -391,6 +415,9 @@ private fun errorText(error: LoginError, retryAfterSeconds: Long): String = when
         if (retryAfterSeconds > 0) stringResource(R.string.login_error_busy, formatCountdown(retryAfterSeconds))
         else stringResource(R.string.login_error_busy_done)
     LoginError.Offline -> stringResource(R.string.login_error_offline)
+    // Shown on their own screens; the text only covers the instant before navigation.
+    LoginError.AccountPending -> stringResource(R.string.account_pending_login_message)
+    LoginError.AccountRejected -> stringResource(R.string.account_rejected_message)
     LoginError.InsecureConnection -> stringResource(R.string.login_error_insecure)
     LoginError.StorageUnavailable -> stringResource(R.string.login_error_storage)
     LoginError.Unexpected -> stringResource(R.string.login_error_unexpected)

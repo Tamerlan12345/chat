@@ -187,4 +187,52 @@ class AppNavigatorTest {
         assertEquals(listOf(NavKey.Conversations, chatWithAlice), navigator.state.topLevelBackStacks.getValue(NavKey.Conversations).toList())
         assertEquals(listOf(NavKey.Profile), navigator.state.topLevelBackStacks.getValue(NavKey.Profile).toList())
     }
+
+    @Test
+    fun registrationRunsInsideTheSignInFlowAndReturnsToLogin() {
+        val navigator = AppNavigator(AppNavigationState.signedOut())
+
+        navigator.navigate(NavKey.Register)
+        assertEquals(listOf(NavKey.Login, NavKey.Register), navigator.state.visibleKeys)
+        navigator.navigate(NavKey.Register)
+        assertEquals("no duplicate registration screens", listOf(NavKey.Login, NavKey.Register), navigator.state.visibleKeys)
+
+        navigator.navigate(NavKey.Login) // «Вернуться ко входу»
+        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
+
+        navigator.navigate(NavKey.AccountStatus(rejected = true))
+        assertTrue(navigator.goBack())
+        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
+    }
+
+    @Test
+    fun aRegistrationThatSignsInLeavesTheSignInFlowCompletely() {
+        val navigator = AppNavigator(AppNavigationState.signedOut())
+        navigator.navigate(NavKey.Register)
+
+        navigator.navigate(NavKey.Conversations)
+
+        assertFalse(navigator.state.isAuthFlow)
+        assertEquals(listOf(NavKey.Conversations), navigator.state.visibleKeys)
+        assertFalse("no way back into registration", navigator.goBack())
+    }
+
+    @Test
+    fun accountSafetyScreensOpenOverTheProfileAndDeletionEndsAtLogin() {
+        val navigator = authenticatedNavigator()
+        navigator.navigate(NavKey.Profile)
+
+        navigator.navigate(NavKey.BlockedUsers)
+        assertEquals(listOf(NavKey.Conversations, NavKey.Profile, NavKey.BlockedUsers), navigator.state.visibleKeys)
+        navigator.goBack()
+        navigator.navigate(NavKey.DeleteAccount)
+        assertEquals(NavKey.DeleteAccount, navigator.state.currentKey)
+
+        navigator.onLoggedOut()
+        assertEquals(listOf(NavKey.Login), navigator.state.visibleKeys)
+        navigator.navigate(NavKey.Register)
+        assertEquals("the sign-in flow cannot reach protected screens", listOf(NavKey.Login, NavKey.Register), navigator.state.visibleKeys)
+        navigator.navigate(NavKey.DeleteAccount)
+        assertEquals(listOf(NavKey.Login, NavKey.Register), navigator.state.visibleKeys)
+    }
 }

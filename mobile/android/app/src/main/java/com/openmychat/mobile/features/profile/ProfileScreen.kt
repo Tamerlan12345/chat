@@ -25,7 +25,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
@@ -84,7 +88,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
-    onLoggedOut: () -> Unit
+    onLoggedOut: () -> Unit,
+    onOpenBlockedUsers: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val presence by viewModel.presence.collectAsState()
@@ -218,6 +224,16 @@ fun ProfileScreen(
                     }
                 }
 
+                SectionTitle(stringResource(R.string.profile_privacy_section))
+                Group {
+                    NavigationRow(
+                        icon = Icons.Outlined.Block,
+                        text = stringResource(R.string.profile_blocked_users),
+                        onClick = onOpenBlockedUsers,
+                        tag = "profile-blocked-users"
+                    )
+                }
+
                 SectionTitle(stringResource(R.string.profile_app_section))
                 Group {
                     InfoRow(stringResource(R.string.profile_server), BuildConfig.SERVER_URL.toHttpUrlOrNull()?.host ?: BuildConfig.SERVER_URL)
@@ -253,6 +269,23 @@ fun ProfileScreen(
                         Text(stringResource(R.string.profile_logout), style = MaterialTheme.typography.bodyLarge, color = tokens.dangerText)
                     }
                 }
+
+                Spacer(Modifier.size(24.dp))
+                Group {
+                    NavigationRow(
+                        icon = Icons.Outlined.DeleteForever,
+                        text = stringResource(R.string.profile_delete_account),
+                        onClick = onDeleteAccount,
+                        tag = "profile-delete-account",
+                        danger = true
+                    )
+                }
+                Text(
+                    stringResource(R.string.profile_delete_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.textDim,
+                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                )
             }
         }
     }
@@ -357,6 +390,27 @@ private fun DndRow(enabled: Boolean, onChange: (Boolean) -> Unit) {
                 uncheckedThumbColor = tokens.textDim
             )
         )
+    }
+}
+
+/** A row that opens another screen (or a destructive flow, in danger colours). */
+@Composable
+private fun NavigationRow(icon: ImageVector, text: String, onClick: () -> Unit, tag: String, danger: Boolean = false) {
+    val tokens = CentyTheme.tokens
+    val color = if (danger) tokens.dangerText else tokens.textStrong
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = if (danger) tokens.dangerText else tokens.accentText)
+        Spacer(Modifier.width(12.dp))
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = color, modifier = Modifier.weight(1f))
+        if (!danger) Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = tokens.textDim)
     }
 }
 

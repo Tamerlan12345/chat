@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.ApiException
 import com.openmychat.mobile.core.session.SecureStorageUnavailableException
+import com.openmychat.mobile.data.model.AccountStateCode
 import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.LoginResult
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,6 +32,12 @@ sealed interface LoginError {
     /** 503 `LOGIN_BUSY`: the server is overloaded; [LoginViewModel.retryAfterSeconds] counts down. */
     data object ServerBusy : LoginError
     data object Offline : LoginError
+
+    /** `403 ACCOUNT_PENDING`: a registration the administrator has not approved yet (its own screen). */
+    data object AccountPending : LoginError
+
+    /** `403 ACCOUNT_REJECTED`: a registration the administrator declined (its own screen). */
+    data object AccountRejected : LoginError
 
     /** The TLS handshake failed (system trust, hostname check). */
     data object InsecureConnection : LoginError
@@ -174,6 +181,14 @@ class LoginViewModel @Inject constructor(
         }
     }
 
+    /** The pending / rejected screen was opened: back on the login screen the form is plain again. */
+    fun onAccountStateShown() {
+        val state = _uiState.value
+        if (state is LoginUiState.Error && (state.error == LoginError.AccountPending || state.error == LoginError.AccountRejected)) {
+            _uiState.value = LoginUiState.Idle
+        }
+    }
+
     private fun startCountdown(seconds: Long) {
         countdown?.cancel()
         _retryAfterSeconds.value = seconds
@@ -239,13 +254,16 @@ class LoginViewModel @Inject constructor(
 
         /**
          * Maps a failed sign-in to what the screen may say. The server's own message is never
-         * shown: 400 (wrong password, unknown or disabled login) and 401 read the same.
+         * shown: 400 (wrong password, unknown or disabled login) and 401 read the same. A registration
+         * that is pending or rejected (the password was right) gets its own screen.
          */
         internal fun classify(failure: Exception): Pair<LoginError, Long> = when (failure) {
             is SecureStorageUnavailableException -> LoginError.StorageUnavailable to 0L
             is ApiException -> when {
                 failure.statusCode == 0 && failure.errorCode == "TLS_ERROR" -> LoginError.InsecureConnection to 0L
                 failure.statusCode == 0 -> LoginError.Offline to 0L
+                failure.statusCode == 403 && failure.errorCode == AccountStateCode.PENDING -> LoginError.AccountPending to 0L
+                failure.statusCode == 403 && failure.errorCode == AccountStateCode.REJECTED -> LoginError.AccountRejected to 0L
                 failure.statusCode == 400 || failure.statusCode == 401 || failure.statusCode == 403 ->
                     LoginError.InvalidCredentials to 0L
                 failure.statusCode == 429 -> LoginError.Throttled to
