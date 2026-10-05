@@ -8,7 +8,6 @@ import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.core.util.MessageWindowValidator
 import com.openmychat.mobile.data.delivery.DeliveryEngine
 import com.openmychat.mobile.data.delivery.DeliveryState
-import com.openmychat.mobile.data.delivery.OutboxEntry
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.MessageType
@@ -56,26 +55,12 @@ import kotlinx.serialization.json.put
 
 private const val KEY_FOCUS_DONE = "chat.focus_done"
 
-/** Отказ сервера в доставке личного сообщения (блокировка с любой стороны), contracts/registration.md §4. */
-private const val DM_NOT_ALLOWED = "DM_NOT_ALLOWED"
-
 /** Сколько текста сообщения показать в жалобе. */
 private const val REPORT_EXCERPT = 160
 private const val ATTACHMENT_SUBJECT = "Вложение"
 private const val CANNOT_READ_FILE = "Не удалось прочитать файл"
 private const val CANNOT_KEEP_FILE = "Не удалось сохранить файл для отправки"
 private const val NOT_SAVED = "Сообщение не сохранено — попробуйте ещё раз"
-
-/** Why the composer of a direct chat is closed. */
-enum class ComposerLock {
-    NONE,
-
-    /** I blocked this person: nothing goes either way until I unblock. */
-    BLOCKED_BY_ME,
-
-    /** The server refused a send with `DM_NOT_ALLOWED` (the other side blocked me, or I them elsewhere). */
-    NOT_DELIVERABLE
-}
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -218,16 +203,11 @@ class ChatViewModel @AssistedInject constructor(
     /** «Пожаловаться» on a message or on the peer. */
     val reports = ReportController(account, viewModelScope)
 
-    private val notDeliverable = MutableStateFlow(false)
-
-    /** Refusals the chat no longer stays closed for: delivery was seen to work after them. */
-    private val reopenedAfter = HashSet<String>()
-
-    /** The newest message from the peer seen so far (a newer one reopens a refused chat). */
-    private var newestPeerMessage: Long? = null
+    /** The server's `DM_NOT_ALLOWED` for this direct chat, and what reopens it. */
+    private val refusedDelivery = RefusedDelivery(conversationKey, targetId)
 
     /** The composer is closed while the peer is blocked or the server refuses delivery. */
-    val composerLock: StateFlow<ComposerLock> = combine(blocks?.blocked ?: flowOf(false), notDeliverable) { blocked, refused ->
+    val composerLock: StateFlow<ComposerLock> = combine(blocks?.blocked ?: flowOf(false), refusedDelivery.closed) { blocked, refused ->
         lockOf(blocked, refused)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, lockOf(blocks?.blocked?.value == true, false))
 
@@ -242,7 +222,7 @@ class ChatViewModel @AssistedInject constructor(
         blocks?.let { controller ->
             viewModelScope.launch {
                 controller.blocked.drop(1).collect { blocked ->
-                    if (!blocked) reopenRefusedChat()
+                    if (!blocked) refusedDelivery.reopen(model())
                     loadMessages(replaceAll = true)
                 }
             }
@@ -311,35 +291,13 @@ class ChatViewModel @AssistedInject constructor(
             uploads = sends.uploads.value,
             handedOver = sends.handedOver.value
         )
-        if (state != null && conversationType == ConversationType.DIRECT) {
-            // A new message from the peer shows delivery works again: an earlier refusal no longer closes the chat.
-            val peerNewest = list.asSequence().filter { it.senderId == targetId && it.sendState == SendState.SENT }.maxOfOrNull { it.id }
-            val seen = newestPeerMessage
-            if (peerNewest != null && seen != null && peerNewest > seen) reopenRefusedChat()
-            if (peerNewest != null && (seen == null || peerNewest > seen)) newestPeerMessage = peerNewest
-            // The server refused delivery here (DM_NOT_ALLOWED): sending stays closed until delivery is seen to work again.
-            if (refusals(state).any { it !in reopenedAfter }) notDeliverable.value = true
-        }
+        if (state != null && conversationType == ConversationType.DIRECT) refusedDelivery.observe(state, list)
         val known = state?.messages?.containsKey(conversationKey) == true
         _uiState.value = when {
             known || list.isNotEmpty() || load == Load.Done -> ChatUiState.Content(list)
             load is Load.Failed -> ChatUiState.Error((load as Load.Failed).message)
             else -> ChatUiState.Loading
         }
-    }
-
-    /** Client keys of this chat's sends the server refused with `DM_NOT_ALLOWED`. */
-    private fun refusals(state: DeliveryState): List<String> = state.outbox
-        .filter { it.conversation == conversationKey && it.state == OutboxEntry.FAILED && it.failure?.code == DM_NOT_ALLOWED }
-        .map { it.clientMsgId }
-
-    /**
-     * The peer may have unblocked me: a successful history load or a message from them opens the
-     * composer again. A send that is still refused closes it again (a new refusal).
-     */
-    private fun reopenRefusedChat() {
-        model()?.let { reopenedAfter += refusals(it) }
-        notDeliverable.value = false
     }
 
     /** Ids of server messages of this chat in the model now. */
@@ -371,7 +329,7 @@ class ChatViewModel @AssistedInject constructor(
                 val stale = if (replaceAll || window != null || oldest == null) shownBefore else shownBefore.filterTo(HashSet()) { it >= oldest }
                 delivery.replaceHistory(conversationKey, history.map(ChatProjection::record), stale)
                 load = Load.Done
-                if (conversationType == ConversationType.DIRECT) reopenRefusedChat()
+                if (conversationType == ConversationType.DIRECT) refusedDelivery.reopen(model())
                 rebuild()
                 if (jump != null && window != null) _focus.value = jump
             } catch (e: CancellationException) {
