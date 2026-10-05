@@ -10,6 +10,8 @@ import com.openmychat.mobile.data.model.MessageType
 import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.repository.PickedFile
+import com.openmychat.mobile.features.attachments.TransferState
+import java.io.File
 import com.openmychat.mobile.testing.FakeAttachmentRepository
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
@@ -253,5 +255,19 @@ class ChatViewModelAttachmentTest {
 
         assertTrue(files.uploads.isEmpty())
         assertEquals(1, vm.shown.size)
+    }
+
+    @Test
+    fun tappingAServerFileDownloadsItAndAnUnsentOneDoesNothing() {
+        val vm = directChat()
+        val server = message(id = 5, from = alice, to = ME, text = "a.pdf").copy(type = MessageType.FILE, metadataJson = """{"file_id":9}""")
+
+        vm.openAttachment(server)
+
+        assertEquals(listOf(9L), files.downloads)
+        assertEquals(TransferState.Ready(File("a.pdf")), vm.opener.transfers.value[9])
+
+        vm.openAttachment(message(id = 6, from = alice, to = ME, text = "просто текст"))
+        assertEquals(1, files.downloads.size)
     }
 }

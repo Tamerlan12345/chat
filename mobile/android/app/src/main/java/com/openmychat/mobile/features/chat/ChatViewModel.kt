@@ -44,6 +44,7 @@ import com.openmychat.mobile.data.model.LocalUpload
 import com.openmychat.mobile.data.repository.AttachmentRepository
 import com.openmychat.mobile.data.repository.UnavailableAttachments
 import com.openmychat.mobile.core.network.ApiException
+import com.openmychat.mobile.features.attachments.AttachmentOpener
 import com.openmychat.mobile.features.attachments.Attachments
 import com.openmychat.mobile.features.attachments.UploadRules
 import kotlinx.coroutines.CancellationException
@@ -185,6 +186,14 @@ class ChatViewModel @AssistedInject constructor(
 
     /** Короткие сообщения для снекбара: отказ в файле, сбой загрузки или скачивания. */
     val notices: SharedFlow<String> = _notices.asSharedFlow()
+
+    /** Скачать и открыть вложение; картинки — во встроенном просмотре. */
+    val opener = AttachmentOpener(attachments, viewModelScope, ::notice)
+
+    /** Тап по плитке вложения. */
+    fun openAttachment(message: Message) {
+        Attachments.of(message)?.let(opener::open)
+    }
 
     /** «Заблокировать» / «Разблокировать» the peer; null in channels and in a chat with oneself. */
     val blocks: BlockController? =
