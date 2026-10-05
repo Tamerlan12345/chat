@@ -109,7 +109,7 @@ final class PushTokenRegistrar {
     }
 
     /// APNs hands the token out as bytes; the server takes lowercase hex.
-    static func hex(_ token: Data) -> String {
+    nonisolated static func hex(_ token: Data) -> String {
         token.map { String(format: "%02x", $0) }.joined()
     }
 
