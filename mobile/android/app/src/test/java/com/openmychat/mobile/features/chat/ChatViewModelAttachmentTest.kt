@@ -51,6 +51,8 @@ class ChatViewModelAttachmentTest {
     private val pdf = PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
     private val photo = PickedFile("content://media/2", "IMG_2001.jpg", 50_000, "image/jpeg", width = 4000, height = 3000)
 
+    private val cache = ChatHistoryCache(FakeSessionRepository())
+
     private fun directChat(session: FakeSessionRepository = FakeSessionRepository()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = alice,
@@ -58,7 +60,7 @@ class ChatViewModelAttachmentTest {
         realtimeRepository = realtime,
         sessionRepository = session,
         activeConversations = ActiveConversationRegistry(),
-        historyCache = ChatHistoryCache(FakeSessionRepository()),
+        historyCache = cache,
         attachments = files
     ).also { vm -> CoroutineScope(mainDispatcher.dispatcher).launch { vm.notices.collect { notices += it } } }
 
@@ -279,5 +281,21 @@ class ChatViewModelAttachmentTest {
             currentUser.value = currentUser.value!!.copy(permissions = RolePermissions(canUploadFiles = false))
         }
         assertEquals(false, directChat(session).canAttach)
+    }
+
+    @Test
+    fun aFileLeftUploadingComesBackQueuedWithoutAStaleRing() {
+        files.picked[pdf.uri] = pdf
+        files.uploadGate = CompletableDeferred()
+        val first = directChat()
+        first.sendAttachment(pdf.uri)
+        files.uploadProgress!!(0.6f)
+        realtime.connectionState.value = ConnectionState.Connecting
+
+        val reopened = directChat()
+
+        val restored = reopened.shown.single()
+        assertEquals(SendState.QUEUED, restored.sendState)
+        assertNull("no upload runs for it here", restored.upload!!.progress)
     }
 }

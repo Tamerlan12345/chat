@@ -2,7 +2,7 @@ package com.openmychat.mobile.data.repository
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.net.Uri
+import androidx.core.net.toUri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import com.openmychat.mobile.core.network.ApiClient
@@ -98,7 +98,7 @@ class DefaultAttachmentRepository @Inject constructor(
     }
 
     override suspend fun describe(uri: String): PickedFile? = withContext(Dispatchers.IO) {
-        val parsed = Uri.parse(uri)
+        val parsed = uri.toUri()
         val resolver = context.contentResolver
         var name: String? = null
         var size: Long? = null
@@ -146,7 +146,7 @@ class DefaultAttachmentRepository @Inject constructor(
             name = file.name,
             mimeType = file.mimeType,
             size = file.size,
-            open = { resolver.openInputStream(Uri.parse(file.uri)) ?: throw IOException("Файл недоступен") }
+            open = { resolver.openInputStream(file.uri.toUri()) ?: throw IOException("Файл недоступен") }
         ) { sent, total ->
             if (total != null && total > 0) onProgress((sent.toFloat() / total).coerceIn(0f, 1f))
         }

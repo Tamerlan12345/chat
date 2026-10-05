@@ -236,7 +236,10 @@ class ChatViewModel @AssistedInject constructor(
         // were still unconfirmed when it was left come back queued: no frame of a closed chat is in flight.
         historyCache.get(currentUserId, conversation)?.let { cached ->
             _uiState.value = ChatUiState.Content(
-                cached.map { if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED) else it }
+                cached.map {
+                    // No upload of a closed chat is running either: its ring is gone until it starts again.
+                    if (it.sendState == SendState.SENDING) it.copy(sendState = SendState.QUEUED, upload = it.upload?.copy(progress = null)) else it
+                }
             )
         }
         viewModelScope.launch {
