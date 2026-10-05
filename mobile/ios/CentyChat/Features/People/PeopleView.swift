@@ -43,6 +43,13 @@ public struct PeopleView: View {
         .onChange(of: model?.filters) { _, filters in
             if let filters { storedFilters = filters.stored(for: container.session.currentUser?.id) }
         }
+        // Sign-out clears the stored filters (they outlive the session in scene storage).
+        .onChange(of: container.session.currentUser?.id) { _, userId in
+            storedFilters = PeopleFilters.retained(storedFilters, signedInUser: userId)
+        }
+        .onDisappear {
+            storedFilters = PeopleFilters.retained(storedFilters, signedInUser: container.session.currentUser?.id)
+        }
     }
 }
 
