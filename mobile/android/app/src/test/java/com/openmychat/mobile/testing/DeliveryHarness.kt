@@ -87,13 +87,17 @@ class DeliveryHarness(
     val scope = CoroutineScope(SupervisorJob() + dispatcher)
     val backend = FakeDeliveryBackend(chat)
     private val clock = { dispatcher.scheduler.currentTime }
-    val engine = DeliveryEngine(scope, store, RealtimeDeliveryLink(realtime, session), backend, clock)
-    val sends = AttachmentSends(scope, uploadStore, files, engine, clock, owner = { session.currentUserId })
     var flushesScheduled = 0
         private set
     /** What the runtime logged (failures nobody waits for). */
     val logged = mutableListOf<String>()
-    val runtime = DeliveryRuntime(engine, sends, session, realtime, scope, { flushesScheduled++ }, { message, _ -> logged += message })
+    /** Wired exactly as the app's DI does. */
+    val runtime = DeliveryRuntime.create(
+        scope, store, uploadStore, RealtimeDeliveryLink(realtime, session), backend, files, session, realtime,
+        { flushesScheduled++ }, clock, { message, _ -> logged += message }
+    )
+    val engine: DeliveryEngine = runtime.engine
+    val sends: AttachmentSends = runtime.sends
 
     init {
         runtime.start()

@@ -72,7 +72,7 @@ class AttachmentSends(
     private val jobs = HashMap<String, Job>()
     private val retries = HashMap<String, Job>()
     private val loaded = Mutex()
-    private var restored = false
+    @Volatile private var restored = false
     @Volatile private var online = false
     private var started = false
 
@@ -84,6 +84,16 @@ class AttachmentSends(
         scope.launch {
             // The queue was wiped (sign-out, another account): its files go too.
             engine.wiped.collect { forget() }
+        }
+        scope.launch {
+            // An account took the queue after a wipe (signed in, or a sign-out called off whose delete
+            // failed): the files stored for it are listed again.
+            engine.state.collect { state ->
+                if (state.me != null && !restored) {
+                    restore()
+                    if (online) pendingKeys().forEach(::launchUpload)
+                }
+            }
         }
         scope.launch {
             // Once the outbox no longer holds a handed-over file (confirmed or dropped), its copy goes.
@@ -191,14 +201,19 @@ class AttachmentSends(
         }
         _uploads.value = emptyList()
         _handedOver.value = emptyMap()
-        runCatching { files.pruneKept(emptySet()) }
+        loaded.withLock { restored = false }
+        // A copy goes with its row: a delete that failed (rows still there) keeps them for the account.
+        val rows = runCatching { store.all() }.getOrNull() ?: return
+        runCatching { files.pruneKept(rows.mapTo(HashSet()) { it.clientMsgId }) }
     }
 
-    /** Files go up only for the account that owns the queue, never under another account's token. */
+    /**
+     * Files go up only for the account that owns the queue, never under another account's token:
+     * the model and the disk both name the signed-in account (never while a wipe left it unnamed).
+     */
     private fun ownerSignedIn(): Boolean {
         val user = owner() ?: return false
-        val me = engine.state.value.me
-        return engine.ready.value && (me == null || me == user)
+        return engine.ready.value && engine.state.value.me == user && engine.ownerOnDisk == user
     }
 
     /** Explicit sign-out: uploads stop, the kept copies and rows are deleted. */

@@ -82,4 +82,104 @@ class ProfileViewModelUnsentTest {
         assertFalse(navigated)
         assertTrue(vm.logoutError.value != null)
     }
+
+    // ── Fix round 4 (2): a sign-out that was called off leaves the same account working ─────────
+
+    private val conv = "direct:7"
+
+    private fun echo(id: Long, key: String) = kotlinx.serialization.json.buildJsonObject {
+        put("type", kotlinx.serialization.json.JsonPrimitive("direct_message"))
+        put("message", kotlinx.serialization.json.buildJsonObject {
+            put("id", kotlinx.serialization.json.JsonPrimitive(id))
+            put("conversation_type", kotlinx.serialization.json.JsonPrimitive("direct"))
+            put("target_id", kotlinx.serialization.json.JsonPrimitive(7))
+            put("sender_id", kotlinx.serialization.json.JsonPrimitive(1))
+            put("text", kotlinx.serialization.json.JsonPrimitive("эхо"))
+            put("type", kotlinx.serialization.json.JsonPrimitive("text"))
+            put("created_at", kotlinx.serialization.json.JsonPrimitive("2026-10-05T09:00:00.000Z"))
+            put("is_deleted", kotlinx.serialization.json.JsonPrimitive(0))
+            put("client_msg_id", kotlinx.serialization.json.JsonPrimitive(key))
+        })
+    }
+
+    private fun incoming(id: Long) = kotlinx.serialization.json.buildJsonObject {
+        put("type", kotlinx.serialization.json.JsonPrimitive("new_message"))
+        put("message", kotlinx.serialization.json.buildJsonObject {
+            put("id", kotlinx.serialization.json.JsonPrimitive(id))
+            put("conversation_type", kotlinx.serialization.json.JsonPrimitive("direct"))
+            put("target_id", kotlinx.serialization.json.JsonPrimitive(1))
+            put("sender_id", kotlinx.serialization.json.JsonPrimitive(7))
+            put("text", kotlinx.serialization.json.JsonPrimitive("входящее"))
+            put("type", kotlinx.serialization.json.JsonPrimitive("text"))
+            put("created_at", kotlinx.serialization.json.JsonPrimitive("2026-10-05T09:01:00.000Z"))
+            put("is_deleted", kotlinx.serialization.json.JsonPrimitive(0))
+            put("client_msg_id", kotlinx.serialization.json.JsonPrimitive("in-$id"))
+        })
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertTheAccountWorks(h: com.openmychat.mobile.testing.DeliveryHarness) {
+        val outcome = h.engine.enqueue(conv, "после отмены выхода", clientMsgId = "k2")
+        runCurrent()
+        assertTrue("an enqueue is taken again", outcome.composerCleared)
+        assertTrue("and goes out over the open socket", "k2" in realtime.sentClientMsgIds)
+        realtime.emitFrame(echo(51, "k2"))
+        realtime.emitFrame(incoming(52))
+        runCurrent()
+        assertTrue("its confirmation is taken", h.engine.state.value.outbox.none { it.clientMsgId == "k2" })
+        assertTrue("incoming frames are taken", h.engine.state.value.messages[conv].orEmpty().any { it.id == 52L })
+    }
+
+    @Test
+    fun aSignOutWhoseDeleteFailedLeavesTheAccountWorkingWithItsMessages() = runTest(dispatcher) {
+        var clearFailures = 0
+        val store = object : com.openmychat.mobile.testing.InMemoryDeliveryStore() {
+            override suspend fun clear() {
+                if (clearFailures-- > 0) throw java.io.IOException("disk")
+                super.clear()
+            }
+        }
+        realtime.connectionState.value = com.openmychat.mobile.core.network.ConnectionState.Connecting
+        val h = com.openmychat.mobile.testing.DeliveryHarness(realtime, null, dispatcher, store = store)
+        runCurrent()
+        assertTrue(h.engine.enqueue(conv, "не отправлено", clientMsgId = "k1").composerCleared)
+        realtime.connectionState.value = com.openmychat.mobile.core.network.ConnectionState.Connected
+        runCurrent()
+        val vm = viewModel(h.runtime)
+        var navigated = false
+        clearFailures = 1 // the sign-out's delete fails
+
+        vm.logout { navigated = true }
+        runCurrent()
+
+        assertFalse(navigated)
+        assertEquals(0, auth.loggedOut)
+        assertTrue(vm.logoutError.value != null)
+        assertEquals("the message the screen said was not deleted is still there", listOf("k1"), h.engine.state.value.outbox.map { it.clientMsgId })
+        assertEquals(listOf("k1"), store.stored.outbox.map { it.clientMsgId })
+        assertEquals("and it goes out again (same key)", listOf("k1", "k1"), realtime.sentClientMsgIds)
+        realtime.emitFrame(echo(50, "k1"))
+        runCurrent()
+        assertTrue(store.stored.outbox.isEmpty())
+        assertTheAccountWorks(h)
+        h.stop()
+    }
+
+    @Test
+    fun aSignOutTheSessionRefusedLeavesTheAccountWorking() = runTest(dispatcher) {
+        val refusing = object : com.openmychat.mobile.data.repository.AuthRepository by FakeAuthRepository() {
+            override suspend fun logout() = throw com.openmychat.mobile.core.session.SecureStorageUnavailableException()
+        }
+        val h = com.openmychat.mobile.testing.DeliveryHarness(realtime, null, dispatcher)
+        runCurrent()
+        val vm = ProfileViewModel(Profiles(me), refusing, realtime, PresenceController(realtime, backgroundScope), h.runtime)
+        var navigated = false
+
+        vm.logout { navigated = true }
+        runCurrent()
+
+        assertFalse(navigated)
+        assertTrue(vm.logoutError.value != null)
+        assertTheAccountWorks(h)
+        h.stop()
+    }
 }

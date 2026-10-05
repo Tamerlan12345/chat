@@ -2,6 +2,7 @@ package com.openmychat.mobile.data.delivery
 
 import androidx.work.ListenableWorker
 import com.openmychat.mobile.core.network.ConnectionState
+import com.openmychat.mobile.data.repository.AttachmentRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import com.openmychat.mobile.features.chat.AttachmentSends
@@ -26,6 +27,12 @@ interface OutgoingQueue {
     /** Explicit sign-out: they are deleted. Throws when that could not be done (nothing is signed out then). */
     suspend fun discardForSignOut()
 
+    /**
+     * The sign-out did not happen after all ([discardForSignOut] or the session clear failed): the
+     * account that is still signed in goes on sending and receiving.
+     */
+    suspend fun signOutAborted() = Unit
+
     object None : OutgoingQueue {
         override val unsentCount: StateFlow<Int> = MutableStateFlow(0)
         override suspend fun discardForSignOut() = Unit
@@ -46,8 +53,8 @@ fun interface BackgroundFlushScheduler {
  * user agreed, [discardForSignOut]) or when another account signs in ([DeliveryEngine.adopt]).
  */
 class DeliveryRuntime(
-    private val engine: DeliveryEngine,
-    private val sends: AttachmentSends,
+    val engine: DeliveryEngine,
+    val sends: AttachmentSends,
     private val session: SessionRepository,
     private val realtime: RealtimeRepository,
     private val scope: CoroutineScope,
@@ -65,13 +72,19 @@ class DeliveryRuntime(
         sends.reset()
     }
 
+    /** Nobody else signed in: the same account takes its queue again (logged, never thrown). */
+    override suspend fun signOutAborted() {
+        session.currentUserId?.let { adopt(it) }
+    }
+
     private var started = false
 
+    /** The one start of the delivery core (idempotent): the app, a worker or the DI graph may call it. */
     @Synchronized
     fun start() {
         if (started) return
         started = true
-        engine.start(signedInAs = session.currentUserId)
+        engine.start()
         sends.start(realtime.connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged())
         scope.launch {
             // Another account signing in never inherits this queue (nor sends it).
@@ -128,6 +141,30 @@ class DeliveryRuntime(
     }
 
     companion object {
+        /**
+         * The app's wiring of the delivery core (DI uses exactly this): the engine, the file queue and
+         * the runtime over one store.
+         */
+        fun create(
+            scope: CoroutineScope,
+            store: DeliveryStore,
+            uploadStore: UploadStore,
+            link: DeliveryLink,
+            backend: DeliveryBackend,
+            files: AttachmentRepository,
+            session: SessionRepository,
+            realtime: RealtimeRepository,
+            scheduler: BackgroundFlushScheduler,
+            clock: () -> Long = System::currentTimeMillis,
+            log: (String, Throwable?) -> Unit = { _, _ -> }
+        ): DeliveryRuntime {
+            // Nothing starts here: [start] starts both, and the engine reads the signed-in account
+            // itself when it restores, so the stored model is checked before any of it is shown.
+            val engine = DeliveryEngine(scope, store, link, backend, clock, log = log, signedInNow = { session.currentUserId })
+            val sends = AttachmentSends(scope, uploadStore, files, engine, clock, owner = { session.currentUserId })
+            return DeliveryRuntime(engine, sends, session, realtime, scope, scheduler, log)
+        }
+
         private const val MAX_ROUNDS = 20
         private const val ROUND_SLACK_MS = 5_000L
         private const val READY_TIMEOUT_MS = 60_000L

@@ -228,12 +228,16 @@ class ProfileViewModel @Inject constructor(
                 throw error
             } catch (error: Exception) {
                 _logoutError.value = UNSENT_NOT_DELETED
+                // Still signed in: the account goes on sending and receiving (its messages are back).
+                outgoing.signOutAborted()
                 return@launch
             }
             try {
                 authRepository.logout()
             } catch (error: SecureStorageUnavailableException) {
                 _logoutError.value = error.message ?: "Secure storage is unavailable"
+                // The session could not be cleared: whoever is still signed in goes on working.
+                outgoing.signOutAborted()
                 return@launch
             }
             onLoggedOut()

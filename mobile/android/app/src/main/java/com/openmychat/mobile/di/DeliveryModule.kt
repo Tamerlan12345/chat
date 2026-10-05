@@ -20,10 +20,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import com.openmychat.mobile.core.network.ConnectionState
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import javax.inject.Singleton
 
 /** The delivery core (delivery-state.md): one engine, one file queue and one Room database per process. */
@@ -34,50 +31,38 @@ object DeliveryModule {
     @Singleton
     fun database(@ApplicationContext context: Context): DeliveryDatabase = DeliveryDatabase.open(context)
 
-    @Provides
-    @Singleton
-    fun engine(
-        database: DeliveryDatabase,
-        realtime: RealtimeRepository,
-        session: SessionRepository,
-        api: ApiClient,
-        @ApplicationScope scope: CoroutineScope
-    ): DeliveryEngine = DeliveryEngine(
-        scope = scope,
-        store = RoomDeliveryStore(database.dao()),
-        link = RealtimeDeliveryLink(realtime, session),
-        backend = HttpDeliveryBackend(api),
-        log = { message, error -> android.util.Log.w("Delivery", message, error) }
-    ).also { it.start() } // whoever asks first (the app, a worker, a screen test) gets a running engine
-
-    @Provides
-    @Singleton
-    fun attachmentSends(
-        database: DeliveryDatabase,
-        attachments: AttachmentRepository,
-        engine: DeliveryEngine,
-        @ApplicationScope scope: CoroutineScope,
-        realtime: RealtimeRepository,
-        session: SessionRepository
-    ): AttachmentSends = AttachmentSends(
-        scope, RoomUploadStore(database.dao()), attachments, engine, owner = { session.currentUserId }
-    ).also { sends ->
-        sends.start(realtime.connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged())
-    }
-
+    /** The engine, the file queue and the runtime are wired in one place ([DeliveryRuntime.create]). */
     @Provides
     @Singleton
     fun runtime(
-        engine: DeliveryEngine,
-        sends: AttachmentSends,
-        session: SessionRepository,
+        database: DeliveryDatabase,
+        attachments: AttachmentRepository,
         realtime: RealtimeRepository,
+        session: SessionRepository,
+        api: ApiClient,
         @ApplicationScope scope: CoroutineScope,
         @ApplicationContext context: Context
-    ): DeliveryRuntime = DeliveryRuntime(
-        engine, sends, session, realtime, scope, WorkManagerFlushScheduler(context),
+    ): DeliveryRuntime = DeliveryRuntime.create(
+        scope = scope,
+        store = RoomDeliveryStore(database.dao()),
+        uploadStore = RoomUploadStore(database.dao()),
+        link = RealtimeDeliveryLink(realtime, session),
+        backend = HttpDeliveryBackend(api),
+        files = attachments,
+        session = session,
+        realtime = realtime,
+        scheduler = WorkManagerFlushScheduler(context),
         log = { message, error -> android.util.Log.w("Delivery", message, error) }
     )
+
+    /** Whoever asks first (the app, a worker, a screen) gets a running core, started once by the runtime. */
+    @Provides
+    @Singleton
+    fun engine(runtime: DeliveryRuntime): DeliveryEngine = runtime.also { it.start() }.engine
+
+    @Provides
+    @Singleton
+    fun attachmentSends(runtime: DeliveryRuntime): AttachmentSends = runtime.also { it.start() }.sends
 
     /** Sign-out asks about unsent messages and deletes them through the runtime. */
     @Provides

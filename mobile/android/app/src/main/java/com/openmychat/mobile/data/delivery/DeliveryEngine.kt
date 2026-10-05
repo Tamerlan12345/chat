@@ -45,7 +45,12 @@ class DeliveryEngine(
     /** How long cache writes of live messages are batched. */
     private val cacheDelayMs: Long = 1_000L,
     /** Failures nobody waits for (Logcat in the app). */
-    private val log: (String, Throwable?) -> Unit = { _, _ -> }
+    private val log: (String, Throwable?) -> Unit = { _, _ -> },
+    /**
+     * The account signed in right now (the session), read when the stored model is restored: it is
+     * checked against that account before anything of it is shown, whoever started the engine.
+     */
+    private val signedInNow: () -> Long? = { null }
 ) {
     private val _wiped = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
 
@@ -76,6 +81,7 @@ class DeliveryEngine(
     private class Adopt(val userId: Long, val done: CompletableDeferred<Unit>) : Command
     private object Restore : Command
     private object RetryWipe : Command
+    private object RetryClaim : Command
     private object FlushCache : Command
 
     private val inbox = Channel<Command>(Channel.UNLIMITED)
@@ -107,9 +113,11 @@ class DeliveryEngine(
     private var started = false
 
     /**
-     * Fail closed: the stored model could not be read ("load") or another account's could not be
-     * deleted ("wipe"). Until that is repaired (retried with backoff) nothing is accepted, persisted
-     * or sent — a persist now would overwrite the outbox on disk, a send could be the wrong account's.
+     * Fail closed: the stored model could not be read ("load"), another account's could not be
+     * deleted ("wipe") or the signed-in account could not be written as the owner ("owner"). Until
+     * that is repaired (retried with backoff) nothing is accepted, persisted or sent — a persist now
+     * would overwrite the outbox on disk, a send could be the wrong account's, an entry would name
+     * no account.
      */
     private var blocked: String? = null
     private var repairAttempts = 0
@@ -134,14 +142,13 @@ class DeliveryEngine(
 
     /**
      * Subscribes to the socket and loads the stored model. Frames that arrive meanwhile wait in order.
-     * [signedInAs] — the account signed in at launch: the stored model is checked against it before
-     * anything of it is shown.
+     * Only the first call does anything; the stored model is checked against the account signed in
+     * when it is read (`signedInNow`), so it does not matter who starts the engine first.
      */
     @Synchronized
-    fun start(signedInAs: Long? = null) {
+    fun start() {
         if (started) return
         started = true
-        signedIn = signedInAs
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             link.frames.collect { frame -> inbox.trySend(Dispatch(frameEvent(frame), null)) }
         }
@@ -255,7 +262,23 @@ class DeliveryEngine(
                 // A socket that came up meanwhile was refused: pick it up for its own account.
                 link.authenticatedUserId()?.let { id -> if (claimFor(id) == null) process(authSuccess(id)) }
             }
+            is RetryClaim -> if (blocked == "owner") {
+                blocked = null
+                signedIn?.let { user -> if (claimFor(user) == null) pickUpSocket(user) }
+            }
             is Dispatch -> {
+                val enqueue = command.event["type"].string() == "enqueue"
+                // A new entry is always stamped with its account. When the queue names none yet (the
+                // owner could not be written), the message itself tries again now: taken only once
+                // the account is on disk, otherwise refused (the composer keeps the text, the screen
+                // says it was not saved) while the engine keeps retrying.
+                if (enqueue && !signedOut && (blocked == "owner" || (blocked == null && current.me == null))) {
+                    val user = signedIn
+                    if (user == null || claimFor(user) != null) {
+                        command.done?.complete(Outcome(false, emptyList()))
+                        return
+                    }
+                }
                 if (blocked != null || signedOut || orphaned(command.event)) {
                     // Refused, not lost: the composer keeps the text; frames come again with the next sync.
                     // After a sign-out, or before any account is known, nothing is taken in at all.
@@ -264,14 +287,7 @@ class DeliveryEngine(
                 }
                 // A socket of another account: that account never sees, nor sends, this one's data.
                 authenticatedAs(command.event)?.let { user -> claimFor(user) }
-                // A new entry is always stamped with its account; without one it is not taken.
-                if (command.event["type"].string() == "enqueue" && current.me == null) {
-                    signedIn?.let { claimFor(it) } ?: run {
-                        command.done?.complete(Outcome(false, emptyList()))
-                        return
-                    }
-                }
-                if (blocked != null) {
+                if (blocked != null || (enqueue && current.me == null)) {
                     command.done?.complete(Outcome(false, emptyList()))
                     return
                 }
@@ -301,10 +317,27 @@ class DeliveryEngine(
                 command.done.complete(Unit)
             }
             is Adopt -> {
+                // A sign-out whose delete never reached the disk, followed by an account: the sign-out
+                // was called off (or another account signs in). What is on disk is read again under the
+                // owner rule: the same account gets its unsent messages back, another one's are wiped.
+                val signOutUndone = signedOut && blocked == "wipe"
                 signedIn = command.userId
                 signedOut = false
-                // While the store cannot be read, the owner is checked once it can (restore).
-                if (blocked != "load") claimFor(command.userId)?.let { throw it }
+                when {
+                    signOutUndone -> {
+                        dropSessionWork() // the pending retry of the delete
+                        blocked = null
+                        repairAttempts = 0
+                        restore()
+                    }
+                    // While the store cannot be read, the owner is checked once it can (restore).
+                    blocked != "load" -> {
+                        claimFor(command.userId)?.let { throw it }
+                        // A socket of this account that is already up (a sign-out called off after the
+                        // delete) is picked up: it never sends auth_success again.
+                        pickUpSocket(command.userId)
+                    }
+                }
                 command.done.complete(Unit)
             }
             is FlushCache -> {
@@ -333,7 +366,10 @@ class DeliveryEngine(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // Nothing is taken until the owner is on disk; the claim is retried.
             log("delivery store owner could not be written", e)
+            blocked = "owner"
+            scheduleRepair(RetryClaim)
             return e
         }
         ownerStored = user
@@ -354,15 +390,26 @@ class DeliveryEngine(
      * then on disk. A failed delete keeps the engine blocked and retries; the caller hears of it.
      */
     private suspend fun wipe(): Exception? {
-        work.cancel()
-        work = newWork()
-        epoch++
-        alarms.clear()
+        dropSessionWork()
         dirtyCache.clear()
         current = DeliveryState()
         _state.value = current
         _wiped.tryEmit(Unit)
         return clearStore()
+    }
+
+    /** Requests, alarms and repairs of the session so far are dropped; late answers are ignored. */
+    private fun dropSessionWork() {
+        work.cancel()
+        work = newWork()
+        epoch++
+        alarms.clear()
+    }
+
+    /** A socket already authenticated as [user] while the model is not online: its auth_success. */
+    private suspend fun pickUpSocket(user: Long) {
+        if (blocked != null || current.connection == DeliveryState.ONLINE) return
+        if (link.authenticatedUserId() == user) process(authSuccess(user))
     }
 
     /** Null when the store is empty now; otherwise the failure (the engine stays blocked and retries). */
@@ -417,7 +464,7 @@ class DeliveryEngine(
         ownerStored = stored.me
         // The owner rule of a live auth_success applies to what was just read, before any of it is
         // shown: another account's (or nobody's) store is wiped, never replayed, sent or synced.
-        val owner = signedIn ?: link.authenticatedUserId()
+        val owner = signedIn ?: signedInNow() ?: link.authenticatedUserId()
         if (owner != null && stored.me != owner) {
             current = DeliveryState()
             claimFor(owner)

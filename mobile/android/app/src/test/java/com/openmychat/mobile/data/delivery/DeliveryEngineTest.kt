@@ -595,6 +595,115 @@ class DeliveryEngineTest {
         assertEquals(1, h.engine.state.value.messages[conv]!!.single().isDeleted)
     }
 
+    @Test
+    fun aColdStartSignedInAsAnotherAccountNeverShowsThePreviousAccountsQueue() = runBlocking {
+        // Fix round 4: the app's own wiring (DeliveryRuntime.create, used by DI) and its real start
+        // path — whoever asks the graph first starts the engine, then the app starts the runtime.
+        // Боб's store, Кэрол signed in, no socket yet (the usual cold start).
+        val store = InMemoryDeliveryStore()
+        store.persist(listOf("cancelled", "cursor", "ops", "outbox"), DeliveryState(me = 2, seq = 1).apply {
+            sync.cursor = "b-cursor"
+            outbox.add(OutboxEntry(clientMsgId = "k0", conversation = conv, seq = 1, text = "текст Боба"))
+        }, mapOf(conv to listOf(DeliveryReducer.project(record(400, "y", "секрет Боба", from = alice, to = 2), null))))
+        realtime.connectionState.value = ConnectionState.Connecting
+        val carol = com.openmychat.mobile.testing.FakeSessionRepository(99)
+        val seen = mutableSetOf<String>()
+        var holder: DeliveryEngine? = null
+        val watch = {
+            holder?.state?.value?.let { s ->
+                s.outbox.forEach { seen += it.clientMsgId }
+                s.messages.values.flatten().forEach { seen += "${it.id}" }
+            }
+            Unit
+        }
+        val scope = CoroutineScope(main.dispatcher)
+        val runtime = DeliveryRuntime.create(
+            scope, store, com.openmychat.mobile.testing.InMemoryUploadStore(), RealtimeDeliveryLink(realtime, carol),
+            FakeDeliveryBackend(), com.openmychat.mobile.data.repository.UnavailableAttachments, carol, realtime, {},
+            clock = { watch(); 0L }
+        )
+        holder = runtime.engine
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { runtime.engine.state.collect { watch() } }
+
+        runtime.engine.start() // the first to ask the DI graph
+        runtime.start() // CentyChatApp.onCreate
+        runtime.engine.awaitReady()
+
+        assertTrue("nothing of Боб was ever emitted: $seen", "k0" !in seen && "400" !in seen)
+        assertTrue(store.stored.outbox.isEmpty())
+        assertTrue(store.stored.cache.isEmpty())
+        assertEquals(99L, runtime.engine.state.value.me)
+    }
+
+    /** A store whose owner cannot be written while [failOwner] is set. */
+    private class OwnerFailingStore : InMemoryDeliveryStore() {
+        var failOwner = false
+        override suspend fun setOwner(me: Long) {
+            if (failOwner) throw java.io.IOException("read-only")
+            super.setOwner(me)
+        }
+    }
+
+    @Test
+    fun anEnqueueThatNamesItsAccountAfterAnOwnerWriteFailedIsTaken() = runBlocking {
+        // Fix round 4 (3): a successful claim proceeds — the entry is stored under its account.
+        val store = OwnerFailingStore().apply { failOwner = true }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        store.failOwner = false
+
+        val outcome = h.engine.enqueue(conv, "после сбоя", clientMsgId = "k1")
+
+        assertTrue("taken, the composer clears", outcome.composerCleared)
+        assertEquals(listOf("k1"), store.stored.outbox.map { it.clientMsgId })
+        assertEquals("stored under its account", 1L, store.stored.me)
+    }
+
+    @Test
+    fun anEnqueueWhoseAccountCannotBeWrittenIsRefusedAndRetriedNeverStoredUnowned() = runBlocking {
+        // Fix round 4 (3): a failed claim refuses the enqueue (the composer keeps the text, the screen
+        // says it was not saved) and the engine retries the claim; nothing is stored without an owner.
+        val store = OwnerFailingStore().apply { failOwner = true }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+
+        val outcome = h.engine.enqueue(conv, "без владельца", clientMsgId = "k1")
+
+        assertFalse("refused: the composer keeps the text", outcome.persisted)
+        assertFalse(outcome.composerCleared)
+        assertTrue("nothing stored without its account", store.stored.outbox.isEmpty())
+        assertTrue(h.engine.state.value.outbox.isEmpty())
+
+        store.failOwner = false
+        elapse(1_000) // the claim is retried
+        assertEquals(1L, h.engine.state.value.me)
+        assertEquals(1L, store.stored.me)
+        assertTrue(h.engine.enqueue(conv, "теперь можно", clientMsgId = "k2").composerCleared)
+        assertEquals(listOf("k2"), store.stored.outbox.map { it.clientMsgId })
+    }
+
+    @Test
+    fun aFileIsNeverUploadedWhileTheQueueNamesNoAccount() = runBlocking {
+        // Fix round 4 (4): a listed file goes up only when the model and the disk both name the
+        // signed-in account — never while the queue names nobody (as during a wipe).
+        val uploads = com.openmychat.mobile.testing.InMemoryUploadStore()
+        uploads.put(com.openmychat.mobile.data.delivery.PendingUpload("k9", conv, 0, "отчёт.pdf", 2048, "application/pdf", null, null, "content://docs/9", null))
+        val store = InMemoryDeliveryStore(uploads)
+        val files = com.openmychat.mobile.testing.FakeAttachmentRepository()
+        realtime.connectionState.value = ConnectionState.Connecting
+        val scope = CoroutineScope(main.dispatcher)
+        val engine = DeliveryEngine(scope, store, RealtimeDeliveryLink(realtime, com.openmychat.mobile.testing.FakeSessionRepository(99)), FakeDeliveryBackend(), clock = { 0L })
+        engine.start()
+        engine.awaitReady()
+        assertNull("the queue names no account", engine.state.value.me)
+        val sends = com.openmychat.mobile.features.chat.AttachmentSends(scope, uploads, files, engine, { 0L }, owner = { 99L })
+        sends.start(kotlinx.coroutines.flow.flowOf(true))
+
+        sends.flush()
+
+        assertTrue("never under Кэрол's token: ${files.uploads}", files.uploads.isEmpty())
+    }
+
     @Suppress("unused")
     private fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.content
 }
