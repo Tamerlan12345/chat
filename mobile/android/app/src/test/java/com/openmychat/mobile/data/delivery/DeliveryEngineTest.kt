@@ -364,6 +364,96 @@ class DeliveryEngineTest {
     }
 
     @Test
+    fun aStoreReadLateWhileAnotherAccountIsConnectedIsWipedNotSent() = runBlocking {
+        // Review fix B1: the restore must apply the same owner rule as a live auth_success.
+        var failures = 2
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun load(): StoredDelivery {
+                if (failures-- > 0) throw java.io.IOException("locked")
+                return super.load()
+            }
+        }
+        store.persist(listOf("cancelled", "cursor", "ops", "outbox"), DeliveryState(me = 1, seq = 1).apply {
+            sync.cursor = "a-cursor"
+            outbox.add(OutboxEntry(clientMsgId = "k0", conversation = conv, seq = 1, text = "текст Алисы"))
+        }, emptyMap())
+        realtime.me = 99
+        val carol = com.openmychat.mobile.testing.FakeSessionRepository(99)
+        val h = DeliveryHarness(realtime, null, main.dispatcher, session = carol, store = store)
+
+        elapse(10_000) // the load succeeds while Кэрол's socket is already up
+
+        assertTrue(h.engine.ready.value)
+        assertTrue("nothing of Алиса goes out under Кэрол", sendFrames.isEmpty())
+        assertTrue(store.stored.outbox.isEmpty())
+        assertTrue("Алиса's cursor is not used for Кэрол", h.backend.syncRequests.none { it == "a-cursor" })
+        assertEquals(99L, h.engine.state.value.me)
+    }
+
+    @Test
+    fun aQueueWrittenRightAfterAFailedWipeStillBelongsToItsAccount() = runBlocking {
+        // Review fix B1: B queues offline after A's queue was wiped (late, after a failed delete);
+        // B's session ends by itself; C signs in — C must never send B's text.
+        var clearFailures = 1
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun clear() {
+                if (clearFailures-- > 0) throw java.io.IOException("busy")
+                super.clear()
+            }
+        }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "текст Алисы", clientMsgId = "k1")
+
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 2, username = "bob", fullName = "Боб")
+        elapse(5_000) // the wipe of Алиса's queue succeeds on its retry
+        assertTrue(store.stored.outbox.isEmpty())
+        h.engine.enqueue("direct:5", "текст Боба", clientMsgId = "k2")
+        assertEquals("the entry carries its account", 2L, store.stored.me)
+        h.session.token.value = null
+
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 3, username = "carol", fullName = "Кэрол")
+        h.session.token.value = "carol"
+        realtime.me = 3
+        realtime.connectionState.value = ConnectionState.Connected
+
+        assertTrue("nothing of Боб goes out under Кэрол", sendFrames.isEmpty())
+        assertTrue(store.stored.outbox.isEmpty())
+    }
+
+    @Test
+    fun signingOutWhileTheStoreCannotBeReadLeavesAWorkingEmptyQueue() = runBlocking {
+        // Review fix B2: the wipe repairs the store, so the engine must become ready again.
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun load(): StoredDelivery = throw java.io.IOException("locked")
+        }
+        val h = harness(store)
+        assertFalse(h.engine.ready.value)
+
+        h.runtime.discardForSignOut()
+
+        assertTrue(h.engine.ready.value)
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 2, username = "bob", fullName = "Боб")
+        assertTrue(h.engine.enqueue(conv, "после выхода", clientMsgId = "k1").persisted)
+    }
+
+    @Test
+    fun aFailedAdoptionIsLoggedByTheRuntime() = runBlocking {
+        // Review fix B3: nothing is swallowed silently.
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun clear() = throw java.io.IOException("disk")
+        }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "текст Алисы", clientMsgId = "k1")
+
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+
+        assertTrue(h.logged.toString(), h.logged.any { it.contains("99") })
+        assertTrue("and still nothing of Алиса can go out", h.engine.state.value.outbox.isEmpty())
+    }
+
+    @Test
     fun theWorkerDoesNotWaitForeverOnAStoreThatCannotBeRead() = runBlocking {
         val store = object : InMemoryDeliveryStore() {
             override suspend fun load(): StoredDelivery = throw java.io.IOException("locked")

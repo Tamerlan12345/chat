@@ -114,6 +114,13 @@ class DeliveryEngine(
     private var blocked: String? = null
     private var repairAttempts = 0
 
+    /**
+     * The account the app is signed in as (the last [adopt]); null after an explicit sign-out. A
+     * load or wipe that succeeds later applies it, and an enqueue stamps the queue with it, so the
+     * stored queue always names its owner.
+     */
+    private var signedIn: Long? = null
+
     /** Subscribes to the socket and loads the stored model. Frames that arrive meanwhile wait in order. */
     @Synchronized
     fun start() {
@@ -227,7 +234,11 @@ class DeliveryEngine(
     private suspend fun run(command: Command) {
         when (command) {
             is Restore -> restore()
-            is RetryWipe -> if (blocked == "wipe") clearStore()
+            is RetryWipe -> if (blocked == "wipe" && clearStore() == null) {
+                signedIn?.let { claimFor(it) }
+                // A socket that came up meanwhile was refused: pick it up for its own account.
+                link.authenticatedUserId()?.let { id -> if (claimFor(id) == null) process(authSuccess(id)) }
+            }
             is Dispatch -> {
                 if (blocked != null) {
                     // Refused, not lost: the composer keeps the text; frames come again with the next sync.
@@ -235,7 +246,14 @@ class DeliveryEngine(
                     return
                 }
                 // A socket of another account: that account never sees, nor sends, this one's data.
-                authenticatedAs(command.event)?.let { user -> if (current.me != null && current.me != user) wipe() }
+                authenticatedAs(command.event)?.let { user -> claimFor(user) }
+                // A new entry is always stamped with its account; without one it is not taken.
+                if (command.event["type"].string() == "enqueue" && current.me == null) {
+                    signedIn?.let { claimFor(it) } ?: run {
+                        command.done?.complete(Outcome(false, emptyList()))
+                        return
+                    }
+                }
                 if (blocked != null) {
                     command.done?.complete(Outcome(false, emptyList()))
                     return
@@ -258,21 +276,15 @@ class DeliveryEngine(
                 command.done.complete(process(event("history_page") { put("body", JsonArray(command.records)) }))
             }
             is Reset -> {
+                signedIn = null
                 // Loud: the caller (sign-out) must not go on as if the messages were gone.
                 wipe()?.let { throw it }
                 command.done.complete(Unit)
             }
             is Adopt -> {
-                if (blocked != "load") {
-                    if (current.me != null && current.me != command.userId) {
-                        wipe()
-                    }
-                    if (blocked == null && current.me == null) {
-                        // The queue is this account's from now on (stored with the next persist).
-                        current = current.deepCopy().apply { me = command.userId }
-                        _state.value = current
-                    }
-                }
+                signedIn = command.userId
+                // While the store cannot be read, the owner is checked once it can (restore).
+                if (blocked != "load") claimFor(command.userId)?.let { throw it }
                 command.done.complete(Unit)
             }
             is FlushCache -> {
@@ -283,6 +295,22 @@ class DeliveryEngine(
                 }
             }
         }
+    }
+
+    /**
+     * The model is [user]'s: another account's queue — or one that names no account but holds
+     * something — is wiped first; an empty model is claimed. The failure of a wipe, or null.
+     */
+    private suspend fun claimFor(user: Long): Exception? {
+        val me = current.me
+        val ownerless = me == null && (current.outbox.isNotEmpty() || current.ops.isNotEmpty() || current.cancelled.isNotEmpty())
+        if ((me != null && me != user) || ownerless) wipe()?.let { return it }
+        if (blocked == null && current.me == null) {
+            // Stored with the next persist; until then nothing of this account is on disk anyway.
+            current = current.deepCopy().apply { this.me = user }
+            _state.value = current
+        }
+        return null
     }
 
     /**
@@ -306,6 +334,8 @@ class DeliveryEngine(
         store.clear()
         blocked = null
         repairAttempts = 0
+        // The store is empty and readable now: whatever blocked the engine (a failed load) is over.
+        _ready.value = true
         null
     } catch (e: CancellationException) {
         throw e
@@ -360,9 +390,15 @@ class DeliveryEngine(
         for ((_, records) in stored.cache) {
             if (records.isNotEmpty()) process(event("history_page") { put("body", JsonArray(records)) }, cacheWrite = false)
         }
+        // The owner rule of a live auth_success applies to what was just read: a queue of another
+        // account (signed in meanwhile, or with a socket already up) is wiped, never sent or synced.
+        signedIn?.let { claimFor(it) }
+        val authenticated = link.authenticatedUserId()
+        authenticated?.let { claimFor(it) }
+        if (blocked != null) return
         _ready.value = true
         // Started while a socket was already up (it never sends auth_success again).
-        link.authenticatedUserId()?.let { id -> process(authSuccess(id)) }
+        authenticated?.let { id -> process(authSuccess(id)) }
     }
 
     private fun nextNow(): Long {

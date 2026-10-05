@@ -74,7 +74,10 @@ object DeliveryModule {
         realtime: RealtimeRepository,
         @ApplicationScope scope: CoroutineScope,
         @ApplicationContext context: Context
-    ): DeliveryRuntime = DeliveryRuntime(engine, sends, session, realtime, scope, WorkManagerFlushScheduler(context))
+    ): DeliveryRuntime = DeliveryRuntime(
+        engine, sends, session, realtime, scope, WorkManagerFlushScheduler(context),
+        log = { message, error -> android.util.Log.w("Delivery", message, error) }
+    )
 
     /** Sign-out asks about unsent messages and deletes them through the runtime. */
     @Provides

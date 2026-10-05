@@ -5,6 +5,7 @@ import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import com.openmychat.mobile.features.chat.AttachmentSends
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -50,7 +51,9 @@ class DeliveryRuntime(
     private val session: SessionRepository,
     private val realtime: RealtimeRepository,
     private val scope: CoroutineScope,
-    private val scheduler: BackgroundFlushScheduler
+    private val scheduler: BackgroundFlushScheduler,
+    /** Failures nobody waits for (Logcat in the app). */
+    private val log: (String, Throwable?) -> Unit = { _, _ -> }
 ) : OutgoingQueue {
     override val unsentCount: StateFlow<Int> = combine(engine.state, sends.uploads) { state, uploads ->
         state.outbox.count { !it.pendingDelete } + uploads.size
@@ -73,7 +76,7 @@ class DeliveryRuntime(
         scope.launch {
             // Another account signing in never inherits this queue (nor sends it).
             session.currentUser.map { it?.id }.distinctUntilChanged().collect { id ->
-                if (id != null) runCatching { engine.adopt(id) }
+                if (id != null) adopt(id)
             }
         }
         scope.launch {
@@ -94,7 +97,7 @@ class DeliveryRuntime(
         if (session.token.value == null) return ListenableWorker.Result.success()
         // Only this account's queue goes out under this account's token.
         val user = session.currentUserId ?: return ListenableWorker.Result.success()
-        runCatching { engine.adopt(user) }.onFailure { return ListenableWorker.Result.retry() }
+        if (!adopt(user)) return ListenableWorker.Result.retry()
         sends.flush()
         for (round in 0 until MAX_ROUNDS) {
             val state = engine.state.value
@@ -111,6 +114,17 @@ class DeliveryRuntime(
         val left = engine.state.value
         val waiting = hasSendable(left) || sends.uploads.value.any { !it.pending.failed }
         return if (left.connection != DeliveryState.ONLINE && waiting) ListenableWorker.Result.retry() else ListenableWorker.Result.success()
+    }
+
+    /** The queue is [user]'s (another account's is wiped). False when that failed — logged, never silent. */
+    private suspend fun adopt(user: Long): Boolean = try {
+        engine.adopt(user)
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("delivery queue could not be handed to account $user", e)
+        false
     }
 
     companion object {

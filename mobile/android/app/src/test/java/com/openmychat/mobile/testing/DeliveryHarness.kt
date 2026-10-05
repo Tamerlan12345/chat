@@ -91,7 +91,9 @@ class DeliveryHarness(
     val sends = AttachmentSends(scope, uploadStore, files, engine, clock, owner = { session.currentUserId })
     var flushesScheduled = 0
         private set
-    val runtime = DeliveryRuntime(engine, sends, session, realtime, scope) { flushesScheduled++ }
+    /** What the runtime logged (failures nobody waits for). */
+    val logged = mutableListOf<String>()
+    val runtime = DeliveryRuntime(engine, sends, session, realtime, scope, { flushesScheduled++ }, { message, _ -> logged += message })
 
     init {
         runtime.start()
