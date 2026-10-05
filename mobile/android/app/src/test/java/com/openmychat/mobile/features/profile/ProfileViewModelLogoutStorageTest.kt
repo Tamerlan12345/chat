@@ -45,7 +45,12 @@ class ProfileViewModelLogoutStorageTest {
     }
 
     private fun profileViewModel(sessionManager: SessionManager): ProfileViewModel {
-        val apiClient = ApiClient(sessionManager)
+        // No real network: the profile refresh of init fails at once instead of resolving a host and
+        // resuming on Dispatchers.Main after this test has reset it (an uncaught error in a later test).
+        val offline = okhttp3.OkHttpClient.Builder()
+            .addInterceptor { throw java.io.IOException("offline in this test") }
+            .build()
+        val apiClient = ApiClient(sessionManager, offline)
         val realtime = DefaultRealtimeRepository(WebSocketClient(sessionManager))
         return ProfileViewModel(
             profileRepository = DefaultProfileRepository(apiClient, sessionManager),
