@@ -105,6 +105,7 @@ private struct PeopleContent: View {
 
     @Environment(\.isSearching) private var isSearching
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let state = model.state
@@ -233,7 +234,8 @@ private struct PeopleContent: View {
             .scrollContentBackground(.hidden)
             .accessibilityIdentifier("people-list")
             .overlay(alignment: .trailing) {
-                if state.sections.count > 1 {
+                // At accessibility sizes the letters would cover the rows; VoiceOver has the headers.
+                if state.sections.count > 1 && !typeSize.isAccessibilitySize {
                     SectionIndexBar(letters: state.sections.map(\.letter)) { letter in
                         guard let first = state.sections.first(where: { $0.letter == letter })?.people.first else { return }
                         proxy.scrollTo(first.id, anchor: .top)

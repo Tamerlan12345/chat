@@ -270,7 +270,7 @@ private struct MessageHitRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(sender) · \(location)")
+                    Text(sender)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(CentyColors.textStrong)
                         .lineLimit(1)
@@ -280,6 +280,10 @@ private struct MessageHitRow: View {
                         .foregroundStyle(CentyColors.textDim)
                         .lineLimit(1)
                 }
+                Text(location)
+                    .font(.caption)
+                    .foregroundStyle(CentyColors.textDim)
+                    .lineLimit(1)
                 Text(Highlight.attributed(hit.snippet, hit.highlights))
                     .font(.subheadline)
                     .foregroundStyle(CentyColors.textSecondary)

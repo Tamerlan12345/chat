@@ -23,35 +23,58 @@ struct PersonRowView: View {
         self.zoom = zoom
     }
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        HStack(spacing: 12) {
-            avatar
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Highlight.attributed(person.fullName, highlights))
-                    .font(.headline)
-                    .foregroundStyle(CentyColors.textStrong)
-                    .lineLimit(1)
-                if !person.subtitle.isEmpty {
-                    Text(Highlight.attributed(person.subtitle, subtitleHighlights))
-                        .font(.subheadline)
-                        .foregroundStyle(CentyColors.textSecondary)
-                        .lineLimit(1)
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Accessibility sizes: the text gets the full width and wraps instead of «А…».
+                VStack(alignment: .leading, spacing: 6) {
+                    avatar
+                    texts(lineLimit: 3)
+                    extensionText
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if let ext = person.extension {
-                Text(Highlight.attributed(String(localized: "вн. \(ext)"), extensionHighlights.map { ($0.lowerBound + 4)..<($0.upperBound + 4) }))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(CentyColors.textDim)
-                    .lineLimit(1)
-                    .layoutPriority(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 12) {
+                    avatar
+                    texts(lineLimit: 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    extensionText
+                        .layoutPriority(1)
+                }
+                .frame(minHeight: 48)
             }
         }
-        .frame(minHeight: 64 - 16)
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+    }
+
+    private func texts(lineLimit: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(Highlight.attributed(person.fullName, highlights))
+                .font(.headline)
+                .foregroundStyle(CentyColors.textStrong)
+                .lineLimit(lineLimit)
+            if !person.subtitle.isEmpty {
+                Text(Highlight.attributed(person.subtitle, subtitleHighlights))
+                    .font(.subheadline)
+                    .foregroundStyle(CentyColors.textSecondary)
+                    .lineLimit(lineLimit)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var extensionText: some View {
+        if let ext = person.extension {
+            Text(Highlight.attributed(String(localized: "вн. \(ext)"), extensionHighlights.map { ($0.lowerBound + 4)..<($0.upperBound + 4) }))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(CentyColors.textDim)
+                .lineLimit(1)
+        }
     }
 
     @ViewBuilder
