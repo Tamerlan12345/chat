@@ -2,3 +2,4 @@ build-evidence/
 local.properties
 build/
 .kotlin/
+.gradle/
