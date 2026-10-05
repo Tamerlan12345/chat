@@ -84,9 +84,9 @@ public final class ChatStore: RealtimeEventHandling {
         loadState = .loading
         do {
             let loaded = try await repository.messages(in: conversation, limit: 50, beforeId: nil)
-            // Keep what arrived over realtime (or is still pending) while the page was loading.
-            let loadedIDs = Set(loaded.map(\.id))
-            messages = loaded + messages.filter { !loadedIDs.contains($0.id) }
+            // Keep what arrived over realtime (or is still pending) while the page was loading, and
+            // history loaded around a search hit, in order.
+            messages = Self.merged(page: loaded, into: messages)
             loadState = .loaded
         } catch {
             Log.chat.error("Loading messages failed: \(error.localizedDescription, privacy: .public)")
@@ -97,7 +97,33 @@ public final class ChatStore: RealtimeEventHandling {
     /// Opens the conversation at `messageId` (a search hit): the history around it is loaded next to
     /// the newest page. Returns false when the message is not there (deleted, no access).
     public func loadAround(_ messageId: Int64) async -> Bool {
-        false
+        if messages.contains(where: { $0.id == messageId }) { return true }
+        let repository = self.repository
+        let conversation = self.conversation
+        do {
+            // `beforeId` is exclusive: +1 brings the message itself with the older page.
+            async let older = repository.messages(in: conversation, limit: Self.aroundPage, beforeId: messageId + 1)
+            async let newer = repository.messages(in: conversation, limit: Self.aroundPage, afterId: messageId)
+            let page = try await older + newer
+            messages = Self.merged(page: page, into: messages)
+        } catch {
+            Log.chat.error("Loading the history around a message failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return messages.contains { $0.id == messageId }
+    }
+
+    static let aroundPage = 30
+
+    /// Server history merged with what is on screen: one copy per id (the page wins), ordered by
+    /// id, optimistic messages (negative ids) last in the order they were sent.
+    static func merged(page: [Message], into current: [Message]) -> [Message] {
+        var seen = Set<Int64>()
+        var stored: [Message] = []
+        for message in page + current where message.id > 0 && seen.insert(message.id).inserted {
+            stored.append(message)
+        }
+        return stored.sorted { $0.id < $1.id } + current.filter { $0.id <= 0 }
     }
 
     public func markAsRead() async {

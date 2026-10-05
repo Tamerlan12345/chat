@@ -110,6 +110,7 @@ public final class AppContainer: SessionLifecycleDelegate {
         realtime.register(calls)
         realtime.register(profile)
         realtime.register(notifications)
+        realtime.register(people)
         realtime.audioSink = { [weak calls] frame in
             calls?.receiveAudio(frame)
         }
@@ -139,7 +140,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             handshake: .shared,
             startsInBackground: UIApplication.shared.applicationState == .background,
             notificationCenter: UserNotificationCenterBridge(),
-            accountRepository: accountRepository
+            accountRepository: accountRepository,
+            peopleSource: APIPeopleSource(client: client),
+            peopleCache: PeopleDiskCache(),
+            recentsDefaults: .standard
         )
     }
 
@@ -175,6 +179,9 @@ public final class AppContainer: SessionLifecycleDelegate {
         presence.reset()
         notifications.reset()
         account.reset()
+        // The directory and the search recents belong to the account that signed out.
+        people.signOut()
+        searchRecents.clear()
         calls.stopCallSession()
     }
 }

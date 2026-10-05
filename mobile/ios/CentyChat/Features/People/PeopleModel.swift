@@ -151,6 +151,11 @@ public final class PeopleModel {
         directory.refresh()
     }
 
+    /// Pull to refresh: waits for the server.
+    public func refreshAndWait() async {
+        await directory.refreshAndWait()
+    }
+
     /// Просьба из поиска «Чатов» или из карточки, если она есть.
     public func applyPendingRequest() {
         guard let request = requests.consume() else { return }

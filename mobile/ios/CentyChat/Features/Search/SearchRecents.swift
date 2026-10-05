@@ -38,9 +38,22 @@ public final class SearchRecentsStore {
     /// `defaults` nil keeps the list in memory only (tests, previews).
     public init(defaults: UserDefaults?) {
         self.defaults = defaults
+        if let data = defaults?.data(forKey: Self.key),
+           let stored = try? JSONDecoder().decode([RecentItem].self, from: data) {
+            items = Array(stored.prefix(Self.limit))
+        }
     }
 
-    public func add(_ item: RecentItem) {}
+    /// The newest first, without repeats, at most five.
+    public func add(_ item: RecentItem) {
+        items = Array(([item] + items.filter { $0.id != item.id }).prefix(Self.limit))
+        if let data = try? JSONEncoder().encode(items) {
+            defaults?.set(data, forKey: Self.key)
+        }
+    }
 
-    public func clear() {}
+    public func clear() {
+        items = []
+        defaults?.removeObject(forKey: Self.key)
+    }
 }

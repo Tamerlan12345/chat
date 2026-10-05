@@ -166,6 +166,7 @@ public final class PeopleStore: RealtimeEventHandling {
     /// Обновить и дождаться ответа сервера («потянуть, чтобы обновить»).
     public func refreshAndWait() async {
         refresh()
+        await refreshTask?.value
     }
 
     private func load(owner: Int64?) async {
