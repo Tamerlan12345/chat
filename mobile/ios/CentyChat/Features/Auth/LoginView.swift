@@ -136,7 +136,7 @@ public struct LoginView: View {
             VStack(alignment: .leading, spacing: 6) {
                 fieldLabel("Логин")
                 TextField("Корпоративный логин", text: $form.username)
-                    .textContentType(.username)
+                    .passwordContent(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.next)

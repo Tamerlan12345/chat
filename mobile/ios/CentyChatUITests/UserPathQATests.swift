@@ -56,7 +56,7 @@ final class UserPathQATests: XCTestCase {
             tap(dialog)
             _ = chatBar.waitForExistence(timeout: 8)
         }
-        if !chatBar.exists { print("UI-DUMP list:\n" + app.debugDescription) }
+        if !chatBar.exists { app.dumpForDiagnosis() }
         XCTAssertTrue(chatBar.exists, "Tapping the dialog must open the chat.")
         let composer = app.descendants(matching: .any)
             .matching(NSPredicate(format: "placeholderValue == %@ OR label == %@", "Сообщение...", "Сообщение...")).firstMatch
@@ -192,11 +192,7 @@ final class UserPathQATests: XCTestCase {
 
     /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
     private func dismissSavePasswordPrompt(_ app: XCUIApplication) {
-        let notNow = app.buttons.matching(NSPredicate(format: "label IN %@", ["Not Now", "Не сейчас"])).firstMatch
-        if notNow.waitForExistence(timeout: 10) {
-            notNow.tap()
-            _ = notNow.waitForNonExistence(timeout: 5)
-        }
+        app.dismissSystemPrompts(timeout: 10)
     }
 
     private func waitUntil(_ element: XCUIElement, _ format: String, timeout: TimeInterval = 10) -> Bool {

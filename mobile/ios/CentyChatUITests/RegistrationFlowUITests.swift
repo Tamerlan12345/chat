@@ -123,6 +123,7 @@ final class RegistrationFlowUITests: XCTestCase {
         XCTAssertTrue(loginScreen(application).waitForExistence(timeout: 15))
         signIn(application, username: Self.standLogin, password: Self.standPassword)
         XCTAssertTrue(application.tabBars.firstMatch.waitForExistence(timeout: 30), "Alice must reach the tabs")
+        application.dismissSystemPrompts()
 
         let profileBar = application.navigationBars["Профиль"]
         for _ in 0..<4 where !profileBar.exists {
@@ -142,6 +143,7 @@ final class RegistrationFlowUITests: XCTestCase {
             }
             _ = deleteEntry.waitForExistence(timeout: 1)
         }
+        if !deleteEntry.exists { application.dumpForDiagnosis() }
         XCTAssertTrue(deleteEntry.exists, "The profile must offer account deletion")
         // The row can sit under the tab bar edge: a coordinate tap does not need it to be hittable.
         RunLoop.current.run(until: Date().addingTimeInterval(1))
@@ -289,5 +291,34 @@ final class RegistrationFlowUITests: XCTestCase {
         for _ in 0..<8 where !(element.exists && element.isHittable && element.frame.maxY < application.frame.height - 110) {
             application.swipeUp(velocity: .slow)
         }
+    }
+}
+
+extension XCUIApplication {
+    /// Closes a system «Save Password?» / AutoFill sheet that can cover the app after sign-in.
+    /// Its buttons live outside the app's tree (the app only shows an empty key window), so
+    /// SpringBoard is searched too. Coordinate taps and swipes never trigger interruption monitors.
+    func dismissSystemPrompts(timeout: TimeInterval = 4) {
+        let labels = ["Not Now", "Не сейчас", "Не сохранять", "Never for This App", "Никогда для этого приложения"]
+        let predicate = NSPredicate(format: "label IN %@", labels)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for host in [self, springboard] {
+                let button = host.buttons.matching(predicate).firstMatch
+                if button.exists {
+                    button.tap()
+                    _ = button.waitForNonExistence(timeout: 5)
+                    return
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+    }
+
+    /// Prints the app and SpringBoard trees, so a failed CI run shows what covered the screen.
+    func dumpForDiagnosis() {
+        print("UI-DUMP app:\n" + debugDescription)
+        print("UI-DUMP springboard:\n" + XCUIApplication(bundleIdentifier: "com.apple.springboard").debugDescription)
     }
 }
