@@ -76,7 +76,8 @@ enum ServerEndpointPolicy {
         }
 
         components.path = "/ws"
-        components.query = nil
+        // Mobile clients always connect with `?avatars=url` (`ws-protocol.md`): photos as links.
+        components.queryItems = [AvatarOptIn.webSocketQuery]
         components.fragment = nil
         return components.url
     }

@@ -157,7 +157,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             accountRepository: accountRepository,
             peopleSource: APIPeopleSource(client: client),
             peopleCache: PeopleDiskCache(),
-            recentsDefaults: .standard
+            recentsDefaults: .standard,
+            pushTokenService: LivePushTokenService(client: client),
+            deviceId: { try? keychain.deviceID() },
+            avatarLoader: .live(keychain: keychain)
         )
     }
 
@@ -177,7 +180,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     // MARK: - SessionLifecycleDelegate
 
     func sessionDidAuthenticate() async {
+        // After every sign-in and every launch with a live session (`push.md` §2).
+        async let push: Void = pushTokens.sessionDidAuthenticate()
         await loadAllData()
+        await push
     }
 
     func sessionDidResume() async {
@@ -185,7 +191,15 @@ public final class AppContainer: SessionLifecycleDelegate {
         await chats.reloadLoaded()
     }
 
+    func sessionWillSignOut() async {
+        await pushTokens.sessionWillSignOut()
+    }
+
     func sessionDidEnd() {
+        pushTokens.sessionDidEnd()
+        // Colleagues' photos belong to the session that saw them.
+        let avatars = avatars
+        Task { await avatars.removeAll() }
         conversations.reset()
         announcements.reset()
         chats.reset()
@@ -214,5 +228,6 @@ extension View {
             .environment(container.presence)
             .environment(container.notifications)
             .environment(container.account)
+            .environment(\.avatarLoader, container.avatars)
     }
 }

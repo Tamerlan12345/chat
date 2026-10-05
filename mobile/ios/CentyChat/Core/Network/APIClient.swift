@@ -81,6 +81,8 @@ public actor APIClient {
         urlRequest.httpMethod = method
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Colleagues' photos as `/api/users/<id>/avatar?v=…` links, not data URLs (`openapi.yaml`).
+        urlRequest.setValue(AvatarOptIn.value, forHTTPHeaderField: AvatarOptIn.header)
         if body != nil && urlRequest.value(forHTTPHeaderField: "Content-Type") == nil {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
@@ -328,12 +330,17 @@ public actor APIClient {
 
     // MARK: - Push token
 
+    /// `POST /devices/push-token` (`push.md` §2): idempotent; a new token of the same device and kind replaces the old one.
     func registerPushToken(_ registration: PushTokenRegistration) async throws -> PushTokenRegisterResponse {
-        throw APIError.custom("not implemented")
+        let body = try jsonEncoder.encode(registration)
+        return try await request(endpoint: "/devices/push-token", method: "POST", body: body)
     }
 
+    /// `DELETE /devices/push-token`: `true` for this user's token; someone else's or an unknown one is `false`.
     func unregisterPushToken(_ token: String) async throws -> Bool {
-        throw APIError.custom("not implemented")
+        let body = try jsonEncoder.encode(["token": token])
+        let response: PushTokenDeleteResponse = try await request(endpoint: "/devices/push-token", method: "DELETE", body: body)
+        return response.removed
     }
 
     /// Выход из системы
@@ -480,6 +487,7 @@ public actor APIClient {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue(AvatarOptIn.value, forHTTPHeaderField: AvatarOptIn.header)
         
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
