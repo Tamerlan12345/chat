@@ -48,6 +48,12 @@ class MessageMenuPolicyTest {
     }
 
     @Test
+    fun aQueuedOrSendingMessageCanBeCopiedOrCancelledOnly() {
+        val unsent = MessageMenuPolicy.actionsFor(msg(), canEdit = true, canDelete = false, failed = false, canReport = true, unsent = true)
+        assertEquals("no server id yet to answer, edit or report", listOf(COPY, DELETE), unsent)
+    }
+
+    @Test
     fun blankTextIsNotCopied() {
         assertEquals(listOf(REPLY), actions(msg(text = "   ")))
     }

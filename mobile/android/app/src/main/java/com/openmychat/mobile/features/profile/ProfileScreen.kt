@@ -59,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -291,9 +292,13 @@ fun ProfileScreen(
     }
 
     if (showLogoutDialog) {
+        // Unsent messages are deleted by a sign-out: the dialog says how many first.
+        val unsent by viewModel.unsentCount.collectAsState()
+        val base = stringResource(R.string.profile_logout_message)
+        val unsentLine = if (unsent > 0) pluralStringResource(R.plurals.profile_logout_unsent, unsent, unsent) else null
         CentyConfirmDialog(
             title = stringResource(R.string.profile_logout_title),
-            message = stringResource(R.string.profile_logout_message),
+            message = if (unsentLine != null) "$unsentLine\n\n$base" else base,
             confirmText = stringResource(R.string.profile_logout),
             isDestructive = true,
             onConfirm = {

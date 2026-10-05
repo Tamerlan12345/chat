@@ -226,7 +226,7 @@ class ScriptedAccountRepository : AccountRepository {
         return onVerify()
     }
 
-    override suspend fun deleteAccount(password: String) = Unit
+    override suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit) = Unit
     override suspend fun report(body: ReportBody) = Unit
     override suspend fun block(userId: Long, name: String?) = Unit
     override suspend fun unblock(userId: Long) = Unit

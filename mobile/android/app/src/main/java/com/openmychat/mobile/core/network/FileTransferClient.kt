@@ -17,6 +17,9 @@ import okhttp3.Response
 import okio.BufferedSink
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -96,7 +99,7 @@ class FileTransferClient(
             }
             .get()
             .build()
-        val response = client.newCall(request).execute()
+        val response = executeInterruptibly(client.newCall(request))
         val code = response.code
         if (code == 401) {
             val text = response.use { it.body?.string().orEmpty() }
@@ -112,6 +115,35 @@ class FileTransferClient(
             body = if (streaming) body?.byteStream() else null,
             errorText = if (streaming) null else response.use { it.body?.source()?.let { s -> s.request(MAX_ERROR); s.buffer.readUtf8(minOf(s.buffer.size, MAX_ERROR)) } }
         ).also { if (!streaming) response.close() }
+    }
+
+    /**
+     * A blocking `execute()` ignores thread interrupts while it waits for the server. The call runs on
+     * OkHttp's dispatcher instead and this thread waits interruptibly: a caller cancelled through
+     * `runInterruptible` cancels the request rather than leaving it hanging.
+     */
+    private fun executeInterruptibly(call: Call): Response {
+        val result = CompletableFuture<Response>()
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                result.completeExceptionally(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (!result.complete(response)) response.close()
+            }
+        })
+        return try {
+            result.get()
+        } catch (e: InterruptedException) {
+            call.cancel()
+            // A response that raced the interrupt is not leaked.
+            result.cancel(false)
+            result.getNow(null)?.close()
+            throw InterruptedIOException("Загрузка отменена").apply { initCause(e) }
+        } catch (e: ExecutionException) {
+            throw (e.cause as? IOException) ?: IOException(e.cause)
+        }
     }
 
     /** The picked document, streamed (never loaded whole), reporting how much has gone. */

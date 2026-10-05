@@ -37,74 +37,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 
-class FakeRealtimeRepository : RealtimeRepository {
-    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64)
-    private val _audioFrames = MutableSharedFlow<WsEvent.AudioFrameReceived>(extraBufferCapacity = 64)
-    override val events: Flow<WsEvent> = _events
-    override val audioFrames: Flow<WsEvent.AudioFrameReceived> = _audioFrames
-    override val connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
-
-    /** Outgoing commands in order, e.g. "mark_read direct 7" or "call_end 7". */
-    val sent = mutableListOf<String>()
-
-    /** false — сокет закрыт: команды не уходят (send возвращает false). */
-    var accepting = true
-
-    fun emit(event: WsEvent) = check(_events.tryEmit(event))
-    fun emitAudio(frame: WsEvent.AudioFrameReceived) = check(_audioFrames.tryEmit(frame))
-
-    private fun record(command: String): Boolean {
-        if (!accepting) return false
-        sent += command
-        return true
-    }
-
-    /** Ключи отправок в порядке ухода кадров `send_message`. */
-    val sentClientMsgIds = mutableListOf<String>()
-
-    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean {
-        val written = record("send_message ${conversationType.value} $targetId $text")
-        if (written) sentClientMsgIds += clientMsgId
-        return written
-    }
-    /** Metadata of the last `send_message` with a file. */
-    var lastAttachmentMetadata: JsonObject? = null
-
-    override fun sendAttachment(
-        conversationType: ConversationType,
-        targetId: Long,
-        text: String,
-        type: MessageType,
-        metadata: JsonObject,
-        clientMsgId: String
-    ): Boolean {
-        val written = record("send_message ${type.value} ${conversationType.value} $targetId $text")
-        if (written) {
-            sentClientMsgIds += clientMsgId
-            lastAttachmentMetadata = metadata
-        }
-        return written
-    }
-    override fun cancelMessage(clientMsgId: String) = record("cancel_message $clientMsgId")
-    override fun editMessage(messageId: Long, text: String) = record("edit_message $messageId")
-    override fun deleteMessage(messageId: Long) = record("delete_message $messageId")
-    override fun markRead(conversationType: ConversationType, targetId: Long) =
-        record("mark_read ${conversationType.value} $targetId")
-    override fun sendViewing(conversation: Pair<ConversationType, Long>?) =
-        record(if (conversation == null) "viewing null" else "viewing ${conversation.first.value} ${conversation.second}")
-    override fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean) =
-        record("typing $targetId $isTyping")
-    override fun sendPresence(state: String) = record("presence $state")
-    override fun sendCustomStatus(state: String, customStatus: String?) = record("presence $state custom=$customStatus")
-    override fun setDnd(enabled: Boolean) = record("set_dnd $enabled")
-    override fun sendWake(targetUserId: Long) = record("wake_send $targetUserId")
-    override fun sendCallOffer(targetUserId: Long) = record("call_offer $targetUserId")
-    override fun sendCallAnswer(targetUserId: Long) = record("call_answer $targetUserId")
-    override fun sendCallRejected(targetUserId: Long, reason: String?) = record("call_rejected $targetUserId")
-    override fun sendCallEnd(targetUserId: Long, reason: String?) = record("call_end $targetUserId")
-    override fun sendAudioFrame(targetUserId: Long, pcmSamples: ShortArray) = record("audio $targetUserId")
-}
-
 open class FakeChatRepository(
     var direct: List<DirectConversation> = emptyList(),
     var channels: List<Channel> = emptyList(),
@@ -136,6 +68,15 @@ open class FakeChatRepository(
         historyGate?.await()
         historyFailure?.let { throw it }
         return history
+    }
+
+    /** Older pages by `beforeId` (scrolling up); missing — nothing older. */
+    var older: Map<Long, List<Message>> = emptyMap()
+    val olderRequests = mutableListOf<Long>()
+
+    override suspend fun messagesBefore(conversationType: ConversationType, targetId: Long, beforeId: Long): List<Message> {
+        olderRequests += beforeId
+        return older[beforeId].orEmpty()
     }
 
     /** История вокруг сообщения (переход из поиска); null — «слишком давнее». */
@@ -265,9 +206,14 @@ class FakeAccountRepository : AccountRepository {
         return onVerify(registrationId, code)
     }
 
-    override suspend fun deleteAccount(password: String) {
+    /** The local wipe after the server deleted the account (throws like a locked secure storage). */
+    var onLocalClear: suspend () -> Unit = {}
+
+    override suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit) {
         deletions += password
         onDelete(password)
+        afterServerDeletion()
+        onLocalClear()
     }
 
     override suspend fun report(body: ReportBody) {
@@ -313,6 +259,28 @@ class FakeAttachmentRepository : AttachmentRepository {
 
     override suspend fun describe(uri: String): PickedFile? = picked[uri]
     override suspend fun policy(): FilePolicy? = policyValue
+
+    /** Keys of files kept for sending, and of kept copies deleted. */
+    val kept = mutableListOf<String>()
+    val discarded = mutableListOf<String>()
+
+    /** The picked document stands in for its own private copy. */
+    override suspend fun keep(file: PickedFile, key: String): PickedFile {
+        kept += key
+        keptNow += key
+        return file
+    }
+
+    override suspend fun discard(file: PickedFile) {
+        discarded += file.uri
+    }
+
+    /** Keys whose private copies exist now (a prune deletes every copy not in its set). */
+    val keptNow = mutableSetOf<String>()
+
+    override suspend fun pruneKept(keys: Set<String>) {
+        keptNow.retainAll(keys)
+    }
 
     override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse {
         uploads += file

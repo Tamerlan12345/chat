@@ -3,9 +3,17 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="centychat_secure_session.xml"/>
         <exclude domain="sharedpref" path="centychat_fallback_session.xml"/>
+        <!-- Message bodies and unsent messages of a session stay on the device (delivery outbox and cache). -->
+        <exclude domain="database" path="delivery.db"/>
+        <exclude domain="database" path="delivery.db-wal"/>
+        <exclude domain="database" path="delivery.db-shm"/>
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="centychat_secure_session.xml"/>
         <exclude domain="sharedpref" path="centychat_fallback_session.xml"/>
+        <!-- Message bodies and unsent messages of a session stay on the device (delivery outbox and cache). -->
+        <exclude domain="database" path="delivery.db"/>
+        <exclude domain="database" path="delivery.db-wal"/>
+        <exclude domain="database" path="delivery.db-shm"/>
     </device-transfer>
 </data-extraction-rules>

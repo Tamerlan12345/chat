@@ -4,14 +4,17 @@ import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.network.WebSocketClient
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ConversationType
-import com.openmychat.mobile.data.model.MessageType
-import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Realtime chat, presence and call signalling over the authenticated WebSocket. */
+/**
+ * Realtime chat, presence and call signalling over the authenticated WebSocket. Messages are not
+ * sent from here: sending, editing, deleting and read marks go through the delivery engine
+ * (`data/delivery`), which reads [deliveryFrames] and writes with [sendFrame].
+ */
 interface RealtimeRepository {
     /** Chat, presence and signalling events. Each message arrives once even if the server repeats it. */
     val events: Flow<WsEvent>
@@ -21,27 +24,14 @@ interface RealtimeRepository {
 
     val connectionState: StateFlow<ConnectionState>
 
-    /** [clientMsgId] — ключ идемпотентности: при каждом повторе шлётся тот же. */
-    fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String): Boolean
+    /** Every server frame as sent, in order, plus `socket_closed` when a socket goes away (DeliveryLink). */
+    val deliveryFrames: Flow<JsonObject>
 
-    /**
-     * A file or image message (msgType file/image) for an uploaded file; [text] is the file name, as
-     * the desktop sends it, so every client shows a caption. Same key rules as [sendMessage].
-     */
-    fun sendAttachment(
-        conversationType: ConversationType,
-        targetId: Long,
-        text: String,
-        type: MessageType,
-        metadata: JsonObject,
-        clientMsgId: String
-    ): Boolean
+    /** A frame built by the delivery engine; false when no socket took it. */
+    fun sendFrame(frame: JsonObject): Boolean
 
-    /** Отозвать отправку по ключу (удаление неотправленного сообщения, исход которого неизвестен). */
-    fun cancelMessage(clientMsgId: String): Boolean
-    fun editMessage(messageId: Long, text: String): Boolean
-    fun deleteMessage(messageId: Long): Boolean
-    fun markRead(conversationType: ConversationType, targetId: Long): Boolean
+    /** Reconnect now: the delivery engine could not store what it received (delivery-state.md §5). */
+    fun restartLink()
 
     /** «Смотрю этот чат» на переднем плане; null — ни один (multi-device.md §4). */
     fun sendViewing(conversation: Pair<ConversationType, Long>?): Boolean
@@ -68,37 +58,10 @@ class DefaultRealtimeRepository @Inject constructor(
     override val events: Flow<WsEvent> get() = webSocketClient.events
     override val audioFrames: Flow<WsEvent.AudioFrameReceived> get() = webSocketClient.audioFrames
     override val connectionState: StateFlow<ConnectionState> get() = webSocketClient.connectionState
+    override val deliveryFrames: Flow<JsonObject> get() = webSocketClient.deliveryFrames
 
-    override fun sendMessage(conversationType: ConversationType, targetId: Long, text: String, clientMsgId: String) =
-        webSocketClient.sendTextMessage(
-            conversationType = conversationType,
-            targetId = targetId,
-            text = text,
-            clientMsgId = clientMsgId
-        )
-
-    override fun sendAttachment(
-        conversationType: ConversationType,
-        targetId: Long,
-        text: String,
-        type: MessageType,
-        metadata: JsonObject,
-        clientMsgId: String
-    ) = webSocketClient.sendTextMessage(
-        conversationType = conversationType,
-        targetId = targetId,
-        text = text,
-        clientMsgId = clientMsgId,
-        msgType = type,
-        rawMetadata = metadata
-    )
-
-    override fun cancelMessage(clientMsgId: String) = webSocketClient.cancelMessage(clientMsgId)
-
-    override fun editMessage(messageId: Long, text: String) = webSocketClient.editMessage(messageId, text)
-    override fun deleteMessage(messageId: Long) = webSocketClient.deleteMessage(messageId)
-    override fun markRead(conversationType: ConversationType, targetId: Long) =
-        webSocketClient.markRead(conversationType, targetId)
+    override fun sendFrame(frame: JsonObject) = webSocketClient.sendFrame(frame)
+    override fun restartLink() = webSocketClient.restart()
 
     override fun sendViewing(conversation: Pair<ConversationType, Long>?) =
         webSocketClient.sendViewing(conversation?.first, conversation?.second)

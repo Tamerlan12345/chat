@@ -21,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -45,6 +47,18 @@ interface AttachmentRepository {
     /** The admin's file policy for me; null when it could not be loaded (the server still checks). */
     suspend fun policy(): FilePolicy?
 
+    /**
+     * A private copy of [file] in the app's files (not a picker grant, which ends with the process),
+     * so a queued send survives process death; [key] names it. The copy, or null when unreadable.
+     */
+    suspend fun keep(file: PickedFile, key: String): PickedFile?
+
+    /** Deletes a copy made by [keep] (any other URI is left alone). */
+    suspend fun discard(file: PickedFile)
+
+    /** Deletes every copy made by [keep] except those of [keys] (empty: all — the session ended). */
+    suspend fun pruneKept(keys: Set<String>)
+
     /** Throws [ApiException] with the server's reason; cancelling stops the upload. */
     suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse
 
@@ -60,6 +74,9 @@ object UnavailableAttachments : AttachmentRepository {
     private fun offline(): Nothing = throw ApiException(0, "NETWORK_ERROR", "No attachment backend")
     override suspend fun describe(uri: String): PickedFile? = null
     override suspend fun policy(): FilePolicy? = null
+    override suspend fun keep(file: PickedFile, key: String): PickedFile? = null
+    override suspend fun discard(file: PickedFile) = Unit
+    override suspend fun pruneKept(keys: Set<String>) = Unit
     override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse = offline()
     override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File = offline()
     override fun thumbnailUrl(fileId: Long): String? = null
@@ -140,6 +157,39 @@ class DefaultAttachmentRepository @Inject constructor(
         return runCatching { api.getFilePolicy() }.getOrNull()?.also { cachedPolicy = System.currentTimeMillis() to it }
     }
 
+    /** Not backed up (noBackupFilesDir) and wiped with the session (AttachmentSends.reset). */
+    private val kept = File(context.noBackupFilesDir, OUTBOX_DIR)
+
+    override suspend fun keep(file: PickedFile, key: String): PickedFile? = withContext(Dispatchers.IO) {
+        if (!com.openmychat.mobile.data.delivery.DeliveryReducer.CLIENT_MSG_ID_RE.matches(key)) return@withContext null
+        kept.mkdirs()
+        val target = File(kept, key)
+        try {
+            val input = context.contentResolver.openInputStream(file.uri.toUri()) ?: return@withContext null
+            val size = input.use { source -> target.outputStream().use { source.copyTo(it) } }
+            file.copy(uri = target.toUri().toString(), size = size)
+        } catch (e: IOException) {
+            target.delete()
+            null
+        } catch (e: SecurityException) {
+            target.delete()
+            null
+        }
+    }
+
+    override suspend fun discard(file: PickedFile) = withContext(Dispatchers.IO) {
+        val path = file.uri.toUri().takeIf { it.scheme == "file" }?.path ?: return@withContext
+        val target = File(path)
+        // Only our own copies: never a file outside the outbox folder.
+        if (target.parentFile?.canonicalPath == kept.canonicalPath) target.delete()
+        Unit
+    }
+
+    override suspend fun pruneKept(keys: Set<String>) = withContext(Dispatchers.IO) {
+        kept.listFiles()?.forEach { if (it.name !in keys) it.delete() }
+        Unit
+    }
+
     override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse {
         val resolver = context.contentResolver
         return transfer.upload(
@@ -152,17 +202,22 @@ class DefaultAttachmentRepository @Inject constructor(
         }
     }
 
-    override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File =
-        withContext(Dispatchers.IO) {
-            val job = coroutineContext
+    // Interruptible: cancelling the tap's coroutine also cancels a request still waiting for the server.
+    override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File {
+        val job = coroutineContext
+        return runInterruptible(Dispatchers.IO) {
             downloader.fetch(fileId, name, onProgress = onProgress, ensureActive = { job.ensureActive() })
         }
+    }
 
     override fun thumbnailUrl(fileId: Long): String = transfer.thumbnailUrl(fileId)
 
     companion object {
         /** Must match `res/xml/attachment_paths.xml`. */
         const val CACHE_DIR = "attachments"
+
+        /** Private copies of files waiting to be sent (in noBackupFilesDir). */
+        const val OUTBOX_DIR = "outbox"
         private const val POLICY_TTL_MS = 5 * 60 * 1000L
     }
 }

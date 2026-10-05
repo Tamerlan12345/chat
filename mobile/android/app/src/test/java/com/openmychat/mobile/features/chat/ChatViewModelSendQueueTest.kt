@@ -6,6 +6,7 @@ import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -34,14 +35,18 @@ class ChatViewModelSendQueueTest {
     private val realtime = FakeRealtimeRepository()
     private val chat = FakeChatRepository()
 
-    private fun directChat(cache: ChatHistoryCache = ChatHistoryCache(FakeSessionRepository())) = ChatViewModel(
+    /** The process-wide delivery core every chat of this "process" shares. */
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher)
+
+    private fun directChat() = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = alice,
         chatRepository = chat,
         realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = cache
+        delivery = delivery.engine,
+        sends = delivery.sends
     )
 
     private val ChatViewModel.shown get() = (uiState.value as ChatUiState.Content).messages
@@ -162,14 +167,22 @@ class ChatViewModelSendQueueTest {
 
     @Test
     fun noEchoWithinTheAckTimeoutMarksTheMessageFailed() {
+        // delivery-state.md §7.3: an unanswered attempt is a failure; the same key goes again after
+        // backoff (1, 2, 4, 8 s) and only the fifth unanswered attempt is «не отправлено».
         val vm = directChat()
         vm.sendMessage("тишина")
+        val key = vm.shown.single().clientMsgId!!
 
         elapse(9_000)
         assertEquals(SendState.SENDING, vm.shown.single().sendState)
-        elapse(2_000)
+        elapse(1_500)
+        assertEquals("timed out: waits 1 s, then goes again", SendState.QUEUED, vm.shown.single().sendState)
+        elapse(54_000)
+        assertEquals("the fifth attempt is out", SendState.SENDING, vm.shown.single().sendState)
+        elapse(1_000)
 
         assertEquals(SendState.FAILED, vm.shown.single().sendState)
+        assertEquals("five attempts, one key", List(5) { key }, realtime.sentClientMsgIds)
     }
 
     @Test
@@ -188,7 +201,7 @@ class ChatViewModelSendQueueTest {
         val vm = directChat()
         vm.sendMessage("не нужно")
         val local = vm.shown.single()
-        elapse(11_000)
+        elapse(66_000) // five unanswered attempts (§7.3)
         assertEquals(SendState.FAILED, vm.shown.single().sendState)
 
         vm.discardFailed(vm.shown.single())
@@ -238,16 +251,15 @@ class ChatViewModelSendQueueTest {
 
     @Test
     fun aReopenedChatKeepsItsUnconfirmedMessagesAndResendsThem() {
-        val cache = ChatHistoryCache(FakeSessionRepository())
         realtime.connectionState.value = ConnectionState.Connecting
-        val first = directChat(cache)
+        val first = directChat()
         first.sendMessage("останется")
         val key = first.shown.single().clientMsgId
         first.viewModelScope.cancel() // the screen is closed: its view model no longer works
 
         // The chat is opened again (new view model) once the connection is back.
         realtime.connectionState.value = ConnectionState.Connected
-        val second = directChat(cache)
+        val second = directChat()
 
         assertEquals(listOf(key), second.shown.map { it.clientMsgId })
         assertEquals(listOf(key), realtime.sentClientMsgIds)

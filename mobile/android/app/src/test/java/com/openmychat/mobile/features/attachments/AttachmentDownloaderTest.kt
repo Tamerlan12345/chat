@@ -92,6 +92,26 @@ class AttachmentDownloaderTest {
     }
 
     @Test
+    fun aRangeThatDoesNotStartWhereThePartialEndsIsNeverAppended() {
+        transport.answers += { full(body = breaking(content, 4_000)) }
+        runCatching { downloader.fetch(42, "big.zip") }
+
+        // A proxy answers 206 for another range: gluing it on would corrupt the file.
+        transport.answers += {
+            DownloadResponse(
+                code = 206, etag = etag, contentLength = content.size.toLong() - 1_000,
+                contentRange = "bytes 1000-${content.size - 1}/${content.size}",
+                body = ByteArrayInputStream(content.copyOfRange(1_000, content.size))
+            )
+        }
+        transport.answers += { full() }
+        val file = downloader.fetch(42, "big.zip")
+
+        assertEquals("started over without a range", Call(42, null, null, null), transport.calls.last())
+        assertArrayEquals(content, file.readBytes())
+    }
+
+    @Test
     fun aFileThatChangedSinceThePartialStartsOverWhenTheServerSendsItWhole() {
         transport.answers += { full(body = breaking(content, 3_000)) }
         runCatching { downloader.fetch(42, "big.zip") }

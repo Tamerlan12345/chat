@@ -53,11 +53,16 @@ import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /** How long the sticky date stays after scrolling stops. */
 private const val STICKY_DATE_LINGER = 1_000L
+
+/** Rows from the oldest loaded message at which the page before it is asked for. */
+private const val OLDER_PAGE_THRESHOLD = 8
 
 /**
  * The history, newest at the bottom, laid out bottom-up (`reverseLayout`): index 0 is the newest row,
@@ -151,6 +156,14 @@ internal fun MessageList(
         if (decision.scrollToEnd && !wasAtBottom) {
             if (reduce) listState.scrollToItem(0) else listState.animateScrollToItem(0)
         }
+    }
+
+    // Older history (`beforeId`): reaching the oldest rows asks for the page before them.
+    LaunchedEffect(listState, items.size) {
+        snapshotFlow { (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= items.size - OLDER_PAGE_THRESHOLD }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { actions.onLoadOlder() }
     }
 
     val showJump by remember { derivedStateOf { JumpToLatest.isVisible(unseen, listState.firstVisibleItemIndex) } }

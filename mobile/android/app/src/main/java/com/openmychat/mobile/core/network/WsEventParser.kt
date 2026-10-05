@@ -39,7 +39,7 @@ object WsEventParser {
     }
 
     /** Server frames the client receives but does not use (binary PCM relay, no live roster). */
-    // message_cancelled: echo of cancel_message, which Android does not send yet (the send queue maps it, Task 15).
+    // message_cancelled: the answer to cancel_message — the delivery engine reads it from deliveryFrames.
     private val ignoredTypes = setOf("ice_candidate", "user_created", "user_updated", "message_cancelled")
 
     fun parse(text: String): WsFrame {

@@ -64,6 +64,14 @@ class WebSocketClient(
     )
     val audioFrames: SharedFlow<WsEvent.AudioFrameReceived> = _audioFrames.asSharedFlow()
 
+    /**
+     * Every text frame exactly as the server sent it, in order, plus a synthetic `socket_closed`
+     * whenever a socket goes away — the delivery engine's input (delivery-state.md §4). Nothing is
+     * deduplicated here: the engine merges repeated frames itself.
+     */
+    private val _deliveryFrames = MutableSharedFlow<JsonObject>(extraBufferCapacity = 1024)
+    val deliveryFrames: SharedFlow<JsonObject> = _deliveryFrames.asSharedFlow()
+
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
@@ -154,6 +162,7 @@ class WebSocketClient(
 
     private fun onSocketLost() {
         webSocket = null
+        _deliveryFrames.tryEmit(SOCKET_CLOSED_FRAME)
         isConnected.set(false)
         isConnecting.set(false)
         if (!isManuallyClosed.get()) {
@@ -167,6 +176,7 @@ class WebSocketClient(
     /** Closes the current socket without triggering the listener-driven reconnect. */
     private fun closeCurrentSocket(reason: String) {
         val ws = webSocket
+        if (ws != null) _deliveryFrames.tryEmit(SOCKET_CLOSED_FRAME)
         webSocket = null
         isConnected.set(false)
         isConnecting.set(false)
@@ -223,6 +233,7 @@ class WebSocketClient(
     }
 
     private fun handleTextMessage(text: String) {
+        val raw = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull()
         try {
             val event = (WsEventParser.parse(text) as? WsFrame.Event)?.event ?: return
             when (event) {
@@ -247,6 +258,19 @@ class WebSocketClient(
                 else -> _events.tryEmit(event)
             }
         } catch (_: Exception) {}
+        // After the typed handling: an auth_success frame finds the session user already set.
+        if (raw != null) _deliveryFrames.tryEmit(raw)
+    }
+
+    /** Writes a frame built by the delivery engine; false when there is no open socket. */
+    fun sendFrame(frame: JsonObject): Boolean = sendJson(frame.toString())
+
+    /**
+     * Drops the current socket so it reconnects: the engine lost data it could not store (§5), and
+     * the new socket's sync chain reads it again.
+     */
+    fun restart() {
+        webSocket?.cancel()
     }
 
     private fun handleBinaryMessage(bytes: ByteString) {
@@ -268,74 +292,9 @@ class WebSocketClient(
         return webSocket?.send(jsonString) ?: false
     }
 
-    fun sendTextMessage(
-        conversationType: ConversationType,
-        targetId: Long,
-        text: String,
-        replyToId: Long? = null,
-        metadata: MessageMetadata? = null,
-        /** Ключ идемпотентности: повтор с тем же ключом не создаёт копию (ws-protocol §3.2). */
-        clientMsgId: String? = null,
-        /** file / image for an attachment message (ws-protocol §3.2 msgType). */
-        msgType: MessageType = MessageType.TEXT,
-        /** Metadata as the desktop sends it (file_id, size, mimeType, url); wins over [metadata]. */
-        rawMetadata: JsonObject? = null
-    ): Boolean {
-        val payload = buildJsonObject {
-            put("type", "send_message")
-            put("conversationType", conversationType.value)
-            put("targetId", targetId)
-            put("text", text)
-            put("msgType", msgType.value)
-            if (replyToId != null) put("replyToId", replyToId)
-            if (rawMetadata != null) {
-                put("metadata", rawMetadata)
-            } else if (metadata != null) {
-                put("metadata", json.encodeToJsonElement(metadata))
-            }
-            if (clientMsgId != null) put("client_msg_id", clientMsgId)
-        }
-        return sendJson(payload.toString())
-    }
-
-    /** Отзыв отправки по ключу: сервер не сохранит её позже и удалит, если уже сохранил (ws-protocol §3.4.1). */
-    fun cancelMessage(clientMsgId: String): Boolean {
-        val payload = buildJsonObject {
-            put("type", "cancel_message")
-            put("client_msg_id", clientMsgId)
-        }
-        return sendJson(payload.toString())
-    }
-
-    fun editMessage(messageId: Long, text: String): Boolean {
-        val payload = buildJsonObject {
-            put("type", "edit_message")
-            put("messageId", messageId)
-            put("text", text)
-        }
-        return sendJson(payload.toString())
-    }
-
-    fun deleteMessage(messageId: Long): Boolean {
-        val payload = buildJsonObject {
-            put("type", "delete_message")
-            put("messageId", messageId)
-        }
-        return sendJson(payload.toString())
-    }
-
     /** «Смотрю этот чат» (null — ни один): сервер не уведомляет о нём ни одно устройство сотрудника. */
     fun sendViewing(conversationType: ConversationType?, targetId: Long?): Boolean =
         sendJson(viewingFrame(conversationType, targetId).toString())
-
-    fun markRead(conversationType: ConversationType, targetId: Long): Boolean {
-        val payload = buildJsonObject {
-            put("type", "mark_read")
-            put("conversationType", conversationType.value)
-            put("targetId", targetId)
-        }
-        return sendJson(payload.toString())
-    }
 
     fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean): Boolean {
         val payload = buildJsonObject {
@@ -466,6 +425,9 @@ class WebSocketClient(
                 put("targetId", targetId)
             }
         }
+
+        /** A socket went away, whatever the reason (DeliveryLink.SOCKET_CLOSED). */
+        private val SOCKET_CLOSED_FRAME = buildJsonObject { put("type", "socket_closed") }
 
         private const val SESSION_LIMIT_MIN_DELAY_MS = 10_000L
         private const val REFUSAL_MIN_DELAY_MS = 2_000L

@@ -91,6 +91,8 @@ internal fun ChatBubbleRow(
     val snackbar = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
     val failed = item.mark == DeliveryMark.FAILED
+    // Still in the queue: no server id yet to answer, edit or report.
+    val unsent = item.mark == DeliveryMark.QUEUED || item.mark == DeliveryMark.SENDING
 
     // The bubble that receives the travelling composer text skips its own entrance.
     val carried = remember(item.key) { fresh && isOwn && !reduce && landing.claim(item.key, message) }
@@ -136,7 +138,7 @@ internal fun ChatBubbleRow(
             meta = meta,
             failed = failed,
             onRetry = { actions.onRetrySend(message) },
-            onDiscard = { actions.onDiscardFailed(message) },
+            onDiscard = { onRequestDelete(message) },
             attachment = attachment?.let { file ->
                 {
                     MessageAttachmentView(
@@ -164,12 +166,13 @@ internal fun ChatBubbleRow(
                 if (Build.VERSION.SDK_INT < 33) scope.launch { snackbar.showSnackbar(strings.copied) }
             }
             MessageAction.EDIT -> onEdit(message)
-            MessageAction.DELETE -> if (failed) actions.onDiscardFailed(message) else onRequestDelete(message)
+            // Both ask first: a sent message is deleted for everyone, an unsent one is never sent.
+            MessageAction.DELETE -> onRequestDelete(message)
             MessageAction.REPORT -> actions.onReportMessage(message)
         }
     }
     fun menuActions() = MessageMenuPolicy.actionsFor(
-        message, actions.canEdit(message), actions.canDelete(message), failed, canReport = actions.canReport(message)
+        message, actions.canEdit(message), actions.canDelete(message), failed, canReport = actions.canReport(message), unsent = unsent
     )
     val openMenu = {
         val bounds = coordinates[0]?.takeIf { it.isAttached }?.boundsInRoot()
@@ -188,7 +191,7 @@ internal fun ChatBubbleRow(
             )
         }
     }
-    val canReply = !message.isDeleted && !failed
+    val canReply = !message.isDeleted && !failed && !unsent
     // QA D4: a tap on the file opens it; the long press keeps the menu.
     val openLabel = attachment?.let {
         stringResource(if (it.isImage) R.string.attachment_open_image else R.string.attachment_open, it.name)

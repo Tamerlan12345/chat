@@ -2,7 +2,7 @@ package com.openmychat.mobile.features.chat
 
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
-import com.openmychat.mobile.data.realtime.ConversationRef
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -11,10 +11,16 @@ import com.openmychat.mobile.testing.MainDispatcherRule
 import com.openmychat.mobile.testing.message
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** Reopening a chat shows what was there at once (no skeleton flash) and refreshes underneath. */
+/**
+ * Reopening a chat shows what was there at once (no skeleton flash) and refreshes underneath. The
+ * in-memory history cache is gone: the delivery model's conversation cache (in memory for the
+ * process, in Room across restarts) is what a reopened chat shows.
+ */
 class ChatHistoryCacheTest {
 
     @get:Rule val mainDispatcher = MainDispatcherRule()
@@ -22,16 +28,18 @@ class ChatHistoryCacheTest {
     private val bob = 3L
     private val repository = FakeChatRepository(history = listOf(message(id = 10, from = bob, to = ME)))
     private val session = FakeSessionRepository()
-    private val cache = ChatHistoryCache(session)
+    private val realtime = FakeRealtimeRepository()
+    private val delivery = DeliveryHarness(realtime, repository, mainDispatcher.dispatcher, session = session)
 
     private fun open(userId: Long = ME) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = bob,
         chatRepository = repository,
-        realtimeRepository = FakeRealtimeRepository(),
+        realtimeRepository = realtime,
         sessionRepository = if (userId == ME) session else FakeSessionRepository(userId),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = cache
+        delivery = delivery.engine,
+        sends = delivery.sends
     )
 
     private fun ChatViewModel.ids() = (uiState.value as? ChatUiState.Content)?.messages?.map { it.id }
@@ -62,11 +70,16 @@ class ChatHistoryCacheTest {
     @Test
     fun signingOutClearsTheCache() {
         open()
-        assertEquals(listOf(10L), cache.get(ME, ConversationRef(ConversationType.DIRECT, bob))?.map { it.id })
+        assertEquals(listOf(10L), delivery.engine.state.value.messages["direct:$bob"]?.map { it.id })
 
+        // A lost session (401) keeps this account's cache; an explicit sign-out deletes it.
         session.token.value = null
+        assertEquals(listOf(10L), delivery.engine.state.value.messages["direct:$bob"]?.map { it.id })
+        kotlinx.coroutines.runBlocking { delivery.runtime.discardForSignOut() }
 
-        assertEquals(null, cache.get(ME, ConversationRef(ConversationType.DIRECT, bob)))
+        assertNull(delivery.engine.state.value.messages["direct:$bob"])
+        assertTrue("nothing of the session stays on disk", delivery.store.stored.cache.isEmpty())
+        assertTrue(delivery.store.stored.outbox.isEmpty())
     }
 
     @Test

@@ -13,6 +13,7 @@ import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.repository.PickedFile
 import com.openmychat.mobile.features.attachments.TransferState
 import java.io.File
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeAttachmentRepository
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
@@ -51,7 +52,8 @@ class ChatViewModelAttachmentTest {
     private val pdf = PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
     private val photo = PickedFile("content://media/2", "IMG_2001.jpg", 50_000, "image/jpeg", width = 4000, height = 3000)
 
-    private val cache = ChatHistoryCache(FakeSessionRepository())
+    /** The process-wide delivery core (engine + file queue) every chat of this "process" shares. */
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher, files = files)
 
     private fun directChat(session: FakeSessionRepository = FakeSessionRepository()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
@@ -60,7 +62,8 @@ class ChatViewModelAttachmentTest {
         realtimeRepository = realtime,
         sessionRepository = session,
         activeConversations = ActiveConversationRegistry(),
-        historyCache = cache,
+        delivery = delivery.engine,
+        sends = delivery.sends,
         attachments = files
     ).also { vm -> CoroutineScope(mainDispatcher.dispatcher).launch { vm.notices.collect { notices += it } } }
 
@@ -292,11 +295,18 @@ class ChatViewModelAttachmentTest {
         files.uploadProgress!!(0.6f)
         realtime.connectionState.value = ConnectionState.Connecting
 
+        // Uploads belong to the app, not to the screen: a chat opened again shows the live upload.
         val reopened = directChat()
+        assertEquals(SendState.SENDING, reopened.shown.single().sendState)
+        assertEquals(0.6f, reopened.shown.single().upload!!.progress)
 
-        val restored = reopened.shown.single()
-        assertEquals(SendState.QUEUED, restored.sendState)
-        assertNull("no upload runs for it here", restored.upload!!.progress)
+        // After the process dies the file is still queued (its row and private copy were stored),
+        // with no ring: nothing goes up for it until the connection is back.
+        val restarted = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher, uploadStore = delivery.uploadStore, store = delivery.store, files = files)
+        val restored = restarted.sends.uploads.value.single()
+        assertEquals("отчёт.pdf", restored.pending.name)
+        assertNull("no upload runs for it here", restored.progress)
+        assertEquals(false, restored.pending.failed)
     }
 
     @Test

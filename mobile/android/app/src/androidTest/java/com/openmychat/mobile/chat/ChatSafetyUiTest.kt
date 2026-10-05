@@ -19,7 +19,6 @@ import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.BlockedUser
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
-import com.openmychat.mobile.features.chat.ChatHistoryCache
 import com.openmychat.mobile.features.chat.ChatScreen
 import com.openmychat.mobile.features.chat.ChatViewModel
 import com.openmychat.mobile.features.chat.ChatActions
@@ -131,14 +130,17 @@ class ChatSafetyUiTest {
         // The session's block list starts empty and then brings a block made on another device.
         val account = com.openmychat.mobile.ScriptedAccountRepository()
         val session = SignedInSessionRepository(me)
+        val realtime = ConnectedRealtimeRepository()
+        val delivery = TestDelivery(realtime, session, listOf(incoming))
         val viewModel = ChatViewModel(
             conversationType = ConversationType.DIRECT,
             targetId = peer,
             chatRepository = StaticChatRepository(listOf(incoming)),
-            realtimeRepository = ConnectedRealtimeRepository(),
+            realtimeRepository = realtime,
             sessionRepository = session,
             activeConversations = ActiveConversationRegistry(),
-            historyCache = ChatHistoryCache(session),
+            delivery = delivery.engine,
+            sends = delivery.sends,
             account = account
         )
         compose.setContent {

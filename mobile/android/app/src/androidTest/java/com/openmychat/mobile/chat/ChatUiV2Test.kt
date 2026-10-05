@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -44,6 +45,7 @@ class ChatUiV2Test {
     private val peer = 2L
     private val sent = mutableListOf<Pair<String, Long?>>()
     private val edited = mutableListOf<Long>()
+    private var olderRequests = 0
 
     private fun message(id: Long, from: Long, text: String = "Сообщение $id", minute: Long = id % 60, status: DeliveryStatus? = null) = Message(
         id = id, conversationType = ConversationType.DIRECT, targetId = if (from == me) peer else me,
@@ -59,6 +61,9 @@ class ChatUiV2Test {
         override fun onStartEdit(message: Message) {
             edited += message.id
         }
+        override fun onLoadOlder() {
+            olderRequests++
+        }
     }
 
     private fun show(messages: List<Message>, connection: ConnectionState = ConnectionState.Connected) {
@@ -70,6 +75,18 @@ class ChatUiV2Test {
                 )
             }
         }
+    }
+
+    @Test
+    fun reachingTheOldestMessagesAsksForTheOlderPage() {
+        show((1L..60L).map { message(it, peer) })
+        compose.waitForIdle()
+        assertEquals("the newest end is on screen: nothing older is needed yet", 0, olderRequests)
+
+        compose.onNodeWithTag("message-list").performScrollToIndex(60)
+        compose.waitForIdle()
+
+        assertEquals(1, olderRequests)
     }
 
     @Test

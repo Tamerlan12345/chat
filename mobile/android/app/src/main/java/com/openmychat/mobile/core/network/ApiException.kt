@@ -10,6 +10,9 @@ open class ApiException(
     val attemptsLeft: Int? = null
 ) : Exception(message)
 
+/** An answer read as is ([ApiClient.raw]); [status] 0 — the server could not be reached. */
+class RawResponse(val status: Int, val body: String, val retryAfterSeconds: Long?)
+
 class MustChangePasswordException(
     message: String = "Требуется обязательная смена пароля"
 ) : ApiException(statusCode = 403, errorCode = "MUST_CHANGE_PASSWORD", message = message)

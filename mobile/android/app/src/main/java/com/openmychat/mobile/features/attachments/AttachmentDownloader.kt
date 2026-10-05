@@ -81,7 +81,17 @@ class AttachmentDownloader(private val root: File, private val transport: Downlo
             when (it.code) {
                 304 -> if (cached) return target
                 200 -> return write(it, dir, target, part, tag, offset = 0, onProgress, ensureActive)
-                206 -> if (resumeFrom != null) return write(it, dir, target, part, tag, offset = resumeFrom, onProgress, ensureActive)
+                206 -> if (resumeFrom != null) {
+                    if (startOf(it.contentRange) == resumeFrom) return write(it, dir, target, part, tag, offset = resumeFrom, onProgress, ensureActive)
+                    // Not the range asked for (a proxy, a changed file): appending would corrupt the
+                    // copy. Drop the partial and download it whole once.
+                    if (!retried) {
+                        part.delete()
+                        tag.delete()
+                        it.close()
+                        return fetch(fileId, name, onProgress, ensureActive, retried = true)
+                    }
+                }
                 416 -> if (!retried) {
                     part.delete()
                     tag.delete()
@@ -179,6 +189,10 @@ class AttachmentDownloader(private val root: File, private val transport: Downlo
             }
             return clean
         }
+
+        /** First byte of `bytes 100-199/1000`. */
+        private fun startOf(contentRange: String?): Long? =
+            contentRange?.trim()?.removePrefix("bytes")?.trim()?.substringBefore('-')?.trim()?.toLongOrNull()
 
         /** Total size from `bytes 100-199/1000`. */
         private fun totalOf(contentRange: String?): Long? =

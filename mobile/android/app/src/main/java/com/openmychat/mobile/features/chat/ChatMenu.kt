@@ -16,15 +16,18 @@ object MessageMenuPolicy {
         canDelete: Boolean,
         failed: Boolean,
         /** Someone else's delivered message: «Пожаловаться» comes last, apart from editing. */
-        canReport: Boolean = false
+        canReport: Boolean = false,
+        /** An own message still in the queue (queued or sending): it can only be copied or cancelled. */
+        unsent: Boolean = false
     ): List<MessageAction> {
         if (message.isDeleted) return emptyList()
+        val settled = !failed && !unsent
         return buildList {
-            if (!failed) add(MessageAction.REPLY)
+            if (settled) add(MessageAction.REPLY)
             if (message.type == MessageType.TEXT && message.text.isNotBlank()) add(MessageAction.COPY)
-            if (canEdit && !failed) add(MessageAction.EDIT)
-            if (canDelete || failed) add(MessageAction.DELETE)
-            if (canReport && !failed) add(MessageAction.REPORT)
+            if (canEdit && settled) add(MessageAction.EDIT)
+            if (canDelete || failed || unsent) add(MessageAction.DELETE)
+            if (canReport && settled) add(MessageAction.REPORT)
         }
     }
 }

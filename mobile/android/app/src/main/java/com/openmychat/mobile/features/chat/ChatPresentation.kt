@@ -78,8 +78,8 @@ sealed interface ChatItem {
 const val GROUP_BREAK_MILLIS = 5 * 60 * 1000L
 
 /**
- * Chronological rows (oldest first). [markOverride] lets the send queue (Task 15) report queued,
- * sending and failed states for own messages; without it the server status decides.
+ * Chronological rows (oldest first). [markOverride] lets the send queue report queued, sending and
+ * failed states for own messages; without it the server status decides.
  */
 fun buildChatItems(
     messages: List<Message>,
@@ -116,11 +116,32 @@ fun buildChatItems(
             isOwn = message.senderId == currentUserId,
             position = position,
             mark = marks[i],
-            showsMeta = ends || edited,
+            showsMeta = ends || edited || stalledBehind(marks[i], marks[groupEnd[i]]),
             day = days[i]
         )
     }
     return items
+}
+
+/**
+ * A queued or sending bubble whose group ends in a bubble further along (sending, failed, or already
+ * sent / delivered / read) shows its own clock: a stalled earlier message is never hidden behind a
+ * later one (principle «never lose a message»). Only these two states count, so a delivery status
+ * catching up on sent bubbles never reflows history.
+ */
+private fun stalledBehind(mark: DeliveryMark?, groupLast: DeliveryMark?): Boolean {
+    if (mark != DeliveryMark.QUEUED && mark != DeliveryMark.SENDING) return false
+    return progress(groupLast) > progress(mark)
+}
+
+/** How far a send has come: queued < sending < failed (settled, needs the user) < sent < delivered < read. */
+private fun progress(mark: DeliveryMark?): Int = when (mark) {
+    DeliveryMark.QUEUED -> 0
+    DeliveryMark.SENDING -> 1
+    DeliveryMark.FAILED -> 2
+    DeliveryMark.SENT, null -> 3
+    DeliveryMark.DELIVERED -> 4
+    DeliveryMark.READ -> 5
 }
 
 /** Отметка для ещё не подтверждённого сервером своего сообщения; null — решает статус сервера. */

@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.room)
 }
 
 // The JVM test worker cannot load classes from a build directory whose path
@@ -82,6 +83,11 @@ android {
     }
 }
 
+// Room exports every schema version: the outbox may hold unsent text, so its table only ever migrates.
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
@@ -123,6 +129,12 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.security.crypto)
     implementation("com.google.errorprone:error_prone_annotations:2.18.0")
+
+    // Durable outbox and conversation cache (delivery-state.md): Room; background flush: WorkManager.
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

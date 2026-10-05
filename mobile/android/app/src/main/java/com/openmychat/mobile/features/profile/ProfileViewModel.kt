@@ -12,9 +12,11 @@ import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.ProfileRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import com.openmychat.mobile.data.delivery.OutgoingQueue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -47,13 +49,22 @@ sealed interface ProfileUiState {
 /** One-off outcomes for the snackbar. */
 enum class ProfileEvent { StatusSaved, StatusSaveFailed }
 
+/** Sign-out could not delete the unsent messages: the session stays (contract: never silently dropped or kept for another account). */
+private const val UNSENT_NOT_DELETED = "Не удалось удалить неотправленные сообщения — выход отменён"
+
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository,
     private val realtimeRepository: RealtimeRepository,
-    private val presenceController: PresenceController
+    private val presenceController: PresenceController,
+    /** Unsent messages: sign-out deletes them, after the user agreed. */
+    private val outgoing: OutgoingQueue = OutgoingQueue.None
 ) : ViewModel() {
+
+    /** How many messages a sign-out now would delete («N неотправленных сообщений будут удалены»). */
+    val unsentCount: StateFlow<Int> get() = outgoing.unsentCount
+
 
     /** Автоматическое присутствие: на экране — «В сети», свёрнуто — «Отошёл». Только для показа. */
     val presence: StateFlow<Presence> = presenceController.presence
@@ -210,9 +221,23 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             _logoutError.value = null
             try {
+                // Unsent messages go first (the user agreed in the dialog); if they cannot be deleted,
+                // nothing is signed out — they never silently stay for someone else.
+                outgoing.discardForSignOut()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _logoutError.value = UNSENT_NOT_DELETED
+                // Still signed in: the account goes on sending and receiving (its messages are back).
+                outgoing.signOutAborted()
+                return@launch
+            }
+            try {
                 authRepository.logout()
             } catch (error: SecureStorageUnavailableException) {
                 _logoutError.value = error.message ?: "Secure storage is unavailable"
+                // The session could not be cleared: whoever is still signed in goes on working.
+                outgoing.signOutAborted()
                 return@launch
             }
             onLoggedOut()

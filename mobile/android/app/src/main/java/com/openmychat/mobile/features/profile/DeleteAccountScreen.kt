@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentType
@@ -65,8 +66,9 @@ import com.openmychat.mobile.ui.theme.CentyTheme
 @Composable
 fun DeleteAccountScreen(viewModel: DeleteAccountViewModel, onBack: () -> Unit, onDeleted: () -> Unit) {
     val state by viewModel.state.collectAsState()
+    val unsent by viewModel.unsentCount.collectAsState()
     LaunchedEffect(state.deleted) { if (state.deleted) onDeleted() }
-    DeleteAccountContent(state, onBack = onBack, onPasswordChange = viewModel::onPasswordChange, onDelete = viewModel::delete)
+    DeleteAccountContent(state, onBack = onBack, onPasswordChange = viewModel::onPasswordChange, onDelete = viewModel::delete, unsentCount = unsent)
 }
 
 /**
@@ -80,7 +82,9 @@ fun DeleteAccountContent(
     onPasswordChange: (String) -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
-    initiallyConfirming: Boolean = false
+    initiallyConfirming: Boolean = false,
+    /** Unsent messages that go with the account: the confirmation names them. */
+    unsentCount: Int = 0
 ) {
     val tokens = CentyTheme.tokens
     val focus = LocalFocusManager.current
@@ -177,7 +181,9 @@ fun DeleteAccountContent(
     if (confirming) {
         CentyConfirmDialog(
             title = stringResource(R.string.delete_dialog_title),
-            message = stringResource(R.string.delete_dialog_message),
+            message = stringResource(R.string.delete_dialog_message).let { base ->
+                if (unsentCount > 0) pluralStringResource(R.plurals.profile_logout_unsent, unsentCount, unsentCount) + "\n\n" + base else base
+            },
             confirmText = stringResource(R.string.action_delete),
             isDestructive = true,
             confirmTestTag = "delete-final",
