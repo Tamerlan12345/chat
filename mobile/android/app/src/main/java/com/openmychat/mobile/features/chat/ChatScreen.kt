@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -409,26 +408,26 @@ fun ChatContent(
 @Composable
 private fun ComposerLockBanner(lock: ComposerLock, onUnblock: () -> Unit) {
     val tokens = CentyTheme.tokens
-    Row(
+    // The action sits under the text, so neither is squeezed at large font sizes.
+    Column(
         Modifier
             .fillMaxWidth()
             .background(tokens.dangerSoft)
-            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)
-            .heightIn(min = 48.dp)
-            .semantics(mergeDescendants = false) { liveRegion = LiveRegionMode.Polite }
-            .testTag("composer-lock"),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = if (lock == ComposerLock.BLOCKED_BY_ME) 0.dp else 10.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .testTag("composer-lock")
     ) {
-        Icon(Icons.Outlined.Block, contentDescription = null, tint = tokens.dangerText, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(
-            stringResource(if (lock == ComposerLock.BLOCKED_BY_ME) R.string.chat_blocked_banner else R.string.chat_dm_not_allowed),
-            style = MaterialTheme.typography.bodyMedium,
-            color = tokens.dangerText,
-            modifier = Modifier.weight(1f)
-        )
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(Icons.Outlined.Block, contentDescription = null, tint = tokens.dangerText, modifier = Modifier.padding(top = 1.dp).size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                stringResource(if (lock == ComposerLock.BLOCKED_BY_ME) R.string.chat_blocked_banner else R.string.chat_dm_not_allowed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.dangerText
+            )
+        }
         if (lock == ComposerLock.BLOCKED_BY_ME) {
-            CentyTextButton(onClick = onUnblock, modifier = Modifier.testTag("chat-unblock")) {
+            CentyTextButton(onClick = onUnblock, modifier = Modifier.align(Alignment.End).testTag("chat-unblock")) {
                 Text(stringResource(R.string.safety_unblock))
             }
         }
