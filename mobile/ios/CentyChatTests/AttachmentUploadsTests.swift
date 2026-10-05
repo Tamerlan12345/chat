@@ -168,6 +168,91 @@ final class AttachmentUploadsTests: XCTestCase {
         XCTAssertEqual(second.items.map(\.pending.name), ["Схема.png"])
     }
 
+    func testAtMostTwoFilesGoUpAtOnceInTheOrderTheyWerePicked() async throws {
+        let uploads = makeUploads()
+        let gate = TestGate()
+        uploader.hold(gate)
+        uploader.answer = FakeUploader.done(50)
+        for name in ["1.pdf", "2.pdf", "3.pdf"] {
+            _ = await uploads.add(conversation: "direct:3", picked: try picked(name), replyToId: nil, owner: 2)
+        }
+
+        uploads.setOnline(true)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2, "the server takes two uploads per person at a time (MAX_PARALLEL_UPLOADS)")
+        XCTAssertEqual(uploads.items.first { $0.pending.name == "3.pdf" }?.progress, nil, "the third waits its turn")
+
+        await gate.open()
+        await settle()
+        XCTAssertEqual(uploader.calls, 3)
+        XCTAssertLessThanOrEqual(uploader.maxRunning, 2)
+        XCTAssertEqual(engine.state.outbox.map(\.text), ["1.pdf", "2.pdf", "3.pdf"], "first picked, first queued")
+    }
+
+    func testABusyServerIsAskedAgainAfterItsRetryAfter() async throws {
+        let uploads = makeUploads()
+        uploader.script(
+            .failure(APIError.httpError(statusCode: 429, message: "Дождитесь окончания текущих загрузок", code: nil, retryAfter: 3)),
+            FakeUploader.done(60)
+        )
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+
+        uploads.setOnline(true)
+        await settle()
+        XCTAssertEqual(uploads.items.first?.pending.failed, false, "«wait» is not a refusal")
+        XCTAssertNil(uploads.lastNotice)
+
+        clock.advance(by: 2_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 1, "not before the server's Retry-After")
+
+        clock.advance(by: 1_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2)
+        XCTAssertEqual(engine.state.outbox.count, 1)
+    }
+
+    func testAServerErrorOrFullDiskIsRetriedNotFailed() async throws {
+        let uploads = makeUploads()
+        uploader.script(
+            .failure(APIError.httpError(statusCode: 507, message: "Недостаточно места", code: nil, retryAfter: nil)),
+            .failure(APIError.httpError(statusCode: 503, message: "", code: nil, retryAfter: 1)),
+            FakeUploader.done(61)
+        )
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+
+        uploads.setOnline(true)
+        await settle()
+        clock.advance(by: AttachmentUploads.retryDelayMs)
+        await settle()
+        clock.advance(by: 1_000)
+        await settle()
+
+        XCTAssertEqual(uploader.calls, 3)
+        XCTAssertEqual(engine.state.outbox.count, 1)
+    }
+
+    func testWaitingFilesAreNotLoadedBeforeTheQueuesOwnerIsKnown() async throws {
+        let rows = InMemoryPendingUploadStore()
+        try await rows.putUpload(PendingUpload(clientMsgId: "k-a", conversation: "direct:3", owner: 2, createdAt: 1, name: "Алисин.pdf", size: 1, mimeType: nil, localPath: "k-a/Алисин.pdf", replyToId: nil))
+        let unreadable = InMemoryDeliveryStore(StoredDelivery(me: 4))
+        await unreadable.fail(.load, times: 1)
+        engine = DeliveryEngine(store: unreadable, link: FakeDeliveryLink(), backend: FakeDeliveryBackend(), clock: clock)
+        engine.start()
+        store = rows
+        let uploads = makeUploads()
+        await settle()
+        XCTAssertTrue(uploads.items.isEmpty, "nothing is loaded while the store cannot say whose queue it is")
+
+        clock.advance(by: 1_000)
+        await settle()
+        await uploads.restored()
+
+        XCTAssertTrue(uploads.items.isEmpty, "another account's waiting file is never loaded")
+        let left = try await rows.uploads()
+        XCTAssertTrue(left.isEmpty)
+    }
+
     func testAWipeOfTheQueueForgetsTheFiles() async throws {
         let uploads = makeUploads()
         _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
@@ -181,23 +266,54 @@ final class AttachmentUploadsTests: XCTestCase {
     }
 }
 
-/// `POST /api/files/upload` with a scripted answer.
+/// `POST /api/files/upload` with a scripted answer; can hold uploads at a gate and counts how many
+/// run at once.
 final class FakeUploader: AttachmentUploader, @unchecked Sendable {
-    private let state = Locked<(answer: Result<FileUploadResponse, any Error>, calls: Int)>((.failure(URLError(.notConnectedToInternet)), 0))
+    private struct State {
+        var answers: [Result<FileUploadResponse, any Error>] = []
+        var answer: Result<FileUploadResponse, any Error> = .failure(URLError(.notConnectedToInternet))
+        var calls = 0
+        var running = 0
+        var maxRunning = 0
+        var gate: TestGate?
+    }
 
+    private let state = Locked(State())
+
+    /// The answer of every call (after the scripted ones).
     var answer: Result<FileUploadResponse, any Error> {
         get { state.value.answer }
         set { state.withValue { $0.answer = newValue } }
     }
 
+    /// Answers of the next calls, in order.
+    func script(_ answers: Result<FileUploadResponse, any Error>...) {
+        state.withValue { $0.answers += answers }
+    }
+
+    func hold(_ gate: TestGate?) {
+        state.withValue { $0.gate = gate }
+    }
+
     var calls: Int { state.value.calls }
+    var running: Int { state.value.running }
+    var maxRunning: Int { state.value.maxRunning }
 
     func upload(file: URL, name: String, mimeType: String, progress: @escaping @Sendable (Double) -> Void) async throws -> FileUploadResponse {
-        let answer = state.withValue { current -> Result<FileUploadResponse, any Error> in
+        let (answer, gate) = state.withValue { current -> (Result<FileUploadResponse, any Error>, TestGate?) in
             current.calls += 1
-            return current.answer
+            current.running += 1
+            current.maxRunning = max(current.maxRunning, current.running)
+            let next = current.answers.isEmpty ? current.answer : current.answers.removeFirst()
+            return (next, current.gate)
         }
         progress(0.5)
+        if let gate { await gate.wait() }
+        state.withValue { $0.running -= 1 }
         return try answer.get()
+    }
+
+    static func done(_ id: Int64) -> Result<FileUploadResponse, any Error> {
+        .success(FileUploadResponse(id: id, originalName: "f", storedFilename: "x", fileSize: 64, mimeType: "application/pdf", url: "/api/files/download/\(id)"))
     }
 }

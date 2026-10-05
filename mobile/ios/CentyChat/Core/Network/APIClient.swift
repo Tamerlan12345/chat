@@ -557,6 +557,72 @@ public actor APIClient {
         try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: false)
     }
 
+    /// `POST /files/upload` streaming a file from disk: the multipart body is written to a temporary
+    /// file and sent with `upload(fromFile:)`, so memory stays flat and `progress` (0…1) is real.
+    /// No answer — `APIError.noConnection`; any refusal — `APIError.httpError` with the server's
+    /// words, code and `Retry-After`.
+    public func uploadFile(at file: URL, fileName: String, mimeType: String, progress: @escaping @Sendable (Double) -> Void) async throws -> FileUploadResponse {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        let body = try MultipartFile.write(file: file, fieldName: "file", fileName: fileName, mimeType: mimeType, boundary: boundary, in: FileManager.default.temporaryDirectory)
+        defer { try? FileManager.default.removeItem(at: body) }
+        return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, isRetry: false)
+    }
+
+    private func performStreamingUpload(body: URL, boundary: String, progress: @escaping @Sendable (Double) -> Void, isRetry: Bool) async throws -> FileUploadResponse {
+        let url = try apiURL(serverURL: environment.serverURL, endpoint: "/files/upload")
+        guard ServerEndpointPolicy.allowsAuthorization(to: url) else { throw APIError.insecureTransport }
+        guard let token = keychain.authToken else { throw APIError.unauthorized }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(AvatarOptIn.value, forHTTPHeaderField: AvatarOptIn.header)
+
+        let data: Data
+        let http: HTTPURLResponse
+        do {
+            let (received, response) = try await session.upload(for: request, fromFile: body, delegate: UploadProgressDelegate(report: progress))
+            guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            data = received
+            http = response
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.noConnection
+        }
+        if http.statusCode == 401 {
+            if isRetry {
+                if keychain.authToken == token { try keychain.clearAllAuthData() }
+                throw APIError.unauthorized
+            }
+            do {
+                try await refreshAccessToken(after: token)
+            } catch APIError.unauthorized {
+                if keychain.authToken == token { try keychain.clearAllAuthData() }
+                throw APIError.unauthorized
+            } catch {
+                // The refresh got no answer: not a rejection, the file waits.
+                throw APIError.noConnection
+            }
+            return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, isRetry: true)
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data)
+            throw APIError.httpError(
+                statusCode: http.statusCode,
+                message: serverError?.error ?? String(localized: "Не удалось загрузить файл"),
+                code: serverError?.code,
+                retryAfter: RetryAfter.seconds(from: http.value(forHTTPHeaderField: "Retry-After"), now: Date())
+            )
+        }
+        do {
+            return try jsonDecoder.decode(FileUploadResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error.localizedDescription)
+        }
+    }
+
     private func performUploadFile(
         fileData: Data,
         fileName: String,

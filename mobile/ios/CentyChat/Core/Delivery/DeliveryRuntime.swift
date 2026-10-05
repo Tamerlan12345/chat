@@ -54,8 +54,10 @@ final class DeliveryRuntime {
     }
 
     /// Messages and files of the signed-in account that have not left the device (cancelled ones
-    /// excluded). Another account's leftovers are never counted.
-    var unsentCount: Int {
+    /// excluded). Another account's leftovers are never counted. Nil — unknown: the store cannot be
+    /// read yet.
+    var unsentCount: Int? {
+        guard engine.ready else { return nil }
         guard let user = currentUser() else { return 0 }
         let state = engine.state
         let messages = state.me == user ? state.outbox.filter { !$0.pendingDelete }.count : 0
@@ -141,7 +143,10 @@ final class DeliveryRuntime {
 
 /// «N неотправленных сообщений будут удалены» with Russian plural forms; nil when nothing waits.
 enum UnsentNotice {
-    static func text(_ count: Int) -> String? {
+    static func text(_ count: Int?) -> String? {
+        guard let count else {
+            return String(localized: "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены")
+        }
         guard count > 0 else { return nil }
         let lastTwo = count % 100
         let last = count % 10

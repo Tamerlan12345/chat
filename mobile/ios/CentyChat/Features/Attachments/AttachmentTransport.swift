@@ -13,23 +13,39 @@ final class RedirectRefusal: NSObject, URLSessionTaskDelegate, Sendable {
     }
 }
 
-/// `POST /api/files/upload` through `APIClient` (Bearer, one token refresh).
+/// `POST /api/files/upload` through `APIClient` (Bearer, one token refresh), streamed from disk.
 struct APIAttachmentUploader: AttachmentUploader {
     let client: APIClient
     var offline: @Sendable () -> Bool = { LaunchTestFixture.deliveryOffline }
 
     func upload(file: URL, name: String, mimeType: String, progress: @escaping @Sendable (Double) -> Void) async throws -> FileUploadResponse {
         if offline() { throw URLError(.notConnectedToInternet) }
-        let data: Data
-        do {
-            data = try Data(contentsOf: file, options: .mappedIfSafe)
-        } catch {
+        guard FileManager.default.isReadableFile(atPath: file.path) else {
             throw AttachmentError(message: String(localized: "Файл недоступен — удалите его и выберите снова"))
         }
         progress(0)
-        let response = try await client.uploadFile(fileData: data, fileName: name, mimeType: mimeType)
+        let response = try await client.uploadFile(at: file, fileName: name, mimeType: mimeType, progress: progress)
         progress(1)
         return response
+    }
+}
+
+/// Reports how much of an upload's body has gone (0…1) and refuses redirects (the token goes only
+/// to the configured server).
+final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    let report: @Sendable (Double) -> Void
+
+    init(report: @escaping @Sendable (Double) -> Void) {
+        self.report = report
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        report(min(1, Double(totalBytesSent) / Double(totalBytesExpectedToSend)))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
+        nil
     }
 }
 

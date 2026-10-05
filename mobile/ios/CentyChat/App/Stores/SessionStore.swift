@@ -39,6 +39,9 @@ protocol SessionLifecycleDelegate: AnyObject {
     /// The account's data must not outlive it (the account was deleted, or the stored credentials
     /// were another server's): its unsent messages are deleted, best effort.
     func sessionDidDiscardAccount() async
+    /// The sign-out did not happen after all (the unsent messages could not be deleted, or the
+    /// server refused it): the account takes its queue back.
+    func sessionSignOutAborted() async
 }
 
 /// Authentication and the session lifecycle against the build's fixed server.
@@ -283,11 +286,14 @@ public final class SessionStore: RealtimeEventHandling {
     // MARK: - Logout
 
     public func logout() async {
+        // The socket goes first: none of its frames may reach the model once it is emptied.
+        await realtime.stop()
         do {
             // The user agreed to lose what was not sent; if it cannot be deleted, nothing is signed out.
             try await delegate?.sessionWillSignOut()
         } catch {
             errorMessage = String(localized: "Не удалось удалить неотправленные сообщения — выход отменён")
+            await resumeAfterAbortedSignOut()
             return
         }
         do {
@@ -295,9 +301,17 @@ public final class SessionStore: RealtimeEventHandling {
         } catch {
             // Fail closed: the token is still stored, so the session stays as it is.
             errorMessage = error.userMessage
+            await delegate?.sessionSignOutAborted()
+            await resumeAfterAbortedSignOut()
             return
         }
         await endSession()
+    }
+
+    private func resumeAfterAbortedSignOut() async {
+        guard phase == .authenticated else { return }
+        hasRealtimeAuthenticated = false
+        await realtime.start()
     }
 
     private func endSession() async {

@@ -176,3 +176,25 @@ final class UnsentNoticeTests: XCTestCase {
         XCTAssertEqual(UnsentNotice.text(112), "112 неотправленных сообщений будут удалены")
     }
 }
+
+/// Signing out while the store cannot be read: the number of unsent messages is unknown.
+@MainActor
+final class UnsentUnknownTests: XCTestCase {
+    func testTheCountIsUnknownWhileTheStoreCannotBeRead() async {
+        let broken = InMemoryDeliveryStore()
+        await broken.fail(.load)
+        let clock = ManualDeliveryClock()
+        let engine = DeliveryEngine(store: broken, link: FakeDeliveryLink(), backend: FakeDeliveryBackend(), clock: clock)
+        engine.start()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("u-\(UUID().uuidString)")
+        let uploads = AttachmentUploads(store: InMemoryPendingUploadStore(), files: AttachmentFiles(root: folder), uploader: FakeUploader(), engine: engine, clock: clock, owner: { 2 })
+        let runtime = DeliveryRuntime(engine: engine, uploads: uploads, currentUser: { 2 }, reconnect: {}, clock: clock)
+        for _ in 0..<10 {
+            await engine.idle()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+
+        XCTAssertNil(runtime.unsentCount)
+        XCTAssertEqual(UnsentNotice.text(nil), "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены")
+    }
+}

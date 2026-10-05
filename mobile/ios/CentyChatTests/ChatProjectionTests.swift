@@ -200,3 +200,33 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(rows.map(\.startsDay), [true, true])
     }
 }
+
+/// Whose things the chat shows, and what the composer keeps.
+@MainActor
+final class ChatOwnershipProjectionTests: XCTestCase {
+    private func build(_ state: DeliveryState, uploads: [AttachmentUploads.Item]) -> [Message] {
+        ChatProjection(conversationType: .direct, targetId: 3).build(
+            state: state, me: 2, myName: "Алиса", uploads: uploads, handedOver: [:], fileURL: { URL(fileURLWithPath: "/tmp/\($0)") }
+        )
+    }
+
+    private func upload(owner: Int64) -> AttachmentUploads.Item {
+        AttachmentUploads.Item(pending: PendingUpload(clientMsgId: "k-\(owner)", conversation: "direct:3", owner: owner, createdAt: 1, name: "f\(owner).pdf", size: 1, mimeType: nil, localPath: "k/f.pdf", replyToId: nil))
+    }
+
+    func testAnotherAccountsWaitingFileIsNeverShown() async {
+        let shown = build(DeliveryState(me: 2), uploads: [upload(owner: 4), upload(owner: 2)])
+        XCTAssertEqual(shown.map(\.text), ["f2.pdf"])
+    }
+
+    func testAModelThatNamesNoAccountShowsNothing() async {
+        var state = DeliveryState()
+        state.outbox = [OutboxEntry(clientMsgId: "k-x", conversation: "direct:3", seq: 1, text: "чьё?")]
+        XCTAssertTrue(build(state, uploads: [upload(owner: 2)]).isEmpty)
+    }
+
+    func testTheComposerKeepsWhatWasTypedWhileTheMessageWasBeingStored() async {
+        XCTAssertEqual(ComposerText.afterSend(sent: "Привет", current: "Привет"), "")
+        XCTAssertEqual(ComposerText.afterSend(sent: "Привет", current: "Привет, как дела"), "Привет, как дела")
+    }
+}

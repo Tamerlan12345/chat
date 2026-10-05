@@ -81,7 +81,7 @@ public final class ChatStore: RealtimeEventHandling {
             messages: state.messages[key],
             outbox: state.outbox.filter { $0.conversation == key },
             deleting: state.ops.filter { $0.op == DeliveryOp.delete }.compactMap(\.messageId),
-            uploads: uploads.items.filter { $0.pending.conversation == key },
+            uploads: uploads.items.filter { $0.pending.conversation == key && $0.pending.owner == me },
             handedOver: uploads.handedOver.keys.sorted(),
             myName: session.currentUser?.fullName ?? ""
         )
@@ -156,12 +156,14 @@ public final class ChatStore: RealtimeEventHandling {
     /// returns there (hidden by a block, gone) are dropped; older history (a jump's window) stays.
     public func load() async {
         loadState = .loading
-        let shownBefore = serverIds()
+        // The page is the account's that asked for it, whoever is signed in when it arrives.
+        let owner = session.currentUser?.id
         do {
             let records = try await repository.messageRecords(in: conversation, limit: Self.pageSize, beforeId: nil)
+            let shownBefore = serverIds()
             let oldest = records.compactMap { $0["id"]?.int64 }.min()
             let stale = oldest.map { first in shownBefore.filter { $0 >= first } } ?? shownBefore
-            try await engine.replaceHistory(key, records: records, stale: stale, owner: session.currentUser?.id)
+            try await engine.replaceHistory(key, records: records, stale: stale, owner: owner)
             if records.count < Self.pageSize { reachedStart = true }
             rebuild()
             loadState = .loaded
@@ -177,6 +179,7 @@ public final class ChatStore: RealtimeEventHandling {
     public func loadAround(_ messageId: Int64) async -> Bool {
         // What is on screen is already continuous up to the newest message.
         if messages.contains(where: { $0.id == messageId }) { return true }
+        let owner = session.currentUser?.id
         let repository = self.repository
         let conversation = self.conversation
         let window: [MessageRecord]?
@@ -199,7 +202,7 @@ public final class ChatStore: RealtimeEventHandling {
         // The window replaces the history up to its newest message; what arrived meanwhile stays.
         let stale = serverIds().filter { $0 <= newest }
         do {
-            try await engine.replaceHistory(key, records: window.map(\.json), stale: stale, owner: session.currentUser?.id)
+            try await engine.replaceHistory(key, records: window.map(\.json), stale: stale, owner: owner)
         } catch {
             Log.chat.error("Applying the history around a message failed: \(error.localizedDescription, privacy: .public)")
             return false
@@ -211,12 +214,13 @@ public final class ChatStore: RealtimeEventHandling {
     /// The page before the oldest loaded message (`beforeId`), when the reader reaches the top.
     public func loadOlder() async {
         guard !isLoadingOlder, !reachedStart, let oldest = engine.state.messages[key]?.first?.id else { return }
+        let owner = session.currentUser?.id
         isLoadingOlder = true
         defer { isLoadingOlder = false }
         do {
             let records = try await repository.messageRecords(in: conversation, limit: Self.pageSize, beforeId: oldest)
             if records.count < Self.pageSize { reachedStart = true }
-            if !records.isEmpty { await engine.historyPage(records, owner: session.currentUser?.id) }
+            if !records.isEmpty { await engine.historyPage(records, owner: owner) }
             rebuild()
         } catch {
             // The next scroll to the top asks again.
@@ -240,8 +244,8 @@ public final class ChatStore: RealtimeEventHandling {
 
     /// Queues a text message. True once it is on disk: only then may the composer clear (§7.4).
     @discardableResult
-    public func send(text rawText: String, replyTo: Message? = nil) async -> Bool {
-        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    public func send(text: String, replyTo: Message? = nil) async -> Bool {
+        // Whether the text is empty is the contract's decision (§6.1 whitespace set), not the platform's.
         guard !text.isEmpty, let me = session.currentUser?.id else { return false }
         let outcome = await engine.enqueue(
             conversation: key,
@@ -279,8 +283,7 @@ public final class ChatStore: RealtimeEventHandling {
     /// A new text for an own message: a confirmed one through `ops` (shown once the server confirms),
     /// an unsent one at once (§7.10).
     @discardableResult
-    public func edit(_ message: Message, text rawText: String) async -> Bool {
-        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    public func edit(_ message: Message, text: String) async -> Bool {
         guard !text.isEmpty, text != message.text else { return false }
         let outcome: DeliveryEngine.Outcome
         if message.sendState != nil, let clientMsgId = message.clientMsgId {

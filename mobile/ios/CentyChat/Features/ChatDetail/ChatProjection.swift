@@ -26,8 +26,9 @@ final class ChatProjection {
         handedOver: [String: PendingUpload],
         fileURL: (String) -> URL
     ) -> [Message] {
-        // Another account's leftovers are never shown.
-        if let owner = state.me, owner != me { return [] }
+        // Only the signed-in account's model is shown: another account's leftovers never, and a model
+        // that names no account yet holds nothing to show.
+        guard state.me == me else { return [] }
         let deleting = Set(state.ops.filter { $0.op == DeliveryOp.delete }.compactMap(\.messageId))
         var keys = Set<String>()
         var result: [Message] = []
@@ -43,7 +44,7 @@ final class ChatProjection {
             keys.insert(entry.clientMsgId)
             result.append(local(entry, me: me, myName: myName, upload: handedOver[entry.clientMsgId], fileURL: fileURL))
         }
-        for item in uploads where item.pending.conversation == key && !keys.contains(item.pending.clientMsgId) {
+        for item in uploads where item.pending.conversation == key && item.pending.owner == me && !keys.contains(item.pending.clientMsgId) {
             result.append(uploading(item, me: me, myName: myName, fileURL: fileURL))
         }
         return withReplies(result)
@@ -167,6 +168,13 @@ final class ChatProjection {
             hash = hash &* 0x0000_0100_0000_01b3
         }
         return -Int64(hash & 0x3fff_ffff_ffff_ffff) - 1
+    }
+}
+
+/// What the composer holds once a message was stored: empty, unless the user typed on meanwhile.
+enum ComposerText {
+    static func afterSend(sent: String, current: String) -> String {
+        current == sent ? "" : current
     }
 }
 

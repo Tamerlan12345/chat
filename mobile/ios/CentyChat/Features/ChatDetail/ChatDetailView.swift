@@ -134,8 +134,9 @@ private struct ChatDetailContent: View {
         return permissions?.isAdmin == true || permissions?.canUploadFiles != false
     }
 
-    private var trimmedInput: String {
-        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Nothing to send: empty, or only the contract's whitespace (§6.1, the server's `trim()`).
+    private var inputIsBlank: Bool {
+        DeliveryReducer.isBlank(inputText)
     }
 
     var body: some View {
@@ -569,11 +570,11 @@ private struct ChatDetailContent: View {
             }) {
                 Image(systemName: editingMessage != nil ? "checkmark.circle.fill" : "arrow.up.circle.fill")
                     .font(.system(size: 32))
-                    .foregroundColor(trimmedInput.isEmpty ? .gray : CentyColors.primaryBlue)
+                    .foregroundColor(inputIsBlank ? .gray : CentyColors.primaryBlue)
                     .frame(minWidth: 44, minHeight: 44)
             }
             .accessibilityLabel(editingMessage != nil ? "Сохранить изменения" : "Отправить")
-            .disabled(trimmedInput.isEmpty || isSending)
+            .disabled(inputIsBlank || isSending)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -583,20 +584,21 @@ private struct ChatDetailContent: View {
     /// The composer clears only once the message is on disk (`delivery-state.md` §7.4); a refused
     /// write keeps the text, and a second tap meanwhile is ignored.
     private func sendOrUpdateMessage() async {
-        let text = trimmedInput
-        guard !text.isEmpty, !isSending else { return }
+        let text = inputText
+        guard !inputIsBlank, !isSending else { return }
         isSending = true
         defer { isSending = false }
 
         if let editing = editingMessage {
             if await store.edit(editing, text: text) || text == editing.text {
                 editingMessage = nil
-                inputText = ""
+                inputText = ComposerText.afterSend(sent: text, current: inputText)
             }
         } else {
             let reply = replyingTo
             if await store.send(text: text, replyTo: reply) {
-                inputText = ""
+                // What was typed while the message was being stored stays in the field.
+                inputText = ComposerText.afterSend(sent: text, current: inputText)
                 replyingTo = nil
                 CentyHaptics.light()
             } else {

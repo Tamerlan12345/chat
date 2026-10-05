@@ -72,6 +72,17 @@ enum AttachmentRules {
         return error is URLError
     }
 
+    /// How long to wait before a failed upload goes again; nil — the server refused the file for good.
+    /// No answer, a session to renew, «Дождитесь окончания текущих загрузок» / the hourly quota (429),
+    /// a full disk (507) and server errors (5xx) are waits, honouring the server's `Retry-After`.
+    static func retryDelayMs(_ error: any Error) -> Int64? {
+        if isTransportFailure(error) { return AttachmentUploads.retryDelayMs }
+        guard let api = error as? APIError, case .httpError(let status, _, _, let retryAfter) = api,
+              status == 408 || status == 429 || (500...599).contains(status) else { return nil }
+        if let retryAfter, retryAfter > 0 { return Int64((retryAfter * 1_000).rounded(.up)) }
+        return AttachmentUploads.retryDelayMs
+    }
+
     /// The reason an upload failed, for the bubble and the notice.
     static func failureText(_ error: any Error) -> String {
         if isTransportFailure(error) { return noNetwork }

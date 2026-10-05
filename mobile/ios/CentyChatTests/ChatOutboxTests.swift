@@ -188,5 +188,79 @@ final class ChatOutboxTests: XCTestCase {
 
         XCTAssertEqual(app.session.phase, .authenticated)
         XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения — выход отменён")
+        XCTAssertEqual(chat.messages.map(\.text), ["Останусь"], "nothing was deleted: the message is still there")
+        await app.goOnline()
+        let sent = await frames("send_message")
+        XCTAssertEqual(sent.map { $0["text"]?.string }, ["Останусь"], "and it still goes out")
+        let stored = await app.deliveryStore.contents
+        XCTAssertEqual(stored.outbox.map(\.text), ["Останусь"])
+    }
+
+    func testFramesOfTheOldSocketAfterAnExplicitSignOutAreNotStored() async throws {
+        try await signIn(as: TestModels.me)
+        await app.goOnline()
+        await app.session.logout()
+        XCTAssertEqual(app.session.phase, .signedOut)
+        let stopped = await app.realtime.disconnectCount
+        XCTAssertGreaterThanOrEqual(stopped, 1, "the socket is closed with the sign-out")
+
+        await app.deliver(#"{"type":"direct_message","message":{"id":950,"conversation_type":"direct","target_id":1,"sender_id":12,"text":"после выхода","type":"text","created_at":"2026-10-05T09:00:00.000Z","updated_at":null,"is_deleted":0,"client_msg_id":null,"sender_name":"Коллега"}}"#)
+
+        XCTAssertTrue(app.engine.state.messages.isEmpty)
+        let stored = await app.deliveryStore.contents
+        XCTAssertNil(stored.me)
+        XCTAssertTrue(stored.cache.isEmpty, "nothing of the signed-out account is written again")
+    }
+
+    // MARK: - Answers that arrive after an account switch
+
+    func testALatePageOfThePreviousAccountIsDroppedAndTheNextAccountsQueueStays() async throws {
+        try await signIn(as: TestModels.me)
+        let gate = TestGate()
+        app.chat.state.withValue { state in
+            state.messages[key] = [TestModels.message(id: 400, from: 12, to: 1, text: "Для первого")]
+            state.pageGate = gate
+        }
+        let chat = app.container.chats.store(for: key)
+        async let loading: Void = chat.load()
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Another account signs in while the first one's page is still on its way.
+        app.session.currentUser = TestModels.colleague
+        await app.container.delivery.adopt(TestModels.colleague.id)
+        _ = await app.engine.enqueue(conversation: "direct:1", text: "Очередь второго", owner: TestModels.colleague.id)
+        await gate.open()
+        await loading
+
+        XCTAssertNil(app.engine.state.messages["direct:12"], "the first account's page never enters the second one's model")
+        XCTAssertEqual(app.engine.state.me, TestModels.colleague.id)
+        XCTAssertEqual(app.engine.state.outbox.map(\.text), ["Очередь второго"])
+    }
+
+    func testAMessageOfAnAccountThatIsNoLongerSignedInIsRefusedVisibly() async throws {
+        try await signIn(as: TestModels.me)
+        let chat = await openChat()
+        // The engine already belongs to the next account; the screen still holds the old one.
+        await app.container.delivery.adopt(TestModels.colleague.id)
+
+        let accepted = await chat.send(text: "От прежнего аккаунта")
+
+        XCTAssertFalse(accepted, "the composer keeps the text")
+        XCTAssertNotNil(chat.notice)
+        XCTAssertTrue(app.engine.state.outbox.isEmpty)
+    }
+
+    // MARK: - Empty text is the contract's decision (§6.1)
+
+    func testOnlyTheContractsWhitespaceMakesAMessageEmpty() async {
+        let chat = await openChat()
+
+        let nextLine = await chat.send(text: "\u{0085}")
+        XCTAssertTrue(nextLine, "U+0085 is not whitespace for the server's trim() (vector 48)")
+
+        let blank = await chat.send(text: " \u{FEFF}\u{3000}")
+        XCTAssertFalse(blank)
+        XCTAssertEqual(chat.notice?.text, "Нельзя отправить пустое сообщение")
+        XCTAssertEqual(chat.messages.map(\.text), ["\u{0085}"])
     }
 }

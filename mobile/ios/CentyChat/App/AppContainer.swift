@@ -262,6 +262,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         LocalSendTimes.removeAll()
     }
 
+    func sessionSignOutAborted() async {
+        if let user = session.currentUser?.id { await delivery.adopt(user) }
+    }
+
     func sessionDidDiscardAccount() async {
         do {
             try await delivery.discardForSignOut()

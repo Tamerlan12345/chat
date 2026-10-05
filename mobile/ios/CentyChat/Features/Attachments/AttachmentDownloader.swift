@@ -38,6 +38,10 @@ actor AttachmentDownloader {
 
     private let root: URL
     private let transport: any DownloadTransport
+    /// One transfer per file id: a second tap joins it instead of writing into the same `.part`.
+    private var inFlight: [Int64: Task<URL, any Error>] = [:]
+    /// Bumped by `removeAll()`: a transfer of the wiped session never leaves a file behind.
+    private var generation = 0
 
     init(root: URL, transport: any DownloadTransport) {
         self.root = root
@@ -53,17 +57,34 @@ actor AttachmentDownloader {
 
     /// The local copy of `fileId`. `progress` gets 0…1 (nil while the size is unknown).
     func fetch(fileId: Int64, name: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
-        try await fetch(fileId: fileId, name: name, progress: progress, retried: false)
+        if let running = inFlight[fileId] {
+            return try await running.value
+        }
+        let started = generation
+        let task = Task { try await self.fetch(fileId: fileId, name: name, progress: progress, retried: false, generation: started) }
+        inFlight[fileId] = task
+        defer { if inFlight[fileId] == task { inFlight[fileId] = nil } }
+        return try await task.value
     }
 
-    /// Every download is forgotten (sign-out, account deletion).
+    /// Every download is forgotten (sign-out, account deletion), including those still on their way.
     func removeAll() throws {
+        generation += 1
+        for task in inFlight.values { task.cancel() }
+        inFlight.removeAll()
         if FileManager.default.fileExists(atPath: root.path) {
             try FileManager.default.removeItem(at: root)
         }
     }
 
-    private func fetch(fileId: Int64, name: String, progress: @escaping @Sendable (Double?) -> Void, retried: Bool) async throws -> URL {
+    /// The session that started a transfer was wiped meanwhile: nothing of it stays on disk.
+    private func checkCurrent(_ started: Int, folder: URL) throws {
+        guard started != generation else { return }
+        try? FileManager.default.removeItem(at: folder)
+        throw CancellationError()
+    }
+
+    private func fetch(fileId: Int64, name: String, progress: @escaping @Sendable (Double?) -> Void, retried: Bool, generation started: Int) async throws -> URL {
         let files = FileManager.default
         let folder = root.appendingPathComponent(String(fileId), isDirectory: true)
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -90,29 +111,31 @@ actor AttachmentDownloader {
                 ifNoneMatch: cached ? etag : nil
             )
         } catch {
+            try checkCurrent(started, folder: folder)
             if cached { return target }
             throw AttachmentError(message: Self.noNetwork)
         }
+        try checkCurrent(started, folder: folder)
 
         switch response.status {
         case 304 where cached:
             return target
         case 200:
-            return try await write(response, folder: folder, target: target, part: part, tag: tag, offset: 0, progress: progress)
+            return try await write(response, folder: folder, target: target, part: part, tag: tag, offset: 0, progress: progress, generation: started)
         case 206 where resumeFrom != nil:
             if Self.startOf(response.contentRange) == resumeFrom, let resumeFrom {
-                return try await write(response, folder: folder, target: target, part: part, tag: tag, offset: resumeFrom, progress: progress)
+                return try await write(response, folder: folder, target: target, part: part, tag: tag, offset: resumeFrom, progress: progress, generation: started)
             }
             // Not the range asked for (a proxy, a changed file): appending would corrupt the copy.
             if !retried {
                 try? files.removeItem(at: part)
                 try? files.removeItem(at: tag)
-                return try await fetch(fileId: fileId, name: name, progress: progress, retried: true)
+                return try await fetch(fileId: fileId, name: name, progress: progress, retried: true, generation: started)
             }
         case 416 where !retried:
             try? files.removeItem(at: part)
             try? files.removeItem(at: tag)
-            return try await fetch(fileId: fileId, name: name, progress: progress, retried: true)
+            return try await fetch(fileId: fileId, name: name, progress: progress, retried: true, generation: started)
         case 500...599 where cached:
             return target
         case 403, 404:
@@ -130,7 +153,8 @@ actor AttachmentDownloader {
         part: URL,
         tag: URL,
         offset: Int64,
-        progress: @Sendable (Double?) -> Void
+        progress: @Sendable (Double?) -> Void,
+        generation started: Int
     ) async throws -> URL {
         let files = FileManager.default
         let total: Int64? = offset > 0
@@ -169,11 +193,14 @@ actor AttachmentDownloader {
                 }
             }
         } catch is CancellationError {
+            try checkCurrent(started, folder: folder)
             throw CancellationError()
         } catch {
+            try checkCurrent(started, folder: folder)
             // What arrived stays as the partial; the next tap continues from there.
             throw AttachmentError(message: Self.interrupted)
         }
+        try checkCurrent(started, folder: folder)
         if let total, written != total { throw AttachmentError(message: Self.interrupted) }
         try? handle.close()
         try? files.removeItem(at: target)

@@ -209,6 +209,8 @@ final class FakeChatRepository: ChatRepository, @unchecked Sendable {
         var pageRequests: [String] = []
         var searchResults: Result<[Message], any Error> = .success([])
         var searchQueries: [String] = []
+        /// When set, history pages wait for it (a request still in flight).
+        var pageGate: TestGate?
     }
 
     let state = Locked(State())
@@ -264,7 +266,9 @@ final class FakeChatRepository: ChatRepository, @unchecked Sendable {
 
     /// The same pages as server records (the delivery model's input).
     func messageRecords(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [JSONObject] {
-        try await messages(in: conversation, limit: limit, beforeId: beforeId).map(Self.record)
+        let page = try await messages(in: conversation, limit: limit, beforeId: beforeId).map(Self.record)
+        if let gate = state.value.pageGate { await gate.wait() }
+        return page
     }
 
     func messageRecords(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [JSONObject] {

@@ -187,3 +187,77 @@ final class ScriptedDownloads: DownloadTransport, @unchecked Sendable {
         }
     }
 }
+
+/// One download per file at a time, and none outlives a wipe.
+final class AttachmentDownloaderConcurrencyTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("downloader-c-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    func testTwoTapsOnTheSameFileShareOneDownload() async throws {
+        let gate = TestGate()
+        let transport = GatedDownloads(gate: gate, body: Data("0123456789".utf8))
+        let downloader = AttachmentDownloader(root: root, transport: transport)
+
+        async let first = downloader.fetch(fileId: 3, name: "a.txt") { _ in }
+        async let second = downloader.fetch(fileId: 3, name: "a.txt") { _ in }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await gate.open()
+        let (a, b) = try await (first, second)
+
+        XCTAssertEqual(transport.requests, 1, "no second request writing into the same .part")
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(try Data(contentsOf: a), Data("0123456789".utf8))
+    }
+
+    func testADownloadThatFinishesAfterAWipeLeavesNoFile() async throws {
+        let gate = TestGate()
+        let downloader = AttachmentDownloader(root: root, transport: GatedDownloads(gate: gate, body: Data("secret".utf8)))
+
+        async let fetched = downloader.fetch(fileId: 4, name: "b.txt") { _ in }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        try await downloader.removeAll()
+        await gate.open()
+
+        do {
+            _ = try await fetched
+            XCTFail("a download of the signed-out session must not be handed out")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("4").path), "nothing of it is left on disk")
+    }
+}
+
+/// A 200 whose body waits for the gate.
+final class GatedDownloads: DownloadTransport, @unchecked Sendable {
+    private let gate: TestGate
+    private let body: Data
+    private let asked = Locked(0)
+
+    init(gate: TestGate, body: Data) {
+        self.gate = gate
+        self.body = body
+    }
+
+    var requests: Int { asked.value }
+
+    func get(fileId: Int64, rangeFrom: Int64?, ifRange: String?, ifNoneMatch: String?) async throws -> DownloadResponse {
+        asked.withValue { $0 += 1 }
+        let gate = self.gate
+        let body = self.body
+        let stream = AsyncThrowingStream<Data, any Error> { continuation in
+            Task {
+                await gate.wait()
+                continuation.yield(body)
+                continuation.finish()
+            }
+        }
+        return DownloadResponse(status: 200, etag: "\"g\"", contentLength: Int64(body.count), contentRange: nil, errorText: nil, body: stream)
+    }
+}

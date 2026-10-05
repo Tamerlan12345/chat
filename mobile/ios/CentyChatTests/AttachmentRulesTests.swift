@@ -92,3 +92,32 @@ final class AttachmentRulesTests: XCTestCase {
         XCTAssertTrue(AttachmentRules.safeFileName(String(repeating: "я", count: 300) + ".docx").hasSuffix(".docx"))
     }
 }
+
+/// The multipart body of `POST /api/files/upload` is written to a file, so the upload streams from
+/// disk (flat memory, real progress).
+final class MultipartFileTests: XCTestCase {
+    func testTheBodyIsTheFileBetweenItsPartHeaderAndTheClosingBoundary() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("mp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("src.bin")
+        let payload = Data((0..<200_000).map { UInt8($0 % 256) })
+        try payload.write(to: source)
+
+        let body = try MultipartFile.write(file: source, fieldName: "file", fileName: "Акт \"1\".pdf", mimeType: "application/pdf", boundary: "B0UND", in: folder)
+
+        let written = try Data(contentsOf: body)
+        let head = Data("--B0UND\r\nContent-Disposition: form-data; name=\"file\"; filename=\"Акт 1.pdf\"\r\nContent-Type: application/pdf\r\n\r\n".utf8)
+        let tail = Data("\r\n--B0UND--\r\n".utf8)
+        XCTAssertEqual(written, head + payload + tail)
+    }
+
+    func testOnlyTransportFailuresAndBusyAnswersAreRetried() {
+        XCTAssertEqual(AttachmentRules.retryDelayMs(APIError.noConnection), AttachmentUploads.retryDelayMs)
+        XCTAssertEqual(AttachmentRules.retryDelayMs(APIError.httpError(statusCode: 429, message: "Дождитесь окончания текущих загрузок", code: nil, retryAfter: 7)), 7_000)
+        XCTAssertEqual(AttachmentRules.retryDelayMs(APIError.httpError(statusCode: 507, message: "", code: nil, retryAfter: nil)), AttachmentUploads.retryDelayMs)
+        XCTAssertEqual(AttachmentRules.retryDelayMs(APIError.httpError(statusCode: 502, message: "", code: nil, retryAfter: nil)), AttachmentUploads.retryDelayMs)
+        XCTAssertNil(AttachmentRules.retryDelayMs(APIError.httpError(statusCode: 415, message: "Файлы .exe к отправке не разрешены", code: "ext-not-allowed")))
+        XCTAssertNil(AttachmentRules.retryDelayMs(APIError.httpError(statusCode: 413, message: "Файл слишком большой", code: nil)))
+    }
+}
