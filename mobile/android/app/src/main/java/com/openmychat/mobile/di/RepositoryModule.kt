@@ -1,6 +1,8 @@
 package com.openmychat.mobile.di
 
 import com.openmychat.mobile.data.repository.AnnouncementsRepository
+import com.openmychat.mobile.data.repository.AttachmentRepository
+import com.openmychat.mobile.data.repository.DefaultAttachmentRepository
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.DefaultAnnouncementsRepository
 import com.openmychat.mobile.data.repository.DefaultChatRepository
@@ -28,6 +30,7 @@ abstract class RepositoryModule {
     @Binds abstract fun profileRepository(impl: DefaultProfileRepository): ProfileRepository
     @Binds abstract fun realtimeRepository(impl: DefaultRealtimeRepository): RealtimeRepository
     @Binds abstract fun peopleRepository(impl: DefaultPeopleRepository): PeopleRepository
+    @Binds abstract fun attachmentRepository(impl: DefaultAttachmentRepository): AttachmentRepository
     @Binds abstract fun recentsStore(impl: SharedPreferencesRecentsStore): RecentsStore
     @Binds abstract fun notificationSink(
         impl: com.openmychat.mobile.data.notifications.SystemNotificationSink
