@@ -385,6 +385,36 @@ final class DeliveryEngineTests: XCTestCase {
         try? await engine.adopt(alice)
     }
 
+    // MARK: - The open conversation (§7.8)
+
+    func testAScreenClosedRightAfterItOpenedLeavesNoConversationVisible() async {
+        let engine = makeEngine()
+        await settle(engine)
+        await connect(engine, as: alice)
+
+        engine.conversationOpened("direct:3")
+        engine.conversationClosed("direct:3")
+        await settle(engine)
+        link.clear()
+        engine.receive(DeliveryFixtures.echo(DeliveryFixtures.record(id: 60, from: bob, to: alice, text: "Ты тут?")))
+        await settle(engine)
+
+        XCTAssertNil(engine.state.visible)
+        XCTAssertFalse(link.types().contains("mark_read"), "a closed chat does not read what arrives")
+        XCTAssertEqual(engine.state.unread["direct:3"], 1)
+    }
+
+    func testClosingAChatThatIsNoLongerVisibleKeepsTheOneThatOpened() async {
+        let engine = makeEngine()
+        await settle(engine)
+        engine.conversationOpened("direct:3")
+        engine.conversationOpened("channel:5")
+        engine.conversationClosed("direct:3")
+        await settle(engine)
+
+        XCTAssertEqual(engine.state.visible, "channel:5")
+    }
+
     // MARK: - Errors for the user
 
     func testAUserErrorIsPublished() async {

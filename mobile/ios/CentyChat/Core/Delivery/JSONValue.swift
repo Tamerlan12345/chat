@@ -128,8 +128,10 @@ extension JSONValue: Codable {
     }
 }
 
+// Deliberately not `ExpressibleByNilLiteral`: `nil` must stay "no value" (`JSONValue?`), never turn
+// silently into JSON `null` (a `cond ? nil : value` would otherwise become `.null`).
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral,
-    ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral {
+    ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral {
     public init(stringLiteral value: String) { self = .string(value) }
     public init(integerLiteral value: Int64) { self = .number(Double(value)) }
     public init(booleanLiteral value: Bool) { self = .bool(value) }
@@ -139,7 +141,6 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
         for (key, value) in elements { object[key] = value }
         self = .object(object)
     }
-    public init(nilLiteral: ()) { self = .null }
 }
 
 /// A JSON object (frames, events, server records).

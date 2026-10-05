@@ -134,8 +134,8 @@ public final class ChatStore: RealtimeEventHandling {
         if isVisible && !wasVisible {
             conversations.markConversationRead(conversation)
             engine.conversationOpened(key)
-        } else if !isVisible && wasVisible, engine.state.visible == key {
-            engine.conversationClosed()
+        } else if !isVisible && wasVisible {
+            engine.conversationClosed(key)
         }
         // The server hears only the open screen; foreground/background is the presence controller's.
         if presence.appeared {

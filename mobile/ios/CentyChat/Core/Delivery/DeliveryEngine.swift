@@ -84,6 +84,8 @@ public final class DeliveryEngine {
         case restore
         case retryWipe
         case flushCache
+        /// `conversation_closed`, only if `conversation` is still the visible one when it is processed.
+        case closeIfVisible(String)
     }
 
     @ObservationIgnored private var queue: [Command] = []
@@ -237,6 +239,12 @@ public final class DeliveryEngine {
         post(["type": "conversation_closed"])
     }
 
+    /// The screen of `conversation` closed. Checked when processed, after an open still in the
+    /// queue: another chat opened meanwhile stays visible.
+    public func conversationClosed(_ conversation: String) {
+        submit(.closeIfVisible(conversation))
+    }
+
     /// An older page of a conversation (`beforeId`), or any other page the screen loaded, for `owner`
     /// (the model is claimed for the account that loaded it).
     @discardableResult
@@ -358,6 +366,9 @@ public final class DeliveryEngine {
             } else {
                 continuation.resume()
             }
+        case .closeIfVisible(let conversation):
+            guard blocked == nil, state.visible == conversation else { return }
+            _ = await process(["type": "conversation_closed"])
         case .flushCache:
             cacheFlushScheduled = false
             guard blocked == nil, !dirtyCache.isEmpty else { return }
