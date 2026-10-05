@@ -1,6 +1,14 @@
 package com.openmychat.mobile.core.network
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -142,6 +150,31 @@ class FileTransferClientTest {
             assertEquals(401, e.statusCode)
         }
         assertEquals(listOf(401), failures)
+    }
+
+    @Test
+    fun cancellingTheCallerCancelsABlockedDownloadRequest() = runBlocking {
+        val started = CountDownLatch(1)
+        val canceled = CountDownLatch(1)
+        val stalling = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                started.countDown()
+                // A server that never answers: only cancelling the call ends this request.
+                while (!chain.call().isCanceled()) Thread.sleep(5)
+                canceled.countDown()
+                throw IOException("Canceled")
+            }
+            .build()
+        val stalled = FileTransferClient(stalling, { base }) { code, _, _ -> throw ApiException(code, null, "x") }
+
+        val job = launch(Dispatchers.IO) {
+            runInterruptible { stalled.get(42, rangeFrom = null, ifRange = null, ifNoneMatch = null) }
+        }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        job.cancel()
+
+        assertTrue("the OkHttp call is cancelled with the coroutine", canceled.await(5, TimeUnit.SECONDS))
+        withTimeout(5_000) { job.join() }
     }
 
     @Test

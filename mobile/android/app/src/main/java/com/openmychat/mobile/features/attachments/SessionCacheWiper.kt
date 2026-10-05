@@ -23,8 +23,10 @@ class SessionCacheWiper(
         token.collect { if (it == null) wipe() }
     }
 
+    // Each step is guarded on its own: a busy disk cache or a locked file must neither crash sign-out
+    // nor end the collector, so the next sign-out wipes again.
     private suspend fun wipe() = withContext(io) {
-        root.deleteRecursively()
-        clearImages()
+        runCatching { root.deleteRecursively() }
+        runCatching { clearImages() }
     }
 }

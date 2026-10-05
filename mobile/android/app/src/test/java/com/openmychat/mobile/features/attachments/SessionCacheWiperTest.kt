@@ -49,4 +49,28 @@ class SessionCacheWiperTest {
         token.value = null
         assertEquals("every sign-out wipes", 2, imageWipes)
     }
+
+    @Test
+    fun aFailingWipeNeverCrashesSignOutOrStopsTheNextOne() {
+        val root = File(tmp.root, "attachments").apply { mkdirs() }
+        val token = MutableStateFlow<String?>("token")
+        var failNext = true
+        SessionCacheWiper(root, clearImages = {
+            imageWipes++
+            if (failNext) {
+                failNext = false
+                throw java.io.IOException("disk cache busy")
+            }
+        }, io = dispatcher).watch(scope, token)
+
+        token.value = null
+        assertEquals(1, imageWipes)
+
+        File(root, "7").mkdirs()
+        token.value = "next"
+        token.value = null
+
+        assertEquals("the collector survived the failure", 2, imageWipes)
+        assertFalse(root.exists())
+    }
 }

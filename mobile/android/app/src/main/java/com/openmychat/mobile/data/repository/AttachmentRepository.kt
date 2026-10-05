@@ -21,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -152,11 +154,13 @@ class DefaultAttachmentRepository @Inject constructor(
         }
     }
 
-    override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File =
-        withContext(Dispatchers.IO) {
-            val job = coroutineContext
+    // Interruptible: cancelling the tap's coroutine also cancels a request still waiting for the server.
+    override suspend fun download(fileId: Long, name: String, onProgress: (Float?) -> Unit): File {
+        val job = coroutineContext
+        return runInterruptible(Dispatchers.IO) {
             downloader.fetch(fileId, name, onProgress = onProgress, ensureActive = { job.ensureActive() })
         }
+    }
 
     override fun thumbnailUrl(fileId: Long): String = transfer.thumbnailUrl(fileId)
 
