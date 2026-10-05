@@ -29,6 +29,8 @@ protocol SessionLifecycleDelegate: AnyObject {
     func sessionDidAuthenticate() async
     /// The realtime socket re-authenticated after a reconnect; state may have been missed.
     func sessionDidResume() async
+    /// The user asked to sign out; the session is still valid (best-effort clean-up on the server).
+    func sessionWillSignOut() async
     /// The session ended (logout or revoked token).
     func sessionDidEnd()
 }
@@ -261,6 +263,7 @@ public final class SessionStore: RealtimeEventHandling {
     // MARK: - Logout
 
     public func logout() async {
+        await delegate?.sessionWillSignOut()
         do {
             try await auth.logout()
         } catch {
