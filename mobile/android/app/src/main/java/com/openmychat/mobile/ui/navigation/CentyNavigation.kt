@@ -47,14 +47,13 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldState
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldValue
 import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.IntState
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
@@ -243,19 +242,7 @@ fun CentyNavigation(
     // Phones show a chat full screen: the bar slides away with the inbox→chat transition and comes
     // back with it, instead of vanishing in one frame. Medium windows keep the rail next to the pane.
     val hideBar = currentKey is NavKey.Chat && isCompact
-    // Starts where the destination is (a cold start or deep link into a chat must not slide the bar away).
-    val navState = rememberNavigationSuiteScaffoldState(
-        initialValue = if (hideBar) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
-    )
-    LaunchedEffect(hideBar, reduce) {
-        val target = if (hideBar) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
-        when {
-            navState.targetValue == target -> Unit
-            reduce -> navState.snapTo(target)
-            hideBar -> navState.hide()
-            else -> navState.show()
-        }
-    }
+    val navState = rememberBottomBarState(hidden = hideBar)
     val tokens = CentyTheme.tokens
     val itemColors = NavigationSuiteDefaults.itemColors(
         navigationBarItemColors = NavigationBarItemDefaults.colors(
@@ -321,21 +308,25 @@ fun CentyNavigation(
         // part is read from this area's height in the same layout pass, before the screen measures.
         val windowHeight = LocalWindowInfo.current.containerSize.height
         val barAtBottom = layoutType == NavigationSuiteType.NavigationBar
-        val barVisiblePx = remember { mutableIntStateOf(0) }
+        // A plain holder, not snapshot state: it is written in this measure and read by the screens'
+        // measure right after it in the same pass. A state write during layout invalidated its
+        // readers again on every frame of the slide. Every change of it comes with new constraints
+        // for the content below, so its readers are measured again anyway.
+        val barVisible = remember { BarVisible() }
         val density = LocalDensity.current
         val navInsets = WindowInsets.navigationBars
-        val consumed = remember(density, navInsets) { BarInsetConsumption(density, barVisiblePx) { navInsets.getBottom(density) } }
+        val consumed = remember(density, navInsets) { BarInsetConsumption(density, barVisible) { navInsets.getBottom(density) } }
         Box(
             Modifier
                 .fillMaxSize()
                 .layout { measurable, constraints ->
-                    barVisiblePx.intValue = if (barAtBottom && constraints.hasBoundedHeight) (windowHeight - constraints.maxHeight).coerceAtLeast(0) else 0
+                    barVisible.px = if (barAtBottom && constraints.hasBoundedHeight) (windowHeight - constraints.maxHeight).coerceAtLeast(0) else 0
                     val placeable = measurable.measure(constraints)
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 }
                 .consumeWindowInsets(consumed)
         ) {
-            CompositionLocalProvider(LocalBottomBarVisible provides { barVisiblePx.intValue }) { display() }
+            CompositionLocalProvider(LocalBottomBarVisible provides barVisible::px) { display() }
             CentySnackbarHost(
                 snackbarHost,
                 Modifier
@@ -346,6 +337,28 @@ fun CentyNavigation(
             )
         }
     }
+}
+
+/**
+ * The bottom bar's state, following [hidden]. It starts where the destination is (a cold start or a
+ * deep link into a chat must not slide the bar away).
+ *
+ * `snapTo`, not `show()`/`hide()`: those run the state's own spring first, and the scaffold starts its
+ * visible slide (a second spring, keyed on the state's *current* value, which reads Visible only at
+ * exactly 1) once that first spring has fully settled — the bar came back ~250–290 ms after the inbox,
+ * and two springs ran per frame. With `snapTo` the state flips at once and the scaffold's one slide
+ * starts with the navigation transition.
+ */
+@Composable
+internal fun rememberBottomBarState(hidden: Boolean): NavigationSuiteScaffoldState {
+    val state = rememberNavigationSuiteScaffoldState(
+        initialValue = if (hidden) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
+    )
+    LaunchedEffect(hidden) {
+        val target = if (hidden) NavigationSuiteScaffoldValue.Hidden else NavigationSuiteScaffoldValue.Visible
+        if (state.currentValue != target) state.snapTo(target)
+    }
+    return state
 }
 
 /** Conversations and the open chat share the screen only on expanded widths (>= 840dp). */
@@ -505,14 +518,19 @@ private fun appEntryProvider(
 
 private fun Person.toCardKey() = NavKey.Person(userId = id, name = fullName, avatarUrl = avatarUrl, status = status.value)
 
+/** The bottom bar's visible height (px), measured by the navigation shell in each layout pass. */
+private class BarVisible {
+    var px: Int = 0
+}
+
 /** Consumes the gesture-bar inset by the visible part of the bottom bar ([NavBarInset]). */
 private class BarInsetConsumption(
     private val density: Density,
-    private val barVisiblePx: IntState,
+    private val barVisible: BarVisible,
     private val navInsetPx: () -> Int
 ) : PaddingValues {
     override fun calculateBottomPadding(): Dp =
-        with(density) { NavBarInset.consumedBottom(navInsetPx(), barVisiblePx.intValue).toDp() }
+        with(density) { NavBarInset.consumedBottom(navInsetPx(), barVisible.px).toDp() }
 
     override fun calculateTopPadding(): Dp = 0.dp
     override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
