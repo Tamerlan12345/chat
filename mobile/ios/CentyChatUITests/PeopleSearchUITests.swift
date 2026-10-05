@@ -118,6 +118,7 @@ final class PeopleSearchUITests: XCTestCase {
     // MARK: - Helpers
 
     private func launchSignedIn(server: String, appearance: XCUIDevice.Appearance, contentSize: String? = nil) -> XCUIApplication {
+        XCTAssertTrue(StandAvatars.ensureUploaded(standURL: server), "The stand must accept the colleagues' photos")
         XCUIDevice.shared.appearance = appearance
         let app = XCUIApplication()
         app.launchEnvironment["CENTYCHAT_UI_TESTING"] = "1"
@@ -133,7 +134,7 @@ final class PeopleSearchUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["login-screen"].waitForExistence(timeout: 20), "Login must open first.")
         signIn(app)
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 40), "Alice must reach the tabs.")
-        dismissSavePasswordPrompt(app)
+        app.dismissSystemPrompts(timeout: 10)
         // The inbox has loaded (as in the other signed-in tests) before anything is tapped.
         if !app.staticTexts["Боб Тестов"].waitForExistence(timeout: 30) {
             printTree(app, "after sign-in")
@@ -199,28 +200,6 @@ final class PeopleSearchUITests: XCTestCase {
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
         }
-    }
-
-    /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
-    /// Private copy of `XCUIApplication.dismissSystemPrompts()` (integration branch): the sheet's
-    /// buttons can live in SpringBoard, outside the app's tree. Replace with the shared helper
-    /// once the lanes are merged.
-    private func dismissSavePasswordPrompt(_ app: XCUIApplication, timeout: TimeInterval = 10) {
-        let labels = ["Not Now", "Не сейчас", "Не сохранять", "Never for This App", "Никогда для этого приложения"]
-        let predicate = NSPredicate(format: "label IN %@", labels)
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for host in [app, springboard] {
-                let button = host.buttons.matching(predicate).firstMatch
-                if button.exists {
-                    button.tap()
-                    _ = button.waitForNonExistence(timeout: 5)
-                    return
-                }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < deadline
     }
 
     /// The app and SpringBoard trees in the CI log, so a failure shows what covered the screen.

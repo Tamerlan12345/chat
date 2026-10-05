@@ -37,6 +37,8 @@ final class ScreenshotTourTests: XCTestCase {
         }
         continueAfterFailure = false
         defer { XCUIDevice.shared.appearance = .light }
+        // The inbox shows Bob's photo, not his initials.
+        XCTAssertTrue(StandAvatars.ensureUploaded(standURL: standURL), "The stand must accept the colleagues' photos")
         for (appearance, suffix) in [(XCUIDevice.Appearance.light, "light"), (.dark, "dark")] {
             let application = launchFreshInstall(server: standURL, appearance: appearance)
             XCTAssertTrue(loginScreen(of: application).waitForExistence(timeout: 15), "Login must open first.")
@@ -47,10 +49,13 @@ final class ScreenshotTourTests: XCTestCase {
                 XCTFail("Alice must reach the signed-in tabs.")
                 return
             }
+            application.dismissSystemPrompts()
             XCTAssertTrue(
                 application.staticTexts["Боб Тестов"].waitForExistence(timeout: 30),
                 "The seeded dialog with Bob must load from the stand."
             )
+            // Bob's photo is fetched after the row appears.
+            pause(2)
             capture(application, named: "03-inbox-alice-\(suffix)")
             application.terminate()
         }
