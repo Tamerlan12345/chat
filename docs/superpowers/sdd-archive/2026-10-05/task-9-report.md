@@ -308,3 +308,56 @@ None between the prose, the vectors and the reference. Coverage gaps, as Android
 8. **Edit of an unsent message:** the menu offers «Редактировать» only for settled messages (Android
    parity). `ChatStore.edit` supports unsent text through `edit` by `client_msg_id`, but the UI does not
    offer it.
+
+---
+
+## Fix round 1 — Stopped at 16:52 (controller's stop)
+
+Commits (4b86f5a..503d2e4, pushed without force; working tree clean):
+- 834aa27 fix(ios): a cancelled sign-out deletes nothing; stale owners and the signed-out socket are refused
+- 503d2e4 fix(ios): owner-bound chats and uploads, two uploads at a time, streamed from disk
+
+**Done (items 1–10):**
+1. `reset()` clears the disk first. If that fails, the model, owner and queue are untouched, nothing is blocked and no retry wipe runs; the user stays signed in and the message still goes. The account-switch wipe stays memory-first, with retries.
+2. ChatStore captures the owner before each request. The engine refuses (never claims for) an enqueue or page whose stated owner is not the signed-in account. Refused sends show a notice.
+3. Sign-out stops the socket before the wipe. A `signedOut` flag drops `ws` frames and refuses actions and pages until `adopt`; an adopted account then picks up a socket that is already authenticated. A cancelled sign-out re-adopts and restarts the socket.
+4. The projection shows only `state.me == me`, so an ownerless model shows nothing. Uploads are filtered by `owner == me`. `AttachmentUploads.restore()` waits for the engine to be ready and deletes another account's rows without loading them.
+5. Uploads:
+   - at most 2 at once, enqueued in the order they were picked (per conversation);
+   - 429, 5xx, 507 and 408 retry, using `Retry-After` when given;
+   - the multipart body is written to a temporary file and sent with `URLSession.upload(fromFile:)`, with real progress and redirects refused.
+6. The composer keeps text typed while a message was being stored (`ComposerText.afterSend`).
+7. No platform trimming: §6.1 decides whether text is empty, and the send button uses `DeliveryReducer.isBlank`.
+8. `restore()` deletes another account's stored model before anything of it is published.
+9. `unsentCount` is nil while the store cannot be read; the sign-out dialog then says «Не удалось проверить неотправленные сообщения — если они есть, они будут удалены».
+10. The downloader shares one transfer per file id and guards with a generation counter, so a download that finishes after `removeAll()` leaves no file and fails.
+
+**Tests:**
+- **RED** (assertion failures, logged in this folder):
+  - `task-9-fix1-red-engine.log`: 6 engine tests, 21 failures.
+  - `task-9-fix1-red-rest.log`: uploads (FIFO/2-at-once, Retry-After, 5xx/507, owner-gated restore), projection ownership, composer, multipart writer, retry policy, unknown unsent count, shared download.
+  - The generation-guard test already passed against the old code, for the wrong reason: the Linux rename failed on the deleted folder.
+- **GREEN on Linux:** `task-9-fix1-green-linux.log`, 105/105.
+- **CI-only tests added to ChatOutboxTests**, not yet confirmed by CI:
+  - «Останусь» stays visible, is stored, and is sent;
+  - frames after sign-out are not stored, and the socket is closed;
+  - a late page of the previous account is dropped while the next account's queue stays;
+  - a stale owner's send is refused with a notice;
+  - U+0085 is accepted and blank text is refused.
+  - `testAWipeThatFailsIsLoudAndSendsNothing` was split into `testASignOutWhoseWipeFailsKeepsTheQueueAndItStillGoes` and `testAnAccountSwitchWhoseWipeFailsSendsNothingOfThePreviousAccount`.
+
+**Not done:** nothing outside the 10 items was started. The CI-only tests have no CI result yet.
+
+**CI:** run 37304787048 on 503d2e4 was **in progress** at the stop:
+- Release lock: success (the app compiles with the new code).
+- Simulator job: build for testing succeeded (the tests compile); unit and UI tests had not finished.
+
+**Next step:** read run 37304787048 (`gh run view 37304787048`, failure annotations from the `ios-simulator-tests` check run). If it is green, round 1 is closed. If not, fix the failures, especially in the CI-only ChatOutboxTests and SessionLifecycleTests, which are sensitive to the new logout order (socket stopped before the wipe).
+
+**Update after the stop (no new work, no new run):** CI run 37304787048 on 503d2e4 finished **green**:
+- Release lock: passed.
+- Unit tests: **442/442**, including the CI-only ChatOutboxTests of round 1.
+- UI tests: **15/15**.
+- Screenshots: published.
+
+Fix round 1 is closed.
