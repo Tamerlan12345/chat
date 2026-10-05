@@ -16,9 +16,11 @@ test('после удаления последнего сообщения (text 
   assert.strictEqual(conversationSnippet(convo), 'Сообщение удалено');
 });
 
-test('вложение без подписи не выдаётся за удалённое', () => {
-  const convo = { last_message_text: '', last_message_time: 't', last_message_type: 'file' };
-  assert.strictEqual(conversationSnippet(convo), 'Вложение');
+test('удалённое вложение (type сохраняется, text пуст) — тоже «Сообщение удалено», как в ChatView', () => {
+  for (const type of ['file', 'image']) {
+    const convo = { last_message_text: '', last_message_time: 't', last_message_type: type };
+    assert.strictEqual(conversationSnippet(convo), 'Сообщение удалено');
+  }
 });
 
 test('registration_pending превращается в уведомление с именем заявителя', () => {
