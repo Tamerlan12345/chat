@@ -94,6 +94,12 @@ public final class ChatStore: RealtimeEventHandling {
         }
     }
 
+    /// Opens the conversation at `messageId` (a search hit): the history around it is loaded next to
+    /// the newest page. Returns false when the message is not there (deleted, no access).
+    public func loadAround(_ messageId: Int64) async -> Bool {
+        false
+    }
+
     public func markAsRead() async {
         await realtime.send(.markRead(conversationType: conversation.type, targetId: conversation.targetId))
         conversations.markConversationRead(conversation)

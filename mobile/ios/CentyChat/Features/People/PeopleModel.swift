@@ -7,6 +7,8 @@ public protocol PeopleProviding: AnyObject {
     var state: PeopleState { get }
     /// Показать кэш и обновить с сервера.
     func refresh()
+    /// То же и дождаться ответа сервера («потянуть, чтобы обновить»).
+    func refreshAndWait() async
     /// Свежая карточка сотрудника с сервера; обновляет его и в справочнике.
     func person(id: Int64) async -> Person?
 }

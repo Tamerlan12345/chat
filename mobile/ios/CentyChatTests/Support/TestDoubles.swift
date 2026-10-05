@@ -205,6 +205,10 @@ final class FakeChatRepository: ChatRepository, @unchecked Sendable {
         var users: Result<[PublicUser], any Error> = .success([])
         var messages: [ConversationKey: [Message]] = [:]
         var directLoadCount = 0
+        /// History pages asked for (`beforeId`/`afterId`), in order.
+        var pageRequests: [String] = []
+        var searchResults: Result<[Message], any Error> = .success([])
+        var searchQueries: [String] = []
     }
 
     let state = Locked(State())
@@ -228,8 +232,30 @@ final class FakeChatRepository: ChatRepository, @unchecked Sendable {
         Channel(id: 999, name: name, topic: topic, type: type)
     }
 
+    /// Like the server: the newest `limit` messages older than `beforeId`, oldest first.
     func messages(in conversation: ConversationKey, limit: Int, beforeId: Int64?) async throws -> [Message] {
-        state.value.messages[conversation] ?? []
+        state.withValue { state in
+            state.pageRequests.append("before:\(beforeId.map(String.init) ?? "-")")
+            let all = state.messages[conversation] ?? []
+            let older = beforeId.map { id in all.filter { $0.id < id } } ?? all
+            return Array(older.suffix(limit))
+        }
+    }
+
+    /// Like the server: the oldest `limit` messages newer than `afterId`, oldest first.
+    func messages(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [Message] {
+        state.withValue { state in
+            state.pageRequests.append("after:\(afterId)")
+            let all = state.messages[conversation] ?? []
+            return Array(all.filter { $0.id > afterId }.prefix(limit))
+        }
+    }
+
+    func searchMessages(_ query: String) async throws -> [Message] {
+        try state.withValue { state in
+            state.searchQueries.append(query)
+            return try state.searchResults.get()
+        }
     }
 
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
@@ -362,6 +388,8 @@ struct TestApp {
     let chat: FakeChatRepository
     let announcements: FakeAnnouncementsRepository
     let realtime: FakeRealtimeRepository
+    let peopleSource: FakePeopleSource
+    let peopleCache: InMemoryPeopleCache
 
     init(environment: ServerEnvironment = .test) {
         server = FakeServerRepository()
@@ -369,6 +397,8 @@ struct TestApp {
         chat = FakeChatRepository()
         announcements = FakeAnnouncementsRepository()
         realtime = FakeRealtimeRepository()
+        peopleSource = FakePeopleSource(users: [])
+        peopleCache = InMemoryPeopleCache()
         container = AppContainer(
             server: server,
             auth: auth,
@@ -379,11 +409,45 @@ struct TestApp {
             audioRelayFactory: { peerId in
                 AudioCallRelay(targetUserId: peerId, backend: SilentAudioBackend(), sendFrame: { _ in })
             },
-            deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") }
+            deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") },
+            peopleSource: peopleSource,
+            peopleCache: peopleCache
         )
     }
 
     var session: SessionStore { container.session }
+}
+
+/// `/api/users`, `/api/org/tree` and `/api/users/:id` for the people directory.
+@MainActor
+final class FakePeopleSource: PeopleSource {
+    var users: [PublicUser]
+    var tree = OrgTree()
+    var failure: (any Error)?
+    /// When set, `users()` waits for it (a request still in flight).
+    var gate: TestGate?
+
+    init(users: [PublicUser], gate: TestGate? = nil) {
+        self.users = users
+        self.gate = gate
+    }
+
+    func users() async throws -> [PublicUser] {
+        if let gate { await gate.wait() }
+        if let failure { throw failure }
+        return users
+    }
+
+    func orgTree() async throws -> OrgTree {
+        if let failure { throw failure }
+        return tree
+    }
+
+    func user(id: Int64) async throws -> PublicUser {
+        if let failure { throw failure }
+        guard let user = users.first(where: { $0.id == id }) else { throw APIError.httpError(statusCode: 404, message: "Не найден", code: nil) }
+        return user
+    }
 }
 
 /// Lets the main actor run queued tasks (event pumps, detached reloads).

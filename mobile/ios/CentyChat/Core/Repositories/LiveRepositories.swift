@@ -120,6 +120,19 @@ struct LiveChatRepository: ChatRepository {
         )
     }
 
+    func messages(in conversation: ConversationKey, limit: Int, afterId: Int64) async throws -> [Message] {
+        try await client.getMessages(
+            conversationType: conversation.type,
+            targetId: conversation.targetId,
+            limit: limit,
+            afterId: afterId
+        )
+    }
+
+    func searchMessages(_ query: String) async throws -> [Message] {
+        try await client.searchMessages(query: query)
+    }
+
     func uploadFile(data: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
         try await client.uploadFile(fileData: data, fileName: fileName, mimeType: mimeType)
     }

@@ -364,7 +364,13 @@ public actor APIClient {
     }
     
     /// Универсальная загрузка сообщений
-    public func getMessages(conversationType: ConversationType, targetId: Int64, limit: Int = 50, beforeId: Int64? = nil) async throws -> [Message] {
+    public func getMessages(
+        conversationType: ConversationType,
+        targetId: Int64,
+        limit: Int = 50,
+        beforeId: Int64? = nil,
+        afterId: Int64? = nil
+    ) async throws -> [Message] {
         var queryItems = [
             URLQueryItem(name: "conversationType", value: conversationType.rawValue),
             URLQueryItem(name: "targetId", value: "\(targetId)"),
@@ -373,7 +379,15 @@ public actor APIClient {
         if let beforeId = beforeId {
             queryItems.append(URLQueryItem(name: "beforeId", value: "\(beforeId)"))
         }
+        if let afterId = afterId {
+            queryItems.append(URLQueryItem(name: "afterId", value: "\(afterId)"))
+        }
         return try await request(endpoint: "/messages", queryItems: queryItems)
+    }
+
+    /// Поиск по тексту сообщений в доступных каналах и личной переписке (сервер принимает до 200 символов).
+    public func searchMessages(query: String) async throws -> [Message] {
+        try await request(endpoint: "/messages/search", queryItems: [URLQueryItem(name: "q", value: String(query.prefix(200)))])
     }
     
     /// Отправка прямого сообщения по HTTP
