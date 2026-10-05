@@ -259,7 +259,7 @@ public final class ChatStore: RealtimeEventHandling {
     /// Queues a picked file: a private copy first, then the upload, then the outbox. False — nothing
     /// was queued (`notice` says why).
     @discardableResult
-    public func sendAttachment(_ picked: PickedAttachment, replyTo: Message? = nil) async -> Bool {
+    func sendAttachment(_ picked: PickedAttachment, replyTo: Message? = nil) async -> Bool {
         guard let me = session.currentUser?.id else { return false }
         let policy = try? await repository.filePolicy()
         let size: Int64? = switch picked.source {

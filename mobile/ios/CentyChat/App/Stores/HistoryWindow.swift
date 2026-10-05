@@ -11,7 +11,7 @@ enum HistoryWindow {
     static let pageSize = 200
     static let maxPages = 5
 
-    static func around<Item: Identifiable>(
+    static func around<Item: Identifiable & Sendable>(
         _ messageId: Int64,
         before: (_ beforeId: Int64, _ limit: Int) async throws -> [Item],
         after: (_ afterId: Int64, _ limit: Int) async throws -> [Item]

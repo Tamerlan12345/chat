@@ -8,6 +8,9 @@ final class NetworkPathWatcher {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "kz.centras.centychat.network-path")
     private var wasSatisfied: Bool?
+
+    /// Whether the device has a usable path now; nil before the first answer.
+    var isAvailable: Bool? { wasSatisfied }
     private var started = false
 
     /// `onAvailable` runs on the main actor after each transition to a satisfied path.

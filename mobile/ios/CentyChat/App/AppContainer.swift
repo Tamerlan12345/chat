@@ -281,7 +281,8 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     /// The app came to the foreground: what waits goes out (over HTTP until the socket is up).
     func appBecameActive() async {
-        guard session.isAuthenticated else { return }
+        // Without a network an HTTP attempt only spends the message's retry budget (§7.3).
+        guard session.isAuthenticated, networkPath.isAvailable != false else { return }
         await delivery.appBecameActive()
     }
 
