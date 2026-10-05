@@ -128,6 +128,13 @@ data class Message(
     @SerialName("file_original_name")
     val fileOriginalName: String? = null,
 
+    /** Размеры картинки-вложения, посчитанные сервером (null — не картинка или неизвестно). */
+    @SerialName("file_width")
+    val fileWidth: Int? = null,
+
+    @SerialName("file_height")
+    val fileHeight: Int? = null,
+
     @SerialName("delivery_status")
     val deliveryStatus: DeliveryStatus? = null,
 
@@ -141,7 +148,11 @@ data class Message(
 
     /** Только локально: отправка ещё не подтверждена сервером ([SendState]); у записей сервера — SENT. */
     @Transient
-    val sendState: SendState = SendState.SENT
+    val sendState: SendState = SendState.SENT,
+
+    /** Только локально: файл, выбранный на этом устройстве, пока эхо сервера не заменило запись. */
+    @Transient
+    val upload: LocalUpload? = null
 )
 
 /** Состояние отправки своего сообщения на этом устройстве (delivery-state.md §3.4). */
