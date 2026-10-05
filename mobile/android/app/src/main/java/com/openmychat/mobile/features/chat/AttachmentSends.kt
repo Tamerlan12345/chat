@@ -46,7 +46,9 @@ class AttachmentSends(
     private val engine: DeliveryEngine,
     private val clock: () -> Long = System::currentTimeMillis,
     /** Pause before a queued file goes again while the connection stays up. */
-    private val retryDelayMs: Long = 15_000L
+    private val retryDelayMs: Long = 15_000L,
+    /** The signed-in account: files go up only for the account that owns the queue. */
+    private val owner: () -> Long? = { null }
 ) {
     /** One file on screen: [progress] is set while it is going up. */
     data class Upload(val pending: PendingUpload, val progress: Float? = null)
@@ -79,6 +81,10 @@ class AttachmentSends(
     fun start(connected: Flow<Boolean>) {
         if (started) return
         started = true
+        scope.launch {
+            // The queue was wiped (sign-out, another account): its files go too.
+            engine.wiped.collect { forget() }
+        }
         scope.launch {
             // Once the outbox no longer holds a handed-over file (confirmed or dropped), its copy goes.
             engine.state.collect { state ->
@@ -170,7 +176,27 @@ class AttachmentSends(
         synchronized(jobs) { jobs.values.toList() }.joinAll()
     }
 
-    /** The session ended: uploads stop, the kept copies and rows are deleted. */
+    /** The engine's store was wiped (rows included): stop and forget the files in memory and on disk. */
+    private suspend fun forget() {
+        synchronized(jobs) {
+            jobs.values.forEach { it.cancel() }
+            jobs.clear()
+            retries.values.forEach { it.cancel() }
+            retries.clear()
+        }
+        _uploads.value = emptyList()
+        _handedOver.value = emptyMap()
+        runCatching { files.pruneKept(emptySet()) }
+    }
+
+    /** Files go up only for the account that owns the queue, never under another account's token. */
+    private fun ownerSignedIn(): Boolean {
+        val user = owner() ?: return false
+        val me = engine.state.value.me
+        return engine.ready.value && (me == null || me == user)
+    }
+
+    /** Explicit sign-out: uploads stop, the kept copies and rows are deleted. */
     suspend fun reset() {
         synchronized(jobs) {
             jobs.values.forEach { it.cancel() }
@@ -200,6 +226,7 @@ class AttachmentSends(
 
     private fun launchUpload(key: String, ignoreConnection: Boolean = false) {
         if (!ignoreConnection && !online) return
+        if (!ownerSignedIn()) return
         val job = synchronized(jobs) {
             if (jobs[key]?.isActive == true) return
             retries.remove(key)?.cancel()

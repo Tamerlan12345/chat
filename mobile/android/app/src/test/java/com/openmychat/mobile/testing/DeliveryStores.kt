@@ -10,7 +10,7 @@ import com.openmychat.mobile.data.delivery.toRecord
 import kotlinx.serialization.json.JsonObject
 
 /** For tests and previews: nothing survives the process. */
-class InMemoryDeliveryStore : DeliveryStore {
+open class InMemoryDeliveryStore : DeliveryStore {
     var stored = StoredDelivery()
         private set
     var failNextPersist: Exception? = null

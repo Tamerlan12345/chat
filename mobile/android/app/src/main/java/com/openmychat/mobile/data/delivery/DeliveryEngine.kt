@@ -43,8 +43,25 @@ class DeliveryEngine(
     private val backend: DeliveryBackend,
     private val clock: () -> Long = System::currentTimeMillis,
     /** How long cache writes of live messages are batched. */
-    private val cacheDelayMs: Long = 1_000L
+    private val cacheDelayMs: Long = 1_000L,
+    /** Failures nobody waits for (Logcat in the app). */
+    private val log: (String, Throwable?) -> Unit = { _, _ -> }
 ) {
+    private val _wiped = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+
+    /** The model and its storage were wiped (sign-out, or another account signed in). */
+    val wiped: SharedFlow<Unit> = _wiped.asSharedFlow()
+
+    /**
+     * The model belongs to [userId] from now on: another account's outbox, ops and cache are wiped
+     * first, so nothing of theirs is ever sent from this one.
+     */
+    suspend fun adopt(userId: Long) {
+        val done = CompletableDeferred<Unit>()
+        inbox.trySend(Adopt(userId, done))
+        done.await()
+    }
+
     /** What one event did: its effects, and whether its state reached the disk (§5 persist). */
     class Outcome(val persisted: Boolean, val effects: List<DeliveryEffect>) {
         /** `enqueue` was taken: the entry is on disk and the composer may clear (§7.4). */
@@ -56,7 +73,9 @@ class DeliveryEngine(
     private class Dispatch(val event: JsonObject, val done: CompletableDeferred<Outcome>?) : Command
     private class ReplaceHistory(val conversation: String, val records: List<JsonObject>, val stale: Set<Long>, val done: CompletableDeferred<Outcome>) : Command
     private class Reset(val done: CompletableDeferred<Unit>) : Command
+    private class Adopt(val userId: Long, val done: CompletableDeferred<Unit>) : Command
     private object Restore : Command
+    private object RetryWipe : Command
     private object FlushCache : Command
 
     private val inbox = Channel<Command>(Channel.UNLIMITED)
@@ -87,6 +106,14 @@ class DeliveryEngine(
     private var cacheFlushScheduled = false
     private var started = false
 
+    /**
+     * Fail closed: the stored model could not be read ("load") or another account's could not be
+     * deleted ("wipe"). Until that is repaired (retried with backoff) nothing is accepted, persisted
+     * or sent — a persist now would overwrite the outbox on disk, a send could be the wrong account's.
+     */
+    private var blocked: String? = null
+    private var repairAttempts = 0
+
     /** Subscribes to the socket and loads the stored model. Frames that arrive meanwhile wait in order. */
     @Synchronized
     fun start() {
@@ -103,8 +130,16 @@ class DeliveryEngine(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // One broken event must not stop delivery for the rest of the process.
-                    (command as? Dispatch)?.done?.complete(Outcome(false, emptyList()))
+                    // One broken command must not stop delivery for the rest of the process, and
+                    // nobody waits for it forever: every waiter learns that it failed.
+                    log("delivery command failed: ${command::class.simpleName}", e)
+                    when (command) {
+                        is Dispatch -> command.done?.complete(Outcome(false, emptyList()))
+                        is ReplaceHistory -> command.done.completeExceptionally(e)
+                        is Reset -> command.done.completeExceptionally(e)
+                        is Adopt -> command.done.completeExceptionally(e)
+                        else -> Unit
+                    }
                 }
             }
         }
@@ -192,11 +227,24 @@ class DeliveryEngine(
     private suspend fun run(command: Command) {
         when (command) {
             is Restore -> restore()
+            is RetryWipe -> if (blocked == "wipe") clearStore()
             is Dispatch -> {
+                if (blocked != null) {
+                    // Refused, not lost: the composer keeps the text; frames come again with the next sync.
+                    command.done?.complete(Outcome(false, emptyList()))
+                    return
+                }
+                // A socket of another account: that account never sees, nor sends, this one's data.
+                authenticatedAs(command.event)?.let { user -> if (current.me != null && current.me != user) wipe() }
+                if (blocked != null) {
+                    command.done?.complete(Outcome(false, emptyList()))
+                    return
+                }
                 val outcome = process(command.event)
                 command.done?.complete(outcome)
             }
             is ReplaceHistory -> {
+                check(blocked == null) { "the delivery store is unavailable ($blocked)" }
                 val list = current.messages[command.conversation]
                 if (list != null) {
                     val pageIds = command.records.mapNotNullTo(HashSet()) { it["id"].long() }
@@ -210,19 +258,26 @@ class DeliveryEngine(
                 command.done.complete(process(event("history_page") { put("body", JsonArray(command.records)) }))
             }
             is Reset -> {
-                work.cancel()
-                work = newWork()
-                epoch++
-                alarms.clear()
-                dirtyCache.clear()
-                runCatching { store.clear() }
-                current = DeliveryState()
-                _state.value = current
+                // Loud: the caller (sign-out) must not go on as if the messages were gone.
+                wipe()?.let { throw it }
+                command.done.complete(Unit)
+            }
+            is Adopt -> {
+                if (blocked != "load") {
+                    if (current.me != null && current.me != command.userId) {
+                        wipe()
+                    }
+                    if (blocked == null && current.me == null) {
+                        // The queue is this account's from now on (stored with the next persist).
+                        current = current.deepCopy().apply { me = command.userId }
+                        _state.value = current
+                    }
+                }
                 command.done.complete(Unit)
             }
             is FlushCache -> {
                 cacheFlushScheduled = false
-                if (dirtyCache.isNotEmpty()) {
+                if (blocked == null && dirtyCache.isNotEmpty()) {
                     val cache = takeDirtyCache()
                     runCatching { store.writeCache(cache) }
                 }
@@ -230,8 +285,68 @@ class DeliveryEngine(
         }
     }
 
+    /**
+     * Forgets everything of the current account — in memory at once (so nothing of it can be sent),
+     * then on disk. A failed delete keeps the engine blocked and retries; the caller hears of it.
+     */
+    private suspend fun wipe(): Exception? {
+        work.cancel()
+        work = newWork()
+        epoch++
+        alarms.clear()
+        dirtyCache.clear()
+        current = DeliveryState()
+        _state.value = current
+        _wiped.tryEmit(Unit)
+        return clearStore()
+    }
+
+    /** Null when the store is empty now; otherwise the failure (the engine stays blocked and retries). */
+    private suspend fun clearStore(): Exception? = try {
+        store.clear()
+        blocked = null
+        repairAttempts = 0
+        null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("delivery store could not be wiped", e)
+        blocked = "wipe"
+        scheduleRepair(RetryWipe)
+        e
+    }
+
+    private fun scheduleRepair(command: Command) {
+        repairAttempts++
+        val wait = minOf(1_000L * (1L shl (repairAttempts - 1).coerceIn(0, 5)), 30_000L)
+        work.launch {
+            delay(wait)
+            inbox.trySend(command)
+        }
+    }
+
+    /** The user id of an `auth_success` frame event, else null. */
+    private fun authenticatedAs(event: JsonObject): Long? {
+        if (event["type"].string() != "ws") return null
+        val frame = event["frame"] as? JsonObject ?: return null
+        if (frame["type"].string() != "auth_success") return null
+        return (frame["user"] as? JsonObject)?.get("id").long()
+    }
+
     private suspend fun restore() {
-        val stored = runCatching { store.load() }.getOrDefault(StoredDelivery())
+        val stored = try {
+            store.load()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Fail closed: an empty model now would overwrite the outbox on disk with the next persist.
+            log("delivery store could not be read", e)
+            blocked = "load"
+            scheduleRepair(Restore)
+            return
+        }
+        blocked = null
+        repairAttempts = 0
         current = DeliveryState(
             me = stored.me,
             sync = SyncState(cursor = stored.cursor),

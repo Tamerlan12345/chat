@@ -5,6 +5,7 @@ import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.data.delivery.DeliveryEngine
 import com.openmychat.mobile.data.delivery.DeliveryRuntime
 import com.openmychat.mobile.data.delivery.HttpDeliveryBackend
+import com.openmychat.mobile.data.delivery.OutgoingQueue
 import com.openmychat.mobile.data.delivery.RealtimeDeliveryLink
 import com.openmychat.mobile.data.delivery.store.DeliveryDatabase
 import com.openmychat.mobile.data.delivery.store.RoomDeliveryStore
@@ -45,7 +46,8 @@ object DeliveryModule {
         scope = scope,
         store = RoomDeliveryStore(database.dao()),
         link = RealtimeDeliveryLink(realtime, session),
-        backend = HttpDeliveryBackend(api)
+        backend = HttpDeliveryBackend(api),
+        log = { message, error -> android.util.Log.w("Delivery", message, error) }
     ).also { it.start() } // whoever asks first (the app, a worker, a screen test) gets a running engine
 
     @Provides
@@ -55,8 +57,11 @@ object DeliveryModule {
         attachments: AttachmentRepository,
         engine: DeliveryEngine,
         @ApplicationScope scope: CoroutineScope,
-        realtime: RealtimeRepository
-    ): AttachmentSends = AttachmentSends(scope, RoomUploadStore(database.dao()), attachments, engine).also { sends ->
+        realtime: RealtimeRepository,
+        session: SessionRepository
+    ): AttachmentSends = AttachmentSends(
+        scope, RoomUploadStore(database.dao()), attachments, engine, owner = { session.currentUserId }
+    ).also { sends ->
         sends.start(realtime.connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged())
     }
 
@@ -70,4 +75,8 @@ object DeliveryModule {
         @ApplicationScope scope: CoroutineScope,
         @ApplicationContext context: Context
     ): DeliveryRuntime = DeliveryRuntime(engine, sends, session, realtime, scope, WorkManagerFlushScheduler(context))
+
+    /** Sign-out asks about unsent messages and deletes them through the runtime. */
+    @Provides
+    fun outgoing(runtime: DeliveryRuntime): OutgoingQueue = runtime
 }

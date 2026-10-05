@@ -23,7 +23,10 @@ import kotlinx.serialization.json.put
  * closing (`socket_closed`), and frames the engine writes are recorded in [sent] as short commands,
  * e.g. "send_message direct 7 hi", "send_message file direct 7 a.pdf", "mark_read direct 7".
  */
-class FakeRealtimeRepository(private val me: Long = FakeSessionRepository.ME) : RealtimeRepository {
+class FakeRealtimeRepository(
+    /** The account the next socket authenticates as. */
+    var me: Long = FakeSessionRepository.ME
+) : RealtimeRepository {
     private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64)
     private val _audioFrames = MutableSharedFlow<WsEvent.AudioFrameReceived>(extraBufferCapacity = 64)
     private val _frames = MutableSharedFlow<JsonObject>(extraBufferCapacity = 256)

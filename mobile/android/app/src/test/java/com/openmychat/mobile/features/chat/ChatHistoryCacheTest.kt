@@ -71,9 +71,11 @@ class ChatHistoryCacheTest {
     fun signingOutClearsTheCache() {
         open()
         assertEquals(listOf(10L), delivery.engine.state.value.messages["direct:$bob"]?.map { it.id })
-        assertTrue("the cache reached the store", delivery.store.stored.cache.isNotEmpty() || delivery.engine.state.value.messages.isNotEmpty())
 
+        // A lost session (401) keeps this account's cache; an explicit sign-out deletes it.
         session.token.value = null
+        assertEquals(listOf(10L), delivery.engine.state.value.messages["direct:$bob"]?.map { it.id })
+        kotlinx.coroutines.runBlocking { delivery.runtime.discardForSignOut() }
 
         assertNull(delivery.engine.state.value.messages["direct:$bob"])
         assertTrue("nothing of the session stays on disk", delivery.store.stored.cache.isEmpty())

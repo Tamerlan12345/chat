@@ -5,6 +5,7 @@ import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeDeliveryBackend
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.InMemoryDeliveryStore
+import com.openmychat.mobile.data.delivery.StoredDelivery
 import com.openmychat.mobile.testing.MainDispatcherRule
 import androidx.work.ListenableWorker
 import kotlinx.coroutines.CompletableDeferred
@@ -246,17 +247,148 @@ class DeliveryEngineTest {
     }
 
     @Test
-    fun signingOutWipesTheModelAndItsStorage() = runBlocking {
+    fun anExplicitSignOutCountsTheUnsentFirstThenWipesTheModelAndItsStorage() = runBlocking {
         val store = InMemoryDeliveryStore()
         realtime.connectionState.value = ConnectionState.Connecting
         val h = harness(store)
-        h.engine.enqueue(conv, "чужому не достанется", clientMsgId = "k1")
+        h.engine.enqueue(conv, "первое", clientMsgId = "k1")
+        h.engine.enqueue(conv, "второе", clientMsgId = "k2")
+        assertEquals("what the confirmation names", 2, h.runtime.unsentCount.value)
 
-        h.session.token.value = null
+        h.runtime.discardForSignOut()
 
         assertTrue(h.engine.state.value.outbox.isEmpty())
         assertTrue(store.stored.outbox.isEmpty())
         assertNull(store.stored.cursor)
+        assertEquals(0, h.runtime.unsentCount.value)
+    }
+
+    @Test
+    fun anInvoluntarySessionEndKeepsTheOutboxForTheSameAccount() = runBlocking {
+        // Review fix 1b: a 401 or a refused token is not a sign-out; nothing unsent is dropped (T19).
+        val store = InMemoryDeliveryStore()
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "переживёт 401", clientMsgId = "k1")
+
+        h.session.token.value = null
+        assertEquals(listOf("k1"), h.engine.state.value.outbox.map { it.clientMsgId })
+        assertEquals(listOf("k1"), store.stored.outbox.map { it.clientMsgId })
+
+        h.session.token.value = "renewed" // the same account signs in again
+        realtime.connectionState.value = ConnectionState.Connected
+        assertEquals(listOf("k1"), realtime.sentClientMsgIds)
+    }
+
+    @Test
+    fun anotherAccountSigningInNeverSendsThePreviousAccountsText() = runBlocking {
+        val store = InMemoryDeliveryStore()
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "текст Алисы", clientMsgId = "k1")
+        h.session.token.value = null
+
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+        h.session.token.value = "carol"
+        realtime.me = 99
+        realtime.connectionState.value = ConnectionState.Connected
+
+        assertTrue("nothing of the previous account goes out", sendFrames.isEmpty())
+        assertTrue(h.engine.state.value.outbox.isEmpty())
+        assertTrue("and nothing of it stays on disk", store.stored.outbox.isEmpty())
+    }
+
+    @Test
+    fun anotherAccountsBackgroundFlushPostsNothingOfThePreviousAccount() = runBlocking {
+        val store = InMemoryDeliveryStore()
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "текст Алисы", clientMsgId = "k1")
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+
+        h.runtime.flushInBackground()
+
+        assertTrue(h.backend.posts.isEmpty())
+        assertTrue(store.stored.outbox.isEmpty())
+    }
+
+    @Test
+    fun aWipeThatFailsIsReportedAndStillNeverSendsTheOldOutbox() = runBlocking {
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun clear() = throw java.io.IOException("disk")
+        }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        h.engine.enqueue(conv, "текст Алисы", clientMsgId = "k1")
+
+        try {
+            h.runtime.discardForSignOut()
+            org.junit.Assert.fail("a sign-out that could not delete must say so")
+        } catch (e: java.io.IOException) {
+            // reaches the caller instead of leaving it waiting
+        }
+
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+        realtime.me = 99
+        realtime.connectionState.value = ConnectionState.Connected
+        assertTrue(sendFrames.isEmpty())
+    }
+
+    @Test
+    fun aStoreThatCannotBeReadIsNotOverwrittenAndNothingIsAcceptedUntilItIs() = runBlocking {
+        // Review fix 2: a failed load must not let the next persist replace the durable outbox.
+        var failures = 2
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun load(): StoredDelivery {
+                if (failures-- > 0) throw java.io.IOException("locked")
+                return super.load()
+            }
+        }
+        store.persist(listOf("outbox"), DeliveryState(me = 1, seq = 1).apply {
+            outbox.add(OutboxEntry(clientMsgId = "k0", conversation = conv, seq = 1, text = "с прошлого запуска"))
+        }, emptyMap())
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness(store)
+        assertFalse(h.engine.ready.value)
+
+        val outcome = h.engine.enqueue(conv, "пока не прочитано", clientMsgId = "k1")
+
+        assertFalse("refused, the composer keeps the text", outcome.persisted)
+        assertEquals("the stored outbox is intact", listOf("k0"), store.stored.outbox.map { it.clientMsgId })
+
+        elapse(10_000) // the load is tried again
+        assertTrue(h.engine.ready.value)
+        assertEquals(listOf("k0"), h.engine.state.value.outbox.map { it.clientMsgId })
+        realtime.connectionState.value = ConnectionState.Connected
+        assertEquals(listOf("k0"), realtime.sentClientMsgIds)
+    }
+
+    @Test
+    fun theWorkerDoesNotWaitForeverOnAStoreThatCannotBeRead() = runBlocking {
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun load(): StoredDelivery = throw java.io.IOException("locked")
+        }
+        val h = harness(store)
+
+        val result = CoroutineScope(main.dispatcher).async { h.runtime.flushInBackground() }
+        elapse(120_000)
+
+        assertTrue(result.isCompleted)
+        assertEquals(ListenableWorker.Result.retry(), result.await())
+    }
+
+    @Test
+    fun theWorkerAsksAgainWhileAFileStillWaits() = runBlocking {
+        val files = com.openmychat.mobile.testing.FakeAttachmentRepository()
+        val pdf = com.openmychat.mobile.data.repository.PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
+        files.uploadFailure = com.openmychat.mobile.core.network.ApiException(0, "NETWORK_ERROR", "timeout")
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = DeliveryHarness(realtime, null, main.dispatcher, files = files)
+        assertTrue(h.sends.add(conv, pdf, null))
+
+        val result = h.runtime.flushInBackground()
+
+        assertEquals("the file is still queued", ListenableWorker.Result.retry(), result)
     }
 
     @Test

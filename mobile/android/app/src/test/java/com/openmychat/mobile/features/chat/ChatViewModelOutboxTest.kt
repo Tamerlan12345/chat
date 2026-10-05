@@ -239,6 +239,24 @@ class ChatViewModelOutboxTest {
     }
 
     @Test
+    fun aPreviousAccountsFileNeverGoesUpForAnotherAccount() {
+        val pdf = PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
+        files.picked[pdf.uri] = pdf
+        realtime.connectionState.value = ConnectionState.Connecting
+        directChat().sendAttachment(pdf.uri)
+        delivery.session.token.value = null
+
+        delivery.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+        delivery.session.token.value = "carol"
+        realtime.me = 99
+        realtime.connectionState.value = ConnectionState.Connected
+
+        assertTrue(files.uploads.isEmpty())
+        assertTrue(textFrames.isEmpty())
+        assertTrue(delivery.sends.uploads.value.isEmpty())
+    }
+
+    @Test
     fun aFileIsKeptBeforeItIsQueuedSoItSurvivesTheProcess() {
         val pdf = PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
         files.picked[pdf.uri] = pdf

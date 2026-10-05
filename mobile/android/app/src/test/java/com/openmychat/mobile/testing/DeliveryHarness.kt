@@ -88,7 +88,7 @@ class DeliveryHarness(
     val backend = FakeDeliveryBackend(chat)
     private val clock = { dispatcher.scheduler.currentTime }
     val engine = DeliveryEngine(scope, store, RealtimeDeliveryLink(realtime, session), backend, clock)
-    val sends = AttachmentSends(scope, uploadStore, files, engine, clock)
+    val sends = AttachmentSends(scope, uploadStore, files, engine, clock, owner = { session.currentUserId })
     var flushesScheduled = 0
         private set
     val runtime = DeliveryRuntime(engine, sends, session, realtime, scope) { flushesScheduled++ }
