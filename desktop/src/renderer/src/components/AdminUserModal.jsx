@@ -7,6 +7,8 @@ import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
 import FilePolicyAdmin from './FilePolicyAdmin';
 import UpdatesAdmin from './UpdatesAdmin';
+import RegistrationAllowlistAdmin from './RegistrationAllowlistAdmin';
+import ReportsAdmin from './ReportsAdmin';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
 import { isValidMessageWindowValue } from '../lib/message-actions.mjs';
 
@@ -68,7 +70,7 @@ export default function AdminUserModal({
 
   // Разделы консоли управления сервером
   const [activeTab, setActiveTab] = useState(superAdmin ? 'server' : 'users');
-  // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
+  // 'server' | 'users' | 'allowlist' | 'reports' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
 
   const [loading, setLoading] = useState(false);
   const [showToast, toastElement] = useInlineToast();
@@ -1196,6 +1198,20 @@ export default function AdminUserModal({
               {superAdmin && (
                 <>
                   <button
+                    className={`admin-nav-item ${activeTab === 'allowlist' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('allowlist')}
+                  >
+                    <Icon name="circleCheck" size={16} /> <span>Разрешённые адреса</span>
+                  </button>
+
+                  <button
+                    className={`admin-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('reports')}
+                  >
+                    <Icon name="alert" size={16} /> <span>Жалобы</span>
+                  </button>
+
+                  <button
                     className={`admin-nav-item ${activeTab === 'conferences' ? 'active' : ''}`}
                     onClick={() => setActiveTab('conferences')}
                   >
@@ -2248,6 +2264,18 @@ export default function AdminUserModal({
                     </table>
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'allowlist' && superAdmin && (
+              <div className="admin-tab-pane">
+                <RegistrationAllowlistAdmin serverUrl={serverUrl} showToast={showToast} />
+              </div>
+            )}
+
+            {activeTab === 'reports' && superAdmin && (
+              <div className="admin-tab-pane">
+                <ReportsAdmin serverUrl={serverUrl} showToast={showToast} />
               </div>
             )}
 
