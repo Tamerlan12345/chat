@@ -63,6 +63,13 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import com.openmychat.mobile.features.account.BlockConfirmDialog
+import com.openmychat.mobile.features.attachments.AttachmentChooserSheet
+import com.openmychat.mobile.features.attachments.AttachmentIntents
+import com.openmychat.mobile.features.attachments.ImageViewer
+import com.openmychat.mobile.features.attachments.MessageAttachment
+import com.openmychat.mobile.features.attachments.TransferState
+import com.openmychat.mobile.features.attachments.rememberAttachmentPickers
+import androidx.compose.ui.platform.LocalContext
 import com.openmychat.mobile.features.account.ReportSheet
 import com.openmychat.mobile.features.account.SafetyNotices
 import com.openmychat.mobile.ui.components.CentyTextButton
@@ -110,6 +117,24 @@ interface ChatActions {
     fun onReportPeer() {}
     fun onBlockPeer() {}
     fun onUnblockPeer() {}
+
+    /** Files can be sent here: the composer offers «Прикрепить». */
+    val canAttach: Boolean get() = false
+
+    /** A photo or document picked in the system picker (content URI). */
+    fun onAttach(uri: String) {}
+
+    /** Tap on an attachment tile: an image opens in the viewer, a file downloads and opens. */
+    fun onOpenAttachment(message: Message) {}
+
+    /** «Отменить загрузку» on a file still going up. */
+    fun onCancelUpload(message: Message) {}
+
+    /** Download of an attachment; read in composition, so its progress redraws the tile. */
+    fun transfer(fileId: Long): TransferState? = null
+
+    /** The server thumbnail of an image attachment. */
+    fun thumbnailUrl(attachment: MessageAttachment): String? = null
 }
 
 @Composable
@@ -134,6 +159,11 @@ fun ChatScreen(
     val jumpUnavailable by viewModel.jumpUnavailable.collectAsState()
     val composerLock by viewModel.composerLock.collectAsState()
     val reportSheet by viewModel.reports.sheet.collectAsState()
+    // Kept as State: the actions read it during composition of each tile.
+    val transfers = viewModel.opener.transfers.collectAsState()
+    val viewerImage by viewModel.opener.viewer.collectAsState()
+    val context = LocalContext.current
+    val noApp = stringResource(R.string.attachment_no_app)
     val jumpUnavailableText = stringResource(R.string.chat_jump_unavailable)
     val snackbar = LocalSnackbarHostState.current
     val haptics = rememberHaptics()
@@ -145,6 +175,17 @@ fun ChatScreen(
     LifecycleResumeEffect(viewModel) {
         viewModel.onVisibilityChanged(true)
         onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+    }
+
+    // Отказ в файле, сбой загрузки или скачивания — по-русски, словами сервера.
+    LaunchedEffect(viewModel) {
+        viewModel.notices.collect { snackbar.showSnackbar(it) }
+    }
+    // Скачанный файл открывает другое приложение; если такого нет — сказать.
+    LaunchedEffect(viewModel) {
+        viewModel.opener.openRequests.collect { request ->
+            if (!AttachmentIntents.open(context, request)) snackbar.showSnackbar(noApp)
+        }
     }
 
     // Найденное сообщение слишком давнее: сказать, что показаны последние.
@@ -185,10 +226,25 @@ fun ChatScreen(
             override fun onReportPeer() = viewModel.reportPeer(title)
             override fun onBlockPeer() = viewModel.block(title)
             override fun onUnblockPeer() = viewModel.unblock()
+            override val canAttach: Boolean = viewModel.canAttach
+            override fun onAttach(uri: String) = viewModel.sendAttachment(uri)
+            override fun onOpenAttachment(message: Message) = viewModel.openAttachment(message)
+            override fun onCancelUpload(message: Message) = viewModel.cancelUpload(message)
+            override fun transfer(fileId: Long): TransferState? = transfers.value[fileId]
+            override fun thumbnailUrl(attachment: MessageAttachment) = viewModel.opener.thumbnailUrl(attachment)
         }
     }
     viewModel.blocks?.let { SafetyNotices(it) }
     reportSheet?.let { ReportSheet(viewModel.reports, it) }
+    viewerImage?.let { image ->
+        ImageViewer(
+            attachment = image,
+            thumbnailUrl = viewModel.opener.thumbnailUrl(image),
+            transfer = image.fileId?.let { transfers.value[it] },
+            onRetry = { viewModel.opener.retry(image) },
+            onDismiss = viewModel.opener::closeViewer
+        )
+    }
 
     ChatContent(
         title = title,
@@ -248,6 +304,8 @@ fun ChatContent(
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
     var confirmBlock by rememberSaveable { mutableStateOf(false) }
     var replyToId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var choosingAttachment by rememberSaveable { mutableStateOf(false) }
+    val pickers = rememberAttachmentPickers { uri -> actions.onAttach(uri.toString()) }
     val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
     val menuState = rememberMessageMenuState()
@@ -368,12 +426,29 @@ fun ChatContent(
                     onCancelReply = { replyToId = null },
                     onSent = { replyToId = null },
                     actions = actions,
-                    landing = landing
+                    landing = landing,
+                    onAttach = if (actions.canAttach) {
+                        { choosingAttachment = true }
+                    } else null
                 )
             }
         }
         LandingOverlay(landing)
       }
+    }
+
+    if (choosingAttachment) {
+        AttachmentChooserSheet(
+            onPhoto = {
+                choosingAttachment = false
+                pickers.pickPhoto()
+            },
+            onFile = {
+                choosingAttachment = false
+                pickers.pickFile()
+            },
+            onDismiss = { choosingAttachment = false }
+        )
     }
 
     if (confirmBlock) {

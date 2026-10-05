@@ -8,6 +8,7 @@ import com.openmychat.mobile.data.model.FilePolicy
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.MessageType
 import com.openmychat.mobile.data.model.SendState
+import com.openmychat.mobile.data.model.RolePermissions
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.repository.PickedFile
 import com.openmychat.mobile.features.attachments.TransferState
@@ -50,12 +51,12 @@ class ChatViewModelAttachmentTest {
     private val pdf = PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
     private val photo = PickedFile("content://media/2", "IMG_2001.jpg", 50_000, "image/jpeg", width = 4000, height = 3000)
 
-    private fun directChat() = ChatViewModel(
+    private fun directChat(session: FakeSessionRepository = FakeSessionRepository()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = alice,
         chatRepository = chat,
         realtimeRepository = realtime,
-        sessionRepository = FakeSessionRepository(),
+        sessionRepository = session,
         activeConversations = ActiveConversationRegistry(),
         historyCache = ChatHistoryCache(FakeSessionRepository()),
         attachments = files
@@ -269,5 +270,14 @@ class ChatViewModelAttachmentTest {
 
         vm.openAttachment(message(id = 6, from = alice, to = ME, text = "просто текст"))
         assertEquals(1, files.downloads.size)
+    }
+
+    @Test
+    fun aRoleThatCannotUploadGetsNoAttachButton() {
+        assertTrue(directChat().canAttach)
+        val session = FakeSessionRepository().apply {
+            currentUser.value = currentUser.value!!.copy(permissions = RolePermissions(canUploadFiles = false))
+        }
+        assertEquals(false, directChat(session).canAttach)
     }
 }

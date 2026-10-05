@@ -190,6 +190,10 @@ class ChatViewModel @AssistedInject constructor(
     /** Скачать и открыть вложение; картинки — во встроенном просмотре. */
     val opener = AttachmentOpener(attachments, viewModelScope, ::notice)
 
+    /** Роль разрешает загрузку файлов (сервер: can_upload_files или администратор). */
+    val canAttach: Boolean
+        get() = sessionRepository.isAdmin || sessionRepository.currentUser.value?.permissions?.canUploadFiles != false
+
     /** Тап по плитке вложения. */
     fun openAttachment(message: Message) {
         Attachments.of(message)?.let(opener::open)

@@ -42,10 +42,10 @@ import androidx.compose.ui.unit.dp
 import com.openmychat.mobile.R
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.Message
-import com.openmychat.mobile.data.model.MessageType
+import com.openmychat.mobile.features.attachments.Attachments
+import com.openmychat.mobile.features.attachments.MessageAttachmentView
 import com.openmychat.mobile.ui.components.BubbleMeta
 import com.openmychat.mobile.ui.components.DeliveryMark
-import com.openmychat.mobile.ui.components.FileAttachmentTile
 import com.openmychat.mobile.ui.components.LiftedMessage
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
 import com.openmychat.mobile.ui.components.MessageAction
@@ -115,12 +115,15 @@ internal fun ChatBubbleRow(
     val edited = !message.updatedAt.isNullOrBlank() && !message.isDeleted
     val meta = if (item.showsMeta) BubbleMeta(time = time, edited = edited, mark = item.mark, drawMarkIn = fresh && isOwn) else null
     val senderName = if (showSenderName) message.senderName else null
-    val fileName = message.fileOriginalName ?: message.metadata?.fileName ?: message.text
-    val fileSize = message.metadata?.size?.let { formatBytes(it) }
-    val isFile = message.type == MessageType.FILE && !message.isDeleted
+    val attachment = remember(message) { Attachments.of(message) }
+    val fileSize = attachment?.size?.let { formatBytes(it) }
+    // Read here, in composition: a download that moves on redraws this row.
+    val transfer = attachment?.fileId?.let(actions::transfer)
+    val thumbnail = attachment?.let(actions::thumbnailUrl)
 
     // Draws the bubble without interaction: in the list, and again lifted over the menu scrim.
-    val bubble: @Composable (Modifier, Modifier) -> Unit = { outer, surface ->
+    // The middle modifier is the attachment's own tap (open) and long press (menu).
+    val bubble: @Composable (Modifier, Modifier, Modifier) -> Unit = { outer, tile, surface ->
         MessageBubble(
             own = isOwn,
             position = item.position,
@@ -134,9 +137,19 @@ internal fun ChatBubbleRow(
             failed = failed,
             onRetry = { actions.onRetrySend(message) },
             onDiscard = { actions.onDiscardFailed(message) },
-            attachment = if (isFile) {
-                { FileAttachmentTile(name = fileName, sizeLabel = fileSize) }
-            } else null
+            attachment = attachment?.let { file ->
+                {
+                    MessageAttachmentView(
+                        attachment = file,
+                        upload = message.upload,
+                        transfer = transfer,
+                        thumbnailUrl = thumbnail,
+                        sizeLabel = fileSize,
+                        modifier = tile,
+                        onCancelUpload = { actions.onCancelUpload(message) }
+                    )
+                }
+            }
         )
     }
 
@@ -170,12 +183,22 @@ internal fun ChatBubbleRow(
                     onAction = ::perform,
                     // Reads the row's latest bubble, so a status that changes while the menu is
                     // open shows on the lifted copy too.
-                    content = { latestBubble.value(Modifier, Modifier) }
+                    content = { latestBubble.value(Modifier, Modifier, Modifier) }
                 )
             )
         }
     }
     val canReply = !message.isDeleted && !failed
+    // QA D4: a tap on the file opens it; the long press keeps the menu.
+    val openLabel = attachment?.let {
+        stringResource(if (it.isImage) R.string.attachment_open_image else R.string.attachment_open, it.name)
+    }
+    val tileModifier = if (attachment == null) Modifier else Modifier.combinedClickable(
+        onClick = { actions.onOpenAttachment(message) },
+        onClickLabel = openLabel,
+        onLongClick = openMenu,
+        onLongClickLabel = strings.actions
+    )
     val hairline = with(LocalDensity.current) { 1.dp.roundToPx() }
     val textInset = with(LocalDensity.current) { Offset(12.dp.toPx(), 7.dp.toPx()) }
 
@@ -208,6 +231,7 @@ internal fun ChatBubbleRow(
 
                         }
                     },
+                    tileModifier,
                     Modifier
                         // Kept for the long press only; onPlaced is cheap where onGloballyPositioned
                         // would dispatch on every scroll frame.
@@ -268,7 +292,7 @@ internal fun rememberChatRowStrings(): ChatRowStrings {
 }
 
 @Composable
-private fun formatBytes(bytes: Long): String = when {
+internal fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> stringResource(R.string.file_size_bytes, bytes)
     bytes < 1024 * 1024 -> stringResource(R.string.file_size_kb, bytes / 1024.0)
     else -> stringResource(R.string.file_size_mb, bytes / (1024.0 * 1024))

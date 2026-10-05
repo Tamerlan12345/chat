@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,6 +70,7 @@ fun attachmentKind(name: String, mime: String? = null): AttachmentKind {
 /**
  * A file in a bubble (UI layer v2): glyph tile with the extension, name, size and an open action.
  * Upload states are drawn here for the send queue (Task 15): [progress] shows a ring, [failed] a retry.
+ * [status] replaces the size line (download progress, the server's reason); [onCancel] stops an upload.
  */
 @Composable
 fun FileAttachmentTile(
@@ -79,7 +81,10 @@ fun FileAttachmentTile(
     progress: Float? = null,
     failed: Boolean = false,
     onRetry: (() -> Unit)? = null,
-    onOpen: (() -> Unit)? = null
+    onOpen: (() -> Unit)? = null,
+    status: String? = null,
+    statusIsError: Boolean = false,
+    onCancel: (() -> Unit)? = null
 ) {
     val tokens = CentyTheme.tokens
     val shape = RoundedCornerShape(CentyRadius.chip)
@@ -124,16 +129,20 @@ fun FileAttachmentTile(
             Text(name, style = MaterialTheme.typography.bodyMedium, color = tokens.textStrong, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
                 when {
+                    status != null -> status
                     failed -> stringResource(R.string.attachment_failed)
                     progress != null -> stringResource(R.string.attachment_uploading, (progress * 100).toInt())
                     else -> sizeLabel ?: stringResource(R.string.chat_file)
                 },
                 style = MaterialTheme.typography.labelSmall,
                 // textDim on the tile drops to 4.1:1 in dark; the size reads in textSecondary.
-                color = if (failed) tokens.dangerText else tokens.textSecondary
+                color = if (failed || statusIsError) tokens.dangerText else tokens.textSecondary
             )
         }
         when {
+            progress != null && onCancel != null -> IconButton(onClick = onCancel) {
+                Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.attachment_cancel), tint = tokens.textSecondary)
+            }
             failed && onRetry != null -> IconButton(onClick = onRetry) {
                 Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.action_retry), tint = tokens.accentText)
             }
@@ -157,6 +166,8 @@ fun ImageAttachmentTile(
     progress: Float? = null,
     failed: Boolean = false,
     onRetry: (() -> Unit)? = null,
+    /** Stops the upload: the ring becomes a button with a cross. */
+    onCancel: (() -> Unit)? = null,
     image: (@Composable () -> Unit)? = null
 ) {
     val tokens = CentyTheme.tokens
@@ -178,6 +189,11 @@ fun ImageAttachmentTile(
                 if (failed && onRetry != null) {
                     IconButton(onClick = onRetry) {
                         Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.action_retry), tint = Color.White)
+                    }
+                } else if (progress != null && onCancel != null) {
+                    IconButton(onClick = onCancel) {
+                        UploadProgressRing(progress, Modifier.size(32.dp), track = Color.White.copy(alpha = 0.3f), ring = Color.White)
+                        Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.attachment_cancel), tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 } else if (progress != null) {
                     UploadProgressRing(progress, Modifier.size(32.dp), track = Color.White.copy(alpha = 0.3f), ring = Color.White)
