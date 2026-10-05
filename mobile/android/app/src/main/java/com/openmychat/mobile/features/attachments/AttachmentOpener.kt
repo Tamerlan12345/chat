@@ -22,8 +22,11 @@ sealed interface TransferState {
     data class Ready(val file: File) : TransferState
 }
 
-/** A downloaded file to hand to another app (`ACTION_VIEW` through the FileProvider). */
-data class OpenRequest(val file: File, val name: String, val mimeType: String?)
+/**
+ * A downloaded file to hand to another app (`ACTION_VIEW` through the FileProvider). It carries no
+ * type: the sender's `mimeType` is not trusted ([AttachmentIntents.viewType]).
+ */
+data class OpenRequest(val file: File, val name: String)
 
 /**
  * A tap on an attachment: an image opens in the in-app viewer (thumbnail first, the full picture
@@ -79,7 +82,7 @@ class AttachmentOpener(
             try {
                 val file = repository.download(id, attachment.name) { progress -> set(id, TransferState.Running(progress)) }
                 set(id, TransferState.Ready(file))
-                if (openWhenReady) requests.trySend(OpenRequest(file, attachment.name, attachment.mimeType))
+                if (openWhenReady) requests.trySend(OpenRequest(file, attachment.name))
             } catch (e: CancellationException) {
                 _transfers.update { it - id }
                 throw e

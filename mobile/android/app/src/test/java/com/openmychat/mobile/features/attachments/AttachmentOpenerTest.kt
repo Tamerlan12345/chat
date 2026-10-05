@@ -51,7 +51,7 @@ class AttachmentOpenerTest {
         gate.complete(file)
 
         assertEquals(TransferState.Ready(file), opener.transfers.value[42])
-        assertEquals(listOf(OpenRequest(file, "отчёт.pdf", "application/pdf")), opened)
+        assertEquals(listOf(OpenRequest(file, "отчёт.pdf")), opened)
     }
 
     @Test
