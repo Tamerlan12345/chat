@@ -241,7 +241,7 @@ class ChatContentTest {
                 )
             }
         }
-        compose.onNodeWithText("Не удалось обновить").assertIsDisplayed()
+        compose.onNodeWithText("Не удалось обновить переписку").assertIsDisplayed()
         compose.onNodeWithText("Сообщение 1").assertIsDisplayed()
         compose.onNodeWithText("Повторить").performClick()
         assertEquals(1, retries)

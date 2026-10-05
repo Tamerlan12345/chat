@@ -11,7 +11,6 @@
     <string name="action_reply">Ответить</string>
     <string name="action_edit">Редактировать</string>
     <string name="action_back">Назад</string>
-    <string name="action_refresh">Обновить</string>
     <string name="loading">Загрузка…</string>
     <string name="error_check_connection">Проверьте подключение к интернету и повторите попытку.</string>
 
@@ -145,7 +144,7 @@
     <string name="chat_cancel_reply">Отменить ответ</string>
     <string name="chat_attach">Прикрепить файл</string>
     <string name="chat_jump_latest">К последним сообщениям</string>
-    <string name="chat_refresh_failed">Не удалось обновить</string>
+    <string name="chat_refresh_failed">Не удалось обновить переписку</string>
     <string name="chat_typing_bubble">Собеседник печатает</string>
     <string name="attachment_failed">Не загрузилось</string>
     <string name="attachment_uploading">Загрузка: %1$d%%</string>
@@ -186,7 +185,7 @@
     <string name="people_scope_all">Все</string>
     <string name="people_scope_departments">Отделы</string>
     <string name="people_online_filter">В сети</string>
-    <string name="people_refresh_failed">Не удалось обновить список</string>
+    <string name="people_refresh_failed">Не удалось обновить список сотрудников</string>
     <string name="people_error">Не удалось загрузить сотрудников</string>
     <string name="people_empty">В справочнике пока никого нет</string>
     <string name="people_empty_message">Когда администратор добавит сотрудников, они появятся здесь.</string>
@@ -409,12 +408,12 @@
     <string name="blocked_footer">Вы не можете писать друг другу, пока блокировка не снята.</string>
     <string name="blocked_unblock_person">Разблокировать: %1$s</string>
     <string name="blocked_unknown_name">Пользователь</string>
-    <string name="blocked_load_failed">Не удалось загрузить список</string>
+    <string name="blocked_load_failed">Не удалось загрузить список заблокированных</string>
     <string name="blocked_unblock_failed">Не удалось разблокировать</string>
     <string name="delete_title">Удаление аккаунта</string>
     <string name="delete_warning">Аккаунт и личные данные (имя, почта, телефон, фото) будут удалены безвозвратно. Отправленные сообщения останутся у собеседников с подписью «Удалённый сотрудник». Восстановить аккаунт нельзя.</string>
     <string name="delete_password_label">Пароль для подтверждения</string>
-    <string name="delete_in_progress">Удаление…</string>
+    <string name="delete_in_progress">Удаление аккаунта…</string>
     <string name="delete_dialog_title">Удалить аккаунт навсегда?</string>
     <string name="delete_dialog_message">Это действие нельзя отменить.</string>
 

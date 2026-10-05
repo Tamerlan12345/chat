@@ -51,9 +51,9 @@ private fun ComponentsPreview() {
                 DeliveryGlyph(DeliveryMark.FAILED)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PriorityBadge(AnnouncementPriority.NORMAL)
-                PriorityBadge(AnnouncementPriority.URGENT)
-                PriorityBadge(AnnouncementPriority.CRITICAL)
+                PriorityMarker(AnnouncementPriority.NORMAL)
+                PriorityMarker(AnnouncementPriority.URGENT)
+                PriorityMarker(AnnouncementPriority.CRITICAL)
             }
             TypingIndicator("печатает")
             InlineNotice("Не удалось обновить список чатов", actionLabel = "Повторить", onAction = {})

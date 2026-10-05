@@ -27,7 +27,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.State
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -269,7 +268,6 @@ private fun PermissionNotice() {
         Modifier
             .widthIn(max = 360.dp)
             .background(tokens.dangerSoft, RoundedCornerShape(12.dp))
-            .border(1.dp, tokens.dangerLine, RoundedCornerShape(12.dp))
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
