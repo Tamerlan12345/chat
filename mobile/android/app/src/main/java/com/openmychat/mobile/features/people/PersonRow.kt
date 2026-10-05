@@ -20,6 +20,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import com.openmychat.mobile.ui.components.textEdgeAfter
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -67,7 +70,9 @@ fun PersonRow(
     extensionHighlights: List<IntRange> = emptyList(),
     /** Отступ слева для вложенности в «Отделах». */
     indent: Dp = 0.dp,
-    background: Color = CentyTheme.tokens.list
+    background: Color = CentyTheme.tokens.list,
+    /** A hairline under the row from the text edge (polish pass, rule 1); not after a section's last row. */
+    divider: Boolean = false
 ) {
     val tokens = CentyTheme.tokens
     val interaction = remember { MutableInteractionSource() }
@@ -81,11 +86,19 @@ fun PersonRow(
         val shift = label.length - person.extension!!.length
         highlighted(label, extensionHighlights.map { (it.first + shift)..(it.last + shift) }, tokens.accentText)
     }
+    val hairline = tokens.border
+    val textEdge = textEdgeAfter(PersonAvatar) + indent
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .background(fill)
+            .drawBehind {
+                if (divider) {
+                    val y = size.height - 0.5.dp.toPx()
+                    drawLine(hairline, Offset(textEdge.toPx(), y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                }
+            }
             .clickable(interactionSource = interaction, indication = ripple(), role = Role.Button, onClick = onClick)
             .padding(start = 16.dp + indent, end = 16.dp, top = 8.dp, bottom = 8.dp)
             .testTag("person-${person.id}"),
@@ -95,7 +108,7 @@ fun PersonRow(
             name = person.fullName,
             avatarUrl = person.avatarUrl,
             status = person.status,
-            size = 40.dp,
+            size = PersonAvatar,
             ringColor = background,
             modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared))
         )
@@ -138,3 +151,5 @@ fun PersonRow(
         }
     }
 }
+
+private val PersonAvatar = 40.dp

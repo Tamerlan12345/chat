@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -225,7 +226,7 @@ fun PeopleContent(
                     focusRequester = focusRequester,
                     onFocusChange = { searchFocused = it },
                     testTag = "people-search",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
                 )
                 AnimatedVisibility(
                     visible = !searchActive,
@@ -253,7 +254,7 @@ fun PeopleContent(
                             text = stringResource(R.string.people_refresh_failed),
                             actionLabel = stringResource(R.string.action_retry),
                             onAction = actions::onRefresh,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("people-refresh-failed")
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("people-refresh-failed")
                         )
                     }
                     val pull = rememberPullToRefreshState()
@@ -295,10 +296,11 @@ fun PeopleContent(
                                     state = resultsState,
                                     contentPadding = padding
                                 ) {
-                                    items(state.results, key = { it.person.id }) { match ->
+                                    itemsIndexed(state.results, key = { _, it -> it.person.id }) { index, match ->
                                         PersonRow(
                                             match.person,
                                             onClick = { actions.onOpenPerson(match.person) },
+                                            divider = index < state.results.lastIndex,
                                             highlights = match.highlights,
                                             subtitleHighlights = match.subtitleHighlights,
                                             extensionHighlights = match.extensionHighlights
@@ -409,9 +411,8 @@ private fun EmptyResult(state: PeopleUiState, actions: PeopleActions) {
         else -> EmptyState(
             illustration = Illustration.INBOX,
             title = stringResource(R.string.people_empty),
-            message = stringResource(R.string.people_empty_message),
-            actionLabel = stringResource(R.string.action_refresh),
-            onAction = actions::onRefresh
+            // No «Обновить»: the list refreshes with a pull (polish pass, rule 5).
+            message = stringResource(R.string.people_empty_message)
         )
     }
 }
@@ -441,12 +442,12 @@ private fun AlphabetList(listState: LazyListState, sections: List<LetterSection>
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(tokens.list)
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                             .semantics { heading() }
                     )
                 }
-                items(section.people, key = { it.id }, contentType = { "person" }) { person ->
-                    PersonRow(person, onClick = { actions.onOpenPerson(person) })
+                itemsIndexed(section.people, key = { _, it -> it.id }, contentType = { _, _ -> "person" }) { index, person ->
+                    PersonRow(person, onClick = { actions.onOpenPerson(person) }, divider = index < section.people.lastIndex)
                 }
             }
         }

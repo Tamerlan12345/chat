@@ -8,7 +8,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -31,9 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Chat
-import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Call
-import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -251,7 +248,7 @@ fun PersonCardContent(
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(24.dp))
                 if (state.isSelf) {
                     CentyPrimaryButton(
                         text = stringResource(R.string.person_edit_profile),
@@ -261,11 +258,11 @@ fun PersonCardContent(
                 } else {
                     ActionRow(person, state, actions)
                 }
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(24.dp))
                 InfoGroup(person, actions)
                 if (!state.isSelf) {
-                    Spacer(Modifier.height(20.dp))
-                    SafetyGroup(person, state, actions)
+                    Spacer(Modifier.height(24.dp))
+                    PersonSafetyGroup(person, state, actions)
                 }
             }
         }
@@ -287,7 +284,7 @@ private fun StatusLine(person: Person) {
     }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("person-status")) {
         StatusDot(person.status, size = 8.dp)
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium, color = tokens.textSecondary)
     }
 }
@@ -394,7 +391,7 @@ private fun ActionTile(
                 role = Role.Button,
                 onClick = onClick
             )
-            .padding(horizontal = 4.dp, vertical = 10.dp),
+            .padding(horizontal = 4.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -554,55 +551,6 @@ private fun copyToClipboard(context: android.content.Context, value: String, sen
         }
     }
     manager.setPrimaryClip(clip)
-}
-
-/** «Пожаловаться» и «Заблокировать» / «Разблокировать» — внизу карточки, отдельно от основных действий. */
-@Composable
-private fun SafetyGroup(person: Person, state: PersonCardState, actions: PersonCardActions) {
-    val tokens = CentyTheme.tokens
-    val shape = RoundedCornerShape(CentyRadius.card)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(tokens.elevated)
-            .border(1.dp, tokens.border, shape)
-    ) {
-        SafetyRow(
-            icon = Icons.Outlined.Flag,
-            text = stringResource(R.string.safety_report),
-            color = tokens.textStrong,
-            enabled = true,
-            onClick = { actions.onReport(person) },
-            tag = "person-report"
-        )
-        HorizontalDivider(Modifier.padding(start = 52.dp), color = tokens.border)
-        SafetyRow(
-            icon = Icons.Outlined.Block,
-            text = stringResource(if (state.blocked) R.string.safety_unblock else R.string.safety_block),
-            color = if (state.blocked) tokens.accentText else tokens.dangerText,
-            enabled = !state.blockBusy,
-            onClick = { actions.onToggleBlock(person) },
-            tag = "person-block"
-        )
-    }
-}
-
-@Composable
-private fun SafetyRow(icon: ImageVector, text: String, color: Color, enabled: Boolean, onClick: () -> Unit, tag: String) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .testTag(tag),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(14.dp))
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = color)
-    }
 }
 
 /** Сотрудник не найден (удалён из справочника, нет сети и кэша). */

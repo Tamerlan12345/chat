@@ -44,6 +44,7 @@ import com.openmychat.mobile.ui.components.SkeletonBlock
 import com.openmychat.mobile.ui.components.SkeletonContainer
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.components.SectionHeader
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 
 /** Что умеет общий поиск; по умолчанию — ничего (превью и тесты). */
@@ -151,16 +152,8 @@ private fun LazyItemScope.stagger(index: Int): Modifier {
 
 private fun LazyListScope.sectionHeader(key: String, title: Int) {
     item(key = "header-$key", contentType = "header") {
-        Text(
-            stringResource(title),
-            style = MaterialTheme.typography.labelMedium,
-            color = CentyTheme.tokens.textDim,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)
-                .semantics { heading() }
-                .testTag("search-section-$key")
-        )
+        // The same section header as every list (polish pass, rules 2 and 8): titleSmall, 24 above, 8 below.
+        SectionHeader(stringResource(title), modifier = Modifier.testTag("search-section-$key"))
     }
 }
 
@@ -230,7 +223,7 @@ private fun MessageRow(hit: MessageHit, onClick: () -> Unit, modifier: Modifier 
         modifier
             .fillMaxWidth()
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag("search-message-${hit.message.id}"),
         verticalAlignment = Alignment.Top
     ) {
@@ -244,7 +237,7 @@ private fun MessageRow(hit: MessageHit, onClick: () -> Unit, modifier: Modifier 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     stringResource(R.string.search_message_in, sender, where),
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     color = tokens.textStrong,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -270,7 +263,7 @@ private fun MessageSkeleton() {
     SkeletonContainer(Modifier.fillMaxWidth().testTag("search-messages-loading")) {
         Column {
             repeat(2) { index ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     SkeletonBlock(Modifier.padding(end = 12.dp).width(40.dp).heightIn(min = 40.dp), androidx.compose.foundation.shape.CircleShape)
                     Column(Modifier.weight(1f)) {
                         SkeletonBlock(Modifier.fillMaxWidth(if (index == 0) 0.45f else 0.35f).heightIn(min = 14.dp))
