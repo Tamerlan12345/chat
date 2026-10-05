@@ -120,3 +120,56 @@ final class SearchHitTimeTests: XCTestCase {
         XCTAssertEqual(SearchHitTime.text(for: earlier, now: now, timeZone: almaty), "2 окт., 16:00")
     }
 }
+
+/// The history window on its own, with a server that answers like `/api/messages`.
+@MainActor
+final class HistoryWindowTests: XCTestCase {
+    /// A dialog with messages 1...`last`; records the requests.
+    private final class Server {
+        let last: Int64
+        var requests: [String] = []
+
+        init(last: Int64) {
+            self.last = last
+        }
+
+        func before(_ beforeId: Int64, _ limit: Int) -> [Message] {
+            requests.append("before \(beforeId) \(limit)")
+            let first = max(1, beforeId - Int64(limit))
+            return first < beforeId ? (first..<beforeId).map { message($0) } : []
+        }
+
+        func after(_ afterId: Int64, _ limit: Int) -> [Message] {
+            requests.append("after \(afterId) \(limit)")
+            let end = min(last, afterId + Int64(limit))
+            return afterId < end ? ((afterId + 1)...end).map { message($0) } : []
+        }
+
+        private func message(_ id: Int64) -> Message {
+            TestModels.message(id: id, from: 2, to: 1)
+        }
+    }
+
+    func testTheWindowHoldsTheMessageItsContextAndEverythingNewer() async throws {
+        let server = Server(last: 300)
+        let window = try await HistoryWindow.around(100, before: { server.before($0, $1) }, after: { server.after($0, $1) })
+        XCTAssertEqual(window?.map(\.id), Array(Int64(70)...Int64(300)), "Continuous, without repeats")
+        XCTAssertEqual(server.requests, ["before 101 31", "after 100 200", "after 300 200"])
+    }
+
+    func testTooManyNewerMessagesGiveUpInsteadOfLeavingAGap() async throws {
+        let server = Server(last: 5_000)
+        let window = try await HistoryWindow.around(100, before: { server.before($0, $1) }, after: { server.after($0, $1) })
+        XCTAssertNil(window)
+        XCTAssertEqual(server.requests.count, 1 + HistoryWindow.maxPages)
+    }
+
+    func testAMessageThatIsGoneGivesUp() async throws {
+        let window = try await HistoryWindow.around(
+            50,
+            before: { _, _ in [TestModels.message(id: 48, from: 2, to: 1), TestModels.message(id: 49, from: 2, to: 1)] },
+            after: { _, _ in [] }
+        )
+        XCTAssertNil(window)
+    }
+}

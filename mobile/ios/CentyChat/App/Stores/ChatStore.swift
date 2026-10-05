@@ -97,23 +97,32 @@ public final class ChatStore: RealtimeEventHandling {
     /// Opens the conversation at `messageId` (a search hit): the history around it is loaded next to
     /// the newest page. Returns false when the message is not there (deleted, no access).
     public func loadAround(_ messageId: Int64) async -> Bool {
+        // What is on screen is already continuous up to the newest message.
         if messages.contains(where: { $0.id == messageId }) { return true }
         let repository = self.repository
         let conversation = self.conversation
+        let window: [Message]?
         do {
-            // `beforeId` is exclusive: +1 brings the message itself with the older page.
-            async let older = repository.messages(in: conversation, limit: Self.aroundPage, beforeId: messageId + 1)
-            async let newer = repository.messages(in: conversation, limit: Self.aroundPage, afterId: messageId)
-            let page = try await older + newer
-            messages = Self.merged(page: page, into: messages)
+            window = try await HistoryWindow.around(
+                messageId,
+                before: { beforeId, limit in
+                    try await repository.messages(in: conversation, limit: limit, beforeId: beforeId)
+                },
+                after: { afterId, limit in
+                    try await repository.messages(in: conversation, limit: limit, afterId: afterId)
+                }
+            )
         } catch {
             Log.chat.error("Loading the history around a message failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
-        return messages.contains { $0.id == messageId }
+        // Gone or too far back: the chat stays on its newest page, without a second stretch.
+        guard let window, let newest = window.last?.id else { return false }
+        // The window replaces the history; what arrived meanwhile (newer ids, pending) stays.
+        let arrived = messages.filter { $0.id <= 0 || $0.id > newest }
+        messages = Self.merged(page: window, into: arrived)
+        return true
     }
-
-    static let aroundPage = 30
 
     /// Server history merged with what is on screen: one copy per id (the page wins), ordered by
     /// id, optimistic messages (negative ids) last in the order they were sent.

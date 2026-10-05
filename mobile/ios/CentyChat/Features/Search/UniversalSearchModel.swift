@@ -299,9 +299,17 @@ public enum Snippet {
     }
 }
 
-/// When a found message was written, for the result row.
+/// When a found message was written, for the result row: «09:32» today, «2 окт., 16:00» otherwise.
+/// Always Russian and 24-hour, like the inbox, whatever the device region.
 public enum SearchHitTime {
     public static func text(for date: Date, now: Date = Date(), timeZone: TimeZone = .current) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        formatter.dateFormat = calendar.isDate(date, inSameDayAs: now) ? "HH:mm" : "d MMM, HH:mm"
+        return formatter.string(from: date)
     }
 }
