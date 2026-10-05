@@ -267,6 +267,7 @@ class FakeAttachmentRepository : AttachmentRepository {
     /** The picked document stands in for its own private copy. */
     override suspend fun keep(file: PickedFile, key: String): PickedFile {
         kept += key
+        keptNow += key
         return file
     }
 
@@ -274,7 +275,12 @@ class FakeAttachmentRepository : AttachmentRepository {
         discarded += file.uri
     }
 
-    override suspend fun pruneKept(keys: Set<String>) = Unit
+    /** Keys whose private copies exist now (a prune deletes every copy not in its set). */
+    val keptNow = mutableSetOf<String>()
+
+    override suspend fun pruneKept(keys: Set<String>) {
+        keptNow.retainAll(keys)
+    }
 
     override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse {
         uploads += file

@@ -76,6 +76,12 @@ class AttachmentSends(
     @Volatile private var online = false
     private var started = false
 
+    /**
+     * The account each listed file belongs to: the queue's owner on disk when its row was read, or the
+     * account that added it. A file goes up, and enters the outbox, only as that account.
+     */
+    private val owners = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /** Loads the files that waited across a restart and sends them whenever [connected] is true. */
     @Synchronized
     fun start(connected: Flow<Boolean>) {
@@ -119,6 +125,10 @@ class AttachmentSends(
         engine.awaitReady()
         restored = true
         val stored = runCatching { store.all() }.getOrDefault(emptyList())
+        // Rows are read once the engine checked the owner: they belong to the owner on disk (rows
+        // of no named account are never sent; the next claim wipes them).
+        owners.clear()
+        engine.ownerOnDisk?.let { account -> stored.forEach { owners[it.clientMsgId] = account } }
         _uploads.value = stored.map { Upload(it) }
         // A copy is needed only while its file waits to go up; the rest are left from a past process.
         runCatching { files.pruneKept(stored.mapTo(HashSet()) { it.clientMsgId }) }
@@ -134,7 +144,16 @@ class AttachmentSends(
         if (!engine.ready.value || engine.ownerOnDisk != account) return false
         restore()
         val key = DeliveryEngine.newClientMsgId()
-        val kept = runCatching { files.keep(picked, key) }.getOrNull() ?: return false
+        // The copy and its row are written under the same lock as a prune of copies against rows,
+        // so a prune that read the rows before this one never deletes this copy.
+        val pending = loaded.withLock { keep(conversation, picked, replyToId, key, account) } ?: return false
+        _uploads.update { it + Upload(pending) }
+        if (online) launchUpload(key)
+        return true
+    }
+
+    private suspend fun keep(conversation: String, picked: PickedFile, replyToId: Long?, key: String, account: Long): PendingUpload? {
+        val kept = runCatching { files.keep(picked, key) }.getOrNull() ?: return null
         val pending = PendingUpload(
             clientMsgId = key,
             conversation = conversation,
@@ -153,11 +172,10 @@ class AttachmentSends(
             throw e
         } catch (e: Exception) {
             files.discard(kept)
-            return false
+            return null
         }
-        _uploads.update { it + Upload(pending) }
-        if (online) launchUpload(key)
-        return true
+        owners[key] = account
+        return pending
     }
 
     /** «Повторить» on a refused file: it goes up again (the server's reason is cleared). */
@@ -178,6 +196,7 @@ class AttachmentSends(
             retries.remove(clientMsgId)?.cancel()
         }
         _uploads.update { list -> list.filter { it.pending.clientMsgId != clientMsgId } }
+        owners.remove(clientMsgId)
         scope.launch {
             runCatching { store.remove(clientMsgId) }
             runCatching { files.discard(upload.pending.toPicked()) }
@@ -201,20 +220,24 @@ class AttachmentSends(
         }
         _uploads.value = emptyList()
         _handedOver.value = emptyMap()
-        loaded.withLock { restored = false }
-        // A copy goes with its row: a delete that failed (rows still there) keeps them for the account.
-        val rows = runCatching { store.all() }.getOrNull() ?: return
-        runCatching { files.pruneKept(rows.mapTo(HashSet()) { it.clientMsgId }) }
+        owners.clear()
+        loaded.withLock {
+            restored = false
+            // A copy goes with its row: a delete that failed (rows still there) keeps them for the
+            // account. Read and prune under the lock that [add] writes a copy and its row under.
+            val rows = runCatching { store.all() }.getOrNull() ?: return@withLock
+            runCatching { files.pruneKept(rows.mapTo(HashSet()) { it.clientMsgId }) }
+        }
     }
 
     /**
-     * Files go up only for the account that owns the queue, never under another account's token:
-     * the model and the disk both name the signed-in account (never while a wipe left it unnamed).
+     * A file of [account] goes up (and into the outbox) only while [account] is signed in and the
+     * queue is its own, in memory and on disk: never under another account's token, never while a
+     * wipe left the queue unnamed. Checked when the upload is launched and again when its job starts,
+     * right before the request goes out (the account may have switched in between).
      */
-    private fun ownerSignedIn(): Boolean {
-        val user = owner() ?: return false
-        return engine.ready.value && engine.state.value.me == user && engine.ownerOnDisk == user
-    }
+    private fun ownedBy(account: Long): Boolean =
+        engine.ready.value && owner() == account && engine.state.value.me == account && engine.ownerOnDisk == account
 
     /** Explicit sign-out: uploads stop, the kept copies and rows are deleted. */
     suspend fun reset() {
@@ -226,6 +249,7 @@ class AttachmentSends(
         }
         _uploads.value = emptyList()
         _handedOver.value = emptyMap()
+        owners.clear()
         runCatching { store.clear() }
         runCatching { files.pruneKept(emptySet()) }
     }
@@ -246,11 +270,12 @@ class AttachmentSends(
 
     private fun launchUpload(key: String, ignoreConnection: Boolean = false) {
         if (!ignoreConnection && !online) return
-        if (!ownerSignedIn()) return
+        val account = owners[key] ?: return
+        if (!ownedBy(account)) return
         val job = synchronized(jobs) {
             if (jobs[key]?.isActive == true) return
             retries.remove(key)?.cancel()
-            scope.launch(start = CoroutineStart.LAZY) { upload(key) }.also { job ->
+            scope.launch(start = CoroutineStart.LAZY) { upload(key, account) }.also { job ->
                 jobs[key] = job
                 job.invokeOnCompletion { synchronized(jobs) { if (jobs[key] === job) jobs.remove(key) } }
             }
@@ -258,9 +283,11 @@ class AttachmentSends(
         job.start()
     }
 
-    private suspend fun upload(key: String) {
+    private suspend fun upload(key: String, account: Long) {
         val pending = find(key)?.pending ?: return
         if (pending.failed) return
+        // The job may start after the account switched (before the old files were forgotten).
+        if (!ownedBy(account)) return
         setProgress(key, 0f)
         try {
             val done = files.upload(pending.toPicked()) { progress ->
@@ -278,7 +305,9 @@ class AttachmentSends(
                 msgType = if (Attachments.isImage(pending.name, pending.mimeType)) "image" else "file",
                 replyToId = pending.replyToId,
                 metadata = metadata,
-                clientMsgId = key
+                clientMsgId = key,
+                // Taken only into this account's queue (checked in the engine's command loop).
+                owner = account
             )
             if (!outcome.persisted) {
                 // The outbox could not be written: the file waits and goes again.
@@ -286,6 +315,7 @@ class AttachmentSends(
                 scheduleRetry(key)
                 return
             }
+            owners.remove(key)
             // In the outbox now (or already there after an earlier attempt): the row is not needed.
             if (engine.state.value.outbox.any { it.clientMsgId == key }) {
                 _handedOver.update { it + (key to LocalUpload(pending.uri, pending.name, done.fileSize, done.mimeType, pending.width, pending.height, fileId = fileId)) }

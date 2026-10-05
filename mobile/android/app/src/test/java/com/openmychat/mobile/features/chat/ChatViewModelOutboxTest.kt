@@ -45,12 +45,12 @@ class ChatViewModelOutboxTest {
     private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher, files = files)
     private val notices = mutableListOf<String>()
 
-    private fun directChat() = ChatViewModel(
+    private fun directChat(session: FakeSessionRepository = FakeSessionRepository()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = alice,
         chatRepository = chat,
         realtimeRepository = realtime,
-        sessionRepository = FakeSessionRepository(),
+        sessionRepository = session,
         activeConversations = ActiveConversationRegistry(),
         delivery = delivery.engine,
         sends = delivery.sends,
@@ -268,5 +268,21 @@ class ChatViewModelOutboxTest {
         val key = vm.shown.single().clientMsgId!!
         assertEquals(listOf(key), files.kept)
         assertFalse(files.uploads.isNotEmpty())
+    }
+
+    @Test
+    fun aMessageWrittenOnTheScreenOfAnAccountThatIsNoLongerSignedInIsNotTakenIntoTheNext() {
+        // Fix round 5: the composer states its account; another account's queue never takes it.
+        val vm = directChat(delivery.session) // the previous account's chat screen, still open
+        delivery.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+        assertEquals(99L, delivery.engine.state.value.me)
+        var cleared = 0
+
+        vm.send("текст прежнего аккаунта", replyTo = null) { cleared++ }
+
+        assertEquals("the text stays in the composer", 0, cleared)
+        assertTrue(delivery.engine.state.value.outbox.isEmpty())
+        assertTrue(delivery.store.stored.outbox.isEmpty())
+        assertTrue(textFrames.isEmpty())
     }
 }

@@ -188,6 +188,9 @@ class ChatViewModel @AssistedInject constructor(
 
     val currentUserId: Long get() = sessionRepository.currentUserId ?: 0L
 
+    /** The account this screen was opened for: what it writes belongs to that account only. */
+    private val screenAccount: Long? = sessionRepository.currentUserId
+
     private val messages: List<Message>
         get() = (_uiState.value as? ChatUiState.Content)?.messages.orEmpty()
 
@@ -442,7 +445,12 @@ class ChatViewModel @AssistedInject constructor(
                 if (editing != null) {
                     delivery.editSent(editing.id, text.trim())
                 } else {
-                    delivery.enqueue(conversationKey, text.trim(), replyToId = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT })
+                    // Written by this screen's account: never taken into another account's queue.
+                    delivery.enqueue(
+                        conversationKey, text.trim(),
+                        replyToId = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT },
+                        owner = screenAccount, ownerStated = true
+                    )
                 }
             } finally {
                 submitting = false

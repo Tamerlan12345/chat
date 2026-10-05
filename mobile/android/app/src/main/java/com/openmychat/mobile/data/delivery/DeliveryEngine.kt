@@ -193,15 +193,24 @@ class DeliveryEngine(
 
     // ── user actions ────────────────────────────────────────────────────────────────────────
 
-    /** `enqueue` (§6.3). [Outcome.composerCleared] — the message is on disk. */
+    /**
+     * `enqueue` (§6.3). [Outcome.composerCleared] — the message is on disk.
+     * [owner] — the account the message is written by (the composer's signed-in account, a file's
+     * account when its upload began). When stated ([ownerStated]) it is taken only while the queue is
+     * that account's, in memory and on disk — checked in the command loop, after everything queued
+     * before it (an account switch included); a stated null is never taken.
+     */
     suspend fun enqueue(
         conversation: String,
         text: String,
         msgType: String = "text",
         replyToId: Long? = null,
         metadata: JsonObject? = null,
-        clientMsgId: String = newClientMsgId()
+        clientMsgId: String = newClientMsgId(),
+        owner: Long? = null,
+        ownerStated: Boolean = owner != null
     ): Outcome = dispatch(event("enqueue") {
+        if (ownerStated) put(OWNER, owner?.let(::JsonPrimitive) ?: JsonNull)
         put("client_msg_id", clientMsgId)
         put("conversation", conversation)
         put("text", text)
@@ -264,10 +273,22 @@ class DeliveryEngine(
             }
             is RetryClaim -> if (blocked == "owner") {
                 blocked = null
-                signedIn?.let { user -> if (claimFor(user) == null) pickUpSocket(user) }
+                // At a cold start nobody adopted yet: the session's account is the one to claim for.
+                (signedIn ?: signedInNow())?.let { user -> if (claimFor(user) == null) pickUpSocket(user) }
             }
             is Dispatch -> {
                 val enqueue = command.event["type"].string() == "enqueue"
+                if (enqueue && command.event.containsKey(OWNER)) {
+                    // Written by a stated account: taken only into that account's queue — never into
+                    // another one (an account switch queued before it), never claimed on its behalf.
+                    val stated = command.event[OWNER].long()
+                    if (stated == null || blocked != null || signedOut || current.me != stated || ownerStored != stated) {
+                        command.done?.complete(Outcome(false, emptyList()))
+                        return
+                    }
+                    command.done?.complete(process(JsonObject(command.event - OWNER)))
+                    return
+                }
                 // A new entry is always stamped with its account. When the queue names none yet (the
                 // owner could not be written), the message itself tries again now: taken only once
                 // the account is on disk, otherwise refused (the composer keeps the text, the screen
@@ -657,6 +678,9 @@ class DeliveryEngine(
 
     companion object {
         const val PERSIST_RETRY_MS = 1_000L
+
+        /** The `enqueue` field naming the account it is written by (not a contract field; removed before the reducer). */
+        private const val OWNER = "owner"
 
         private val USER_EVENTS = setOf("enqueue", "edit", "delete", "cancel", "retry")
         private val SERVER_EVENTS = setOf("ws", "sync_page", "sync_reset_410", "sync_failed", "history_page", "http_send_result", "unread_snapshot")

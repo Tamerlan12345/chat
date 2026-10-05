@@ -683,6 +683,25 @@ class DeliveryEngineTest {
     }
 
     @Test
+    fun aClaimThatFailedAtAColdStartIsRetriedForTheSessionsAccount() = runBlocking {
+        // Fix round 5: before anybody adopted, the retry claims for the session's account.
+        val store = OwnerFailingStore().apply { failOwner = true }
+        realtime.connectionState.value = ConnectionState.Connecting
+        val engine = DeliveryEngine(
+            CoroutineScope(main.dispatcher), store, RealtimeDeliveryLink(realtime, com.openmychat.mobile.testing.FakeSessionRepository()),
+            FakeDeliveryBackend(), clock = { main.dispatcher.scheduler.currentTime }, signedInNow = { 1L }
+        )
+        engine.start()
+        assertNull("the owner could not be written", engine.state.value.me)
+
+        store.failOwner = false
+        elapse(1_000)
+
+        assertEquals(1L, engine.state.value.me)
+        assertEquals(1L, store.stored.me)
+    }
+
+    @Test
     fun aFileIsNeverUploadedWhileTheQueueNamesNoAccount() = runBlocking {
         // Fix round 4 (4): a listed file goes up only when the model and the disk both name the
         // signed-in account — never while the queue names nobody (as during a wipe).
