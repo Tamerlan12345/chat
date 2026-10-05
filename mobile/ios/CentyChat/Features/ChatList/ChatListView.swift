@@ -12,17 +12,31 @@ public enum ChatListTab: Int, CaseIterable {
     }
 }
 
-/// Экран списка диалогов и корпоративных каналов
+/// Экран списка диалогов и корпоративных каналов. Поиск — общий («Люди · Каналы · Сообщения»),
+/// со своим экраном результатов, а не фильтр поверх списка.
 public struct ChatListView: View {
     @Environment(AppContainer.self) private var container
     @Environment(ConversationsStore.self) private var conversations
+    @Environment(PeopleRequests.self) private var peopleRequests
 
     @State private var selectedTab: ChatListTab = .direct
-    @State private var searchText: String = ""
     @State private var showNewChatSheet: Bool = false
     @State private var showNewChannelSheet: Bool = false
+    @State private var router = NavigationRouter()
+    @State private var search: UniversalSearchModel?
+    @State private var isSearchPresented = false
+    @Namespace private var zoom
 
     public init() {}
+
+    /// The results replace the inbox while the field is focused or holds text.
+    private var isSearchActive: Bool {
+        isSearchPresented || !(search?.query.isEmpty ?? true)
+    }
+
+    private var searchQuery: Binding<String> {
+        Binding(get: { search?.query ?? "" }, set: { search?.setQuery($0) })
+    }
 
     private var totalDirectUnread: Int {
         conversations.totalDirectUnread
@@ -40,52 +54,27 @@ public struct ChatListView: View {
         totalChannelUnread > 0 ? String(localized: "Каналы (\(totalChannelUnread))") : String(localized: "Каналы")
     }
 
-    private var filteredConversations: [DirectConversation] {
-        if searchText.isEmpty {
-            return conversations.directConversations
-        }
-        return conversations.directConversations.filter {
-            $0.fullName.localizedCaseInsensitiveContains(searchText) ||
-            ($0.departmentName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-            ($0.lastMessageText?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
-    }
-
-    private var filteredChannels: [Channel] {
-        if searchText.isEmpty {
-            return conversations.channels
-        }
-        return conversations.channels.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            ($0.topic?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
-    }
-
     public var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Переключатель вкладок Личные / Каналы
-                Picker("Раздел", selection: $selectedTab) {
-                    Text(directTabTitle).tag(ChatListTab.direct)
-                    Text(channelsTabTitle).tag(ChatListTab.channels)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(CentyColors.navigationSurface)
-
-                // Списки бесед
-                if selectedTab == .direct {
-                    directConversationsList
+        NavigationStack(path: $router.path) {
+            Group {
+                if isSearchActive, let search {
+                    UniversalSearchResultsView(model: search, zoom: zoom, open: openSelection)
                 } else {
-                    channelsList
+                    inbox
                 }
             }
-            .navigationTitle("CentyChat")
+            .navigationTitle("Чаты")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $searchText, prompt: "Поиск по переписке и сотрудникам")
-            .refreshable {
-                await container.loadAllData()
+            .searchable(
+                text: searchQuery,
+                isPresented: $isSearchPresented,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Люди, каналы, сообщения"
+            )
+            // Return opens the first result.
+            .onSubmit(of: .search) { openFirstResult() }
+            .onChange(of: isSearchPresented) { _, presented in
+                if presented { search?.opened() }
             }
             .toolbarBackground(CentyColors.navigationSurface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -117,6 +106,85 @@ public struct ChatListView: View {
             .sheet(isPresented: $showNewChannelSheet) {
                 newChannelSheet
             }
+            .appRoutes(zoom: zoom)
+        }
+        .environment(router)
+        .onAppear {
+            guard search == nil else { return }
+            let conversations = self.conversations
+            search = UniversalSearchModel(
+                directory: container.people,
+                channels: { conversations.channels },
+                searchMessages: { query in try await conversations.searchMessages(query) },
+                recents: container.searchRecents,
+                requests: peopleRequests,
+                currentUserId: { [weak session = container.session] in session?.currentUser?.id }
+            )
+        }
+    }
+
+    // MARK: - Inbox
+
+    private var inbox: some View {
+        VStack(spacing: 0) {
+            // Переключатель вкладок Личные / Каналы
+            Picker("Раздел", selection: $selectedTab) {
+                Text(directTabTitle).tag(ChatListTab.direct)
+                Text(channelsTabTitle).tag(ChatListTab.channels)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(CentyColors.navigationSurface)
+
+            // Списки бесед
+            if selectedTab == .direct {
+                directConversationsList
+            } else {
+                channelsList
+            }
+        }
+        .refreshable {
+            await container.loadAllData()
+        }
+    }
+
+    // MARK: - Search
+
+    private func openSelection(_ selection: SearchSelection) {
+        guard let search else { return }
+        switch selection {
+        case .person(let person):
+            search.rememberPerson(person)
+            router.push(.person(PersonRoute(id: person.id, name: person.fullName, avatarUrl: person.avatarUrl, zoomsFromRow: true)))
+        case .channel(let channel):
+            search.rememberChannel(channel)
+            router.push(.chat(.channel(channel)))
+        case .recent(let item):
+            search.remember(item)
+            switch item.kind {
+            case .person:
+                router.push(.person(PersonRoute(id: item.targetId, name: item.title, avatarUrl: item.avatarUrl)))
+            case .channel:
+                router.push(.chat(ChatRoute(type: .channel, targetId: item.targetId, title: item.title)))
+            }
+        case .message(let hit):
+            router.push(.chat(hit.route))
+        case .allPeople:
+            search.showAllPeople()
+        }
+    }
+
+    private func openFirstResult() {
+        guard let search, let target = search.firstResult else { return }
+        let state = search.state
+        switch target {
+        case .person(let id):
+            if let match = state.people.first(where: { $0.person.id == id }) { openSelection(.person(match.person)) }
+        case .channel(let id):
+            if let match = state.channels.first(where: { $0.channel.id == id }) { openSelection(.channel(match.channel)) }
+        case .message(let id):
+            if let hit = state.messages.hits?.first(where: { $0.message.id == id }) { openSelection(.message(hit)) }
         }
     }
 
@@ -124,29 +192,29 @@ public struct ChatListView: View {
 
     private var directConversationsList: some View {
         List {
-            if filteredConversations.isEmpty {
-                if searchText.isEmpty && ListLoadStateView.replacesEmptyState(conversations.directState) {
+            if conversations.directConversations.isEmpty {
+                if ListLoadStateView.replacesEmptyState(conversations.directState) {
                     ListLoadStateView(state: conversations.directState, failureTitle: "Не удалось загрузить диалоги") {
                         await conversations.loadDirectConversations()
                     }
                     .listRowBackground(Color.clear)
                 } else {
                     ContentUnavailableView(
-                        searchText.isEmpty ? "Нет активных диалогов" : "Ничего не найдено",
+                        "Нет активных диалогов",
                         systemImage: "bubble.left.and.bubble.right",
-                        description: Text(searchText.isEmpty ? "Нажмите карандаш сверху, чтобы начать диалог с коллегой" : "Попробуйте изменить поисковый запрос")
+                        description: Text("Нажмите карандаш сверху, чтобы начать диалог с коллегой")
                     )
                     .listRowBackground(Color.clear)
                 }
             } else {
-                ForEach(filteredConversations) { conv in
-                    NavigationLink(destination: ChatDetailView(
-                        conversationType: .direct,
+                ForEach(conversations.directConversations) { conv in
+                    NavigationLink(value: AppRoute.chat(ChatRoute(
+                        type: .direct,
                         targetId: conv.userId,
                         title: conv.fullName,
                         avatarUrl: conv.avatarUrl,
                         status: conv.status
-                    )) {
+                    ))) {
                         ConversationRowView(conversation: conv)
                     }
                     .listRowBackground(CentyColors.cardBackground)
@@ -157,35 +225,30 @@ public struct ChatListView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(CentyColors.chatBackground)
+        .accessibilityIdentifier("chats-direct-list")
     }
 
     // MARK: - Channels List
 
     private var channelsList: some View {
         List {
-            if filteredChannels.isEmpty {
-                if searchText.isEmpty && ListLoadStateView.replacesEmptyState(conversations.channelsState) {
+            if conversations.channels.isEmpty {
+                if ListLoadStateView.replacesEmptyState(conversations.channelsState) {
                     ListLoadStateView(state: conversations.channelsState, failureTitle: "Не удалось загрузить каналы") {
                         await conversations.loadChannels()
                     }
                     .listRowBackground(Color.clear)
                 } else {
                     ContentUnavailableView(
-                        searchText.isEmpty ? "Нет доступных каналов" : "Ничего не найдено",
+                        "Нет доступных каналов",
                         systemImage: "number",
                         description: Text("Создайте новый канал для координации")
                     )
                     .listRowBackground(Color.clear)
                 }
             } else {
-                ForEach(filteredChannels) { channel in
-                    NavigationLink(destination: ChatDetailView(
-                        conversationType: .channel,
-                        targetId: channel.id,
-                        title: channel.name,
-                        avatarUrl: nil,
-                        status: nil
-                    )) {
+                ForEach(conversations.channels) { channel in
+                    NavigationLink(value: AppRoute.chat(.channel(channel))) {
                         ChannelRowView(channel: channel)
                     }
                     .listRowBackground(CentyColors.cardBackground)
@@ -196,6 +259,7 @@ public struct ChatListView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(CentyColors.chatBackground)
+        .accessibilityIdentifier("chats-channels-list")
     }
 
     // MARK: - New Direct Chat Sheet (Colleagues Directory)
