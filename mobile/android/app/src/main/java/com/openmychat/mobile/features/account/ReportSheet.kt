@@ -121,6 +121,8 @@ fun ReportSheetContent(
                             role = Role.RadioButton,
                             onClick = { onReason(reason) }
                         )
+                        // Two-line titles at large font sizes keep apart from their neighbours.
+                        .padding(vertical = 4.dp)
                         .testTag("report-reason-${reason.code}"),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
