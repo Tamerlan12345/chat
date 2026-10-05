@@ -116,6 +116,7 @@
     <string name="inbox_preview_you">Вы: %1$s</string>
     <string name="inbox_preview_empty">Сообщений пока нет</string>
     <string name="inbox_typing">печатает</string>
+    <string name="inbox_find_person">Найти сотрудника</string>
 
     <!-- Chat -->
     <string name="chat_wake">Побудка</string>
@@ -133,6 +134,7 @@
     <string name="chat_deleted">Сообщение удалено</string>
     <string name="chat_empty">Сообщений пока нет</string>
     <string name="chat_empty_message">Напишите первое сообщение.</string>
+    <string name="chat_empty_locked">Сообщений нет</string>
     <string name="chat_error">Не удалось загрузить переписку</string>
     <string name="chat_delete_title">Удалить сообщение?</string>
     <string name="chat_delete_message">Сообщение удалится у всех участников переписки.</string>
@@ -256,6 +258,8 @@
 
     <!-- Announcements -->
     <string name="announcements_title">Объявления</string>
+    <string name="announcements_section_new">Требуют ознакомления</string>
+    <string name="announcements_section_read">Ознакомлены</string>
     <string name="announcements_empty">Объявлений нет</string>
     <string name="announcements_empty_message">Новые объявления компании появятся здесь.</string>
     <string name="announcements_error">Не удалось загрузить объявления</string>
@@ -330,6 +334,10 @@
     <string name="wake_received">Вас зовёт %1$s</string>
     <string name="wake_received_unknown">Вас зовёт коллега</string>
     <string name="notification_channel_messages">Сообщения</string>
+    <string name="notifications_explain_title">Уведомления о сообщениях</string>
+    <string name="notifications_explain_message">Разрешите уведомления, чтобы не пропускать новые сообщения, звонки и побудки, когда CentyChat свёрнут.</string>
+    <string name="notifications_allow">Разрешить уведомления</string>
+    <string name="notifications_later">Не сейчас</string>
 
     <!-- Self-registration (contracts/registration.md §1) -->
     <string name="login_register">Зарегистрироваться</string>
