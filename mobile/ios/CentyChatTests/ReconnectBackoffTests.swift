@@ -130,6 +130,62 @@ final class ReconnectBackoffTests: XCTestCase {
     }
 }
 
+/// The socket as the delivery engine sees it: every frame in order, a close, writes only when authenticated.
+final class DeliveryLinkSocketTests: XCTestCase {
+    func testEveryFrameReachesTheDeliveryStreamInOrderAndTheCloseFollows() async throws {
+        let harness = SocketHarness(script: [.deliverThenFail(SocketFrames.authSuccess)], holdReconnects: true)
+        let client = harness.makeClient()
+        let frames = await client.makeDeliveryFrameStream()
+        let received = Locked<[DeliveryLinkFrame]>([])
+        let consumer = Task {
+            for await frame in frames {
+                received.withValue { $0.append(frame) }
+            }
+        }
+
+        await client.connect()
+        _ = try await harness.clock.waitForDelays(count: 1)
+        await client.disconnect()
+        consumer.cancel()
+
+        let got = received.value
+        XCTAssertEqual(got.count, 2, "auth_success, then the close: \(got)")
+        guard case .frame(let first)? = got.first else { return XCTFail("the first item must be the frame") }
+        XCTAssertEqual(first["type"]?.string, "auth_success")
+        XCTAssertEqual(first["user"]?["id"]?.int64, 1)
+        XCTAssertEqual(got.last, .closed)
+    }
+
+    func testAFrameIsWrittenOnlyOnAnAuthenticatedSocket() async throws {
+        let harness = SocketHarness(script: [.deliverThenHang(#"{"type":"wake_state","retryAt":0}"#), .deliverThenHang(SocketFrames.authSuccess)], holdReconnects: false)
+        let client = harness.makeClient()
+        let frame: JSONObject = ["type": "mark_read", "conversationType": "direct", "targetId": 3]
+
+        await client.connect()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let beforeAuth = await client.sendFrame(frame)
+        let userBeforeAuth = await client.authenticatedUserId
+        XCTAssertFalse(beforeAuth, "no auth_success yet: the engine must hear the frame was not written")
+        XCTAssertNil(userBeforeAuth)
+
+        await client.restart()
+        _ = try await harness.clock.waitForDelays(count: 1)
+        var written = false
+        for _ in 0..<100 where !written {
+            written = await client.sendFrame(frame)
+            if !written { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        let user = await client.authenticatedUserId
+        await client.disconnect()
+        let userAfterClose = await client.authenticatedUserId
+
+        XCTAssertTrue(written)
+        XCTAssertEqual(user, 1)
+        XCTAssertNil(userAfterClose)
+        XCTAssertTrue(harness.sentFrames.contains(.text(#"{"conversationType":"direct","targetId":3,"type":"mark_read"}"#)))
+    }
+}
+
 // MARK: - Harness
 
 private enum TransportStep: Sendable {

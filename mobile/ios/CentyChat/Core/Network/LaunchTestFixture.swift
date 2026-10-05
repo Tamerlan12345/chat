@@ -21,6 +21,18 @@ enum LaunchTestFixture {
         isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-stub-account")
     }
 
+    /// UI tests of the offline queue (`-centychat-ui-delivery-offline`): the message transport is
+    /// down — the socket points at a closed port and the delivery HTTP requests fail as without a
+    /// network — while sign-in and history still load. Never changes the stand.
+    static var deliveryOffline: Bool {
+        isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-ui-delivery-offline")
+    }
+
+    /// Where the socket connects instead of the server while `deliveryOffline` (nothing listens).
+    static var realtimeServerOverride: String? {
+        deliveryOffline ? "https://127.0.0.1:9" : nil
+    }
+
     /// UI tests must not meet the system «Save Password?» sheet: password fields then carry a
     /// content type that never offers or saves credentials.
     static var suppressesPasswordAutofill: Bool { isUITestProcess }
@@ -48,6 +60,8 @@ enum LaunchTestFixture {
         }
     }
 #else
+    static let deliveryOffline = false
+    static let realtimeServerOverride: String? = nil
     static let shouldResetSecureState = false
     static let allowsInsecureLoopback = false
     static let suppressesPasswordAutofill = false

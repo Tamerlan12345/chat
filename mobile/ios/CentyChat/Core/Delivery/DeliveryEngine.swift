@@ -69,6 +69,8 @@ public final class DeliveryEngine {
 
     /// Called after the model and its storage were wiped (sign-out, or another account).
     @ObservationIgnored public var onWipe: [@MainActor () -> Void] = []
+    /// Called after every change of the model.
+    @ObservationIgnored public var onStateChange: [@MainActor (DeliveryState) -> Void] = []
 
     // MARK: - The queue
 
@@ -294,6 +296,7 @@ public final class DeliveryEngine {
 
     private func setState(_ newState: DeliveryState) {
         state = newState
+        for handler in onStateChange { handler(newState) }
         for (id, waiter) in stateWaiters where waiter.predicate(newState) {
             finishWaiter(id, result: true)
         }

@@ -76,10 +76,14 @@ public actor WebSocketClient {
     private let incomingAudioBufferCapacity = 8
     private var audioContinuation: AsyncStream<AudioRelayEngine.DecodedAudioFrame>.Continuation?
     private var audioContinuationID: UUID?
+    /// Raw frames for the delivery engine (`DeliveryLinkFrame`).
+    private var deliveryContinuation: AsyncStream<DeliveryLinkFrame>.Continuation?
+    /// The user the open socket authenticated as (`auth_success`); nil otherwise.
+    public private(set) var authenticatedUserId: Int64?
 
     init(
         credentials: @escaping Credentials = {
-            (ServerEnvironment.current.serverURL.absoluteString, KeychainManager.shared.authToken)
+            (LaunchTestFixture.realtimeServerOverride ?? ServerEnvironment.current.serverURL.absoluteString, KeychainManager.shared.authToken)
         },
         makeTransport: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) },
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
@@ -113,6 +117,15 @@ public actor WebSocketClient {
         )
         stateContinuation = continuation
         continuation.yield(connectionState)
+        return stream
+    }
+
+    /// Single subscriber stream of every server frame as received (JSON objects, in order), plus
+    /// `closed` whenever an open socket goes away. A new subscription finishes the previous one.
+    public func makeDeliveryFrameStream() -> AsyncStream<DeliveryLinkFrame> {
+        deliveryContinuation?.finish()
+        let (stream, continuation) = AsyncStream<DeliveryLinkFrame>.makeStream()
+        deliveryContinuation = continuation
         return stream
     }
 
@@ -170,6 +183,7 @@ public actor WebSocketClient {
     public func disconnect() {
         isIntentionalDisconnect = true
         generation += 1
+        reportClosed()
         tearDownTransport()
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -201,6 +215,35 @@ public actor WebSocketClient {
         guard connectionState == .connected, transport != nil else { return false }
         send(clientMessage: clientMessage)
         return true
+    }
+
+    /// Writes a delivery frame (`send_message`, `mark_read`, …) only on a socket the server has
+    /// authenticated. False when it was not written: the delivery engine treats the socket as gone.
+    public func sendFrame(_ frame: JSONObject) -> Bool {
+        guard connectionState == .connected, let transport else { return false }
+        let text = JSONValue.object(frame).jsonText
+        transport.send(.text(text)) { error in
+            if let error {
+                // The engine's timeout repeats the frame with the same key (delivery-state.md §5).
+                Log.realtime.error("Frame send failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return true
+    }
+
+    /// Drops the open socket so it reconnects (with backoff) and authenticates afresh.
+    public func restart() {
+        guard transport != nil else { return }
+        handleTransportFailure(reason: "restart requested", generation: generation)
+    }
+
+    /// The network came back: a reconnect waiting for its backoff goes now.
+    public func reconnectNow() {
+        guard reconnectTask != nil, transport == nil, !isIntentionalDisconnect else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        backoff.reset()
+        connect()
     }
 
     /// Отправка бинарного аудиокадра (1028 байт)
@@ -235,23 +278,33 @@ public actor WebSocketClient {
         guard generation == self.generation else { return }
         switch frame {
         case .text(let text):
-            guard let data = text.data(using: .utf8),
-                  let event = WSServerEvent.parse(from: data) else { return }
+            let data = Data(text.utf8)
+            // The raw frame first: an auth_error below closes the socket, and its close follows it.
+            if let object = JSONValue.parse(data)?.object {
+                deliveryContinuation?.yield(.frame(object))
+            }
+            guard let event = WSServerEvent.parse(from: data) else { return }
             deliver(event, generation: generation)
 
         case .binary(let data):
             if data.count == AudioRelayEngine.frameSizeBytes {
                 receiveIncomingAudioFrame(data)
-            } else if let event = WSServerEvent.parse(from: data) {
-                deliver(event, generation: generation)
+            } else {
+                if let object = JSONValue.parse(data)?.object {
+                    deliveryContinuation?.yield(.frame(object))
+                }
+                if let event = WSServerEvent.parse(from: data) {
+                    deliver(event, generation: generation)
+                }
             }
         }
     }
 
     private func deliver(_ event: WSServerEvent, generation: Int) {
         switch event {
-        case .authSuccess:
+        case .authSuccess(let user):
             // Only an accepted session counts as a working connection and resets the backoff.
+            authenticatedUserId = user.id
             connectionState = .connected
             backoff.reset()
             reportedAuthErrorCode = nil
@@ -325,6 +378,13 @@ public actor WebSocketClient {
 
     // MARK: - Reconnection Logic with Exponential Backoff
 
+    /// An open socket went away: the delivery engine hears it once (`ws_disconnected`).
+    private func reportClosed() {
+        authenticatedUserId = nil
+        guard transport != nil else { return }
+        deliveryContinuation?.yield(.closed)
+    }
+
     private func tearDownTransport() {
         pingTask?.cancel()
         pingTask = nil
@@ -338,6 +398,7 @@ public actor WebSocketClient {
         guard generation == self.generation, !isIntentionalDisconnect else { return }
         Log.realtime.error("Socket closed: \(reason, privacy: .public)")
         self.generation += 1
+        reportClosed()
         tearDownTransport()
 
         let delay = backoff.nextDelay(jitter: jitter())

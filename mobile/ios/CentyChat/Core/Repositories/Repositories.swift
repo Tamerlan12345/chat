@@ -82,4 +82,14 @@ public protocol RealtimeRepository: Sendable {
     func events() async -> AsyncStream<WSServerEvent>
     func incomingAudio() async -> AsyncStream<AudioRelayEngine.DecodedAudioFrame>
     func connectionStates() async -> AsyncStream<RealtimeConnectionState>
+    /// Every server frame as received, and `closed` when a socket goes away (the delivery engine).
+    func deliveryFrames() async -> AsyncStream<DeliveryLinkFrame>
+    /// Writes a delivery frame on the authenticated socket; false when it was not written.
+    func sendFrame(_ frame: JSONObject) async -> Bool
+    /// Drops the socket so it reconnects.
+    func restartLink() async
+    /// A reconnect waiting for its backoff goes now (the network came back).
+    func reconnectNow() async
+    /// The user of the authenticated socket; nil without one.
+    func authenticatedUserId() async -> Int64?
 }

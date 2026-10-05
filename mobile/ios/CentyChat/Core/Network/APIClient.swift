@@ -192,6 +192,95 @@ public actor APIClient {
         }
     }
 
+    // MARK: - Raw requests (the delivery engine reads statuses itself)
+
+    /// An answer read as is: any HTTP status with its body; status 0 when the server could not be
+    /// reached (no network, timeout, a token refresh that got no answer).
+    public struct RawResponse: Sendable, Equatable {
+        public let status: Int
+        public let body: Data
+        public let retryAfterSeconds: TimeInterval?
+
+        static let unreachable = RawResponse(status: 0, body: Data(), retryAfterSeconds: nil)
+    }
+
+    /// Like `request`, without turning statuses into errors. A 401 refreshes the token once; only a
+    /// refresh the server refuses (401/403) ends the stored session — a refresh without an answer is
+    /// a network failure (status 0) and never signs the user out.
+    public func raw(method: String, endpoint: String, queryItems: [URLQueryItem]? = nil, body: Data? = nil) async -> RawResponse {
+        await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, isRetry: false)
+    }
+
+    private func performRaw(method: String, endpoint: String, queryItems: [URLQueryItem]?, body: Data?, isRetry: Bool) async -> RawResponse {
+        guard let base = try? apiURL(serverURL: environment.serverURL, endpoint: endpoint),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return .unreachable
+        }
+        if let queryItems, !queryItems.isEmpty { components.queryItems = queryItems }
+        guard let url = components.url, ServerEndpointPolicy.allowsAuthorization(to: url) else {
+            return .unreachable
+        }
+        guard let token = keychain.authToken else {
+            return RawResponse(status: 401, body: Data(), retryAfterSeconds: nil)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AvatarOptIn.value, forHTTPHeaderField: AvatarOptIn.header)
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let http: HTTPURLResponse
+        do {
+            let (received, response) = try await session.data(for: request)
+            guard let response = response as? HTTPURLResponse else { return .unreachable }
+            data = received
+            http = response
+        } catch {
+            return .unreachable
+        }
+
+        if http.statusCode == 401 {
+            if isRetry {
+                if keychain.authToken == token { try? keychain.clearAllAuthData() }
+                return RawResponse(status: 401, body: data, retryAfterSeconds: nil)
+            }
+            do {
+                try await refreshAccessToken(after: token)
+            } catch APIError.unauthorized {
+                if keychain.authToken == token { try? keychain.clearAllAuthData() }
+                return RawResponse(status: 401, body: data, retryAfterSeconds: nil)
+            } catch {
+                // The refresh got no answer: not a rejection, the session stays.
+                return .unreachable
+            }
+            return await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, isRetry: true)
+        }
+        let retryAfter = RetryAfter.seconds(from: http.value(forHTTPHeaderField: "Retry-After"), now: Date())
+        return RawResponse(status: http.statusCode, body: data, retryAfterSeconds: retryAfter)
+    }
+
+    /// Raw server records of a conversation page (`openapi.yaml` `Message`), oldest first.
+    public func getMessageRecords(
+        conversationType: ConversationType,
+        targetId: Int64,
+        limit: Int,
+        beforeId: Int64? = nil,
+        afterId: Int64? = nil
+    ) async throws -> [JSONObject] {
+        var queryItems = [
+            URLQueryItem(name: "conversationType", value: conversationType.rawValue),
+            URLQueryItem(name: "targetId", value: "\(targetId)"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        if let beforeId { queryItems.append(URLQueryItem(name: "beforeId", value: "\(beforeId)")) }
+        if let afterId { queryItems.append(URLQueryItem(name: "afterId", value: "\(afterId)")) }
+        let values: [JSONValue] = try await request(endpoint: "/messages", queryItems: queryItems)
+        return values.compactMap(\.object)
+    }
+
     private func apiURL(serverURL: URL, endpoint: String) throws -> URL {
         guard endpoint.hasPrefix("/"), var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL(endpoint)

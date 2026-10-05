@@ -184,4 +184,24 @@ struct LiveRealtimeRepository: RealtimeRepository {
     func connectionStates() async -> AsyncStream<RealtimeConnectionState> {
         await client.makeConnectionStateStream()
     }
+
+    func deliveryFrames() async -> AsyncStream<DeliveryLinkFrame> {
+        await client.makeDeliveryFrameStream()
+    }
+
+    func sendFrame(_ frame: JSONObject) async -> Bool {
+        await client.sendFrame(frame)
+    }
+
+    func restartLink() async {
+        await client.restart()
+    }
+
+    func reconnectNow() async {
+        await client.reconnectNow()
+    }
+
+    func authenticatedUserId() async -> Int64? {
+        await client.authenticatedUserId
+    }
 }
