@@ -298,4 +298,17 @@ class ChatViewModelAttachmentTest {
         assertEquals(SendState.QUEUED, restored.sendState)
         assertNull("no upload runs for it here", restored.upload!!.progress)
     }
+
+    @Test
+    fun filesAndImagesAreNeverEditableEvenMyOwnAndFresh() {
+        val vm = directChat()
+        val now = java.time.Instant.now().toString()
+        val text = message(id = 20, from = ME, to = alice, text = "текст").copy(createdAt = now)
+        assertTrue("a fresh own text is editable", vm.canEditMessage(text))
+
+        val file = text.copy(id = 21, text = "отчёт.pdf", type = MessageType.FILE, metadataJson = """{"file_id":9}""")
+        val image = text.copy(id = 22, text = "фото.jpg", type = MessageType.IMAGE, metadataJson = """{"file_id":10}""")
+        assertEquals("server: NOT_TEXT_MESSAGE", false, vm.canEditMessage(file))
+        assertEquals(false, vm.canEditMessage(image))
+    }
 }
