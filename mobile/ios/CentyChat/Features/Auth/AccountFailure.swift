@@ -33,6 +33,8 @@ public enum AccountFailure: Equatable, Sendable {
     case unavailable
 
     static let defaultThrottleWait: TimeInterval = 60
+    /// `503` codes of a busy server (`BUSY` — no free password-hash slot): a short wait, as on Android.
+    static let busyCodes: Set<String> = ["PASSWORD_HASH_BUSY", "LOGIN_BUSY", "BUSY"]
     static let messageLimit = 200
 
     init(_ error: any Error, context: Context, now: Date) {
@@ -66,7 +68,7 @@ public enum AccountFailure: Equatable, Sendable {
                 case 429: return .throttled(until: throttle)
                 case 503:
                     // A busy password hasher is a short wait; anything else is the missing mail setup.
-                    if code == "PASSWORD_HASH_BUSY" || code == "LOGIN_BUSY" {
+                    if let code, busyCodes.contains(code) {
                         return .throttled(until: now.addingTimeInterval(retryAfter ?? 5))
                     }
                     if code == "EMAIL_SEND_FAILED" { return .mailSendFailed }

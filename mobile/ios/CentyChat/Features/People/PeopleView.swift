@@ -6,7 +6,8 @@ public struct PeopleView: View {
     @Environment(AppContainer.self) private var container
     @Environment(PeopleRequests.self) private var requests
 
-    /// Filters survive the process (query, scope, «В сети», open departments).
+    /// Filters survive the process (query, scope, «В сети», open departments) — for the
+    /// account that set them only: scene storage outlives sign-out.
     @SceneStorage("people.filters") private var storedFilters = ""
     @State private var model: PeopleModel?
     @State private var router = NavigationRouter()
@@ -30,7 +31,8 @@ public struct PeopleView: View {
         .environment(router)
         .onAppear {
             guard model == nil else { return }
-            model = PeopleModel(directory: container.people, requests: requests, filters: .decoded(storedFilters))
+            let owner = container.session.currentUser?.id
+            model = PeopleModel(directory: container.people, requests: requests, filters: .restored(from: storedFilters, owner: owner))
         }
         // «Все сотрудники (N)» from the search or «Отдел» from a card while this tab is alive.
         .onChange(of: requests.serial) {
@@ -39,7 +41,7 @@ public struct PeopleView: View {
             router.popToRoot()
         }
         .onChange(of: model?.filters) { _, filters in
-            if let filters { storedFilters = filters.encoded }
+            if let filters { storedFilters = filters.stored(for: container.session.currentUser?.id) }
         }
     }
 }
