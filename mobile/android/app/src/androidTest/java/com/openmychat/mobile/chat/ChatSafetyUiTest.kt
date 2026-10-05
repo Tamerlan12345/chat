@@ -1,6 +1,8 @@
 package com.openmychat.mobile.chat
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -14,7 +16,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.model.ConversationType
+import com.openmychat.mobile.data.model.BlockedUser
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.features.chat.ChatHistoryCache
+import com.openmychat.mobile.features.chat.ChatScreen
+import com.openmychat.mobile.features.chat.ChatViewModel
 import com.openmychat.mobile.features.chat.ChatActions
 import com.openmychat.mobile.features.chat.ChatContent
 import com.openmychat.mobile.features.chat.ChatUiState
@@ -117,5 +124,38 @@ class ChatSafetyUiTest {
         compose.waitUntil(5_000) { calls.size == 2 }
 
         assertEquals(listOf("report peer", "report message 10"), calls)
+    }
+
+    @Test
+    fun aBlockFromTheServersListClosesAnOpenChat() {
+        // The session's block list starts empty and then brings a block made on another device.
+        val account = com.openmychat.mobile.ScriptedAccountRepository()
+        val session = SignedInSessionRepository(me)
+        val viewModel = ChatViewModel(
+            conversationType = ConversationType.DIRECT,
+            targetId = peer,
+            chatRepository = StaticChatRepository(listOf(incoming)),
+            realtimeRepository = ConnectedRealtimeRepository(),
+            sessionRepository = session,
+            activeConversations = ActiveConversationRegistry(),
+            historyCache = ChatHistoryCache(session),
+            account = account
+        )
+        compose.setContent {
+            CentyChatTheme(darkTheme = false, reduceMotion = true) {
+                ChatScreen(viewModel = viewModel, title = "Боб Тестов", onNavigateBack = {}, onStartCall = { _, _ -> })
+            }
+        }
+        compose.onNodeWithText("Купите слона").assertIsDisplayed()
+        compose.onNodeWithTag("composer-field").assertIsEnabled()
+
+        account.blocked.value = listOf(BlockedUser(peer, "Боб Тестов"))
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(hasText("Вы заблокировали этого пользователя", substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("composer-field").assertIsNotEnabled()
+        compose.onNode(hasContentDescription("Ещё")).performClick()
+        compose.onNode(hasTestTag("chat-block")).assertTextContains("Разблокировать", substring = true)
     }
 }

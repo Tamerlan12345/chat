@@ -11,10 +11,14 @@ import com.openmychat.mobile.data.model.RegistrationOutcome
 import com.openmychat.mobile.data.model.ReportBody
 import com.openmychat.mobile.di.ApplicationScope
 import com.openmychat.mobile.features.auth.LoginPreferences
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -70,8 +74,32 @@ class DefaultAccountRepository @Inject constructor(
     private val _blocked = MutableStateFlow<List<BlockedUser>>(emptyList())
     override val blocked: StateFlow<List<BlockedUser>> = _blocked.asStateFlow()
 
+    /** The block list load started by the current session (tests wait for it). */
+    internal var sessionLoad: Job? = null
+        private set
+
     init {
-        scope.launch { session.tokenFlow.collect { if (it == null) _blocked.value = emptyList() } }
+        // Every session starts with the server's block list (made earlier, or on another device), like iOS
+        // on sign-in; a refreshed token is the same session. Signing out forgets the list.
+        scope.launch {
+            session.tokenFlow.map { it != null }.distinctUntilChanged().collect { signedIn ->
+                sessionLoad?.cancel()
+                if (signedIn) {
+                    sessionLoad = scope.launch {
+                        try {
+                            refreshBlocked()
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            // Offline or refused: the profile's list retries; sends still meet DM_NOT_ALLOWED.
+                        }
+                    }
+                } else {
+                    sessionLoad = null
+                    _blocked.value = emptyList()
+                }
+            }
+        }
     }
 
     override suspend fun requestRegistration(body: RegisterRequestBody): RegistrationChallenge =

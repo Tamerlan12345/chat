@@ -3,6 +3,7 @@ package com.openmychat.mobile.data.repository
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.ApiException
 import com.openmychat.mobile.data.model.BlockedUser
+import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.testing.FakeLoginPreferences
 import com.openmychat.mobile.testing.TestSessions
 import kotlinx.coroutines.test.TestScope
@@ -39,7 +40,50 @@ class AccountRepositoryTest {
             .build()
     }).build())
 
-    private fun TestScope.repository() = DefaultAccountRepository(api, session, preferences, backgroundScope)
+    /** The repository once the block list load of its open session is done; that request is not part of each test. */
+    private suspend fun TestScope.repository(): DefaultAccountRepository {
+        val repository = DefaultAccountRepository(api, session, preferences, backgroundScope)
+        runCurrent()
+        repository.sessionLoad?.join()
+        paths.clear()
+        return repository
+    }
+
+    @Test
+    fun aSessionLoadsTheBlockListAtStartAndAfterEverySignIn() = runTest {
+        // A block made before this start (or on another device) is known without opening the profile.
+        answers += 200 to """{"blocks":[{"userId":7,"displayName":"Боб"}]}"""
+        val repository = DefaultAccountRepository(api, session, preferences, backgroundScope)
+        runCurrent()
+        repository.sessionLoad?.join()
+        assertEquals(listOf(BlockedUser(7, "Боб")), repository.blocked.value)
+
+        session.token = "rotated-token" // a refreshed token is the same session: no second request
+        runCurrent()
+        assertEquals(listOf("GET /api/blocks"), paths)
+
+        session.clearSession()
+        runCurrent()
+        assertEquals(emptyList<BlockedUser>(), repository.blocked.value)
+
+        answers += 200 to """{"blocks":[{"userId":8,"displayName":"Ева"}]}"""
+        session.saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token-2")
+        runCurrent()
+        repository.sessionLoad?.join()
+        assertEquals(listOf(BlockedUser(8, "Ева")), repository.blocked.value)
+        assertEquals(listOf("GET /api/blocks", "GET /api/blocks"), paths)
+    }
+
+    @Test
+    fun aBlockListThatCannotLoadLeavesTheListEmptyAndTheSessionAlone() = runTest {
+        answers += 500 to """{"error":"x"}"""
+        val repository = DefaultAccountRepository(api, session, preferences, backgroundScope)
+        runCurrent()
+        repository.sessionLoad?.join()
+
+        assertEquals(emptyList<BlockedUser>(), repository.blocked.value)
+        assertNotNull(session.token)
+    }
 
     @Test
     fun deletingTheAccountWipesEverythingStoredOnThisDevice() = runTest(UnconfinedTestDispatcher()) {
@@ -54,10 +98,11 @@ class AccountRepositoryTest {
 
     @Test
     fun aRefusedDeletionLeavesTheSessionAlone() = runTest(UnconfinedTestDispatcher()) {
+        val repository = repository()
         answers += 403 to """{"error":"Неверный пароль"}"""
 
         try {
-            repository().deleteAccount("wrong")
+            repository.deleteAccount("wrong")
             fail("a wrong password must fail")
         } catch (error: ApiException) {
             assertEquals(403, error.statusCode)
@@ -103,7 +148,6 @@ class AccountRepositoryTest {
     fun signingOutForgetsTheBlockList() = runTest {
         // A standard dispatcher: the request hops to Dispatchers.IO and must come back to the test thread.
         val repository = repository()
-        runCurrent()
         repository.block(8, "Ева")
 
         session.clearSession()

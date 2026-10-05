@@ -84,6 +84,18 @@ class ChatViewModelSafetyTest {
     }
 
     @Test
+    fun aBlockMadeElsewhereClosesTheComposerOnceTheSessionsListArrives() {
+        val vm = open()
+        assertEquals(ComposerLock.NONE, vm.composerLock.value)
+
+        // The sign-in's block list load returns a block made on another device.
+        account.blocked.value = listOf(BlockedUser(alice, "Алиса"))
+
+        assertEquals(ComposerLock.BLOCKED_BY_ME, vm.composerLock.value)
+        assertTrue(vm.blocks!!.blocked.value)
+    }
+
+    @Test
     fun blockingFromTheChatLocksItAndReloadsTheHistory() {
         val vm = open()
         chat.history = emptyList() // the server now hides the blocked person's messages
