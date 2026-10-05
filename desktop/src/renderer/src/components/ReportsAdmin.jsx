@@ -49,7 +49,7 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
     const confirmed = await confirm({
       title: 'Закрыть жалобу',
       message:
-        `Закрыть жалобу №${report.id} от «${report.reporter?.name}» на ${target.kind === 'Сообщение' ? 'сообщение' : 'пользователя'} «${target.who}»?\n` +
+        `Закрыть жалобу №${report.id} от «${report.reporter?.name}» на ${target.kind === 'Сообщение' ? 'сообщение пользователя' : 'пользователя'} «${target.who}»?\n` +
         'Закрытая жалоба считается рассмотренной и уходит из списка открытых.',
       confirmText: 'Закрыть жалобу'
     });
