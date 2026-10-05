@@ -73,6 +73,40 @@ public struct PeopleFilters: Codable, Equatable, Sendable {
         }
         return filters
     }
+
+    /// `@SceneStorage` outlives sign-out, so the filters are saved with the account that set
+    /// them and handed back only to that account: the next one starts with an empty query.
+    func stored(for owner: Int64?) -> String {
+        guard let owner else { return "" }
+        let envelope = OwnedPeopleFilters(owner: owner, filters: self)
+        return (try? JSONEncoder().encode(envelope)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    /// What the scene keeps when the signed-in account changes: nothing once the session ends
+    /// (or for another account), the stored value while its owner stays signed in.
+    static func retained(_ stored: String, signedInUser: Int64?) -> String {
+        guard let signedInUser, let data = stored.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(OwnedPeopleFilters.self, from: data),
+              envelope.owner == signedInUser else {
+            return ""
+        }
+        return stored
+    }
+
+    static func restored(from text: String, owner: Int64?) -> PeopleFilters {
+        guard let owner, let data = text.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(OwnedPeopleFilters.self, from: data),
+              envelope.owner == owner else {
+            return PeopleFilters()
+        }
+        return envelope.filters
+    }
+}
+
+/// What `PeopleView` keeps in `@SceneStorage`: the filters and whose they are.
+private struct OwnedPeopleFilters: Codable {
+    let owner: Int64
+    let filters: PeopleFilters
 }
 
 public struct PeopleUIState: Equatable, Sendable {

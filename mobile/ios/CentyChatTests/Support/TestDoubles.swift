@@ -391,7 +391,11 @@ struct TestApp {
     let peopleSource: FakePeopleSource
     let peopleCache: InMemoryPeopleCache
 
-    init(environment: ServerEnvironment = .test) {
+    init(
+        environment: ServerEnvironment = .test,
+        pushTokens: (any PushTokenService)? = nil,
+        avatarLoader: AvatarImageLoader? = nil
+    ) {
         server = FakeServerRepository()
         auth = FakeAuthRepository()
         chat = FakeChatRepository()
@@ -411,7 +415,9 @@ struct TestApp {
             },
             deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") },
             peopleSource: peopleSource,
-            peopleCache: peopleCache
+            peopleCache: peopleCache,
+            pushTokenService: pushTokens,
+            avatarLoader: avatarLoader
         )
     }
 

@@ -7,6 +7,7 @@ import UserNotifications
 final class PushRouter {
     static let shared = PushRouter()
     weak var notifications: MessageNotificationsStore?
+    weak var pushTokens: PushTokenRegistrar?
 }
 
 /// Silent pushes (`read`, `content-available`) — `multi-device.md` §10: dismiss the
@@ -19,7 +20,23 @@ final class CentyAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = notificationDelegate
+#if DEBUG
+        if LaunchTestFixture.isUnitTestHost { return true }
+#endif
+        // Inert until the app is signed with an Apple developer account: without the
+        // `aps-environment` entitlement APNs answers with the failure callback below.
+        application.registerForRemoteNotifications()
         return true
+    }
+
+    /// A new (or the same) APNs token: registered with the server for the signed-in session (`push.md` §2).
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        guard let registrar = PushRouter.shared.pushTokens else { return }
+        Task { await registrar.deviceTokenChanged(deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error) {
+        Log.session.notice("APNs registration unavailable: \(error.localizedDescription, privacy: .public)")
     }
 
     func application(

@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// End-to-end user path from the QA plan (mobile/qa), recorded as one video in CI
@@ -202,8 +203,8 @@ final class UserPathQATests: XCTestCase {
 }
 
 /// Minimal REST client for the dev stand: lets a second user ("Bob") write to Alice while the
-/// UI is running. Accepts the stand's certificate for localhost only.
-private final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
+/// UI is running, and gives the seeded users photos. Accepts the stand's certificate for localhost only.
+final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
     private let baseURL: URL
 
     init(baseURL: String) {
@@ -231,6 +232,27 @@ private final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable 
             let recipientId = userId(named: recipient, token: token)
         else { return false }
         return post("/api/messages/direct/\(recipientId)", ["text": text], token: token) != nil
+    }
+
+    /// `PUT /api/users/avatar` (multipart, field `file`) as `user`: the stand's seed has no photos.
+    func uploadAvatar(as user: (username: String, password: String), jpeg: Data) -> Bool {
+        guard
+            let login = post("/api/auth/login", ["username": user.username, "password": user.password], token: nil),
+            let token = login["token"] as? String
+        else { return false }
+        let boundary = "CentyChatUITest-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/api/users/avatar"))
+        request.httpMethod = "PUT"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"avatar.jpg\"\r\n".utf8))
+        body.append(Data("Content-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(jpeg)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+        return send(request) != nil
     }
 
     private func userId(named username: String, token: String) -> Int? {
@@ -270,5 +292,49 @@ private final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable 
 
     private final class ResultBox: @unchecked Sendable {
         var value: Any?
+    }
+}
+
+/// Photos for the stand's seeded colleagues, so the screenshots show photo avatars
+/// (`mobile/dev/seed.mjs` creates Alice and Bob without one). Uploaded once per test run.
+@MainActor
+enum StandAvatars {
+    private static var uploaded = false
+
+    static func ensureUploaded(standURL: String) -> Bool {
+        if uploaded { return true }
+        let api = StandAPI(baseURL: standURL)
+        let alice = api.uploadAvatar(
+            as: (username: "alice", password: "Alice-Dev-Stand-5271"),
+            jpeg: portrait(sky: UIColor(red: 0.42, green: 0.62, blue: 0.95, alpha: 1), shirt: UIColor(red: 0.55, green: 0.20, blue: 0.45, alpha: 1))
+        )
+        let bob = api.uploadAvatar(
+            as: (username: "bob", password: "Bob-Dev-Stand-6384"),
+            jpeg: portrait(sky: UIColor(red: 0.98, green: 0.72, blue: 0.38, alpha: 1), shirt: UIColor(red: 0.12, green: 0.42, blue: 0.33, alpha: 1))
+        )
+        uploaded = alice && bob
+        return uploaded
+    }
+
+    /// A simple head-and-shoulders picture on a gradient: clearly a photo, not initials.
+    private static func portrait(sky: UIColor, shirt: UIColor) -> Data {
+        let side: CGFloat = 256
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        return renderer.jpegData(withCompressionQuality: 0.9) { context in
+            let cg = context.cgContext
+            let colors = [sky.cgColor, UIColor.white.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: side), options: [])
+            }
+            shirt.setFill()
+            UIBezierPath(ovalIn: CGRect(x: 38, y: 170, width: 180, height: 150)).fill()
+            UIColor(red: 0.95, green: 0.78, blue: 0.66, alpha: 1).setFill()
+            UIBezierPath(rect: CGRect(x: 110, y: 140, width: 36, height: 40)).fill()
+            UIBezierPath(ovalIn: CGRect(x: 83, y: 60, width: 90, height: 100)).fill()
+            UIColor(red: 0.27, green: 0.18, blue: 0.12, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 78, y: 48, width: 100, height: 52)).fill()
+        }
     }
 }

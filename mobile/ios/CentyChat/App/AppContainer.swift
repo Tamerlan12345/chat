@@ -21,6 +21,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let people: PeopleStore
     /// «Недавние» of the search in «Чаты».
     public let searchRecents: SearchRecentsStore
+    /// This device's APNs token on the server (`push.md` §2).
+    let pushTokens: PushTokenRegistrar
+    /// Colleagues' photos, cached on disk; wiped when the session ends.
+    let avatars: AvatarImageLoader
     let accountRepository: any AccountRepository
 
     init(
@@ -38,7 +42,10 @@ public final class AppContainer: SessionLifecycleDelegate {
         accountRepository: any AccountRepository = UnavailableAccountRepository(),
         peopleSource: (any PeopleSource)? = nil,
         peopleCache: (any PeopleCache)? = nil,
-        recentsDefaults: UserDefaults? = nil
+        recentsDefaults: UserDefaults? = nil,
+        pushTokenService: (any PushTokenService)? = nil,
+        deviceId: @escaping @MainActor () -> String? = { nil },
+        avatarLoader: AvatarImageLoader? = nil
     ) {
         let realtime = RealtimeStore(repository: realtimeRepository)
         let session = SessionStore(
@@ -95,6 +102,13 @@ public final class AppContainer: SessionLifecycleDelegate {
             ownerId: { [weak session] in session?.currentUser?.id }
         )
         self.searchRecents = SearchRecentsStore(defaults: recentsDefaults)
+        self.pushTokens = PushTokenRegistrar(
+            service: pushTokenService ?? DisabledPushTokenService(),
+            deviceId: deviceId,
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            environment: .current
+        )
+        self.avatars = avatarLoader ?? AvatarImageLoader.inMemory(serverURL: environment.serverURL)
         self.accountRepository = accountRepository
 
         account.onBlocksChanged = { [weak conversations, weak chats] in
@@ -143,7 +157,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             accountRepository: accountRepository,
             peopleSource: APIPeopleSource(client: client),
             peopleCache: PeopleDiskCache(),
-            recentsDefaults: .standard
+            recentsDefaults: .standard,
+            pushTokenService: LivePushTokenService(client: client),
+            deviceId: { try? keychain.deviceID() },
+            avatarLoader: .live(keychain: keychain)
         )
     }
 
@@ -163,7 +180,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     // MARK: - SessionLifecycleDelegate
 
     func sessionDidAuthenticate() async {
+        // After every sign-in and every launch with a live session (`push.md` §2).
+        async let push: Void = pushTokens.sessionDidAuthenticate()
         await loadAllData()
+        await push
     }
 
     func sessionDidResume() async {
@@ -171,7 +191,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         await chats.reloadLoaded()
     }
 
-    func sessionDidEnd() {
+    func sessionDidEnd() async {
+        pushTokens.sessionDidEnd()
         conversations.reset()
         announcements.reset()
         chats.reset()
@@ -183,6 +204,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         people.signOut()
         searchRecents.clear()
         calls.stopCallSession()
+        // Colleagues' photos belong to the session that saw them.
+        await avatars.removeAll()
     }
 }
 
@@ -200,5 +223,6 @@ extension View {
             .environment(container.presence)
             .environment(container.notifications)
             .environment(container.account)
+            .environment(\.avatarLoader, container.avatars)
     }
 }

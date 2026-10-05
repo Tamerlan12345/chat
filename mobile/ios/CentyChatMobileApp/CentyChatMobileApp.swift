@@ -15,6 +15,7 @@ struct CentyChatMobileApp: App {
 #endif
         let container = AppContainer.live()
         PushRouter.shared.notifications = container.notifications
+        PushRouter.shared.pushTokens = container.pushTokens
         _container = State(initialValue: container)
     }
 

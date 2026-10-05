@@ -93,6 +93,29 @@ final class RegistrationAPITests: XCTestCase {
         }
     }
 
+    /// `503 {code: "BUSY"}` with `Retry-After` (busy password hasher, server `api/index.js`): a
+    /// short wait that honours the header, as on Android — not «почта не настроена».
+    func testBusyServerIsAShortWaitThatHonoursRetryAfter() async {
+        let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
+            (.init(status: 503, headers: ["Retry-After": "7"],
+                   body: #"{"error":"Сервер сейчас занят. Повторите через несколько секунд.","code":"BUSY"}"#),
+             .throttled(until: Date(timeIntervalSince1970: 1_007))),
+            (.init(status: 503, body: #"{"error":"Сервер сейчас занят.","code":"BUSY"}"#),
+             .throttled(until: Date(timeIntervalSince1970: 1_005))),
+        ]
+        for (response, expected) in cases {
+            let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
+            do {
+                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.kz", username: "abc", displayName: "Аб", password: "12345678"))
+                XCTFail("BUSY must fail")
+            } catch {
+                let failure = failure(error, .registrationRequest)
+                XCTAssertEqual(failure, expected, "Retry-After \(response.headers["Retry-After"] ?? "absent")")
+                XCTAssertNotEqual(failure, .mailNotConfigured)
+            }
+        }
+    }
+
     // MARK: - Verify
 
     func testVerifySignedInDecodesTheSessionAndStoresTheToken() async throws {

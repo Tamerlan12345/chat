@@ -60,6 +60,10 @@ mobile/ios/
 │   │   │   └── JitterBuffer.swift               # Планировщик джиттер-буфера (60мс..250мс)
 │   │   ├── Storage/
 │   │   │   └── KeychainManager.swift            # Хранилище токенов и секретов в Keychain
+│   │   ├── Media/
+│   │   │   └── AvatarImageLoader.swift          # Фото сотрудников ссылкой: токен только своему серверу, кэш память+диск, ETag
+│   │   ├── Push/
+│   │   │   └── PushTokenRegistrar.swift         # APNs-токен на сервере (push.md §2): после входа, при смене токена, снятие при выходе
 │   │   ├── Audio/
 │   │   │   └── AudioSessionManager.swift        # Конфигурация AVAudioSession для VoIP
 │   │   └── Utils/
@@ -91,7 +95,7 @@ mobile/ios/
 │   │       ├── CentyHaptics.swift               # Тактильный отклик
 │   │       └── Components/
 │   │           ├── BrandMark.swift              # Знак CentyChat (порт BRAND_C_PATH из десктопа) и надпись
-│   │           ├── AvatarView.swift             # Аватар с инициалами и бейджем статуса
+│   │           ├── AvatarView.swift             # Аватар: фото или инициалы на цвете из имени (как на десктопе), бейдж статуса
 │   │           ├── StatusBadge.swift            # Индикатор онлайн-статуса
 │   │           ├── DeliveryStatusView.swift     # Галочки отправлено/доставлено/прочитано
 │   │           ├── TypingIndicatorView.swift    # Анимированный индикатор набора текста
