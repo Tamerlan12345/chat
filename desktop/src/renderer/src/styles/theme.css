@@ -9258,3 +9258,17 @@ input[type='radio'] { accent-color: var(--primary); }
 .update-banner,
 .update-banner.is-warn,
 .update-banner.is-error { border-left: 1px solid var(--border-color); }
+
+/* ── Жалобы (вкладка «Жалобы», ReportsAdmin) ─────────────────────────────── */
+.rep-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rep-status.is-open { background: var(--warning-soft); color: var(--warning-text); }
+.rep-status.is-closed { background: var(--success-soft); color: var(--success-text); }
