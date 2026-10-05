@@ -84,7 +84,7 @@ fun rememberMessageMenuState(): MessageMenuState = remember { MessageMenuState()
 
 /**
  * Hosts the long-press menu (UI layer v2): the pressed bubble lifts (scale 1.03) over a scrim and an
- * anchored Material menu offers Ответить / Копировать / Изменить / Удалить. Back, a tap outside or a
+ * anchored Material menu offers Ответить / Копировать / Редактировать / Удалить. Back, a tap outside or a
  * choice closes it. Reduce motion: no lift, the scrim fades. Wrap the whole screen so the scrim
  * covers the bars too.
  */
