@@ -58,16 +58,44 @@ private struct PeopleSearchHost: View {
             )
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Toggle(isOn: Binding(get: { model.filters.onlineOnly }, set: { _ in model.toggleOnlineOnly() })) {
-                        Label("В сети", systemImage: "circle.fill")
-                            .labelStyle(.titleAndIcon)
+                    OnlineFilterChip(isOn: model.filters.onlineOnly) {
+                        model.toggleOnlineOnly()
                     }
-                    .toggleStyle(.button)
-                    .tint(CentyColors.successText)
-                    .accessibilityHint("Показывать только тех, кто в сети")
-                    .accessibilityIdentifier("people-online-filter")
                 }
             }
+    }
+}
+
+/// «В сети» in the navigation bar: a chip that fills green while the filter is on.
+private struct OnlineFilterChip: View {
+    let isOn: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button {
+            CentyHaptics.light()
+            toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(CentyColors.statusOnline)
+                    .frame(width: 8, height: 8)
+                Text("В сети")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundStyle(isOn ? CentyColors.successText : CentyColors.textSecondary)
+            .background(Capsule().fill(isOn ? CentyColors.successSoft : Color(uiColor: .tertiarySystemFill)))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("В сети")
+        .accessibilityValue(isOn ? "Включён" : "Выключен")
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .accessibilityHint("Показывать только тех, кто в сети")
+        .accessibilityIdentifier("people-online-filter")
     }
 }
 
