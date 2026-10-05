@@ -50,6 +50,8 @@ class RoomDeliveryStore(private val dao: DeliveryDao) : DeliveryStore {
         )
     }
 
+    override suspend fun setOwner(me: Long) = dao.putMeta(listOf(MetaRow(ME, me.toString())))
+
     override suspend fun writeCache(cache: Map<String, List<Msg>>) = dao.writeCache(cacheRows(cache))
 
     override suspend fun clear() = dao.clearAll()

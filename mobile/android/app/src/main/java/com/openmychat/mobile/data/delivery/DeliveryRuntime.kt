@@ -71,7 +71,7 @@ class DeliveryRuntime(
     fun start() {
         if (started) return
         started = true
-        engine.start()
+        engine.start(signedInAs = session.currentUserId)
         sends.start(realtime.connectionState.map { it == ConnectionState.Connected }.distinctUntilChanged())
         scope.launch {
             // Another account signing in never inherits this queue (nor sends it).

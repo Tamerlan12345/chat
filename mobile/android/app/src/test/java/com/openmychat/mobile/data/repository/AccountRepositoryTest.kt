@@ -97,17 +97,28 @@ class AccountRepositoryTest {
     }
 
     @Test
+    fun whatFollowsTheServersDeletionRunsBeforeTheLocalClearCanFail() = runTest(UnconfinedTestDispatcher()) {
+        var tokenWhenCalled: String? = "not called"
+        repository().deleteAccount("Secret-12") { tokenWhenCalled = session.token }
+
+        assertNotNull("ran right after the server deleted the account, before the local clear", tokenWhenCalled)
+        assertNull(session.token)
+    }
+
+    @Test
     fun aRefusedDeletionLeavesTheSessionAlone() = runTest(UnconfinedTestDispatcher()) {
         val repository = repository()
         answers += 403 to """{"error":"Неверный пароль"}"""
 
+        var followed = false
         try {
-            repository.deleteAccount("wrong")
+            repository.deleteAccount("wrong") { followed = true }
             fail("a wrong password must fail")
         } catch (error: ApiException) {
             assertEquals(403, error.statusCode)
         }
 
+        assertEquals("nothing follows a refused deletion", false, followed)
         assertNotNull(session.token)
         assertEquals("device-secret", session.deviceSecret)
         assertEquals("alice", preferences.lastUsername)

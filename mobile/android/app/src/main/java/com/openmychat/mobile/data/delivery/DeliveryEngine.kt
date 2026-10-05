@@ -121,11 +121,27 @@ class DeliveryEngine(
      */
     private var signedIn: Long? = null
 
-    /** Subscribes to the socket and loads the stored model. Frames that arrive meanwhile wait in order. */
+    /** Explicit sign-out happened: the old socket's frames (still arriving) are ignored until [adopt]. */
+    private var signedOut = false
+
+    @Volatile private var ownerStored: Long? = null
+
+    /**
+     * The account written on disk as the store's owner, or null. Nothing of an account — upload
+     * rows, cache — may be written while this is not that account (AttachmentSends checks it).
+     */
+    val ownerOnDisk: Long? get() = ownerStored
+
+    /**
+     * Subscribes to the socket and loads the stored model. Frames that arrive meanwhile wait in order.
+     * [signedInAs] — the account signed in at launch: the stored model is checked against it before
+     * anything of it is shown.
+     */
     @Synchronized
-    fun start() {
+    fun start(signedInAs: Long? = null) {
         if (started) return
         started = true
+        signedIn = signedInAs
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             link.frames.collect { frame -> inbox.trySend(Dispatch(frameEvent(frame), null)) }
         }
@@ -240,8 +256,9 @@ class DeliveryEngine(
                 link.authenticatedUserId()?.let { id -> if (claimFor(id) == null) process(authSuccess(id)) }
             }
             is Dispatch -> {
-                if (blocked != null) {
+                if (blocked != null || signedOut || orphaned(command.event)) {
                     // Refused, not lost: the composer keeps the text; frames come again with the next sync.
+                    // After a sign-out, or before any account is known, nothing is taken in at all.
                     command.done?.complete(Outcome(false, emptyList()))
                     return
                 }
@@ -263,6 +280,7 @@ class DeliveryEngine(
             }
             is ReplaceHistory -> {
                 check(blocked == null) { "the delivery store is unavailable ($blocked)" }
+                check(!signedOut && (current.me != null || signedIn != null)) { "no account is signed in" }
                 val list = current.messages[command.conversation]
                 if (list != null) {
                     val pageIds = command.records.mapNotNullTo(HashSet()) { it["id"].long() }
@@ -277,19 +295,22 @@ class DeliveryEngine(
             }
             is Reset -> {
                 signedIn = null
+                signedOut = true
                 // Loud: the caller (sign-out) must not go on as if the messages were gone.
                 wipe()?.let { throw it }
                 command.done.complete(Unit)
             }
             is Adopt -> {
                 signedIn = command.userId
+                signedOut = false
                 // While the store cannot be read, the owner is checked once it can (restore).
                 if (blocked != "load") claimFor(command.userId)?.let { throw it }
                 command.done.complete(Unit)
             }
             is FlushCache -> {
                 cacheFlushScheduled = false
-                if (blocked == null && dirtyCache.isNotEmpty()) {
+                // The cache is written only under its owner's name.
+                if (blocked == null && dirtyCache.isNotEmpty() && current.me != null && ownerStored == current.me) {
                     val cache = takeDirtyCache()
                     runCatching { store.writeCache(cache) }
                 }
@@ -302,15 +323,30 @@ class DeliveryEngine(
      * something — is wiped first; an empty model is claimed. The failure of a wipe, or null.
      */
     private suspend fun claimFor(user: Long): Exception? {
-        val me = current.me
-        val ownerless = me == null && (current.outbox.isNotEmpty() || current.ops.isNotEmpty() || current.cancelled.isNotEmpty())
-        if ((me != null && me != user) || ownerless) wipe()?.let { return it }
-        if (blocked == null && current.me == null) {
-            // Stored with the next persist; until then nothing of this account is on disk anyway.
-            current = current.deepCopy().apply { this.me = user }
-            _state.value = current
+        if (current.me == user && ownerStored == user) return null
+        // Anything not provably this account's — another account's, or written while no account
+        // was named (queue, ops, cache, file rows) — is wiped, never claimed.
+        wipe()?.let { return it }
+        try {
+            // On disk before anything of this account can be written there.
+            store.setOwner(user)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("delivery store owner could not be written", e)
+            return e
         }
+        ownerStored = user
+        current = current.deepCopy().apply { this.me = user }
+        _state.value = current
         return null
+    }
+
+    /** A server answer or page while no account is known (signed out, nobody adopted): dropped. */
+    private fun orphaned(event: JsonObject): Boolean {
+        if (current.me != null || signedIn != null) return false
+        if (authenticatedAs(event) != null) return false
+        return event["type"].string() in SERVER_EVENTS
     }
 
     /**
@@ -332,6 +368,7 @@ class DeliveryEngine(
     /** Null when the store is empty now; otherwise the failure (the engine stays blocked and retries). */
     private suspend fun clearStore(): Exception? = try {
         store.clear()
+        ownerStored = null
         blocked = null
         repairAttempts = 0
         // The store is empty and readable now: whatever blocked the engine (a failed load) is over.
@@ -377,22 +414,28 @@ class DeliveryEngine(
         }
         blocked = null
         repairAttempts = 0
-        current = DeliveryState(
-            me = stored.me,
-            sync = SyncState(cursor = stored.cursor),
-            seq = stored.seq,
-            outbox = stored.outbox.mapTo(ArrayList()) { it.copy() },
-            ops = stored.ops.mapTo(ArrayList()) { it.copy() },
-            cancelled = ArrayList(stored.cancelled)
-        )
-        process(event("app_restart") {})
-        // The cache fills the model again (§6.3 app_restart), oldest conversation first.
-        for ((_, records) in stored.cache) {
-            if (records.isNotEmpty()) process(event("history_page") { put("body", JsonArray(records)) }, cacheWrite = false)
+        ownerStored = stored.me
+        // The owner rule of a live auth_success applies to what was just read, before any of it is
+        // shown: another account's (or nobody's) store is wiped, never replayed, sent or synced.
+        val owner = signedIn ?: link.authenticatedUserId()
+        if (owner != null && stored.me != owner) {
+            current = DeliveryState()
+            claimFor(owner)
+        } else {
+            current = DeliveryState(
+                me = stored.me,
+                sync = SyncState(cursor = stored.cursor),
+                seq = stored.seq,
+                outbox = stored.outbox.mapTo(ArrayList()) { it.copy() },
+                ops = stored.ops.mapTo(ArrayList()) { it.copy() },
+                cancelled = ArrayList(stored.cancelled)
+            )
+            process(event("app_restart") {})
+            // The cache fills the model again (§6.3 app_restart), oldest conversation first.
+            for ((_, records) in stored.cache) {
+                if (records.isNotEmpty()) process(event("history_page") { put("body", JsonArray(records)) }, cacheWrite = false)
+            }
         }
-        // The owner rule of a live auth_success applies to what was just read: a queue of another
-        // account (signed in meanwhile, or with a socket already up) is wiped, never sent or synced.
-        signedIn?.let { claimFor(it) }
         val authenticated = link.authenticatedUserId()
         authenticated?.let { claimFor(it) }
         if (blocked != null) return
@@ -416,7 +459,10 @@ class DeliveryEngine(
         val persist = step.effects.firstOrNull() as? DeliveryEffect.Persist
         if (persist != null) {
             try {
-                store.persist(persist.slices, step.state, takeDirtyCache(step.state))
+                // The cache goes along only under its owner's name (`me` is written with every persist).
+                val cache = takeDirtyCache(step.state).takeIf { step.state.me != null }.orEmpty()
+                store.persist(persist.slices, step.state, cache)
+                if (step.state.me != null) ownerStored = step.state.me
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

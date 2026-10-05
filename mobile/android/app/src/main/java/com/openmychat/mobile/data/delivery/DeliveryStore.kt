@@ -17,6 +17,9 @@ interface DeliveryStore {
      */
     suspend fun persist(slices: List<String>, state: DeliveryState, cache: Map<String, List<Msg>>)
 
+    /** Names the account the store belongs to (`me`), before anything of it is written. */
+    suspend fun setOwner(me: Long)
+
     /** Conversation cache only (no contract slice changed); an empty list drops the conversation. */
     suspend fun writeCache(cache: Map<String, List<Msg>>)
 

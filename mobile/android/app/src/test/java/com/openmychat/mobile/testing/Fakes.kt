@@ -206,9 +206,14 @@ class FakeAccountRepository : AccountRepository {
         return onVerify(registrationId, code)
     }
 
-    override suspend fun deleteAccount(password: String) {
+    /** The local wipe after the server deleted the account (throws like a locked secure storage). */
+    var onLocalClear: suspend () -> Unit = {}
+
+    override suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit) {
         deletions += password
         onDelete(password)
+        afterServerDeletion()
+        onLocalClear()
     }
 
     override suspend fun report(body: ReportBody) {

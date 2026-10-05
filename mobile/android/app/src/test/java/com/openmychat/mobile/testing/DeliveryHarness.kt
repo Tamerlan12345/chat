@@ -80,8 +80,8 @@ class DeliveryHarness(
     chat: ChatRepository?,
     val dispatcher: TestDispatcher,
     val session: FakeSessionRepository = FakeSessionRepository(),
-    val store: InMemoryDeliveryStore = InMemoryDeliveryStore(),
     val uploadStore: InMemoryUploadStore = InMemoryUploadStore(),
+    val store: InMemoryDeliveryStore = InMemoryDeliveryStore(uploadStore),
     files: AttachmentRepository = UnavailableAttachments
 ) {
     val scope = CoroutineScope(SupervisorJob() + dispatcher)

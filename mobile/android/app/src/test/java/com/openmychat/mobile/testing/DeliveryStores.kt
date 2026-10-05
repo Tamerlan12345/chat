@@ -10,7 +10,8 @@ import com.openmychat.mobile.data.delivery.toRecord
 import kotlinx.serialization.json.JsonObject
 
 /** For tests and previews: nothing survives the process. */
-open class InMemoryDeliveryStore : DeliveryStore {
+/** [uploads] — the file rows that live in the same database in the app (a wipe clears them too). */
+open class InMemoryDeliveryStore(private val uploads: InMemoryUploadStore? = null) : DeliveryStore {
     var stored = StoredDelivery()
         private set
     var failNextPersist: Exception? = null
@@ -47,8 +48,13 @@ open class InMemoryDeliveryStore : DeliveryStore {
         return next
     }
 
+    override suspend fun setOwner(me: Long) {
+        stored = StoredDelivery(me, stored.cursor, stored.seq, stored.outbox, stored.ops, stored.cancelled, stored.cache)
+    }
+
     override suspend fun clear() {
         stored = StoredDelivery()
+        uploads?.clear()
     }
 }
 

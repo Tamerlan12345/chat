@@ -56,6 +56,21 @@ class DeleteAccountUnsentTest {
     }
 
     @Test
+    fun aLocalSessionClearThatFailsStillDeletesTheUnsentMessages() {
+        // Review fix round 3: the server deleted the account; the secure storage then refused to
+        // clear the session — the account's messages and files must go anyway.
+        val queue = Queue(2)
+        account.onLocalClear = { throw com.openmychat.mobile.core.session.SecureStorageUnavailableException() }
+        val vm = DeleteAccountViewModel(account, queue) { 0L }
+        vm.onPasswordChange("secret")
+
+        vm.delete()
+
+        assertEquals(1, queue.discarded)
+        assertTrue("the storage problem is still reported", vm.state.value.failure != null)
+    }
+
+    @Test
     fun aRefusedDeletionKeepsTheUnsentMessages() {
         val queue = Queue(2)
         account.onDelete = { throw com.openmychat.mobile.core.network.ApiException(401, null, "Неверный пароль") }

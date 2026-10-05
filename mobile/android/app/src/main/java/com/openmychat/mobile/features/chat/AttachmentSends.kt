@@ -105,6 +105,8 @@ class AttachmentSends(
 
     private suspend fun restore() = loaded.withLock {
         if (restored) return@withLock
+        // Only after the engine checked the store's owner (another account's rows are wiped by then).
+        engine.awaitReady()
         restored = true
         val stored = runCatching { store.all() }.getOrDefault(emptyList())
         _uploads.value = stored.map { Upload(it) }
@@ -117,6 +119,9 @@ class AttachmentSends(
      * False when the file could not be kept: nothing was queued.
      */
     suspend fun add(conversation: String, picked: PickedFile, replyToId: Long?): Boolean {
+        // A row is written only under its account's name on disk.
+        val account = owner() ?: return false
+        if (!engine.ready.value || engine.ownerOnDisk != account) return false
         restore()
         val key = DeliveryEngine.newClientMsgId()
         val kept = runCatching { files.keep(picked, key) }.getOrNull() ?: return false

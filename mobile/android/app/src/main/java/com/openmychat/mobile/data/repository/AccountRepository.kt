@@ -40,7 +40,7 @@ interface AccountRepository {
      * also wipes the caches that follow it (people directory, chat history, recents). A failure on the
      * server leaves everything as it was; a local wipe that fails throws [SecureStorageUnavailableException].
      */
-    suspend fun deleteAccount(password: String)
+    suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit = {})
 
     suspend fun report(body: ReportBody)
     suspend fun block(userId: Long, name: String?)
@@ -56,7 +56,7 @@ object UnavailableAccountRepository : AccountRepository {
     private fun offline(): Nothing = throw ApiException(0, "NETWORK_ERROR", "No account backend")
     override suspend fun requestRegistration(body: RegisterRequestBody): RegistrationChallenge = offline()
     override suspend fun verifyRegistration(registrationId: String, code: String): RegistrationOutcome = offline()
-    override suspend fun deleteAccount(password: String) = offline()
+    override suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit) = offline()
     override suspend fun report(body: ReportBody) = offline()
     override suspend fun block(userId: Long, name: String?) = offline()
     override suspend fun unblock(userId: Long) = offline()
@@ -111,8 +111,10 @@ class DefaultAccountRepository @Inject constructor(
         return outcome
     }
 
-    override suspend fun deleteAccount(password: String) {
+    override suspend fun deleteAccount(password: String, afterServerDeletion: suspend () -> Unit) {
         api.deleteAccount(password)
+        // The server deleted the account: what follows runs whatever the local clear below does.
+        afterServerDeletion()
         // The server revoked every token and unbound this device: nothing of the account may stay.
         val cleared = session.clearSession()
         val secretCleared = runCatching { session.deviceSecret = null }.isSuccess

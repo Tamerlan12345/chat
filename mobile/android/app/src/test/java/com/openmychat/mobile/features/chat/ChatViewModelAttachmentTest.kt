@@ -302,7 +302,7 @@ class ChatViewModelAttachmentTest {
 
         // After the process dies the file is still queued (its row and private copy were stored),
         // with no ring: nothing goes up for it until the connection is back.
-        val restarted = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher, uploadStore = delivery.uploadStore, files = files)
+        val restarted = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher, uploadStore = delivery.uploadStore, store = delivery.store, files = files)
         val restored = restarted.sends.uploads.value.single()
         assertEquals("отчёт.pdf", restored.pending.name)
         assertNull("no upload runs for it here", restored.progress)

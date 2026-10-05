@@ -51,14 +51,16 @@ class DeleteAccountViewModel(
         _state.update { it.copy(deleting = true, failure = null) }
         viewModelScope.launch {
             try {
-                account.deleteAccount(current.password)
-                // The account is gone on the server: its unsent messages, cache and kept files go too.
-                // Best effort — a failed local wipe is retried by the delivery engine (and is logged).
-                try {
-                    outgoing.discardForSignOut()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
+                // Once the server deleted the account, its unsent messages, cache and kept files go too —
+                // whatever happens to the local session clear after it. Best effort: a failed local
+                // wipe is retried by the delivery engine (and logged).
+                account.deleteAccount(current.password) {
+                    try {
+                        outgoing.discardForSignOut()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    }
                 }
                 _state.update { it.copy(deleting = false, deleted = true, password = "") }
             } catch (error: Exception) {

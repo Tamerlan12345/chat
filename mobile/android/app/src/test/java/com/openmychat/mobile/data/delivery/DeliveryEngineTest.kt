@@ -11,6 +11,7 @@ import androidx.work.ListenableWorker
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.serialization.json.JsonObject
@@ -451,6 +452,84 @@ class DeliveryEngineTest {
 
         assertTrue(h.logged.toString(), h.logged.any { it.contains("99") })
         assertTrue("and still nothing of Алиса can go out", h.engine.state.value.outbox.isEmpty())
+    }
+
+    @Test
+    fun aFileQueuedByOneAccountNeverGoesUpForTheNextAfterARestart() = runBlocking {
+        // Review fix round 3: B attaches right after signing in on a fresh install (nothing else was
+        // stored yet), the process dies, B's session ends by itself, C signs in.
+        val uploads = com.openmychat.mobile.testing.InMemoryUploadStore()
+        val store = InMemoryDeliveryStore(uploads)
+        val files = com.openmychat.mobile.testing.FakeAttachmentRepository()
+        val pdf = com.openmychat.mobile.data.repository.PickedFile("content://docs/1", "отчёт.pdf", 2048, "application/pdf")
+        realtime.connectionState.value = ConnectionState.Connecting
+        val bob = DeliveryHarness(realtime, null, main.dispatcher, session = com.openmychat.mobile.testing.FakeSessionRepository(2), uploadStore = uploads, store = store, files = files)
+        assertTrue(bob.sends.add("direct:7", pdf, null))
+        bob.stop() // the process dies before anything else is stored
+
+        realtime.me = 3
+        realtime.connectionState.value = ConnectionState.Connected
+        val carol = DeliveryHarness(realtime, null, main.dispatcher, session = com.openmychat.mobile.testing.FakeSessionRepository(3), uploadStore = uploads, store = store, files = files)
+        carol.engine.awaitReady()
+
+        assertTrue("Боб's file never goes up under Кэрол", files.uploads.isEmpty())
+        assertTrue(sendFrames.isEmpty())
+        assertTrue(carol.sends.uploads.value.isEmpty())
+        assertTrue("and its row is gone", uploads.all().isEmpty())
+    }
+
+    @Test
+    fun framesOfTheSignedOutAccountNeverReachTheNextOne() = runBlocking {
+        // Review fix round 3: sign-out deletes the queue before the server logout; the old socket is
+        // still up meanwhile and its frames must not land in the (now ownerless) model or cache.
+        val store = InMemoryDeliveryStore()
+        val h = harness(store)
+        h.runtime.discardForSignOut()
+
+        realtime.emitFrame(buildJsonObject {
+            put("type", "new_message")
+            put("message", record(300, "x", "для Алисы", from = alice, to = 1))
+        })
+        elapse(2_000) // a batched cache write would have happened by now
+        h.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 2, username = "bob", fullName = "Боб")
+        realtime.me = 2
+        realtime.connectionState.value = ConnectionState.Connecting
+        realtime.connectionState.value = ConnectionState.Connected
+
+        assertTrue("Боб never sees Алиса's message", h.engine.state.value.messages.values.flatten().none { it.id == 300L })
+        assertTrue(store.stored.cache.values.flatten().none { it["id"].toString() == "300" })
+    }
+
+    @Test
+    fun aRestoreNeverShowsAnotherAccountsMessagesEvenForAMoment() = runBlocking {
+        // Review fix round 3 (minor): the owner check runs before the stored model is replayed.
+        val store = InMemoryDeliveryStore()
+        store.persist(listOf("outbox"), DeliveryState(me = 1, seq = 0), mapOf(conv to listOf(DeliveryReducer.project(record(400, "y", "секрет Алисы", from = alice, to = 1), null))))
+        realtime.me = 99
+        val carol = com.openmychat.mobile.testing.FakeSessionRepository(99)
+        val scope = CoroutineScope(main.dispatcher)
+        val seen = mutableListOf<Long>()
+        var holder: DeliveryEngine? = null
+        // A collector is conflated: the clock (read at every step) and the link (asked who is signed
+        // in) also look at the published model, so a brief emission cannot slip through.
+        val watch = { holder?.state?.value?.messages?.values?.flatten()?.forEach { seen += it.id } }
+        val link = object : DeliveryLink by RealtimeDeliveryLink(realtime, carol) {
+            override fun authenticatedUserId(): Long? {
+                watch()
+                return 99
+            }
+        }
+        val engine = DeliveryEngine(scope, store, link, FakeDeliveryBackend(), clock = { watch(); 0L })
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            engine.state.collect { s -> s.messages.values.flatten().forEach { seen += it.id } }
+        }
+
+        holder = engine
+        engine.start()
+        engine.awaitReady()
+
+        assertTrue("never emitted: $seen", 400L !in seen)
+        assertTrue(store.stored.cache.isEmpty())
     }
 
     @Test
