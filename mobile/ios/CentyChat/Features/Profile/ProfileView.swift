@@ -6,12 +6,15 @@ public struct ProfileView: View {
     @Environment(ProfileStore.self) private var profile
     @Environment(ConversationsStore.self) private var conversations
     @Environment(AccountStore.self) private var account
+    @Environment(AppContainer.self) private var container
 
     @State private var showChangePasswordSheet: Bool = false
     @State private var showWakeColleagueSheet: Bool = false
     @State private var showDeleteAccountSheet: Bool = false
     @State private var selectedStatus: UserStatus = .online
     @State private var customStatusText: String = ""
+    /// Unsent messages wait: the sign-out asks first (they would be deleted).
+    @State private var unsentWarning: String?
 
     public init() {}
 
@@ -121,7 +124,11 @@ public struct ProfileView: View {
                     }
 
                     Button(role: .destructive, action: {
-                        Task { await session.logout() }
+                        if let warning = UnsentNotice.text(container.delivery.unsentCount) {
+                            unsentWarning = warning
+                        } else {
+                            Task { await session.logout() }
+                        }
                     }) {
                         HStack {
                             Image(systemName: "rectangle.portrait.and.arrow.right")
@@ -182,6 +189,18 @@ public struct ProfileView: View {
                 if let user = session.currentUser {
                     selectedStatus = user.status
                 }
+            }
+            .alert(
+                "Выйти из аккаунта?",
+                isPresented: Binding(get: { unsentWarning != nil }, set: { if !$0 { unsentWarning = nil } })
+            ) {
+                Button("Отмена", role: .cancel) { unsentWarning = nil }
+                Button("Выйти", role: .destructive) {
+                    unsentWarning = nil
+                    Task { await session.logout() }
+                }
+            } message: {
+                Text(unsentWarning ?? "")
             }
             .sheet(isPresented: $showChangePasswordSheet) {
                 ChangePasswordModalView(isMandatory: false)
