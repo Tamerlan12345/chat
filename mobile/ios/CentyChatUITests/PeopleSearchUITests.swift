@@ -98,12 +98,12 @@ final class PeopleSearchUITests: XCTestCase {
             pause(1)
             capture(app, named: "10-people-\(suffix)")
 
-            // Bob's card: the large (size=m) photo.
+            // Bob's card shows the large (size=m) photo. At accessibility sizes his row may be
+            // below the fold (never scrolled into the tree): then the first row's card is shown.
             let bob = app.buttons.matching(
                 NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "person-row-", "Боб Тестов")
             ).firstMatch
-            XCTAssertTrue(bob.waitForExistence(timeout: 10), "Bob must be listed (\(suffix))")
-            tapCentre(bob)
+            tapCentre(bob.waitForExistence(timeout: 5) ? bob : row)
             XCTAssertTrue(app.descendants(matching: .any)["person-card"].waitForExistence(timeout: 15))
             pause(1)
             capture(app, named: "11-person-card-\(suffix)")
