@@ -14,6 +14,8 @@ import com.openmychat.mobile.data.model.FileUploadResponse
 import com.openmychat.mobile.di.ApplicationScope
 import com.openmychat.mobile.features.attachments.AttachmentDownloader
 import com.openmychat.mobile.features.attachments.Attachments
+import com.openmychat.mobile.features.attachments.SessionCacheWiper
+import coil3.SingletonImageLoader
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,15 +88,13 @@ class DefaultAttachmentRepository @Inject constructor(
     @Volatile private var cachedPolicy: Pair<Long, FilePolicy>? = null
 
     init {
-        // Files of a session never outlive it (like the message history cache).
-        scope.launch {
-            sessionRepository.token.collect { token ->
-                if (token == null) {
-                    cachedPolicy = null
-                    withContext(Dispatchers.IO) { root.deleteRecursively() }
-                }
-            }
-        }
+        // Files and thumbnails of a session never outlive it (like the message history cache).
+        scope.launch { sessionRepository.token.collect { if (it == null) cachedPolicy = null } }
+        SessionCacheWiper(root, clearImages = {
+            val images = SingletonImageLoader.get(context)
+            images.memoryCache?.clear()
+            images.diskCache?.clear()
+        }).watch(scope, sessionRepository.token)
     }
 
     override suspend fun describe(uri: String): PickedFile? = withContext(Dispatchers.IO) {
