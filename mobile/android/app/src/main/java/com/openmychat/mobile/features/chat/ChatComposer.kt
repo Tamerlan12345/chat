@@ -158,9 +158,12 @@ internal fun ChatComposer(
             // Only what its bubble shows in a few lines travels; a long message lands with a fade.
             val fits = measurer.measure(sent.trim(), bodyStyle, constraints = Constraints(maxWidth = bubbleTextWidth.coerceAtLeast(1))).lineCount <= LANDING_MAX_LINES
             if (!reduce && editingMessage == null && landing != null && start != null && fits) landing.launch(sent.trim(), start)
-            actions.onSend(sent, if (editingMessage == null) replyTo else null)
-            text = ""
-            onSent()
+            // The text leaves the field only once the message is on disk (delivery-state.md §7.4):
+            // if it could not be stored, it stays here to send again.
+            actions.onSubmit(sent, if (editingMessage == null) replyTo else null) {
+                if (text == sent) text = ""
+                onSent()
+            }
             haptics.tick()
             if (!reduce) {
                 scope.launch {

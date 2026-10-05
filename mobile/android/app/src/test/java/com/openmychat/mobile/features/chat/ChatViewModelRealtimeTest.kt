@@ -4,6 +4,7 @@ import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.realtime.ConversationRef
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -22,18 +23,27 @@ class ChatViewModelRealtimeTest {
     private val alice = 7L
     private val realtime = FakeRealtimeRepository()
     private val registry = ActiveConversationRegistry()
+    private val chat = FakeChatRepository()
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher)
 
-    private fun directChat(vararg history: com.openmychat.mobile.data.model.Message) = ChatViewModel(
-        conversationType = ConversationType.DIRECT,
-        targetId = alice,
-        chatRepository = FakeChatRepository(history = history.toList()),
-        realtimeRepository = realtime,
-        sessionRepository = FakeSessionRepository(),
-        activeConversations = registry,
-        historyCache = ChatHistoryCache(FakeSessionRepository())
-    )
+    private fun directChat(vararg history: com.openmychat.mobile.data.model.Message): ChatViewModel {
+        chat.history = history.toList()
+        return ChatViewModel(
+            conversationType = ConversationType.DIRECT,
+            targetId = alice,
+            chatRepository = chat,
+            realtimeRepository = realtime,
+            sessionRepository = FakeSessionRepository(),
+            activeConversations = registry,
+            delivery = delivery.engine,
+            sends = delivery.sends
+        )
+    }
 
     private val ChatViewModel.messageIds get() = (uiState.value as ChatUiState.Content).messages.map { it.id }
+
+    /** Ids still shown as messages (a tombstone shows «Сообщение удалено» in its place). */
+    private val ChatViewModel.liveIds get() = (uiState.value as ChatUiState.Content).messages.filter { !it.isDeleted }.map { it.id }
 
     @Test
     fun peerDeletingTheirMessageRemovesItEvenThoughTargetIdIsTheRecipient() {
@@ -42,7 +52,8 @@ class ChatViewModelRealtimeTest {
         // The server sends target_id of the message: for alice's message that is me, not alice.
         realtime.emit(WsEvent.MessageDeleted(messageId = 10, conversationType = "direct", targetId = ME))
 
-        assertEquals(listOf(11L), vm.messageIds)
+        assertEquals(listOf(11L), vm.liveIds)
+        assertEquals("a tombstone keeps its place (delivery-state.md §3.4)", listOf(10L, 11L), vm.messageIds)
     }
 
     @Test
@@ -51,16 +62,20 @@ class ChatViewModelRealtimeTest {
 
         realtime.emit(WsEvent.MessageDeleted(messageId = 11, conversationType = "direct", targetId = alice))
 
-        assertEquals(listOf(10L), vm.messageIds)
+        assertEquals(listOf(10L), vm.liveIds)
     }
 
     @Test
-    fun aChannelDeletionNeverRemovesADirectMessage() {
-        val vm = directChat(message(id = 10, from = alice, to = ME))
+    fun aDeletionIsFoundByItsMessageIdAloneWhateverTheFrameSaysOfItsConversation() {
+        // delivery-state.md §6.3 message_deleted: the message is looked up only by messageId (ids
+        // are the server's, unique across conversations; targetId is the stored target_id). The
+        // earlier rule — skip frames whose conversation did not match the open chat — is replaced.
+        val vm = directChat(message(id = 10, from = alice, to = ME), message(id = 12, from = alice, to = ME))
 
         realtime.emit(WsEvent.MessageDeleted(messageId = 10, conversationType = "channel", targetId = ME))
+        realtime.emit(WsEvent.MessageDeleted(messageId = 99, conversationType = "direct", targetId = alice))
 
-        assertEquals(listOf(10L), vm.messageIds)
+        assertEquals("an unknown id deletes nothing", listOf(12L), vm.liveIds)
     }
 
     @Test

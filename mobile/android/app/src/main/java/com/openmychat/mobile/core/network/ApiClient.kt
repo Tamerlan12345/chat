@@ -479,6 +479,31 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
+    /**
+     * A request whose status the caller interprets (the delivery engine: `/sync` 410, `POST` 409/503).
+     * Never throws for an HTTP status: no answer at all is status 0. The session rules still apply —
+     * a 401 (after the token refresh failed) ends the session, as for every other request.
+     */
+    suspend fun raw(method: String, path: String, body: JsonElement? = null): RawResponse = withContext(Dispatchers.IO) {
+        // Contract paths carry the /api prefix; the base URL already ends with it.
+        val relative = path.removePrefix("/api")
+        val url = "${getBaseUrl()}$relative".toHttpUrlOrNull() ?: return@withContext RawResponse(0, "", null)
+        val request = Request.Builder().url(url).apply {
+            if (method == "GET") get() else method(method, (body ?: JsonObject(emptyMap())).toString().toRequestBody(jsonMediaType))
+        }.build()
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: IOException) {
+            return@withContext RawResponse(0, "", null)
+        }
+        response.use {
+            val text = it.body?.string().orEmpty()
+            if (it.code == 401) sessionManager.clearSession()
+            if (it.code == 403 && text.contains("MUST_CHANGE_PASSWORD")) sessionManager.mustChangePassword = true
+            RawResponse(it.code, text, retryAfterSeconds(it))
+        }
+    }
+
     private inline fun <reified T> executeRequest(
         request: Request,
         requestClient: OkHttpClient = client

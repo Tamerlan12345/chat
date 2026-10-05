@@ -2,6 +2,7 @@ package com.openmychat.mobile.features.chat
 
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -21,15 +22,18 @@ class ChatJumpToMessageTest {
 
     private val bob = 3L
     private val repository = FakeChatRepository(history = (90L..100L).map { message(it, from = bob, to = ME) })
+    private val realtime = FakeRealtimeRepository()
+    private val delivery = DeliveryHarness(realtime, repository, mainDispatcher.dispatcher)
 
     private fun open(focus: Long?, saved: androidx.lifecycle.SavedStateHandle = androidx.lifecycle.SavedStateHandle()) = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = bob,
         chatRepository = repository,
-        realtimeRepository = FakeRealtimeRepository(),
+        realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = ChatHistoryCache(FakeSessionRepository()),
+        delivery = delivery.engine,
+        sends = delivery.sends,
         saved = saved,
         focusMessageId = focus
     )

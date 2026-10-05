@@ -22,6 +22,14 @@ interface ChatRepository {
 
     /** Поиск по сообщениям, доступным сотруднику (сервер: до 30 последних совпадений). */
     suspend fun searchMessages(query: String): List<Message> = emptyList()
+
+    /** The page of [PAGE_SIZE] messages before [beforeId] (`beforeId`), oldest first. */
+    suspend fun messagesBefore(conversationType: ConversationType, targetId: Long, beforeId: Long): List<Message> = emptyList()
+
+    companion object {
+        /** Messages per history page (the server's default `limit`). */
+        const val PAGE_SIZE = 50
+    }
 }
 
 @Singleton
@@ -55,4 +63,8 @@ class DefaultChatRepository @Inject constructor(
         )
 
     override suspend fun searchMessages(query: String): List<Message> = apiClient.searchMessages(query)
+
+    override suspend fun messagesBefore(conversationType: ConversationType, targetId: Long, beforeId: Long): List<Message> =
+        if (conversationType == ConversationType.DIRECT) apiClient.getDirectMessages(targetId, beforeId = beforeId, limit = ChatRepository.PAGE_SIZE)
+        else apiClient.getChannelMessages(targetId, beforeId = beforeId, limit = ChatRepository.PAGE_SIZE)
 }

@@ -18,6 +18,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -28,6 +29,7 @@ import com.openmychat.mobile.R
 import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.ChatSkeleton
@@ -90,23 +92,35 @@ interface ChatActions {
     fun onRetry() {}
 
     /**
-     * Send the composer text. [replyTo] is the local reply draft («Ответить», swipe-to-reply); the
-     * send queue (Task 15) carries it to the server as `reply_to_id`.
+     * Send the composer text. [replyTo] is the reply draft («Ответить», swipe-to-reply); the send
+     * queue carries it to the server as `reply_to_id`.
      */
     fun onSend(text: String, replyTo: Message?) {}
+
+    /**
+     * Send, and clear the composer only once the message is stored: [onAccepted] runs then
+     * (delivery-state.md §7.4). Without a durable queue behind it, it is [onSend] at once.
+     */
+    fun onSubmit(text: String, replyTo: Message?, onAccepted: () -> Unit) {
+        onSend(text, replyTo)
+        onAccepted()
+    }
     fun onTyping(active: Boolean) {}
     fun onStartEdit(message: Message) {}
     fun onCancelEdit() {}
     fun onDelete(message: Message) {}
 
-    /** Queued / sending / failed for own messages, from the send queue (Task 15); null = server state. */
+    /** Queued / sending / failed for own messages, from the send queue; null = server state. */
     fun localMark(message: Message): DeliveryMark? = null
 
-    /** «Повторить» on a failed send (Task 15). */
+    /** «Повторить» on a failed send. */
     fun onRetrySend(message: Message) {}
 
-    /** «Удалить» on a failed send: drop it from the queue (Task 15). */
+    /** «Удалить» on an unsent message (queued, sending or failed), after the confirmation: it is never sent. */
     fun onDiscardFailed(message: Message) {}
+
+    /** The reader reached the oldest loaded message: load the page before it (`beforeId`). */
+    fun onLoadOlder() {}
 
     /** Someone else's delivered message may be reported. */
     fun canReport(message: Message): Boolean = false
@@ -123,6 +137,9 @@ interface ChatActions {
 
     /** A photo or document picked in the system picker (content URI). */
     fun onAttach(uri: String) {}
+
+    /** The same, answering [replyTo] (the reply draft goes with the file as `reply_to_id`). */
+    fun onAttach(uri: String, replyTo: Message?) = onAttach(uri)
 
     /** Tap on an attachment tile: an image opens in the viewer, a file downloads and opens. */
     fun onOpenAttachment(message: Message) {}
@@ -208,9 +225,9 @@ fun ChatScreen(
             }
             override fun onRetry() = viewModel.loadMessages()
 
-            // The reply id travels with the send queue (Task 15); until then the draft is local.
-            override fun onSend(text: String, replyTo: Message?) {
-                viewModel.sendMessage(text)
+            // The reply id travels with the message (`reply_to_id`); the composer clears once it is stored.
+            override fun onSubmit(text: String, replyTo: Message?, onAccepted: () -> Unit) {
+                viewModel.send(text, replyTo, onAccepted)
                 viewModel.onTyping(false)
             }
             override fun onTyping(active: Boolean) = viewModel.onTyping(active)
@@ -219,7 +236,8 @@ fun ChatScreen(
             override fun onDelete(message: Message) = viewModel.deleteMessage(message)
             override fun localMark(message: Message) = sendStateMark(message)
             override fun onRetrySend(message: Message) = viewModel.retrySend(message)
-            override fun onDiscardFailed(message: Message) = viewModel.discardFailed(message)
+            override fun onDiscardFailed(message: Message) = viewModel.cancelUnsent(message)
+            override fun onLoadOlder() = viewModel.loadOlder()
             override fun canReport(message: Message) = viewModel.canReportMessage(message)
             override fun onReportMessage(message: Message) = viewModel.reportMessage(message)
             override val hasPersonMenu: Boolean = viewModel.blocks != null
@@ -228,6 +246,7 @@ fun ChatScreen(
             override fun onUnblockPeer() = viewModel.unblock()
             override val canAttach: Boolean = viewModel.canAttach
             override fun onAttach(uri: String) = viewModel.sendAttachment(uri)
+            override fun onAttach(uri: String, replyTo: Message?) = viewModel.sendAttachment(uri, replyTo)
             override fun onOpenAttachment(message: Message) = viewModel.openAttachment(message)
             override fun onCancelUpload(message: Message) = viewModel.cancelUpload(message)
             override fun transfer(fileId: Long): TransferState? = transfers.value[fileId]
@@ -305,9 +324,14 @@ fun ChatContent(
     var confirmBlock by rememberSaveable { mutableStateOf(false) }
     var replyToId by rememberSaveable { mutableStateOf<Long?>(null) }
     var choosingAttachment by rememberSaveable { mutableStateOf(false) }
-    val pickers = rememberAttachmentPickers { uri -> actions.onAttach(uri.toString()) }
     val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
+    // A picked file answers the reply draft too, and takes it.
+    val currentReply by rememberUpdatedState(replyTo)
+    val pickers = rememberAttachmentPickers { uri ->
+        actions.onAttach(uri.toString(), currentReply)
+        replyToId = null
+    }
     val menuState = rememberMessageMenuState()
     val landing = rememberLandingState()
     // The history composes two frames after the screen: the chat is still invisible then (the
@@ -463,15 +487,17 @@ fun ChatContent(
     }
 
     pendingDelete?.let { message ->
+        // An unsent message is cancelled (never sent later); a sent one is deleted for everyone.
+        val unsent = message.sendState != SendState.SENT
         CentyConfirmDialog(
             title = stringResource(R.string.chat_delete_title),
-            message = stringResource(R.string.chat_delete_message),
+            message = stringResource(if (unsent) R.string.chat_discard_message else R.string.chat_delete_message),
             confirmText = stringResource(R.string.action_delete),
             isDestructive = true,
             confirmTestTag = "confirm-delete",
             onConfirm = {
                 pendingDelete = null
-                actions.onDelete(message)
+                if (unsent) actions.onDiscardFailed(message) else actions.onDelete(message)
             },
             onDismiss = { pendingDelete = null }
         )

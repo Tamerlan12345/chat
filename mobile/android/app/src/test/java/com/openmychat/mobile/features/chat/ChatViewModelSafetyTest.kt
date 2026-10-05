@@ -8,6 +8,7 @@ import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.features.account.ReportTarget
 import com.openmychat.mobile.testing.FakeAccountRepository
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -29,6 +30,7 @@ class ChatViewModelSafetyTest {
     private val realtime = FakeRealtimeRepository()
     private val chat = FakeChatRepository(history = listOf(message(id = 10, from = 7, to = ME, text = "Привет")))
     private val account = FakeAccountRepository()
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher)
 
     private fun open(type: ConversationType = ConversationType.DIRECT, target: Long = alice) = ChatViewModel(
         conversationType = type,
@@ -37,7 +39,8 @@ class ChatViewModelSafetyTest {
         realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = ChatHistoryCache(FakeSessionRepository()),
+        delivery = delivery.engine,
+        sends = delivery.sends,
         account = account
     )
 

@@ -136,6 +136,7 @@
     <string name="chat_error">Не удалось загрузить переписку</string>
     <string name="chat_delete_title">Удалить сообщение?</string>
     <string name="chat_delete_message">Сообщение удалится у всех участников переписки.</string>
+    <string name="chat_discard_message">Сообщение не будет отправлено.</string>
     <string name="chat_copied">Сообщение скопировано</string>
     <string name="chat_reply_to">В ответ</string>
     <string name="chat_replying_to">Ответ · %1$s</string>

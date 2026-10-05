@@ -26,8 +26,12 @@ class CentyChatApp : Application(), SingletonImageLoader.Factory {
     /** Уведомления о сообщениях из кадров сокета (notify) и снятие по conversation_read — с запуска. */
     @Inject lateinit var notifier: com.openmychat.mobile.data.notifications.MessageNotifier
 
+    /** The delivery core: the stored outbox is restored and sent from the first moment of the process. */
+    @Inject lateinit var delivery: com.openmychat.mobile.data.delivery.DeliveryRuntime
+
     override fun onCreate() {
         super.onCreate()
+        delivery.start()
         // Присутствие как на настольном клиенте: процесс на экране — «В сети», свёрнут — «Отошёл».
         // Сигнал — жизненный цикл всего процесса: системный диалог разрешения, окно «Поделиться»
         // или экран звонка внутри приложения его не останавливают, а поворот экрана сглажен.

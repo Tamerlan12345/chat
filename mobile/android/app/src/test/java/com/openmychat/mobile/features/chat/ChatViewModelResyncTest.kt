@@ -4,6 +4,7 @@ import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
+import com.openmychat.mobile.testing.DeliveryHarness
 import com.openmychat.mobile.testing.FakeChatRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.FakeSessionRepository
@@ -26,6 +27,7 @@ class ChatViewModelResyncTest {
     private val alice = 7L
     private val realtime = FakeRealtimeRepository()
     private val chat = FakeChatRepository(history = listOf(message(id = 1, from = alice, to = ME)))
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher)
 
     private fun directChat() = ChatViewModel(
         conversationType = ConversationType.DIRECT,
@@ -34,7 +36,8 @@ class ChatViewModelResyncTest {
         realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = ChatHistoryCache(FakeSessionRepository())
+        delivery = delivery.engine,
+        sends = delivery.sends
     )
 
     private val ChatViewModel.shown get() = (uiState.value as ChatUiState.Content).messages
@@ -102,7 +105,7 @@ class ChatViewModelResyncTest {
         }
         val flapped = ChatViewModel(
             ConversationType.DIRECT, alice, counting, realtime, FakeSessionRepository(), ActiveConversationRegistry(),
-            ChatHistoryCache(FakeSessionRepository())
+            delivery.engine, delivery.sends
         )
         val initial = requests
 
@@ -132,6 +135,8 @@ class ChatViewModelForegroundResyncTest {
             super.messages(conversationType, targetId).also { requests++ }
     }
 
+    private val delivery = DeliveryHarness(realtime, chat, mainDispatcher.dispatcher)
+
     private fun directChat() = ChatViewModel(
         conversationType = ConversationType.DIRECT,
         targetId = alice,
@@ -139,7 +144,8 @@ class ChatViewModelForegroundResyncTest {
         realtimeRepository = realtime,
         sessionRepository = FakeSessionRepository(),
         activeConversations = ActiveConversationRegistry(),
-        historyCache = ChatHistoryCache(FakeSessionRepository()),
+        delivery = delivery.engine,
+        sends = delivery.sends,
         foreground = foreground
     )
 

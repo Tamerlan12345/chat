@@ -163,6 +163,25 @@ class WebSocketClientRealtimeTest {
 
     private fun TestScope.cancel() = coroutineContext[kotlinx.coroutines.Job]?.cancel()
 
+    @Test
+    fun theDeliveryEngineGetsEveryFrameAsSentInOrderAndEachSocketClose() {
+        val scope = TestScope(UnconfinedTestDispatcher())
+        val frames = mutableListOf<String>()
+        scope.launch { client.deliveryFrames.collect { frames += it["type"].toString().trim('"') + (it["message"]?.let { m -> " " + (m as kotlinx.serialization.json.JsonObject)["id"] } ?: "") } }
+        client.connect(scope)
+        open()
+
+        receive("""{"type":"auth_success","user":{"id":1,"username":"alice","full_name":"Alice"}}""")
+        receive(messageJson("direct_message", 512))
+        receive(messageJson("new_message", 512))
+        listener.onFailure(socket, java.io.IOException("reset"), null)
+
+        // Nothing is deduplicated for the engine: it merges repeated frames itself (delivery-state.md §7.7).
+        assertEquals(listOf("auth_success", "direct_message 512", "new_message 512", "socket_closed"), frames)
+        client.disconnect()
+        scope.cancel()
+    }
+
     private class FakeWebSocket(private val request: Request) : WebSocket {
         var closed = false
         override fun request(): Request = request
