@@ -3,7 +3,13 @@ package com.openmychat.mobile.features.people
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openmychat.mobile.core.network.WsEvent
+import com.openmychat.mobile.data.model.ReportTargetType
 import com.openmychat.mobile.data.model.RolePermissions
+import com.openmychat.mobile.data.repository.AccountRepository
+import com.openmychat.mobile.data.repository.UnavailableAccountRepository
+import com.openmychat.mobile.features.account.BlockController
+import com.openmychat.mobile.features.account.ReportController
+import com.openmychat.mobile.features.account.ReportTarget
 import com.openmychat.mobile.data.model.UserStatus
 import com.openmychat.mobile.data.repository.PeopleRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
@@ -52,7 +58,11 @@ data class PersonCardState(
     val isSelf: Boolean = false,
     val call: CallAvailability = CallAvailability.AVAILABLE,
     /** Секунды до следующей побудки; 0 — можно. */
-    val wakeCooldown: Int = 0
+    val wakeCooldown: Int = 0,
+    /** Сотрудник в моём списке заблокированных. */
+    val blocked: Boolean = false,
+    /** Блокировка или разблокировка уходит на сервер. */
+    val blockBusy: Boolean = false
 ) {
     /** Сотрудник больше не работает (карточка из старого чата): действия недоступны. */
     val inactive: Boolean get() = person?.isActive == false
@@ -64,7 +74,8 @@ class PersonViewModel @AssistedInject constructor(
     private val people: PeopleRepository,
     private val session: SessionRepository,
     private val realtime: RealtimeRepository,
-    private val requests: PeopleRequests
+    private val requests: PeopleRequests,
+    account: AccountRepository = UnavailableAccountRepository
 ) : ViewModel() {
 
     @AssistedFactory
@@ -79,15 +90,23 @@ class PersonViewModel @AssistedInject constructor(
     private val _state = MutableStateFlow(PersonCardState(isSelf = isSelf))
     val state: StateFlow<PersonCardState> = _state.asStateFlow()
 
+    /** «Заблокировать» / «Разблокировать» этого сотрудника. */
+    val blocks = BlockController(account, viewModelScope, userId)
+
+    /** «Пожаловаться» на сотрудника: лист с причиной. */
+    val reports = ReportController(account, viewModelScope)
+
     init {
         viewModelScope.launch {
-            combine(people.state, session.currentUser, wakeCooldown) { directory, me, cooldown ->
+            combine(people.state, session.currentUser, wakeCooldown, blocks.blocked, blocks.busy) { directory, me, cooldown, blocked, busy ->
                 val person = if (isSelf) me?.let { Person.from(it) } else directory.people.firstOrNull { it.id == userId }
                 PersonCardState(
                     person = person ?: _state.value.person,
                     isSelf = isSelf,
                     call = CallAvailability.of(me?.permissions, person?.status ?: UserStatus.OFFLINE),
-                    wakeCooldown = cooldown
+                    wakeCooldown = cooldown,
+                    blocked = blocked && !isSelf,
+                    blockBusy = busy
                 )
             }.collect { _state.value = it }
         }
@@ -114,6 +133,20 @@ class PersonViewModel @AssistedInject constructor(
     fun showDepartment() {
         val id = _state.value.person?.departmentId ?: return
         requests.send(PeopleRequest.Department(id))
+    }
+
+    fun block() {
+        if (!isSelf) blocks.block(_state.value.person?.fullName)
+    }
+
+    fun unblock() {
+        if (!isSelf) blocks.unblock()
+    }
+
+    fun report() {
+        if (isSelf) return
+        val name = _state.value.person?.fullName.orEmpty()
+        reports.open(ReportTarget(ReportTargetType.USER, userId, name))
     }
 
     /** «Побудить»: сигнал и вибрация у коллеги; повторно — через минуту. */

@@ -196,6 +196,80 @@ class ApiClient(
         response
     }
 
+    // --- Self-registration, account deletion, reports and blocks (contracts/registration.md) ---
+
+    suspend fun requestRegistration(request: RegisterRequestBody): RegistrationChallenge = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/register/request")
+            .post(json.encodeToString(request).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequest(httpRequest)
+    }
+
+    /** `200` is a sign-in exactly like `/auth/login` (the session is stored); `202` is a pending registration. */
+    suspend fun verifyRegistration(registrationId: String, code: String): RegistrationOutcome = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/register/verify")
+            .post(json.encodeToString(RegisterVerifyBody(registrationId, code)).toRequestBody(jsonMediaType))
+            .build()
+
+        val answer: JsonObject = executeRequest(httpRequest)
+        val token = (answer["token"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        when {
+            token != null -> {
+                val user = json.decodeFromJsonElement<User>(
+                    answer["user"] ?: throw ApiException(200, "SERIALIZATION_ERROR", "Ответ без пользователя")
+                )
+                sessionManager.saveAuthSuccess(user, token)
+                RegistrationOutcome.SignedIn(user)
+            }
+            (answer["status"] as? JsonPrimitive)?.contentOrNull == "pending" -> RegistrationOutcome.Pending
+            else -> throw ApiException(200, "SERIALIZATION_ERROR", "Ни сессии, ни заявки в ответе")
+        }
+    }
+
+    /** Server side only: the caller wipes the local session once this returns. */
+    suspend fun deleteAccount(password: String): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/users/me")
+            .delete(json.encodeToString(DeleteAccountBody(password)).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun report(request: ReportBody): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/reports")
+            .post(json.encodeToString(request).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun blockUser(userId: Long): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/blocks")
+            .post(json.encodeToString(BlockBody(userId)).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun unblockUser(userId: Long): Unit = withContext(Dispatchers.IO) {
+        executeRequestNoContent(Request.Builder().url("${getBaseUrl()}/blocks/$userId").delete().build())
+    }
+
+    /** `GET /api/blocks`: `{ blocks: [...] }`; a bare array is accepted too. */
+    suspend fun blockedUsers(): List<BlockedUser> = withContext(Dispatchers.IO) {
+        val answer: JsonElement = executeRequest(Request.Builder().url("${getBaseUrl()}/blocks").get().build())
+        val entries = (answer as? JsonArray)
+            ?: (answer as? JsonObject)?.let { it["blocks"] ?: it["users"] ?: it["blocked"] } as? JsonArray
+            ?: JsonArray(emptyList())
+        entries.mapNotNull { (it as? JsonObject)?.let(BlockedUser::from) }
+    }
+
     suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
         try {
             val httpRequest = Request.Builder()
@@ -449,6 +523,7 @@ class ApiClient(
     private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long? = null): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"
+        var attemptsLeft: Int? = null
 
         try {
             val jsonElement = json.parseToJsonElement(bodyString).jsonObject
@@ -456,6 +531,7 @@ class ApiClient(
                 ?: jsonElement["message"]?.jsonPrimitive?.content
                 ?: errorMessage
             errorCode = jsonElement["code"]?.jsonPrimitive?.content
+            attemptsLeft = (jsonElement["attemptsLeft"] as? JsonPrimitive)?.intOrNull
         } catch (_: Exception) {}
 
         if (code == 403 && errorCode == "MUST_CHANGE_PASSWORD") {
@@ -470,6 +546,6 @@ class ApiClient(
             throw UnauthorizedException(errorMessage)
         }
 
-        throw ApiException(code, errorCode, errorMessage, retryAfterSeconds)
+        throw ApiException(code, errorCode, errorMessage, retryAfterSeconds, attemptsLeft)
     }
 }

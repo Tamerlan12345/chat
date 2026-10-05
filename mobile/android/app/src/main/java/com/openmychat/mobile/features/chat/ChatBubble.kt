@@ -152,9 +152,12 @@ internal fun ChatBubbleRow(
             }
             MessageAction.EDIT -> onEdit(message)
             MessageAction.DELETE -> if (failed) actions.onDiscardFailed(message) else onRequestDelete(message)
+            MessageAction.REPORT -> actions.onReportMessage(message)
         }
     }
-    fun menuActions() = MessageMenuPolicy.actionsFor(message, actions.canEdit(message), actions.canDelete(message), failed)
+    fun menuActions() = MessageMenuPolicy.actionsFor(
+        message, actions.canEdit(message), actions.canDelete(message), failed, canReport = actions.canReport(message)
+    )
     val openMenu = {
         val bounds = coordinates[0]?.takeIf { it.isAttached }?.boundsInRoot()
         val available = menuActions()

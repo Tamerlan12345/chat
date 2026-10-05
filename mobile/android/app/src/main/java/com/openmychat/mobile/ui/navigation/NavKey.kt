@@ -9,6 +9,14 @@ sealed interface NavKey : androidx.navigation3.runtime.NavKey {
     @Serializable
     data object Login : NavKey
 
+    /** Self-registration: form, e-mail code, «Заявка на рассмотрении». Part of the sign-in flow. */
+    @Serializable
+    data object Register : NavKey
+
+    /** A registration that is pending or rejected, from a login answer (`403 ACCOUNT_*`). */
+    @Serializable
+    data class AccountStatus(val rejected: Boolean) : NavKey
+
     @Serializable
     data object Conversations : NavKey
 
@@ -57,10 +65,18 @@ sealed interface NavKey : androidx.navigation3.runtime.NavKey {
 
     @Serializable
     data object Profile : NavKey
+
+    /** «Заблокированные пользователи», from the profile. */
+    @Serializable
+    data object BlockedUsers : NavKey
+
+    /** «Удалить аккаунт», from the profile. */
+    @Serializable
+    data object DeleteAccount : NavKey
 }
 
 /** Destinations shown in the navigation bar/rail, in display order. Conversations is the start tab. */
 val TopLevelRoutes: List<NavKey> = listOf(NavKey.Conversations, NavKey.People, NavKey.Announcements, NavKey.Profile)
 
 internal val NavKey.isAuthDestination: Boolean
-    get() = this is NavKey.Login
+    get() = this is NavKey.Login || this is NavKey.Register || this is NavKey.AccountStatus

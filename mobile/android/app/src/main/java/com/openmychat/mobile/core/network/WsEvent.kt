@@ -122,6 +122,8 @@ sealed interface WsEvent {
         val message: String,
         val originalText: String? = null,
         /** Ключ отправки, к которой относится ошибка (`send_message`), если сервер его вернул. */
-        val clientMsgId: String? = null
+        val clientMsgId: String? = null,
+        /** Машинный код отказа (`DM_NOT_ALLOWED`, `NOT_CHANNEL_MEMBER`, …); у старого сервера его нет. */
+        val code: String? = null
     ) : WsEvent
 }

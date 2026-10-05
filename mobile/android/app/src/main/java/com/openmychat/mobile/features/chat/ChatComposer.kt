@@ -119,7 +119,11 @@ internal fun ChatComposer(
     onSent: () -> Unit,
     actions: ChatActions,
     landing: LandingState? = null,
-    onAttach: (() -> Unit)? = null
+    onAttach: (() -> Unit)? = null,
+    /** False while the chat is closed for sending (a block, or the server's `DM_NOT_ALLOWED`). */
+    enabled: Boolean = true,
+    /** Why sending is closed; inside the composer, so snackbars float above it too. */
+    lockBanner: (@Composable () -> Unit)? = null
 ) {
     val tokens = CentyTheme.tokens
     val haptics = rememberHaptics()
@@ -146,7 +150,7 @@ internal fun ChatComposer(
     val bubbleTextWidth = with(density) { bubbleTextMaxWidth(LocalWindowInfo.current.containerSize.width.toDp()).roundToPx() }
     val placeholder = remember { Animatable(1f) }
 
-    val canSend = text.isNotBlank()
+    val canSend = enabled && text.isNotBlank()
     val send = {
         if (canSend) {
             val sent = text
@@ -177,6 +181,7 @@ internal fun ChatComposer(
             .bottomBarAwareInsetsPadding()
     ) {
         Column(Modifier.onSizeChanged { anchor.bottom = with(density) { it.height.toDp() } }) {
+            lockBanner?.invoke()
             val banner: ComposerBanner? = when {
                 editingMessage != null -> ComposerBanner.Editing(editingMessage)
                 replyTo != null -> ComposerBanner.Replying(replyTo)
@@ -229,6 +234,7 @@ internal fun ChatComposer(
                 val shape = RoundedCornerShape(CentyRadius.control)
                 BasicTextField(
                     value = text,
+                    enabled = enabled,
                     onValueChange = {
                         text = it
                         actions.onTyping(it.isNotBlank())
@@ -252,7 +258,7 @@ internal fun ChatComposer(
                         ) {
                             if (text.isEmpty()) {
                                 Text(
-                                    stringResource(R.string.chat_composer_hint),
+                                    stringResource(if (enabled) R.string.chat_composer_hint else R.string.chat_composer_unavailable),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = tokens.textDim,
                                     modifier = Modifier.graphicsLayer { alpha = placeholder.value }
@@ -266,7 +272,7 @@ internal fun ChatComposer(
                     canSend = canSend,
                     editing = editingMessage != null,
                     onSend = send,
-                    onAttach = onAttach
+                    onAttach = if (enabled) onAttach else null
                 )
             }
         }

@@ -10,6 +10,12 @@ import com.openmychat.mobile.data.model.DirectConversation
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.model.User
 import com.openmychat.mobile.data.model.ChangePasswordResponse
+import com.openmychat.mobile.data.model.BlockedUser
+import com.openmychat.mobile.data.model.RegisterRequestBody
+import com.openmychat.mobile.data.model.RegistrationChallenge
+import com.openmychat.mobile.data.model.RegistrationOutcome
+import com.openmychat.mobile.data.model.ReportBody
+import com.openmychat.mobile.data.repository.AccountRepository
 import com.openmychat.mobile.data.repository.AuthRepository
 import com.openmychat.mobile.data.repository.ChatRepository
 import com.openmychat.mobile.data.repository.LoginResult
@@ -202,4 +208,57 @@ class FakeAuthRepository : AuthRepository {
         ChangePasswordResponse(success = true)
 
     override suspend fun logout() = Unit
+}
+
+/** Scriptable [AccountRepository]: registration, deletion, reports and blocks without a server. */
+class FakeAccountRepository : AccountRepository {
+    override val blocked = MutableStateFlow<List<BlockedUser>>(emptyList())
+
+    var onRequest: suspend (RegisterRequestBody) -> RegistrationChallenge = { RegistrationChallenge("code_sent", "r-1", 600) }
+    var onVerify: suspend (String, String) -> RegistrationOutcome = { _, _ -> RegistrationOutcome.Pending }
+    var onDelete: suspend (String) -> Unit = {}
+    var onReport: suspend (ReportBody) -> Unit = {}
+    var onBlock: suspend (Long) -> Unit = {}
+    var onUnblock: suspend (Long) -> Unit = {}
+    var onRefreshBlocked: suspend () -> List<BlockedUser> = { blocked.value }
+
+    val registrationRequests = mutableListOf<RegisterRequestBody>()
+    val verifications = mutableListOf<Pair<String, String>>()
+    val deletions = mutableListOf<String>()
+    val reports = mutableListOf<ReportBody>()
+    val blockCalls = mutableListOf<String>()
+
+    override suspend fun requestRegistration(body: RegisterRequestBody): RegistrationChallenge {
+        registrationRequests += body
+        return onRequest(body)
+    }
+
+    override suspend fun verifyRegistration(registrationId: String, code: String): RegistrationOutcome {
+        verifications += registrationId to code
+        return onVerify(registrationId, code)
+    }
+
+    override suspend fun deleteAccount(password: String) {
+        deletions += password
+        onDelete(password)
+    }
+
+    override suspend fun report(body: ReportBody) {
+        reports += body
+        onReport(body)
+    }
+
+    override suspend fun block(userId: Long, name: String?) {
+        blockCalls += "block $userId"
+        onBlock(userId)
+        if (blocked.value.none { it.id == userId }) blocked.value = blocked.value + BlockedUser(userId, name)
+    }
+
+    override suspend fun unblock(userId: Long) {
+        blockCalls += "unblock $userId"
+        onUnblock(userId)
+        blocked.value = blocked.value.filter { it.id != userId }
+    }
+
+    override suspend fun refreshBlocked(): List<BlockedUser> = onRefreshBlocked().also { blocked.value = it }
 }

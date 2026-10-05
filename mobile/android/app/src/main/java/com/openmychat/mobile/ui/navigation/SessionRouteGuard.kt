@@ -52,7 +52,11 @@ object SessionRouteGuard {
         is NavKey.Person,
         is NavKey.Announcements,
         is NavKey.Call,
-        is NavKey.Profile -> true
-        is NavKey.Login -> false
+        is NavKey.Profile,
+        is NavKey.BlockedUsers,
+        is NavKey.DeleteAccount -> true
+        is NavKey.Login,
+        is NavKey.Register,
+        is NavKey.AccountStatus -> false
     }
 }

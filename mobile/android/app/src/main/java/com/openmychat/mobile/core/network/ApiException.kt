@@ -5,7 +5,9 @@ open class ApiException(
     val errorCode: String? = null,
     message: String,
     /** Seconds from the `Retry-After` header (429/503), when the server sent one. */
-    val retryAfterSeconds: Long? = null
+    val retryAfterSeconds: Long? = null,
+    /** `attemptsLeft` of a wrong registration code (`400 CODE_INVALID`), when the server sent it. */
+    val attemptsLeft: Int? = null
 ) : Exception(message)
 
 class MustChangePasswordException(

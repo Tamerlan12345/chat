@@ -46,6 +46,16 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 /**
  * The chat header. Flat on the canvas at rest; it lifts to L3 (elevated tone + hairline) while
@@ -62,7 +72,11 @@ internal fun ChatTopBar(
     showBackButton: Boolean,
     actions: ChatActions,
     lift: State<Float>,
-    sharedKey: String?
+    sharedKey: String?,
+    /** I blocked the peer: the «⋮» menu offers «Разблокировать». */
+    peerBlocked: Boolean = false,
+    /** «Заблокировать» asks for confirmation first. */
+    onRequestBlock: () -> Unit = {}
 ) {
     val tokens = CentyTheme.tokens
     Column(Modifier.liftSurface(lift, rest = tokens.canvas)) {
@@ -157,7 +171,47 @@ internal fun ChatTopBar(
                         Icon(Icons.Outlined.Call, contentDescription = stringResource(R.string.chat_call))
                     }
                 }
+                if (actions.hasPersonMenu) PersonMenu(peerBlocked, actions, onRequestBlock)
             }
         )
+    }
+}
+
+/** «⋮» of a direct chat: «Пожаловаться» and «Заблокировать» / «Разблокировать». */
+@Composable
+private fun PersonMenu(peerBlocked: Boolean, actions: ChatActions, onRequestBlock: () -> Unit) {
+    val tokens = CentyTheme.tokens
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag("chat-person-menu")) {
+            Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.chat_more_actions))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = tokens.elevated) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.safety_report), color = tokens.textMain) },
+                leadingIcon = { Icon(Icons.Outlined.Flag, contentDescription = null, tint = tokens.textSecondary) },
+                onClick = {
+                    open = false
+                    actions.onReportPeer()
+                },
+                modifier = Modifier.testTag("chat-report")
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(if (peerBlocked) R.string.safety_unblock else R.string.safety_block),
+                        color = if (peerBlocked) tokens.textMain else tokens.dangerText
+                    )
+                },
+                leadingIcon = {
+                    Icon(Icons.Outlined.Block, contentDescription = null, tint = if (peerBlocked) tokens.textSecondary else tokens.dangerText)
+                },
+                onClick = {
+                    open = false
+                    if (peerBlocked) actions.onUnblockPeer() else onRequestBlock()
+                },
+                modifier = Modifier.testTag("chat-block")
+            )
+        }
     }
 }

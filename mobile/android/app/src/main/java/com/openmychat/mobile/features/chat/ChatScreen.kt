@@ -48,6 +48,24 @@ import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import com.openmychat.mobile.features.account.BlockConfirmDialog
+import com.openmychat.mobile.features.account.ReportSheet
+import com.openmychat.mobile.features.account.SafetyNotices
+import com.openmychat.mobile.ui.components.CentyTextButton
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,6 +100,16 @@ interface ChatActions {
 
     /** «Удалить» on a failed send: drop it from the queue (Task 15). */
     fun onDiscardFailed(message: Message) {}
+
+    /** Someone else's delivered message may be reported. */
+    fun canReport(message: Message): Boolean = false
+    fun onReportMessage(message: Message) {}
+
+    /** Direct chat with someone else: the top bar's «⋮» offers report and block. */
+    val hasPersonMenu: Boolean get() = false
+    fun onReportPeer() {}
+    fun onBlockPeer() {}
+    fun onUnblockPeer() {}
 }
 
 @Composable
@@ -104,6 +132,8 @@ fun ChatScreen(
     val refreshFailed by viewModel.refreshFailed.collectAsState()
     val focus by viewModel.focus.collectAsState()
     val jumpUnavailable by viewModel.jumpUnavailable.collectAsState()
+    val composerLock by viewModel.composerLock.collectAsState()
+    val reportSheet by viewModel.reports.sheet.collectAsState()
     val jumpUnavailableText = stringResource(R.string.chat_jump_unavailable)
     val snackbar = LocalSnackbarHostState.current
     val haptics = rememberHaptics()
@@ -149,8 +179,16 @@ fun ChatScreen(
             override fun localMark(message: Message) = sendStateMark(message)
             override fun onRetrySend(message: Message) = viewModel.retrySend(message)
             override fun onDiscardFailed(message: Message) = viewModel.discardFailed(message)
+            override fun canReport(message: Message) = viewModel.canReportMessage(message)
+            override fun onReportMessage(message: Message) = viewModel.reportMessage(message)
+            override val hasPersonMenu: Boolean = viewModel.blocks != null
+            override fun onReportPeer() = viewModel.reportPeer(title)
+            override fun onBlockPeer() = viewModel.block(title)
+            override fun onUnblockPeer() = viewModel.unblock()
         }
     }
+    viewModel.blocks?.let { SafetyNotices(it) }
+    reportSheet?.let { ReportSheet(viewModel.reports, it) }
 
     ChatContent(
         title = title,
@@ -168,7 +206,8 @@ fun ChatScreen(
         sharedKey = SharedKeys.conversation(isChannel = !isDirect, id = viewModel.targetId),
         refreshFailed = refreshFailed,
         focusMessageId = focus,
-        onFocusShown = viewModel::onFocusShown
+        onFocusShown = viewModel::onFocusShown,
+        composerLock = composerLock
     )
 }
 
@@ -201,10 +240,13 @@ fun ChatContent(
     refreshFailed: Boolean = false,
     /** Прокрутить к этому сообщению и подсветить его (переход из поиска). */
     focusMessageId: Long? = null,
-    onFocusShown: () -> Unit = {}
+    onFocusShown: () -> Unit = {},
+    /** The composer is closed: the peer is blocked or the server refuses delivery. */
+    composerLock: ComposerLock = ComposerLock.NONE
 ) {
     val tokens = CentyTheme.tokens
     var pendingDelete by remember { mutableStateOf<Message?>(null) }
+    var confirmBlock by rememberSaveable { mutableStateOf(false) }
     var replyToId by rememberSaveable { mutableStateOf<Long?>(null) }
     val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
     val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
@@ -251,7 +293,9 @@ fun ChatContent(
                     showBackButton = showBackButton,
                     actions = actions,
                     lift = lift,
-                    sharedKey = sharedKey
+                    sharedKey = sharedKey,
+                    peerBlocked = composerLock == ComposerLock.BLOCKED_BY_ME,
+                    onRequestBlock = { confirmBlock = true }
                 )
             }
         ) { innerPadding ->
@@ -312,6 +356,12 @@ fun ChatContent(
                     }
                 }
                 ChatComposer(
+                    enabled = composerLock == ComposerLock.NONE || editingMessage != null,
+                    lockBanner = {
+                        AnimatedVisibility(visible = composerLock != ComposerLock.NONE) {
+                            ComposerLockBanner(composerLock, onUnblock = actions::onUnblockPeer)
+                        }
+                    },
                     editingMessage = editingMessage,
                     replyTo = replyTo,
                     replyToIsOwn = replyTo?.senderId == currentUserId,
@@ -324,6 +374,17 @@ fun ChatContent(
         }
         LandingOverlay(landing)
       }
+    }
+
+    if (confirmBlock) {
+        BlockConfirmDialog(
+            name = title,
+            onConfirm = {
+                confirmBlock = false
+                actions.onBlockPeer()
+            },
+            onDismiss = { confirmBlock = false }
+        )
     }
 
     pendingDelete?.let { message ->
@@ -339,6 +400,39 @@ fun ChatContent(
             },
             onDismiss = { pendingDelete = null }
         )
+    }
+}
+
+/**
+ * Why nothing can be sent here: the server's `DM_NOT_ALLOWED` in Russian, or my own block with
+ * «Разблокировать». Sits right above the (disabled) composer.
+ */
+@Composable
+private fun ComposerLockBanner(lock: ComposerLock, onUnblock: () -> Unit) {
+    val tokens = CentyTheme.tokens
+    // The action sits under the text, so neither is squeezed at large font sizes.
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(tokens.dangerSoft)
+            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = if (lock == ComposerLock.BLOCKED_BY_ME) 0.dp else 10.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .testTag("composer-lock")
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(Icons.Outlined.Block, contentDescription = null, tint = tokens.dangerText, modifier = Modifier.padding(top = 1.dp).size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                stringResource(if (lock == ComposerLock.BLOCKED_BY_ME) R.string.chat_blocked_banner else R.string.chat_dm_not_allowed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.dangerText
+            )
+        }
+        if (lock == ComposerLock.BLOCKED_BY_ME) {
+            CentyTextButton(onClick = onUnblock, modifier = Modifier.align(Alignment.End).testTag("chat-unblock")) {
+                Text(stringResource(R.string.safety_unblock))
+            }
+        }
     }
 }
 

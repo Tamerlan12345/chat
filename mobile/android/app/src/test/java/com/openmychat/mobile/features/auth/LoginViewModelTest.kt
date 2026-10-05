@@ -148,6 +148,38 @@ class LoginViewModelTest {
         }
     }
 
+    @Test
+    fun pendingAndRejectedRegistrationsOpenTheirOwnScreensOnce() = runTest(dispatcher) {
+        mapOf(
+            ApiException(403, "ACCOUNT_PENDING", "Заявка на рассмотрении") to LoginError.AccountPending,
+            ApiException(403, "ACCOUNT_REJECTED", "Заявка отклонена") to LoginError.AccountRejected
+        ).forEach { (failure, expected) ->
+            auth.onLogin = { _, _ -> throw failure }
+            val vm = viewModel()
+
+            vm.fillAndSubmit()
+            runCurrent()
+
+            assertEquals(LoginUiState.Error(expected), vm.uiState.value)
+            assertNull("a registration is not a remembered sign-in", preferences.lastUsername)
+
+            vm.onAccountStateShown()
+            assertEquals("the screen is shown once; back returns to the form", LoginUiState.Idle, vm.uiState.value)
+            assertTrue(vm.canSubmit.value)
+        }
+    }
+
+    @Test
+    fun aPlain403IsStillWrongCredentials() = runTest(dispatcher) {
+        auth.onLogin = { _, _ -> throw ApiException(403, "ACCOUNT_DISABLED", "Учётная запись отключена") }
+        val vm = viewModel()
+
+        vm.fillAndSubmit()
+        runCurrent()
+
+        assertEquals(LoginUiState.Error(LoginError.InvalidCredentials), vm.uiState.value)
+    }
+
     // --- abuse and convenience -----------------------------------------------------------------
 
     @Test

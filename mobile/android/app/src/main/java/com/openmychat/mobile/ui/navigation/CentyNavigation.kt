@@ -79,12 +79,17 @@ import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass
 import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.features.announcements.AnnouncementsScreen
+import com.openmychat.mobile.features.auth.AccountStatus
+import com.openmychat.mobile.features.auth.AccountStatusScreen
 import com.openmychat.mobile.features.auth.LoginScreen
+import com.openmychat.mobile.features.auth.RegistrationScreen
 import com.openmychat.mobile.features.call.CallScreen
 import com.openmychat.mobile.features.call.CallViewModel
 import com.openmychat.mobile.features.chat.ChatScreen
 import com.openmychat.mobile.features.chat.ChatViewModel
 import com.openmychat.mobile.features.conversations.ConversationsScreen
+import com.openmychat.mobile.features.profile.BlockedUsersScreen
+import com.openmychat.mobile.features.profile.DeleteAccountScreen
 import com.openmychat.mobile.features.profile.ProfileScreen
 import com.openmychat.mobile.R
 import com.openmychat.mobile.ui.components.CentySnackbarHost
@@ -353,7 +358,22 @@ private fun appEntryProvider(
     entry<NavKey.Login> {
         LoginScreen(
             viewModel = hiltViewModel(),
-            onLoginSuccess = { navigator.navigate(NavKey.Conversations) }
+            onLoginSuccess = { navigator.navigate(NavKey.Conversations) },
+            onRegister = { navigator.navigate(NavKey.Register) },
+            onAccountState = { rejected -> navigator.navigate(NavKey.AccountStatus(rejected)) }
+        )
+    }
+    entry<NavKey.Register> {
+        RegistrationScreen(
+            viewModel = hiltViewModel(),
+            onClose = { navigator.navigate(NavKey.Login) },
+            onSignedIn = { navigator.navigate(NavKey.Conversations) }
+        )
+    }
+    entry<NavKey.AccountStatus> { key ->
+        AccountStatusScreen(
+            status = if (key.rejected) AccountStatus.REJECTED else AccountStatus.PENDING,
+            onBackToLogin = { navigator.navigate(NavKey.Login) }
         )
     }
     entry<NavKey.Conversations>(
@@ -458,7 +478,19 @@ private fun appEntryProvider(
     entry<NavKey.Profile>(metadata = NavMeta.tabRoot()) {
         ProfileScreen(
             viewModel = hiltViewModel(),
-            onLoggedOut = { navigator.onLoggedOut() }
+            onLoggedOut = { navigator.onLoggedOut() },
+            onOpenBlockedUsers = { navigator.navigate(NavKey.BlockedUsers) },
+            onDeleteAccount = { navigator.navigate(NavKey.DeleteAccount) }
+        )
+    }
+    entry<NavKey.BlockedUsers> {
+        BlockedUsersScreen(viewModel = hiltViewModel(), onBack = { navigator.goBack() })
+    }
+    entry<NavKey.DeleteAccount> {
+        DeleteAccountScreen(
+            viewModel = hiltViewModel(),
+            onBack = { navigator.goBack() },
+            onDeleted = { navigator.onLoggedOut() }
         )
     }
     entry<NavKey.Call> { key ->

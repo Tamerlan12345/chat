@@ -1,0 +1,55 @@
+package com.openmychat.mobile.features.profile
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.openmychat.mobile.data.repository.AccountRepository
+import com.openmychat.mobile.features.account.AccountFailure
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class DeleteAccountState(
+    /** Memory only; dropped once the account is gone. */
+    val password: String = "",
+    val deleting: Boolean = false,
+    val failure: AccountFailure? = null,
+    /** The server deleted the account and this device is wiped: the screen goes to sign-in. */
+    val deleted: Boolean = false
+) {
+    val canDelete: Boolean get() = password.isNotEmpty() && !deleting && !deleted
+}
+
+/** «Удалить аккаунт»: the password again, an irreversible warning, then `DELETE /api/users/me`. */
+@HiltViewModel
+class DeleteAccountViewModel(
+    private val account: AccountRepository,
+    private val clock: () -> Long
+) : ViewModel() {
+
+    @Inject
+    constructor(account: AccountRepository) : this(account, System::currentTimeMillis)
+
+    private val _state = MutableStateFlow(DeleteAccountState())
+    val state: StateFlow<DeleteAccountState> = _state.asStateFlow()
+
+    fun onPasswordChange(value: String) = _state.update { it.copy(password = value, failure = null) }
+
+    fun delete() {
+        val current = _state.value
+        if (!current.canDelete) return
+        _state.update { it.copy(deleting = true, failure = null) }
+        viewModelScope.launch {
+            try {
+                account.deleteAccount(current.password)
+                _state.update { it.copy(deleting = false, deleted = true, password = "") }
+            } catch (error: Exception) {
+                val failure = AccountFailure.from(error, AccountFailure.Context.DELETE_ACCOUNT, clock())
+                _state.update { it.copy(deleting = false, failure = failure) }
+            }
+        }
+    }
+}

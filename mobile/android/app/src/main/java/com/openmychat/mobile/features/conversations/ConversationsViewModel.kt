@@ -11,7 +11,9 @@ import com.openmychat.mobile.data.model.DirectConversation
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.data.realtime.ActiveConversationRegistry
 import com.openmychat.mobile.data.realtime.ConversationRef
+import com.openmychat.mobile.data.repository.AccountRepository
 import com.openmychat.mobile.data.repository.ChatRepository
+import com.openmychat.mobile.data.repository.UnavailableAccountRepository
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,6 +25,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import com.openmychat.mobile.data.realtime.resyncRequests
 import kotlinx.coroutines.launch
@@ -68,7 +73,9 @@ class ConversationsViewModel @Inject constructor(
     private val readElsewhere: com.openmychat.mobile.data.notifications.ConversationReadBus =
         com.openmychat.mobile.data.notifications.ConversationReadBus(),
     /** Процесс вышел на передний план: список догружаем (как после переподключения). */
-    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal()
+    private val foreground: com.openmychat.mobile.data.realtime.ForegroundSignal = com.openmychat.mobile.data.realtime.ForegroundSignal(),
+    /** Blocked people's direct chats leave the list (contracts/registration.md §4). */
+    private val account: AccountRepository = UnavailableAccountRepository
 ) : ViewModel() {
 
     val currentUserId: Long? get() = sessionRepository.currentUserId
@@ -109,9 +116,25 @@ class ConversationsViewModel @Inject constructor(
 
     init {
         loadData()
+        observeBlocks()
         observeWebSocketEvents()
         observeOpenConversation()
         resyncAfterReconnect()
+    }
+
+    private fun blockedIds(): Set<Long> = account.blocked.value.mapTo(HashSet()) { it.id }
+
+    /**
+     * A block hides that person's direct chat at once; the list is then reloaded, since the server now
+     * hides (or, after an unblock, shows again) their messages (contracts/registration.md §4).
+     */
+    private fun observeBlocks() {
+        viewModelScope.launch {
+            account.blocked.map { list -> list.mapTo(HashSet()) { it.id } }.distinctUntilChanged().drop(1).collect { hidden ->
+                updateContent { it.copy(directConversations = it.directConversations.filterNot { conv -> conv.userId in hidden }) }
+                loadData(showLoading = false)
+            }
+        }
     }
 
     /** After a drop or on foreground entry the list is reloaded once: gap messages, previews and counters catch up. */
@@ -146,7 +169,10 @@ class ConversationsViewModel @Inject constructor(
                 }
             }
             try {
-                val chats = chatRepository.directConversations()
+                val chats = chatRepository.directConversations().let { all ->
+                    val hidden = blockedIds()
+                    if (hidden.isEmpty()) all else all.filterNot { it.userId in hidden }
+                }
                 val channels = chatRepository.channels()
                 serverInfo.join()
                 _uiState.value = storageError?.let(ConversationsUiState::Error)
