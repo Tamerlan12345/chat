@@ -131,13 +131,16 @@ final class RegistrationFlowUITests: XCTestCase {
         }
         XCTAssertTrue(profileBar.exists, "The profile tab must open")
         let deleteEntry = application.buttons["profile-delete-account"]
-        let profileList = application.collectionViews.firstMatch
+        // Other tabs keep their lists in the tree: swipe the profile list itself, never `firstMatch`.
+        let profileList = application.collectionViews["profile-list"]
+        XCTAssertTrue(profileList.waitForExistence(timeout: 10), "The profile list must be on screen")
         for _ in 0..<12 where !(deleteEntry.exists && deleteEntry.frame.maxY < application.frame.height - 110) {
-            if profileList.exists {
+            if profileList.isHittable {
                 profileList.swipeUp(velocity: .slow)
             } else {
                 application.swipeUp(velocity: .slow)
             }
+            _ = deleteEntry.waitForExistence(timeout: 1)
         }
         XCTAssertTrue(deleteEntry.exists, "The profile must offer account deletion")
         // The row can sit under the tab bar edge: a coordinate tap does not need it to be hittable.

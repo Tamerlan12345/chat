@@ -176,6 +176,7 @@ public struct ProfileView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .accessibilityIdentifier("profile-list")
             .navigationTitle("Профиль")
             .onAppear {
                 if let user = session.currentUser {
