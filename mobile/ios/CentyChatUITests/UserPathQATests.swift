@@ -67,6 +67,10 @@ final class UserPathQATests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
         if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:\n" + app.debugDescription) }
         XCTAssertTrue(seededMessage.exists, "The seeded history must load in the chat.")
+        // The chat opens at its newest message: nothing to jump to.
+        let jumpToLatest = app.buttons["chat-jump-latest"]
+        pause(2)
+        XCTAssertFalse(jumpToLatest.exists, "An opened chat is at its end: no «↓» pill")
 
         // 4. Send a message.
         type(outgoing, into: composer, of: app)
@@ -75,11 +79,15 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(waitUntil(send, "isEnabled == true"), "Send must enable once text is typed.")
         send.tap()
         XCTAssertTrue(app.staticTexts[outgoing].waitForExistence(timeout: 30), "The sent message must appear in the chat.")
+        pause(1.5)
+        XCTAssertFalse(jumpToLatest.exists, "After sending, the list follows the own message: no «↓» pill")
 
         // 5. Receive a message sent by Bob through the REST API while the chat is open.
         let delivered = StandAPI(baseURL: standURL).sendDirect(from: bob, to: alice.username, text: incoming)
         XCTAssertTrue(delivered, "The stand must accept Bob's message.")
         XCTAssertTrue(app.staticTexts[incoming].waitForExistence(timeout: 30), "The incoming message must arrive live.")
+        pause(1.5)
+        XCTAssertFalse(jumpToLatest.exists, "At the end, an incoming message is followed, not counted as «N новых»")
 
         // Back to the list: the dialog row must now carry the latest text.
         goBack(app)
@@ -189,6 +197,10 @@ final class UserPathQATests: XCTestCase {
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
         }
+    }
+
+    private func pause(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 
     /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.

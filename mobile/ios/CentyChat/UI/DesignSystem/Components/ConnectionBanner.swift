@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Observation
 import SwiftUI
 
@@ -57,9 +58,21 @@ final class ConnectionStatus {
     @ObservationIgnored private var problem: LinkProblem?
     @ObservationIgnored private var timer: Task<Void, Never>?
 
-    init(grace: Duration = ConnectionBannerMachine.grace, backOnline: Duration = ConnectionBannerMachine.backOnlineDuration) {
+    /// Says a new phase to VoiceOver (the banner itself is not focused when it appears).
+    @ObservationIgnored private let announce: @MainActor (String) -> Void
+
+    init(
+        grace: Duration = ConnectionBannerMachine.grace,
+        backOnline: Duration = ConnectionBannerMachine.backOnlineDuration,
+        announce: @escaping @MainActor (String) -> Void = ConnectionStatus.announceToVoiceOver
+    ) {
         self.grace = grace
         self.backOnline = backOnline
+        self.announce = announce
+    }
+
+    static func announceToVoiceOver(_ text: String) {
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 
     func connectionChanged(_ state: RealtimeConnectionState, isRunning: Bool) {

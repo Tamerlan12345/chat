@@ -43,6 +43,12 @@ final class ConnectionBannerMachineTests: XCTestCase {
     }
 }
 
+/// What VoiceOver was told.
+@MainActor
+final class Spoken {
+    var items: [String] = []
+}
+
 @MainActor
 final class ConnectionStatusTests: XCTestCase {
     private func wait(_ milliseconds: Int) async {
@@ -56,6 +62,16 @@ final class ConnectionStatusTests: XCTestCase {
         status.connectionChanged(.connected, isRunning: true)
         await wait(400)
         XCTAssertEqual(status.phase, .hidden)
+    }
+
+    func testEveryShownPhaseIsAnnouncedToVoiceOver() {
+        let said = Spoken()
+        let status = ConnectionStatus(grace: .zero, backOnline: .seconds(5), announce: { said.items.append($0) })
+        status.connectionChanged(.reconnecting(attempt: 1, delay: 1), isRunning: true)
+        status.networkChanged(available: false)
+        status.networkChanged(available: true)
+        status.connectionChanged(.connected, isRunning: true)
+        XCTAssertEqual(said.items, ["Переподключение…", "Нет сети", "Переподключение…", "Снова в сети"])
     }
 
     func testALastingDropShowsThenRecoversThroughBackOnline() async {
