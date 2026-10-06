@@ -182,6 +182,7 @@ jobs:
              -only-testing:CentyChatUITests/ScreenshotTourTests/testMotionWalkthrough \
              test-without-building > "$RUNNER_TEMP/motion-$mode.log" 2>&1
             echo "motion $mode: xcodebuild exit $?"
+            grep -E "error: -\[|Test Case .* (passed|failed)" "$RUNNER_TEMP/motion-$mode.log" | tail -n 20 || true
             kill -INT "$recorder" 2>/dev/null
             for _ in $(seq 1 60); do kill -0 "$recorder" 2>/dev/null || break; sleep 1; done
             if [ -s "$out/raw-$mode.mp4" ]; then

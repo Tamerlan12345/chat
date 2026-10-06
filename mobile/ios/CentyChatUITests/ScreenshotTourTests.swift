@@ -360,8 +360,11 @@ final class ScreenshotTourTests: XCTestCase {
                     pause(2)
                     capture(app, named: "06-image-viewer-\(suffix)")
                     let close = app.buttons["image-viewer-close"]
-                    if close.exists { tapCentre(close) }
-                    _ = viewer.waitForNonExistence(timeout: 10)
+                    // The cover may still be settling: wait for the button, retry once.
+                    for _ in 0..<2 where viewer.exists {
+                        if close.waitForExistence(timeout: 5) { tapCentre(close) }
+                        _ = viewer.waitForNonExistence(timeout: 5)
+                    }
                 }
             }
 
