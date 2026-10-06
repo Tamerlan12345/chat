@@ -41,4 +41,17 @@ for f in $(adb shell ls /data/local/tmp/seg*.mp4 2>/dev/null | tr -d '\r'); do
   adb pull "$f" "$out/" || true
 done
 ls -l "$out" || true
+# Artifacts cannot always be downloaded: name each failing test and its first lines in the log.
+if [ "$status" -ne 0 ]; then
+  for xml in mobile/android/app/build/outputs/androidTest-results/connected/debug/*.xml; do
+    [ -f "$xml" ] || continue
+    python3 - "$xml" <<'PY' || true
+import sys, xml.etree.ElementTree as ET
+for case in ET.parse(sys.argv[1]).getroot().iter('testcase'):
+    for failure in list(case.findall('failure')) + list(case.findall('error')):
+        print(f"FAILED {case.get('classname')}.{case.get('name')}")
+        print('\n'.join((failure.text or '').strip().splitlines()[:12]))
+PY
+  done
+fi
 exit "$status"
