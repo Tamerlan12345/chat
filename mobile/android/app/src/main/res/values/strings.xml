@@ -69,7 +69,6 @@
     <string name="login">Войти</string>
     <string name="username">Логин</string>
     <string name="password">Пароль</string>
-    <string name="login_company_fallback">Корпоративный мессенджер</string>
     <string name="login_show_password">Показать пароль</string>
     <string name="login_hide_password">Скрыть пароль</string>
     <string name="login_in_progress">Выполняется вход…</string>

@@ -29,9 +29,6 @@ interface AuthRepository {
      */
     suspend fun knock(): Boolean
 
-    /** `company_name` from the public `/api/settings/info`, unsanitised; null when absent. */
-    suspend fun companyName(): String?
-
     /** Signs in and claims the device. Secure storage failures are rethrown, never swallowed. */
     suspend fun login(username: String, password: String): LoginResult
 
@@ -64,8 +61,6 @@ class DefaultAuthRepository @Inject constructor(
         sessionManager.saveAuthSuccess(response.user, response.token)
         return true
     }
-
-    override suspend fun companyName(): String? = apiClient.fetchServerInfo().companyName
 
     override suspend fun login(username: String, password: String): LoginResult {
         try {

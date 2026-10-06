@@ -78,8 +78,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -111,7 +109,6 @@ fun LoginScreen(
     val uiState by viewModel.uiState.collectAsState()
     val canSubmit by viewModel.canSubmit.collectAsState()
     val retryAfter by viewModel.retryAfterSeconds.collectAsState()
-    val companyName by viewModel.companyName.collectAsState()
     val mustChangePasswordVisible by viewModel.mustChangePasswordDialogVisible.collectAsState()
     val changePasswordLoading by viewModel.changePasswordLoading.collectAsState()
     val changePasswordError by viewModel.changePasswordError.collectAsState()
@@ -163,7 +160,6 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 BrandHeader(
-                    companyName = companyName ?: stringResource(R.string.login_company_fallback),
                     animate = !viewModel.introPlayed,
                     onIntroPlayed = { viewModel.introPlayed = true }
                 )
@@ -219,7 +215,8 @@ fun LoginScreen(
 }
 
 @Composable
-private fun BrandHeader(companyName: String, animate: Boolean, onIntroPlayed: () -> Unit) {
+/** The CentyChat lockup alone (owner: it is a chat, that is obvious - no company or tagline line). */
+private fun BrandHeader(animate: Boolean, onIntroPlayed: () -> Unit) {
     val reduceMotion = rememberReduceMotion()
     val play = animate && !reduceMotion
     val alpha = remember { Animatable(if (play) 0f else 1f) }
@@ -252,16 +249,6 @@ private fun BrandHeader(companyName: String, animate: Boolean, onIntroPlayed: ()
             style = MaterialTheme.typography.headlineMedium.copy(letterSpacing = (-0.02).em),
             color = CentyTheme.tokens.textStrong,
             modifier = Modifier.semantics { heading() }
-        )
-        Spacer(Modifier.height(4.dp))
-        // Server-provided text: plain Text only (sanitised in the ViewModel), never markup or links.
-        Text(
-            text = companyName,
-            style = MaterialTheme.typography.bodyMedium,
-            color = CentyTheme.tokens.textSecondary,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
         )
     }
 }
