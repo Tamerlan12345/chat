@@ -206,6 +206,9 @@ class ChatViewModel @AssistedInject constructor(
     /** The server's `DM_NOT_ALLOWED` for this direct chat, and what reopens it. */
     private val refusedDelivery = RefusedDelivery(conversationKey, targetId)
 
+    /** Outgoing «печатает» frames, throttled; declared with the other collaborators (onCleared stops it). */
+    private val typing = TypingSignal(viewModelScope) { active -> realtimeRepository.sendTyping(conversationType, targetId, active) }
+
     /** The composer is closed while the peer is blocked or the server refuses delivery. */
     val composerLock: StateFlow<ComposerLock> = combine(blocks?.blocked ?: flowOf(false), refusedDelivery.closed) { blocked, refused ->
         lockOf(blocked, refused)
@@ -571,8 +574,6 @@ class ChatViewModel @AssistedInject constructor(
 
     /** The composer field changed ([isTyping] = it has text) or was sent (false). */
     fun onTyping(isTyping: Boolean) = typing.onInput(isTyping)
-
-    private val typing = TypingSignal(viewModelScope) { active -> realtimeRepository.sendTyping(conversationType, targetId, active) }
 
     fun sendWake() {
         if (_wakeCooldownSeconds.value > 0) return
