@@ -105,7 +105,7 @@ final class UserPathQATests: XCTestCase {
         let announcementsTab = app.tabBars.buttons["Объявления"]
         XCTAssertTrue(announcementsTab.waitForExistence(timeout: 5))
         announcementsTab.tap()
-        let announcement = app.staticTexts["Тестовое оповещение"]
+        let announcement = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Тестовое оповещение")).firstMatch
         XCTAssertTrue(announcement.waitForExistence(timeout: 30), "The seeded announcement must be listed.")
         tap(announcement)
         let close = app.buttons["Закрыть"]

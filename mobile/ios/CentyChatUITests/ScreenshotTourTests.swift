@@ -169,6 +169,135 @@ final class ScreenshotTourTests: XCTestCase {
         }
     }
 
+    /// The component gallery (`-centychat-ui-gallery`, canned data): every bubble state including a
+    /// failed message, banners, empty states, skeletons, buttons and the call stage parts.
+    func testComponentGallery() {
+        continueAfterFailure = true
+        defer { XCUIDevice.shared.appearance = .light }
+        let variants: [(XCUIDevice.Appearance, String, String?)] = [
+            (.light, "light", nil),
+            (.dark, "dark", nil),
+            (.light, "ax-xxxl", Self.accessibilitySize),
+        ]
+        for (appearance, suffix, contentSize) in variants {
+            let application = launchFreshInstall(
+                server: Self.unreachableServer,
+                appearance: appearance,
+                contentSize: contentSize,
+                extra: ["-centychat-ui-gallery"]
+            )
+            let gallery = application.scrollViews["design-gallery"]
+            XCTAssertTrue(gallery.waitForExistence(timeout: 15), "The gallery must open (\(suffix))")
+            for (index, page) in ["Сообщения", "Состояния", "Кнопки", "Звонок"].enumerated() {
+                let segment = application.segmentedControls.buttons[page]
+                if segment.waitForExistence(timeout: 5) {
+                    segment.tap()
+                }
+                pause(1.2)
+                capture(application, named: "40-gallery-\(index + 1)-\(suffix)")
+                if index == 0 {
+                    // The rest of the bubbles (the failed one and the glyph row) below the fold.
+                    gallery.swipeUp(velocity: .slow)
+                    pause(1)
+                    capture(application, named: "40-gallery-1b-\(suffix)")
+                }
+            }
+            application.terminate()
+        }
+    }
+
+    /// The motion walkthrough for the brief's screen recordings (CI records it on its own:
+    /// `CENTYCHAT_MOTION_VIDEO=light|dark`): inbox → chat, the keyboard and its interactive dismiss,
+    /// a message landing, swipe-to-reply, the context menu, an empty search, the people flow.
+    func testMotionWalkthrough() throws {
+        guard let standURL else {
+            throw XCTSkip("The dev stand is not running (CENTYCHAT_DEV_STAND_URL is not set).")
+        }
+        guard let mode = ProcessInfo.processInfo.environment["CENTYCHAT_MOTION_VIDEO"], !mode.isEmpty else {
+            throw XCTSkip("Recorded on its own by CI (CENTYCHAT_MOTION_VIDEO).")
+        }
+        continueAfterFailure = true
+        defer { XCUIDevice.shared.appearance = .light }
+        let appearance: XCUIDevice.Appearance = mode == "dark" ? .dark : .light
+        let app = launchFreshInstall(server: standURL, appearance: appearance)
+        XCTAssertTrue(loginScreen(of: app).waitForExistence(timeout: 15))
+        signIn(app, username: "alice", password: "Alice-Dev-Stand-5271")
+        guard app.tabBars.firstMatch.waitForExistence(timeout: 30) else { return }
+        app.dismissSystemPrompts()
+        pause(2)
+
+        // Inbox → chat (zoom from the row on iOS 18).
+        if openChat(titled: "Боб Тестов", in: app) {
+            pause(2)
+            // The keyboard: open, type, send (the message lands), interactive dismiss.
+            let composer = composerField(app)
+            if composer.waitForExistence(timeout: 10) {
+                type("Движение \(mode)", into: composer, of: app)
+                pause(0.6)
+                let send = app.buttons["Отправить"]
+                if waitUntil(send, "isEnabled == true", timeout: 5) { send.tap() }
+                pause(2)
+                closeKeyboardByDraggingTheList(app)
+                pause(1)
+            }
+            // Swipe-to-reply on the own message, then cancel the reply.
+            let own = app.staticTexts["Движение \(mode)"]
+            if own.waitForExistence(timeout: 5) {
+                let start = own.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
+                start.press(forDuration: 0.05, thenDragTo: own.coordinate(withNormalizedOffset: CGVector(dx: -0.6, dy: 0.5)))
+                pause(1.5)
+                let cancelReply = app.buttons["Отменить ответ"]
+                if cancelReply.exists { cancelReply.tap() }
+                pause(1)
+                // The context menu.
+                own.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.2)
+                pause(1.5)
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.12)).tap()
+                pause(1)
+            }
+            // The card from the header and back.
+            let header = app.buttons["chat-header-avatar"]
+            if header.exists {
+                tapCentre(header)
+                pause(2)
+                goBack(app)
+            }
+            goBack(app)
+            pause(1)
+        }
+
+        // An empty search state, then the people flow.
+        let field = app.searchFields["Люди, каналы, сообщения"]
+        if field.waitForExistence(timeout: 10) {
+            type("щщщщ", into: field, of: app, tapAtCentre: true)
+            pause(2.5)
+            for label in ["Отменить", "Cancel"] where app.buttons[label].exists {
+                app.buttons[label].tap()
+                break
+            }
+            pause(1)
+        }
+        if openTab("Сотрудники", in: app) {
+            pause(1.5)
+            let departments = app.segmentedControls.buttons["Отделы"]
+            if departments.exists {
+                departments.tap()
+                pause(1)
+                let department = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "department-")).element(boundBy: 1)
+                if department.exists {
+                    tapCentre(department)
+                    pause(1.5)
+                    tapCentre(department)
+                    pause(1)
+                }
+            }
+        }
+        if openTab("Объявления", in: app) {
+            pause(2)
+        }
+        app.terminate()
+    }
+
     private func runScreenTour(appearance: XCUIDevice.Appearance, suffix: String, contentSize: String? = nil) throws {
         guard let standURL else {
             throw XCTSkip("The dev stand is not running (CENTYCHAT_DEV_STAND_URL is not set).")
@@ -239,7 +368,8 @@ final class ScreenshotTourTests: XCTestCase {
             // The long-press menu of the own message.
             let bubble = app.staticTexts[own]
             if bubble.waitForExistence(timeout: 5) {
-                bubble.press(forDuration: 1.2)
+                // A bubble inside the list may be reported as not hittable: press at its centre.
+                bubble.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.2)
                 pause(1)
                 capture(app, named: "07-message-menu-\(suffix)")
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.12)).tap()
@@ -306,7 +436,7 @@ final class ScreenshotTourTests: XCTestCase {
 
         // «Объявления»: the list and the detail.
         if openTab("Объявления", in: app) {
-            let announcement = app.staticTexts["Тестовое оповещение"]
+            let announcement = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Тестовое оповещение")).firstMatch
             _ = announcement.waitForExistence(timeout: 20)
             pause(1)
             capture(app, named: "13-announcements-\(suffix)")
@@ -373,10 +503,8 @@ final class ScreenshotTourTests: XCTestCase {
         let application = launchFreshInstall(server: server, appearance: appearance, contentSize: contentSize)
 
         XCTAssertTrue(loginScreen(of: application).waitForExistence(timeout: 15), "A fresh install must open on login.")
-        if standURL != nil {
-            // The company name comes from the stand's /api/settings/info.
-            _ = application.staticTexts["login-company"].waitForExistence(timeout: 5)
-        }
+        // Only the CentyChat lockup: no company caption (owner, 2026-10-06).
+        XCTAssertFalse(application.descendants(matching: .any)["login-company"].exists)
         let submit = application.buttons["login-submit"]
         XCTAssertTrue(submit.exists)
         XCTAssertFalse(submit.isEnabled, "«Войти» stays disabled until both fields are filled.")

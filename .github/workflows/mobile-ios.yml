@@ -152,6 +152,54 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: mobile/ios/build/video/ios-ui.mp4
+      # The motion recordings of the design brief («UI layer v2» acceptance): the walkthrough test
+      # on its own, once in light, once in dark and once with Reduce Motion switched on in the
+      # simulator. Evidence only: a failure here never fails the job.
+      - name: Record the motion walkthrough (light, dark, Reduce Motion)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
+        run: |
+          set +e
+          out=mobile/ios/build/motion
+          mkdir -p "$out"
+          for mode in light dark reduce; do
+            appearance="$mode"
+            if [ "$mode" = reduce ]; then
+              appearance=light
+              xcrun simctl spawn "$SIMULATOR_UDID" defaults write com.apple.Accessibility ReduceMotionEnabled -bool true
+            fi
+            xcrun simctl io "$SIMULATOR_UDID" recordVideo --codec=h264 --force "$out/raw-$mode.mp4" > "$RUNNER_TEMP/motion-record-$mode.log" 2>&1 &
+            recorder=$!
+            sleep 2
+            TEST_RUNNER_CENTYCHAT_MOTION_VIDEO="$appearance" xcodebuild \
+             -project mobile/ios/CentyChat.xcodeproj \
+             -scheme CentyChat \
+             -configuration Debug \
+             -destination "id=$SIMULATOR_UDID" \
+             -derivedDataPath mobile/ios/build/derived \
+             -only-testing:CentyChatUITests/ScreenshotTourTests/testMotionWalkthrough \
+             test-without-building > "$RUNNER_TEMP/motion-$mode.log" 2>&1
+            echo "motion $mode: xcodebuild exit $?"
+            kill -INT "$recorder" 2>/dev/null
+            for _ in $(seq 1 60); do kill -0 "$recorder" 2>/dev/null || break; sleep 1; done
+            if [ -s "$out/raw-$mode.mp4" ]; then
+              avconvert --preset Preset960x540 --source "$out/raw-$mode.mp4" --output "$out/ios-motion-$mode.mp4" --replace \
+                || mv -f "$out/raw-$mode.mp4" "$out/ios-motion-$mode.mp4"
+              rm -f "$out/raw-$mode.mp4"
+            fi
+          done
+          xcrun simctl spawn "$SIMULATOR_UDID" defaults write com.apple.Accessibility ReduceMotionEnabled -bool false
+          ls -l "$out"
+      - name: Upload motion videos
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-motion-videos
+          if-no-files-found: ignore
+          retention-days: 7
+          path: mobile/ios/build/motion/ios-motion-*.mp4
       # Compiler errors and failing tests as annotations and in the job summary.
       - name: Report build and test failures
         if: always()
@@ -174,14 +222,20 @@ jobs:
             mobile/ios/build/CentyChat-unit.xcresult
       - name: Export screenshot attachments as PNG
         if: always() && github.event_name == 'push'
-        run: python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+        run: |
+          python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+          # The motion recordings travel with the screenshots (they are small after avconvert).
+          mkdir -p mobile/ios/build/screenshots
+          cp mobile/ios/build/motion/ios-motion-*.mp4 mobile/ios/build/screenshots/ 2>/dev/null || true
       - name: Upload exported screenshots
         if: always() && github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-screenshots
           if-no-files-found: ignore
-          path: mobile/ios/build/screenshots/*.png
+          path: |
+            mobile/ios/build/screenshots/*.png
+            mobile/ios/build/screenshots/*.mp4
 
   # The Release configuration must be locked to production: build it with a hostile
   # CENTYCHAT_SERVER_URL and check the binary ignores it and has no Debug override points.
@@ -239,7 +293,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          shots=(screenshots/*.png)
+          shots=(screenshots/*.png screenshots/*.mp4)
           if [ ${#shots[@]} -eq 0 ]; then
             echo "No screenshots exported; nothing to publish."
             exit 0
