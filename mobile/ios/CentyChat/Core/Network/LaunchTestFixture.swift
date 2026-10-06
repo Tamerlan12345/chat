@@ -28,6 +28,12 @@ enum LaunchTestFixture {
         isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-ui-delivery-offline")
     }
 
+    /// UI tests of the design review (`-centychat-ui-gallery`): the component gallery instead of the
+    /// app, with canned data and no network.
+    static var showsDesignGallery: Bool {
+        isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-ui-gallery")
+    }
+
     /// Where the socket connects instead of the server while `deliveryOffline` (nothing listens).
     static var realtimeServerOverride: String? {
         deliveryOffline ? "https://127.0.0.1:9" : nil

@@ -428,3 +428,10 @@ struct RegistrationFlowView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Регистрация") {
+    RegistrationFlowView(account: UnavailableAccountRepository(), signIn: { _ in }, onClose: {})
+        .previewEnvironment(.preview(signedIn: false))
+}
+#endif

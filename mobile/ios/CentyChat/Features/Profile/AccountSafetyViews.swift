@@ -56,6 +56,8 @@ struct ReportSheetView: View {
                     form
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CentyColors.list)
             .navigationTitle(target.type == .message ? "Жалоба на сообщение" : "Жалоба на пользователя")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -73,7 +75,7 @@ struct ReportSheetView: View {
             Section {
                 Text(target.subject)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CentyColors.textSecondary)
                     .lineLimit(4)
             } header: {
                 Text("На что жалоба")
@@ -153,7 +155,7 @@ struct ReportSheetView: View {
                 .font(.title3.weight(.semibold))
             Text("Спасибо. Администратор рассмотрит её. Чтобы больше не видеть сообщения этого человека, его можно заблокировать.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CentyColors.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(24)
@@ -196,7 +198,7 @@ struct BlockedUsersView: View {
             if account.blocked.isEmpty {
                 Section {
                     Text(account.blocksState.isLoading ? "Загрузка…" : "Вы никого не блокировали.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CentyColors.textSecondary)
                         .accessibilityIdentifier("blocked-empty")
                 } footer: {
                     Text("Заблокировать человека можно в диалоге: меню «⋯» вверху, пункт «Заблокировать».")
@@ -235,6 +237,8 @@ struct BlockedUsersView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(CentyColors.list)
         .navigationTitle("Заблокированные")
         .navigationBarTitleDisplayMode(.inline)
         .task { await account.loadBlocks() }
@@ -242,7 +246,7 @@ struct BlockedUsersView: View {
             "Не удалось разблокировать",
             isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
         ) {
-            Button("ОК", role: .cancel) {}
+            Button("Закрыть", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
@@ -272,7 +276,7 @@ struct DeleteAccountView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(CentyColors.centrasRed)
+                            .foregroundStyle(CentyColors.dangerText)
                     }
                     .font(.subheadline)
                 }
@@ -298,7 +302,7 @@ struct DeleteAccountView: View {
                             isPasswordVisible.toggle()
                         } label: {
                             Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(CentyColors.textSecondary)
                                 .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.plain)
@@ -334,6 +338,8 @@ struct DeleteAccountView: View {
                     .accessibilityIdentifier("delete-confirm")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(CentyColors.list)
             .navigationTitle("Удаление аккаунта")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -368,3 +374,22 @@ struct DeleteAccountView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Удаление аккаунта") {
+    DeleteAccountView()
+        .previewEnvironment()
+}
+
+#Preview("Заблокированные") {
+    NavigationStack {
+        BlockedUsersView()
+    }
+    .previewEnvironment()
+}
+
+#Preview("Жалоба") {
+    ReportSheetView(target: ReportTarget(type: .user, id: 2, subject: "Боб Тестов"))
+        .previewEnvironment()
+}
+#endif

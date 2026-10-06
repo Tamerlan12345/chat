@@ -21,7 +21,7 @@ public struct PeopleView: View {
                 if let model {
                     PeopleSearchHost(model: model, zoom: zoom)
                 } else {
-                    CentyColors.chatBackground.ignoresSafeArea()
+                    CentyColors.list.ignoresSafeArea()
                 }
             }
             .navigationTitle("Сотрудники")
@@ -95,7 +95,7 @@ private struct OnlineFilterChip: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .foregroundStyle(isOn ? CentyColors.successText : CentyColors.textSecondary)
-            .background(Capsule().fill(isOn ? CentyColors.successSoft : Color(uiColor: .tertiarySystemFill)))
+            .background(Capsule().fill(isOn ? CentyColors.successSoft : CentyColors.sunken))
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -115,23 +115,23 @@ private struct PeopleContent: View {
     @Environment(\.isSearching) private var isSearching
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// The department just opened and when: its children fade in with the stagger, once.
+    @State private var opened: (id: Int64, at: Date)?
 
     var body: some View {
         let state = model.state
         Group {
             if !state.isLoaded {
                 if state.refreshFailed {
-                    ContentUnavailableView {
-                        Label("Не удалось загрузить сотрудников", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text("Проверьте подключение и попробуйте ещё раз.")
-                    } actions: {
-                        Button("Повторить") { model.refresh() }
-                            .buttonStyle(.borderedProminent)
-                            .tint(CentyColors.primaryBlue)
+                    EmptyStateView(
+                        illustration: .offline,
+                        title: "Не удалось загрузить сотрудников",
+                        message: "Проверьте подключение и попробуйте ещё раз."
+                    ) {
+                        EmptyStateAction(title: "Повторить", systemImage: "arrow.clockwise") { model.refresh() }
                     }
                 } else {
-                    skeleton
+                    SkeletonList(rows: 9, avatar: 40)
                 }
             } else if state.isEmptyResult {
                 emptyState(state)
@@ -149,7 +149,7 @@ private struct PeopleContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(CentyColors.chatBackground)
+        .background(CentyColors.list)
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await model.refreshAndWait() }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -185,7 +185,7 @@ private struct PeopleContent: View {
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 8)
-        .background(CentyColors.chatBackground)
+        .background(CentyColors.list)
     }
 
     private var refreshFailedBanner: some View {
@@ -198,31 +198,19 @@ private struct PeopleContent: View {
                 .foregroundStyle(CentyColors.textSecondary)
             Spacer(minLength: 8)
             Button("Повторить") { model.refresh() }
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(CentyColors.accentText)
-                .frame(minHeight: 44)
+                .buttonStyle(CentyLinkButtonStyle())
+                .font(.footnote)
         }
         .padding(.horizontal, 12)
-        .background(CentyColors.dangerSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(CentyColors.dangerSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("people-refresh-failed")
     }
 
     // MARK: - Lists
 
-    private var skeleton: some View {
-        List {
-            ForEach(0..<8, id: \.self) { _ in
-                PersonRowSkeleton()
-                    .listRowBackground(CentyColors.cardBackground)
-            }
-        }
-        .listStyle(.plain)
-        .scrollDisabled(true)
-        .accessibilityElement()
-        .accessibilityLabel("Загрузка")
-    }
-
+    /// «Все»: one plane (L1) without white bands — rows sit on the list background with hairline
+    /// separators from the text edge, compact sticky letters, the A–Я index on the trailing edge.
     private func letters(_ state: PeopleUIState) -> some View {
         ScrollViewReader { proxy in
             List {
@@ -233,13 +221,16 @@ private struct PeopleContent: View {
                         }
                     } header: {
                         Text(section.letter)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(CentyColors.textDim)
+                            .padding(.vertical, 2)
                             .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
             .listStyle(.plain)
+            .listSectionSpacing(0)
+            .environment(\.defaultMinListHeaderHeight, 28)
             .scrollContentBackground(.hidden)
             .accessibilityIdentifier("people-list")
             .overlay(alignment: .trailing) {
@@ -267,40 +258,81 @@ private struct PeopleContent: View {
     }
 
     private func departments(_ state: PeopleUIState) -> some View {
-        List {
-            ForEach(DepartmentOutline.rows(state.departments, expanded: state.expanded)) { row in
-                switch row.kind {
-                case .department(let node, expanded: let expanded):
-                    Button {
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                            model.toggleDepartment(node.id)
+        let rows = DepartmentOutline.rows(state.departments, expanded: state.expanded)
+        let parents = Self.parents(of: rows)
+        return List {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                Group {
+                    switch row.kind {
+                    case .department(let node, expanded: let expanded):
+                        Button {
+                            if !expanded { opened = (node.id, Date()) }
+                            withAnimation(reduceMotion ? .easeOut(duration: CentyMotion.crossfade) : .easeOut(duration: CentyMotion.base)) {
+                                model.toggleDepartment(node.id)
+                            }
+                            CentyHaptics.light()
+                        } label: {
+                            DepartmentRowView(node: node, expanded: expanded, depth: row.depth)
                         }
-                        CentyHaptics.light()
-                    } label: {
-                        DepartmentRowView(node: node, expanded: expanded, depth: row.depth)
+                        .buttonStyle(.plain)
+                        .listRowBackground(CentyColors.card)
+                        .accessibilityIdentifier("department-\(node.id)")
+                    case .person(let person):
+                        personLink(person, surface: CentyColors.card) {
+                            PersonRowView(person: person, zoom: zoom, surface: CentyColors.card)
+                                .padding(.leading, CGFloat(row.depth) * 16)
+                        }
+                        .listRowBackground(CentyColors.card)
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(CentyColors.cardBackground)
-                    .accessibilityIdentifier("department-\(node.id)")
-                case .person(let person):
-                    personLink(person) {
-                        PersonRowView(person: person, zoom: zoom)
-                            .padding(.leading, CGFloat(row.depth) * 16)
-                    }
-                    .transition(.opacity)
                 }
+                // Children of the department just opened: a staggered fade (6 × 20 ms cap).
+                .staggeredAppearance(
+                    delay: Stagger.departmentRow(index: staggerIndex(index, parents: parents), reduceMotion: reduceMotion),
+                    reduceMotion: reduceMotion || !isFreshChild(parents[index])
+                )
+                .transition(.opacity)
             }
         }
         .listStyle(.insetGrouped)
+        .listSectionSpacing(.compact)
         .scrollContentBackground(.hidden)
         .accessibilityIdentifier("people-list")
     }
 
-    private func personLink<RowContent: View>(_ person: Person, @ViewBuilder label: () -> RowContent) -> some View {
+    /// For each row, the index of the department row it hangs under (nil for top-level rows).
+    private static func parents(of rows: [OutlineRow]) -> [Int?] {
+        var result: [Int?] = []
+        var stack: [(depth: Int, index: Int)] = []
+        for (index, row) in rows.enumerated() {
+            while let last = stack.last, last.depth >= row.depth { stack.removeLast() }
+            result.append(stack.last?.index)
+            if case .department = row.kind { stack.append((row.depth, index)) }
+        }
+        return result
+    }
+
+    /// The position of a row among its parent's children.
+    private func staggerIndex(_ index: Int, parents: [Int?]) -> Int {
+        guard let parent = parents[index] else { return 0 }
+        return index - parent - 1
+    }
+
+    /// The row's department was opened a moment ago (not a row scrolled back into view).
+    private func isFreshChild(_ parent: Int?) -> Bool {
+        guard parent != nil, let opened else { return false }
+        return Date().timeIntervalSince(opened.at) < 0.6
+    }
+
+    private func personLink<RowContent: View>(
+        _ person: Person,
+        surface: Color = CentyColors.list,
+        @ViewBuilder label: () -> RowContent
+    ) -> some View {
         NavigationLink(value: AppRoute.person(PersonRoute(id: person.id, name: person.fullName, avatarUrl: person.avatarUrl, zoomsFromRow: true))) {
             label()
         }
-        .listRowBackground(CentyColors.cardBackground)
+        .listRowBackground(surface)
+        .listRowSeparatorTint(CentyColors.border)
         .accessibilityIdentifier("person-row-\(person.id)")
     }
 
@@ -309,29 +341,28 @@ private struct PeopleContent: View {
     @ViewBuilder
     private func emptyState(_ state: PeopleUIState) -> some View {
         if state.isSearching {
-            ContentUnavailableView {
-                Label("Никого не нашли по «\(state.query.trimmingCharacters(in: .whitespacesAndNewlines))»", systemImage: "magnifyingglass")
-            } description: {
-                Text("Проверьте написание или поищите по должности, отделу и внутреннему номеру.")
-            } actions: {
+            EmptyStateView(
+                illustration: .search,
+                title: "Никого не нашли по «\(state.query.trimmingCharacters(in: .whitespacesAndNewlines))»",
+                message: "Проверьте написание или поищите по должности, отделу и внутреннему номеру."
+            ) {
                 Button("Очистить поиск") { model.setQuery("") }
-                    .foregroundStyle(CentyColors.accentText)
+                    .buttonStyle(CentyLinkButtonStyle())
                     .accessibilityIdentifier("people-clear-search")
             }
         } else if state.onlineOnly {
-            ContentUnavailableView {
-                Label("Сейчас никого нет в сети", systemImage: "moon.zzz")
-            } description: {
-                Text("Выключите фильтр «В сети», чтобы увидеть всех.")
-            } actions: {
-                Button("Показать всех") { model.toggleOnlineOnly() }
-                    .foregroundStyle(CentyColors.accentText)
+            EmptyStateView(
+                illustration: .people,
+                title: "Сейчас никого нет в сети",
+                message: "Выключите фильтр «В сети», чтобы увидеть всех."
+            ) {
+                EmptyStateAction(title: "Показать всех", systemImage: "person.2") { model.toggleOnlineOnly() }
             }
         } else {
-            ContentUnavailableView(
-                "В справочнике пока никого нет",
-                systemImage: "person.2",
-                description: Text("Когда администратор добавит сотрудников, они появятся здесь.")
+            EmptyStateView(
+                illustration: .people,
+                title: "В справочнике пока никого нет",
+                message: "Когда администратор добавит сотрудников, они появятся здесь."
             )
         }
     }
@@ -370,7 +401,7 @@ private struct DepartmentRowView: View {
                 }
         }
         .padding(.leading, CGFloat(depth) * 16)
-        .frame(minHeight: 44)
+        .frame(minHeight: 52)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(node.name), \(node.online) из \(node.total) в сети")
@@ -379,3 +410,10 @@ private struct DepartmentRowView: View {
         .accessibilityAddTraits(.isButton)
     }
 }
+
+#if DEBUG
+#Preview("Сотрудники") {
+    PeopleView()
+        .previewEnvironment()
+}
+#endif

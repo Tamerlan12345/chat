@@ -2,6 +2,10 @@ import SwiftUI
 
 /// Главный экран с вкладками после успешной авторизации: Чаты, Сотрудники, Объявления, Профиль.
 /// Каждая вкладка держит свой стек и своё состояние (прокрутку, поиск).
+///
+/// Badges count conversations with unread messages and announcements awaiting acknowledgement; the
+/// tab the user is on carries none (anti-generated polish rule 6). The tab bar is the L0 plane:
+/// the system bar material, content scrolls under it.
 public struct MainTabView: View {
     @Environment(ConversationsStore.self) private var conversations
     @Environment(AnnouncementsStore.self) private var announcements
@@ -9,12 +13,8 @@ public struct MainTabView: View {
     @State private var navigation = AppNavigation()
     @State private var peopleRequests = PeopleRequests()
 
-    private var totalChatUnread: Int {
-        conversations.totalDirectUnread + conversations.totalChannelUnread
-    }
-
-    private var unconfirmedAnnouncementsCount: Int {
-        announcements.unconfirmedCount
+    private var unreadConversations: Int {
+        conversations.unreadDirectConversations + conversations.unreadChannelConversations
     }
 
     public init() {}
@@ -25,7 +25,7 @@ public struct MainTabView: View {
                 .tabItem {
                     Label("Чаты", systemImage: "bubble.left.and.bubble.right")
                 }
-                .badge(totalChatUnread > 0 ? "\(totalChatUnread)" : nil)
+                .badge(TabBadge.text(unreadConversations, isSelected: navigation.selectedTab == .chats).map { Text($0) })
                 .tag(AppTab.chats)
 
             PeopleView()
@@ -38,7 +38,7 @@ public struct MainTabView: View {
                 .tabItem {
                     Label("Объявления", systemImage: "megaphone")
                 }
-                .badge(unconfirmedAnnouncementsCount > 0 ? "\(unconfirmedAnnouncementsCount)" : nil)
+                .badge(TabBadge.text(announcements.unconfirmedCount, isSelected: navigation.selectedTab == .announcements).map { Text($0) })
                 .tag(AppTab.announcements)
 
             ProfileView()
@@ -56,3 +56,10 @@ public struct MainTabView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Tabs") {
+    MainTabView()
+        .previewEnvironment()
+}
+#endif

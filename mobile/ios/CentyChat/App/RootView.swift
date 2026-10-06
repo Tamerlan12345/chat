@@ -3,11 +3,28 @@ import SwiftUI
 /// Chooses the top-level screen from the session phase and hosts app-wide presentations.
 public struct RootView: View {
     @Environment(AppContainer.self) private var container
-    @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
     public var body: some View {
+#if DEBUG
+        if LaunchTestFixture.showsDesignGallery {
+            // Design review screenshots: canned data only, the session never starts.
+            DesignGalleryView()
+        } else {
+            SessionRootView()
+        }
+#else
+        SessionRootView()
+#endif
+    }
+}
+
+private struct SessionRootView: View {
+    @Environment(AppContainer.self) private var container
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
         let session = container.session
         let calls = container.calls
         let profile = container.profile
@@ -15,9 +32,9 @@ public struct RootView: View {
         Group {
             switch session.phase {
             case .launching:
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(CentyColors.chatBackground)
+                // A blank canvas for the moment the stored session is checked (no spinner).
+                CentyColors.canvas
+                    .ignoresSafeArea()
                     .accessibilityLabel("Загрузка")
             case .signedOut:
                 LoginView()
@@ -74,7 +91,7 @@ public struct RootView: View {
                 set: { if !$0 { session.errorMessage = nil } }
             )
         ) {
-            Button("ОК", role: .cancel) {
+            Button("Закрыть", role: .cancel) {
                 session.errorMessage = nil
             }
         } message: {
