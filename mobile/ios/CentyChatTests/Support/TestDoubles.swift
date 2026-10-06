@@ -447,6 +447,7 @@ struct TestApp {
     let peopleCache: InMemoryPeopleCache
     let deliveryStore: InMemoryDeliveryStore
     let deliveryBackend: FakeDeliveryBackend
+    let uploadStore: InMemoryPendingUploadStore
 
     init(
         environment: ServerEnvironment = .test,
@@ -462,6 +463,7 @@ struct TestApp {
         peopleCache = InMemoryPeopleCache()
         deliveryStore = InMemoryDeliveryStore()
         deliveryBackend = FakeDeliveryBackend()
+        uploadStore = InMemoryPendingUploadStore()
         container = AppContainer(
             server: server,
             auth: auth,
@@ -478,6 +480,7 @@ struct TestApp {
             pushTokenService: pushTokens,
             avatarLoader: avatarLoader,
             deliveryStore: deliveryStore,
+            uploadStore: uploadStore,
             deliveryBackend: deliveryBackend
         )
     }

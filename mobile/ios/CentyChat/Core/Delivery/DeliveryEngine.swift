@@ -121,6 +121,7 @@ public final class DeliveryEngine {
     /// `auth_success` claims nothing. Unlike a cold launch, where `signedIn` is nil too.
     @ObservationIgnored private var signedOut = false
     @ObservationIgnored private var readyWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var ownerWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         store: any DeliveryStore,
@@ -173,6 +174,20 @@ public final class DeliveryEngine {
         ready = true
         let waiters = readyWaiters
         readyWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        resumeOwnerWaiters()
+    }
+
+    /// Returns once the model is loaded and belongs to an account.
+    public func waitUntilOwned() async {
+        guard !(ready && state.me != nil) else { return }
+        await withCheckedContinuation { ownerWaiters.append($0) }
+    }
+
+    private func resumeOwnerWaiters() {
+        guard ready, state.me != nil, !ownerWaiters.isEmpty else { return }
+        let waiters = ownerWaiters
+        ownerWaiters.removeAll()
         waiters.forEach { $0.resume() }
     }
 
@@ -331,6 +346,7 @@ public final class DeliveryEngine {
     private func setState(_ newState: DeliveryState) {
         state = newState
         for handler in onStateChange { handler(newState) }
+        resumeOwnerWaiters()
         for (id, waiter) in stateWaiters where waiter.predicate(newState) {
             finishWaiter(id, result: true)
         }

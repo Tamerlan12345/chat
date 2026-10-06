@@ -22,6 +22,8 @@ final class AttachmentUploadsTests: XCTestCase {
         engine = DeliveryEngine(store: InMemoryDeliveryStore(), link: FakeDeliveryLink(), backend: FakeDeliveryBackend(), clock: clock)
         engine.start()
         await engine.idle()
+        // The queue belongs to account 2, adopted as at sign-in.
+        try await engine.adopt(2)
         signedIn = 2
     }
 
@@ -253,6 +255,85 @@ final class AttachmentUploadsTests: XCTestCase {
         XCTAssertTrue(left.isEmpty)
     }
 
+    func testALateProgressReportNeverStrandsAFile() async throws {
+        let uploads = makeUploads()
+        uploader.reportProgressLate(true)
+        uploader.script(.failure(URLError(.networkConnectionLost)), FakeUploader.done(70))
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+
+        uploads.setOnline(true)
+        await settle()
+        XCTAssertNil(uploads.items.first?.progress, "a progress report of a finished attempt is ignored")
+
+        clock.advance(by: AttachmentUploads.retryDelayMs)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2, "the file goes again instead of hanging at 70 %")
+        XCTAssertEqual(engine.state.outbox.count, 1)
+    }
+
+    func testRowsOfAnotherAccountAreNeverRestoredUnderTheNextOne() async throws {
+        let rows = InMemoryPendingUploadStore()
+        let copy = AttachmentFiles(root: folder)
+        let kept = try copy.keep(PickedAttachment(source: .data(Data([1, 2])), name: "Алисин.pdf", mimeType: "application/pdf"), key: "k-a")
+        try await rows.putUpload(PendingUpload(clientMsgId: "k-a", conversation: "direct:3", owner: 2, createdAt: 1, name: "Алисин.pdf", size: 2, mimeType: nil, localPath: kept.path, replyToId: nil))
+        // A ready engine whose model names no account yet (a fresh store).
+        engine = DeliveryEngine(store: InMemoryDeliveryStore(), link: FakeDeliveryLink(), backend: FakeDeliveryBackend(), clock: clock)
+        engine.start()
+        await engine.idle()
+        store = rows
+        signedIn = 5
+        let uploads = makeUploads()
+        await settle()
+        XCTAssertTrue(uploads.items.isEmpty, "not loaded before the queue has an owner")
+
+        try await engine.adopt(5)
+        await uploads.restored()
+
+        XCTAssertTrue(uploads.items.isEmpty)
+        let left = try await rows.uploads()
+        XCTAssertTrue(left.isEmpty, "the other account's row is deleted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url(kept.path).path), "with its copy")
+    }
+
+    func testRetryingOneFileOfflineSendsOnlyThatFile() async throws {
+        let uploads = makeUploads()
+        uploader.answer = .failure(APIError.httpError(statusCode: 415, message: "Нельзя", code: nil))
+        uploads.setOnline(true)
+        _ = await uploads.add(conversation: "direct:3", picked: try picked("отказ.pdf"), replyToId: nil, owner: 2)
+        await settle()
+        uploads.setOnline(false)
+        _ = await uploads.add(conversation: "direct:3", picked: try picked("ждёт.pdf"), replyToId: nil, owner: 2)
+        let refused = try XCTUnwrap(uploads.items.first { $0.pending.name == "отказ.pdf" }?.pending.clientMsgId)
+        uploader.answer = FakeUploader.done(80)
+
+        uploads.retry(refused)
+        await settle()
+
+        XCTAssertEqual(uploader.names, ["отказ.pdf", "отказ.pdf"], "«Повторить» sends that file only; the waiting one waits for the network")
+    }
+
+    func testRetriedFilesWaitingForASlotStillGoOffline() async throws {
+        let uploads = makeUploads()
+        uploader.answer = .failure(APIError.httpError(statusCode: 415, message: "Нельзя", code: nil))
+        uploads.setOnline(true)
+        for name in ["1.pdf", "2.pdf", "3.pdf"] {
+            _ = await uploads.add(conversation: "direct:3", picked: try picked(name), replyToId: nil, owner: 2)
+        }
+        await settle()
+        uploads.setOnline(false)
+        let gate = TestGate()
+        uploader.hold(gate)
+        uploader.answer = FakeUploader.done(81)
+
+        for item in uploads.items { uploads.retry(item.id) }
+        await settle()
+        XCTAssertEqual(uploader.calls, 5, "two of the three retried go at once")
+
+        await gate.open()
+        await settle()
+        XCTAssertEqual(uploader.calls, 6, "the third keeps its retry when a slot frees, without a network event")
+    }
+
     func testAWipeOfTheQueueForgetsTheFiles() async throws {
         let uploads = makeUploads()
         _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
@@ -276,6 +357,9 @@ final class FakeUploader: AttachmentUploader, @unchecked Sendable {
         var running = 0
         var maxRunning = 0
         var gate: TestGate?
+        var names: [String] = []
+        /// The progress callback fires after the attempt has already returned (a late hop).
+        var lateProgress = false
     }
 
     private let state = Locked(State())
@@ -296,18 +380,31 @@ final class FakeUploader: AttachmentUploader, @unchecked Sendable {
     }
 
     var calls: Int { state.value.calls }
+    var names: [String] { state.value.names }
     var running: Int { state.value.running }
+
+    func reportProgressLate(_ value: Bool) {
+        state.withValue { $0.lateProgress = value }
+    }
     var maxRunning: Int { state.value.maxRunning }
 
     func upload(file: URL, name: String, mimeType: String, progress: @escaping @Sendable (Double) -> Void) async throws -> FileUploadResponse {
-        let (answer, gate) = state.withValue { current -> (Result<FileUploadResponse, any Error>, TestGate?) in
+        let (answer, gate, late) = state.withValue { current -> (Result<FileUploadResponse, any Error>, TestGate?, Bool) in
             current.calls += 1
+            current.names.append(name)
             current.running += 1
             current.maxRunning = max(current.maxRunning, current.running)
             let next = current.answers.isEmpty ? current.answer : current.answers.removeFirst()
-            return (next, current.gate)
+            return (next, current.gate, current.lateProgress)
         }
-        progress(0.5)
+        if late {
+            Task.detached {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+                progress(0.7)
+            }
+        } else {
+            progress(0.5)
+        }
         if let gate { await gate.wait() }
         state.withValue { $0.running -= 1 }
         return try answer.get()

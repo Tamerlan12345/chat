@@ -79,8 +79,16 @@ final class DeliveryRuntime {
     /// Explicit sign-out or account deletion: the unsent messages and files are deleted. Throws when
     /// that could not be done — the caller must not sign out as if it had been.
     func discardForSignOut() async throws {
-        try await engine.reset()
-        try await uploads.reset()
+        // All or nothing for the user: the waiting files' rows first — if they cannot be deleted,
+        // nothing is; then the messages (disk first, then memory). If those cannot be deleted the
+        // files' rows are written back, and the account keeps its whole queue.
+        try await uploads.clearStoredRows()
+        do {
+            try await engine.reset()
+        } catch {
+            await uploads.restoreStoredRows()
+            throw error
+        }
     }
 
     /// The device has a network again: a reconnect waiting for its backoff goes now, and what waits

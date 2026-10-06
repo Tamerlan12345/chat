@@ -10,6 +10,10 @@ public actor APIClient {
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
     private let refreshCoordinator = TokenRefreshCoordinator()
+    /// The token each refresh produced for the token it replaced: a request that got 401 is retried
+    /// only with its own session's renewed token, never with whatever the keychain holds by then
+    /// (another account may have signed in meanwhile).
+    private var refreshedTokens: [(stale: String, fresh: String)] = []
     
     public init(
         session: URLSession? = nil,
@@ -65,7 +69,8 @@ public actor APIClient {
         requiresAuth: Bool = true,
         isRetry: Bool = false,
         unauthorizedMeansRejected: Bool = false,
-        serverURL: URL
+        serverURL: URL,
+        retryToken: String? = nil
     ) async throws -> T {
         guard var components = URLComponents(url: try apiURL(serverURL: serverURL, endpoint: endpoint), resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL(endpoint)
@@ -92,7 +97,7 @@ public actor APIClient {
             guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
                 throw APIError.insecureTransport
             }
-            guard let token = keychain.authToken else {
+            guard let token = retryToken ?? keychain.authToken else {
                 throw APIError.unauthorized
             }
             requestToken = token
@@ -133,7 +138,8 @@ public actor APIClient {
                 throw APIError.unauthorized
             }
             do {
-                try await refreshAccessToken(after: requestToken)
+                // Only this session's renewed token; another account's ends this request.
+                guard let renewed = try await renewedToken(after: requestToken) else { throw APIError.unauthorized }
                 return try await performRequest(
                     endpoint: endpoint,
                     method: method,
@@ -143,7 +149,8 @@ public actor APIClient {
                     requiresAuth: requiresAuth,
                     isRetry: true,
                     unauthorizedMeansRejected: unauthorizedMeansRejected,
-                    serverURL: serverURL
+                    serverURL: serverURL,
+                    retryToken: renewed
                 )
             } catch APIError.unauthorized {
                 if keychain.authToken == requestToken {
@@ -208,10 +215,11 @@ public actor APIClient {
     /// refresh the server refuses (401/403) ends the stored session — a refresh without an answer is
     /// a network failure (status 0) and never signs the user out.
     public func raw(method: String, endpoint: String, queryItems: [URLQueryItem]? = nil, body: Data? = nil) async -> RawResponse {
-        await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, isRetry: false)
+        await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, retryToken: nil)
     }
 
-    private func performRaw(method: String, endpoint: String, queryItems: [URLQueryItem]?, body: Data?, isRetry: Bool) async -> RawResponse {
+    private func performRaw(method: String, endpoint: String, queryItems: [URLQueryItem]?, body: Data?, retryToken: String?) async -> RawResponse {
+        let isRetry = retryToken != nil
         guard let base = try? apiURL(serverURL: environment.serverURL, endpoint: endpoint),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             return .unreachable
@@ -220,7 +228,7 @@ public actor APIClient {
         guard let url = components.url, ServerEndpointPolicy.allowsAuthorization(to: url) else {
             return .unreachable
         }
-        guard let token = keychain.authToken else {
+        guard let token = retryToken ?? keychain.authToken else {
             return RawResponse(status: 401, body: Data(), retryAfterSeconds: nil)
         }
         var request = URLRequest(url: url)
@@ -247,8 +255,9 @@ public actor APIClient {
                 if keychain.authToken == token { try? keychain.clearAllAuthData() }
                 return RawResponse(status: 401, body: data, retryAfterSeconds: nil)
             }
+            let renewed: String?
             do {
-                try await refreshAccessToken(after: token)
+                renewed = try await renewedToken(after: token)
             } catch APIError.unauthorized {
                 if keychain.authToken == token { try? keychain.clearAllAuthData() }
                 return RawResponse(status: 401, body: data, retryAfterSeconds: nil)
@@ -256,7 +265,9 @@ public actor APIClient {
                 // The refresh got no answer: not a rejection, the session stays.
                 return .unreachable
             }
-            return await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, isRetry: true)
+            // Another account signed in meanwhile: this request of the old session is not repeated.
+            guard let renewed else { return RawResponse(status: 401, body: data, retryAfterSeconds: nil) }
+            return await performRaw(method: method, endpoint: endpoint, queryItems: queryItems, body: body, retryToken: renewed)
         }
         let retryAfter = RetryAfter.seconds(from: http.value(forHTTPHeaderField: "Retry-After"), now: Date())
         return RawResponse(status: http.statusCode, body: data, retryAfterSeconds: retryAfter)
@@ -295,6 +306,22 @@ public actor APIClient {
         return url
     }
 
+    /// The token to repeat a request that got 401 with `staleToken`: the one a refresh produced for
+    /// this session (now or by a concurrent request); nil when the keychain holds another session's
+    /// token. Throws `unauthorized` when the server refused the refresh.
+    private func renewedToken(after staleToken: String) async throws -> String? {
+        try await refreshAccessToken(after: staleToken)
+        guard let current = keychain.authToken,
+              refreshedTokens.contains(where: { $0.stale == staleToken && $0.fresh == current }) else { return nil }
+        return current
+    }
+
+    private func remember(_ fresh: String, replacing stale: String) {
+        refreshedTokens.removeAll { $0.stale == stale }
+        refreshedTokens.append((stale, fresh))
+        if refreshedTokens.count > 16 { refreshedTokens.removeFirst(refreshedTokens.count - 16) }
+    }
+
     private func refreshAccessToken(after staleToken: String) async throws {
         guard keychain.authToken == staleToken else { return }
         let serverURL = environment.serverURL
@@ -325,6 +352,7 @@ public actor APIClient {
             }
             return refreshedToken
         }
+        remember(refreshedToken, replacing: staleToken)
         if keychain.authToken == staleToken {
             try keychain.saveAuthToken(refreshedToken)
         }
@@ -554,7 +582,7 @@ public actor APIClient {
     
     /// Загрузка файла/вложения (multipart/form-data)
     public func uploadFile(fileData: Data, fileName: String, mimeType: String) async throws -> FileUploadResponse {
-        try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: false)
+        try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, retryToken: nil)
     }
 
     /// `POST /files/upload` streaming a file from disk: the multipart body is written to a temporary
@@ -565,13 +593,14 @@ public actor APIClient {
         let boundary = "Boundary-\(UUID().uuidString)"
         let body = try MultipartFile.write(file: file, fieldName: "file", fileName: fileName, mimeType: mimeType, boundary: boundary, in: FileManager.default.temporaryDirectory)
         defer { try? FileManager.default.removeItem(at: body) }
-        return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, isRetry: false)
+        return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, retryToken: nil)
     }
 
-    private func performStreamingUpload(body: URL, boundary: String, progress: @escaping @Sendable (Double) -> Void, isRetry: Bool) async throws -> FileUploadResponse {
+    private func performStreamingUpload(body: URL, boundary: String, progress: @escaping @Sendable (Double) -> Void, retryToken: String?) async throws -> FileUploadResponse {
+        let isRetry = retryToken != nil
         let url = try apiURL(serverURL: environment.serverURL, endpoint: "/files/upload")
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else { throw APIError.insecureTransport }
-        guard let token = keychain.authToken else { throw APIError.unauthorized }
+        guard let token = retryToken ?? keychain.authToken else { throw APIError.unauthorized }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -596,8 +625,9 @@ public actor APIClient {
                 if keychain.authToken == token { try keychain.clearAllAuthData() }
                 throw APIError.unauthorized
             }
+            let renewed: String?
             do {
-                try await refreshAccessToken(after: token)
+                renewed = try await renewedToken(after: token)
             } catch APIError.unauthorized {
                 if keychain.authToken == token { try keychain.clearAllAuthData() }
                 throw APIError.unauthorized
@@ -605,7 +635,9 @@ public actor APIClient {
                 // The refresh got no answer: not a rejection, the file waits.
                 throw APIError.noConnection
             }
-            return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, isRetry: true)
+            // Another account signed in meanwhile: its token never carries this account's file.
+            guard let renewed else { throw APIError.unauthorized }
+            return try await performStreamingUpload(body: body, boundary: boundary, progress: progress, retryToken: renewed)
         }
         guard (200...299).contains(http.statusCode) else {
             let serverError = try? jsonDecoder.decode(ServerErrorResponse.self, from: data)
@@ -627,13 +659,14 @@ public actor APIClient {
         fileData: Data,
         fileName: String,
         mimeType: String,
-        isRetry: Bool
+        retryToken: String?
     ) async throws -> FileUploadResponse {
+        let isRetry = retryToken != nil
         let url = try apiURL(serverURL: environment.serverURL, endpoint: "/files/upload")
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
             throw APIError.insecureTransport
         }
-        guard let token = keychain.authToken else {
+        guard let token = retryToken ?? keychain.authToken else {
             throw APIError.unauthorized
         }
         
@@ -664,8 +697,8 @@ public actor APIClient {
                 throw APIError.unauthorized
             }
             do {
-                try await refreshAccessToken(after: token)
-                return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, isRetry: true)
+                guard let renewed = try await renewedToken(after: token) else { throw APIError.unauthorized }
+                return try await performUploadFile(fileData: fileData, fileName: fileName, mimeType: mimeType, retryToken: renewed)
             } catch APIError.unauthorized {
                 if keychain.authToken == token {
                     try keychain.clearAllAuthData()

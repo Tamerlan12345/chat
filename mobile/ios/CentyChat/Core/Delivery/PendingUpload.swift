@@ -68,11 +68,16 @@ public protocol PendingUploadStore: Sendable {
 public actor InMemoryPendingUploadStore: PendingUploadStore {
     private var rows: [String: PendingUpload] = [:]
     private var failingPuts = 0
+    private var failingClears = 0
 
     public init() {}
 
     public func failNextPuts(_ count: Int) {
         failingPuts = count
+    }
+
+    public func failNextClears(_ count: Int) {
+        failingClears = count
     }
 
     public func uploads() async throws -> [PendingUpload] {
@@ -92,6 +97,10 @@ public actor InMemoryPendingUploadStore: PendingUploadStore {
     }
 
     public func clearUploads() async throws {
+        if failingClears > 0 {
+            failingClears -= 1
+            throw InMemoryDeliveryStore.Failure(operation: .clear)
+        }
         rows.removeAll()
     }
 }

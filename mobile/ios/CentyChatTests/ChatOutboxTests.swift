@@ -196,6 +196,25 @@ final class ChatOutboxTests: XCTestCase {
         XCTAssertEqual(stored.outbox.map(\.text), ["Останусь"])
     }
 
+    func testASignOutWhoseFilesCannotBeDeletedLeavesTheQueueWorking() async throws {
+        try await signIn(as: TestModels.me)
+        let chat = await openChat()
+        await chat.send(text: "Останусь с файлами")
+        await app.uploadStore.failNextClears(1)
+
+        await app.session.logout()
+
+        XCTAssertEqual(app.session.phase, .authenticated)
+        XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения — выход отменён")
+        let stored = await app.deliveryStore.contents
+        XCTAssertEqual(stored.outbox.map(\.text), ["Останусь с файлами"], "nothing was deleted, as the message says")
+        let next = await chat.send(text: "И ещё одно")
+        XCTAssertTrue(next, "the engine still takes the account's messages")
+        await app.goOnline()
+        let sent = await frames("send_message")
+        XCTAssertEqual(sent.count, 1, "and frames: the queue goes out (stop-and-wait: the first one)")
+    }
+
     func testFramesOfTheOldSocketAfterAnExplicitSignOutAreNotStored() async throws {
         try await signIn(as: TestModels.me)
         await app.goOnline()

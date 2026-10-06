@@ -77,10 +77,11 @@ actor AttachmentDownloader {
         }
     }
 
-    /// The session that started a transfer was wiped meanwhile: nothing of it stays on disk.
+    /// The session that started a transfer was wiped meanwhile: the transfer stops without touching
+    /// any path. Its folder was deleted with the wipe (what it still wrote went to unlinked files), and
+    /// the folder may already belong to the next session's download of the same file.
     private func checkCurrent(_ started: Int, folder: URL) throws {
         guard started != generation else { return }
-        try? FileManager.default.removeItem(at: folder)
         throw CancellationError()
     }
 

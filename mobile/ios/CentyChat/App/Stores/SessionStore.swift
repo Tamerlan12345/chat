@@ -292,7 +292,9 @@ public final class SessionStore: RealtimeEventHandling {
             // The user agreed to lose what was not sent; if it cannot be deleted, nothing is signed out.
             try await delegate?.sessionWillSignOut()
         } catch {
+            // Nothing was deleted (the discard is all or nothing); the account takes its queue back.
             errorMessage = String(localized: "Не удалось удалить неотправленные сообщения — выход отменён")
+            await delegate?.sessionSignOutAborted()
             await resumeAfterAbortedSignOut()
             return
         }

@@ -165,6 +165,10 @@ final class AttachmentUploads {
     @ObservationIgnored private let log: @Sendable (String) -> Void
     @ObservationIgnored private var online = false
     @ObservationIgnored private var flushing = false
+    /// Files the user asked to retry: they go whatever the connection, as soon as a slot is free.
+    @ObservationIgnored private var forced = Set<String>()
+    /// The attempt under way per file: progress reports of an ended attempt are dropped.
+    @ObservationIgnored private var attempts: [String: UUID] = [:]
     /// Uploaded, waiting to enter the outbox after the files picked before them.
     @ObservationIgnored private var uploaded: [String: FileUploadResponse] = [:]
     @ObservationIgnored private var enqueuing = false
@@ -209,8 +213,9 @@ final class AttachmentUploads {
     }
 
     private func restore() async {
-        // Whose queue it is is known only once the engine has read (and owner-checked) its model.
-        await engine.waitUntilReady()
+        // Whose queue it is is known only once the engine has read, owner-checked and claimed its
+        // model for an account: rows are never loaded under a model that names nobody.
+        await engine.waitUntilOwned()
         let stored: [PendingUpload]
         do {
             stored = try await store.uploads()
@@ -218,15 +223,15 @@ final class AttachmentUploads {
             log("waiting files could not be read: \(error)")
             return
         }
-        // Another account's waiting files are never loaded: deleted.
+        // Another account's waiting files are never loaded: deleted with their copies.
         let owner = engine.state.me
-        let foreign = stored.filter { owner != nil && $0.owner != owner }
+        let foreign = stored.filter { $0.owner != owner }
         for upload in foreign {
             try? await store.removeUpload(upload.clientMsgId)
             files.discard(upload.localPath)
         }
         let known = Set(items.map(\.id))
-        items += stored.filter { !known.contains($0.clientMsgId) && (owner == nil || $0.owner == owner) }.map { Item(pending: $0) }
+        items += stored.filter { !known.contains($0.clientMsgId) && $0.owner == owner }.map { Item(pending: $0) }
         // A copy is needed only while its file waits; the rest are left from an earlier process.
         files.prune(keeping: Set(items.map(\.id)).union(engine.state.outbox.map(\.clientMsgId)))
         pump()
@@ -241,7 +246,9 @@ final class AttachmentUploads {
     /// Keeps `picked` for `conversation` (a private copy and a stored row) and starts it when online.
     /// False when the file could not be kept: nothing was queued.
     func add(conversation: String, picked: PickedAttachment, replyToId: Int64?, owner: Int64) async -> Bool {
-        await restored()
+        // A restore under way prunes copies it does not know: let it finish first. (Before the queue
+        // has an owner nothing is restored yet; it keeps whatever is in `items` when it runs.)
+        if engine.ready && engine.state.me != nil { await restored() }
         let key = DeliveryEngine.newClientMsgId()
         let files = self.files
         let kept: (path: String, size: Int64)
@@ -284,7 +291,10 @@ final class AttachmentUploads {
         let again = items[index].pending
         let store = self.store
         Task { try? await store.putUpload(again) }
-        pump(ignoringConnection: true)
+        // «Повторить» sends this file, network or not, and keeps that right until a slot is free;
+        // the other waiting files still wait for the network.
+        forced.insert(clientMsgId)
+        pump()
     }
 
     /// «Отменить» / «Удалить»: the upload stops and the file is forgotten.
@@ -294,6 +304,8 @@ final class AttachmentUploads {
         retries.removeValue(forKey: clientMsgId)?.cancel()
         items.removeAll { $0.id == clientMsgId }
         uploaded[clientMsgId] = nil
+        forced.remove(clientMsgId)
+        attempts[clientMsgId] = nil
         do {
             try await store.removeUpload(clientMsgId)
         } catch {
@@ -307,6 +319,8 @@ final class AttachmentUploads {
     /// Every waiting file goes now, whatever the socket; returns when they settled (the flush
     /// without a socket), two at a time.
     func flush() async {
+        // A queue that names no account has nothing to send yet.
+        guard engine.state.me != nil else { return }
         await restored()
         flushing = true
         defer { flushing = false }
@@ -321,10 +335,21 @@ final class AttachmentUploads {
         items.filter { $0.pending.owner == owner }.count
     }
 
-    /// Explicit sign-out or account deletion: uploads stop, the copies and rows are deleted.
-    func reset() async throws {
-        forget()
+    /// Explicit sign-out, step one: the rows go first; if they cannot be deleted nothing is (the
+    /// files in memory and their copies stay). The memory is emptied by the queue's wipe that follows.
+    func clearStoredRows() async throws {
         try await store.clearUploads()
+    }
+
+    /// The sign-out did not go through after the rows were deleted: they are written back.
+    func restoreStoredRows() async {
+        for item in items {
+            do {
+                try await store.putUpload(item.pending)
+            } catch {
+                log("a waiting file's row could not be written back: \(error)")
+            }
+        }
     }
 
     /// The queue was wiped (sign-out, another account): stop and forget the files.
@@ -337,6 +362,8 @@ final class AttachmentUploads {
         items.removeAll()
         handedOver.removeAll()
         uploaded.removeAll()
+        forced.removeAll()
+        attempts.removeAll()
         let store = self.store
         let files = self.files
         let log = self.log
@@ -376,10 +403,13 @@ final class AttachmentUploads {
         return !item.pending.failed && mayUpload(item.pending)
     }
 
-    /// Starts waiting files while a slot is free, first picked first up.
+    /// Starts waiting files while a slot is free, first picked first up: with a connection (or in a
+    /// flush) any of them, otherwise only those the user asked to retry.
     private func pump(ignoringConnection: Bool = false) {
-        guard ignoringConnection || online || flushing else { return }
+        let any = ignoringConnection || online || flushing
         for item in items where running.count < Self.maxConcurrent && canLaunch(item.id) {
+            guard any || forced.contains(item.id) else { continue }
+            forced.remove(item.id)
             start(item.id)
         }
     }
@@ -387,8 +417,10 @@ final class AttachmentUploads {
     private func start(_ key: String) {
         guard let item = items.first(where: { $0.id == key }) else { return }
         let session = epoch
+        let attempt = UUID()
+        attempts[key] = attempt
         running[key] = Task { [weak self] in
-            await self?.upload(item.pending, session: session)
+            await self?.upload(item.pending, session: session, attempt: attempt)
             guard let self, self.epoch == session else { return }
             self.running[key] = nil
             // A slot freed: the next waiting file goes.
@@ -401,7 +433,7 @@ final class AttachmentUploads {
         items[index].progress = progress
     }
 
-    private func upload(_ pending: PendingUpload, session: Int) async {
+    private func upload(_ pending: PendingUpload, session: Int, attempt: UUID) async {
         let key = pending.clientMsgId
         setProgress(key, 0)
         let uploader = self.uploader
@@ -410,16 +442,20 @@ final class AttachmentUploads {
         do {
             let done = try await uploader.upload(file: file, name: pending.name, mimeType: mimeType) { [weak self] value in
                 Task { @MainActor in
-                    guard let self, self.epoch == session else { return }
+                    // Only the attempt still under way reports progress: a late report must not
+                    // mark a file as going up after its attempt ended (it would never go again).
+                    guard let self, self.epoch == session, self.attempts[key] == attempt else { return }
                     if let current = self.items.first(where: { $0.id == key })?.progress, Int(current * 100) == Int(value * 100) { return }
                     self.setProgress(key, value)
                 }
             }
+            if attempts[key] == attempt { attempts[key] = nil }
             guard epoch == session, items.contains(where: { $0.id == key }) else { return }
             setProgress(key, 1)
             uploaded[key] = done
             await enqueueUploaded()
         } catch {
+            if attempts[key] == attempt { attempts[key] = nil }
             guard epoch == session, items.contains(where: { $0.id == key }) else { return }
             if error is CancellationError { return }
             if let wait = AttachmentRules.retryDelayMs(error) {

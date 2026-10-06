@@ -1,0 +1,136 @@
+import Foundation
+import XCTest
+@testable import CentyChat
+
+/// A request that got 401 is repeated only with its own session's renewed token — never with the
+/// token of an account that signed in meanwhile.
+final class UploadTokenTests: XCTestCase {
+    private var keychain: KeychainManager!
+    private var file: URL!
+
+    override func setUpWithError() throws {
+        keychain = KeychainManager(testStore: SeededKeychainItemStore())
+        try keychain.saveAuthToken("token-A")
+        file = FileManager.default.temporaryDirectory.appendingPathComponent("upload-token-\(UUID().uuidString).pdf")
+        try Data("%PDF-1".utf8).write(to: file)
+        ScriptedHTTP.reset()
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: file)
+        ScriptedHTTP.reset()
+    }
+
+    private func client() -> APIClient {
+        APIClient(session: ScriptedHTTP.session(), keychain: keychain, environment: .test)
+    }
+
+    private static let uploaded = #"{"id":42,"originalName":"a.pdf","storedFilename":"x","fileSize":6,"mimeType":"application/pdf","url":"/api/files/download/42"}"#
+
+    func testAFileOfTheOldSessionNeverGoesUpWithTheNextAccountsToken() async throws {
+        let keychain = self.keychain!
+        ScriptedHTTP.handler = { request, _ in
+            if request.url?.path == "/api/files/upload" {
+                // Another account signs in while this upload is answered 401.
+                try? keychain.saveAuthToken("token-B")
+                return (401, #"{"error":"Требуется вход"}"#)
+            }
+            return (500, "{}")
+        }
+
+        do {
+            _ = try await client().uploadFile(at: file, fileName: "a.pdf", mimeType: "application/pdf") { _ in }
+            XCTFail("the old session's upload must end, not go on under another account")
+        } catch APIError.unauthorized {
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+
+        let uploads = ScriptedHTTP.requests.filter { $0.url?.path == "/api/files/upload" }
+        XCTAssertEqual(uploads.count, 1)
+        XCTAssertFalse(ScriptedHTTP.requests.contains { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token-B" })
+        XCTAssertEqual(keychain.authToken, "token-B", "the other account's session is left alone")
+    }
+
+    func testAnExpiredTokenIsRenewedAndTheUploadRepeatedWithIt() async throws {
+        ScriptedHTTP.handler = { request, index in
+            switch request.url?.path {
+            case "/api/files/upload":
+                return index == 0 ? (401, #"{"error":"Токен истёк"}"#) : (201, Self.uploaded)
+            case "/api/auth/refresh":
+                return (200, #"{"token":"token-A2"}"#)
+            default:
+                return (500, "{}")
+            }
+        }
+
+        let response = try await client().uploadFile(at: file, fileName: "a.pdf", mimeType: "application/pdf") { _ in }
+
+        XCTAssertEqual(response.id, 42)
+        let uploads = ScriptedHTTP.requests.filter { $0.url?.path == "/api/files/upload" }
+        XCTAssertEqual(uploads.map { $0.value(forHTTPHeaderField: "Authorization") }, ["Bearer token-A", "Bearer token-A2"])
+    }
+
+    func testADeliveryPostOfTheOldSessionIsNotRepeatedUnderTheNextAccount() async throws {
+        let keychain = self.keychain!
+        ScriptedHTTP.handler = { request, _ in
+            if request.url?.path == "/api/messages/direct/3" {
+                try? keychain.saveAuthToken("token-B")
+                return (401, #"{"error":"Требуется вход"}"#)
+            }
+            return (500, "{}")
+        }
+
+        let response = await client().raw(method: "POST", endpoint: "/messages/direct/3", body: Data("{}".utf8))
+
+        XCTAssertEqual(response.status, 401)
+        XCTAssertFalse(ScriptedHTTP.requests.contains { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token-B" })
+    }
+}
+
+/// Answers from a closure with the request and its index; records every request.
+final class ScriptedHTTP: URLProtocol {
+    typealias Handler = @Sendable (URLRequest, Int) -> (Int, String)
+
+    private static let state = Locked<(requests: [URLRequest], handler: Handler?)>(([], nil))
+
+    static var requests: [URLRequest] { state.value.requests }
+
+    static var handler: Handler? {
+        get { state.value.handler }
+        set { state.withValue { $0.handler = newValue } }
+    }
+
+    static func reset() {
+        state.withValue { $0 = ([], nil) }
+    }
+
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ScriptedHTTP.self]
+        return URLSession(configuration: configuration)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let (index, handler) = Self.state.withValue { state -> (Int, Handler?) in
+            let samePath = state.requests.filter { $0.url?.path == request.url?.path }.count
+            state.requests.append(request)
+            return (samePath, state.handler)
+        }
+        guard let url = request.url, let handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        let (status, body) = handler(request, index)
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}

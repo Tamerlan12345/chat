@@ -198,3 +198,70 @@ final class UnsentUnknownTests: XCTestCase {
         XCTAssertEqual(UnsentNotice.text(nil), "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены")
     }
 }
+
+/// An explicit sign-out deletes the unsent messages and files together, or nothing.
+@MainActor
+final class SignOutDiscardTests: XCTestCase {
+    private var store: InMemoryDeliveryStore!
+    private var rows: InMemoryPendingUploadStore!
+    private var engine: DeliveryEngine!
+    private var uploads: AttachmentUploads!
+    private var runtime: DeliveryRuntime!
+    private var link: FakeDeliveryLink!
+
+    override func setUp() async throws {
+        store = InMemoryDeliveryStore()
+        rows = InMemoryPendingUploadStore()
+        link = FakeDeliveryLink()
+        let clock = ManualDeliveryClock()
+        engine = DeliveryEngine(store: store, link: link, backend: FakeDeliveryBackend(), clock: clock)
+        engine.start()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("discard-\(UUID().uuidString)")
+        uploads = AttachmentUploads(store: rows, files: AttachmentFiles(root: folder), uploader: FakeUploader(), engine: engine, clock: clock, owner: { 2 })
+        uploads.start()
+        runtime = DeliveryRuntime(engine: engine, uploads: uploads, currentUser: { 2 }, reconnect: {}, clock: clock)
+        try await engine.adopt(2)
+    }
+
+    private func settle() async {
+        for _ in 0..<10 {
+            await engine.idle()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
+
+    func testWhenTheWaitingFilesCannotBeDeletedNothingIsDeletedAndTheQueueKeepsWorking() async throws {
+        _ = await engine.enqueue(conversation: "direct:3", text: "Останусь", owner: 2)
+        await rows.failNextClears(1)
+
+        do {
+            try await runtime.discardForSignOut()
+            XCTFail("the sign-out must hear that the files could not be deleted")
+        } catch {}
+        await settle()
+
+        XCTAssertEqual(engine.state.outbox.map(\.text), ["Останусь"], "the messages were not deleted either")
+        let stored = await store.contents
+        XCTAssertEqual(stored.outbox.map(\.text), ["Останусь"])
+        let outcome = await engine.enqueue(conversation: "direct:3", text: "Ещё одно", owner: 2)
+        XCTAssertTrue(outcome.persisted, "the account still owns its queue: new messages are taken")
+        engine.receive(DeliveryFixtures.authSuccess(2))
+        await settle()
+        XCTAssertEqual(engine.state.connection, DeliveryState.online, "frames are taken: the engine is not deaf")
+    }
+
+    func testWhenTheMessagesCannotBeDeletedTheWaitingFilesStay() async throws {
+        let picked = PickedAttachment(source: .data(Data([1])), name: "Акт.pdf", mimeType: "application/pdf")
+        _ = await uploads.add(conversation: "direct:3", picked: picked, replyToId: nil, owner: 2)
+        await store.fail(.clear, times: 1)
+
+        do {
+            try await runtime.discardForSignOut()
+            XCTFail("the sign-out must hear that the messages could not be deleted")
+        } catch {}
+
+        XCTAssertEqual(uploads.items.map(\.pending.name), ["Акт.pdf"])
+        let left = try await rows.uploads()
+        XCTAssertEqual(left.map(\.name), ["Акт.pdf"], "the file's row is still on disk")
+    }
+}

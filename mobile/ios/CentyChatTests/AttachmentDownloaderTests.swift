@@ -261,3 +261,78 @@ final class GatedDownloads: DownloadTransport, @unchecked Sendable {
         return DownloadResponse(status: 200, etag: "\"g\"", contentLength: Int64(body.count), contentRange: nil, errorText: nil, body: stream)
     }
 }
+
+/// A transfer of a wiped session must not leave its file, nor touch the next session's download of
+/// the same file.
+final class AttachmentDownloaderGenerationTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("downloader-g-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    func testAStaleTransferNeitherLeavesItsFileNorBreaksTheNextSessionsDownload() async throws {
+        let staleAnswer = TestGate()
+        let freshBody = TestGate()
+        let transport = SequencedDownloads([
+            .init(head: staleAnswer, body: nil, data: Data("старое".utf8)),
+            .init(head: nil, body: freshBody, data: Data("новое".utf8)),
+        ])
+        let downloader = AttachmentDownloader(root: root, transport: transport)
+
+        // The old session asks; its answer is late.
+        async let old = downloader.fetch(fileId: 5, name: "c.txt") { _ in }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        try await downloader.removeAll()
+        // The next session downloads the same file; its partial is on disk while the old answer lands.
+        async let new = downloader.fetch(fileId: 5, name: "c.txt") { _ in }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await staleAnswer.open()
+        do {
+            _ = try await old
+            XCTFail("the wiped session's download must not be handed out")
+        } catch {}
+
+        await freshBody.open()
+        let file = try await new
+        XCTAssertEqual(try Data(contentsOf: file), Data("новое".utf8), "the next session's download is intact")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path).filter { !$0.hasPrefix(".") }, ["c.txt"])
+    }
+}
+
+/// Answers each request in order; its head and its body can each wait for a gate.
+final class SequencedDownloads: DownloadTransport, @unchecked Sendable {
+    struct Step {
+        let head: TestGate?
+        let body: TestGate?
+        let data: Data
+    }
+
+    private let steps: Locked<[Step]>
+
+    init(_ steps: [Step]) {
+        self.steps = Locked(steps)
+    }
+
+    func get(fileId: Int64, rangeFrom: Int64?, ifRange: String?, ifNoneMatch: String?) async throws -> DownloadResponse {
+        guard let step = steps.withValue({ $0.isEmpty ? nil : $0.removeFirst() }) else {
+            throw URLError(.notConnectedToInternet)
+        }
+        if let head = step.head { await head.wait() }
+        let gate = step.body
+        let data = step.data
+        let stream = AsyncThrowingStream<Data, any Error> { continuation in
+            Task {
+                if let gate { await gate.wait() }
+                continuation.yield(data)
+                continuation.finish()
+            }
+        }
+        return DownloadResponse(status: 200, etag: "\"s\"", contentLength: Int64(data.count), contentRange: nil, errorText: nil, body: stream)
+    }
+}
