@@ -245,10 +245,17 @@ final class ScreenshotTourTests: XCTestCase {
             pause(1)
             capture(app, named: "50-ipad-split-\(suffix)")
 
+            // Bob writes first, so the newest message is known.
+            let latest = "iPad последнее \(suffix) \(Int(Date().timeIntervalSince1970) % 100_000)"
+            XCTAssertTrue(StandAPI(baseURL: standURL).sendDirect(from: self.bob, to: "alice", text: latest), "The stand must accept Bob's message")
             let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Боб Тестов")).firstMatch
+            _ = row.waitForExistence(timeout: 5)
             tapCentre(row.exists ? row : bob)
             XCTAssertTrue(composerField(app).waitForExistence(timeout: 15), "The chat must open in the detail column")
+            let newest = app.staticTexts[latest]
+            XCTAssertTrue(newest.waitForExistence(timeout: 20), "The newest message must be loaded")
             pause(2)
+            XCTAssertTrue(newest.isHittable, "A long chat opens at its newest message, on screen")
             capture(app, named: "51-ipad-split-chat-\(suffix)")
             XCTAssertTrue(peopleTab.exists && peopleTab.isHittable, "With a chat selected, the tab bar stays on iPad")
             app.terminate()

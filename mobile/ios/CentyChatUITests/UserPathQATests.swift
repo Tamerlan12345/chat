@@ -51,7 +51,9 @@ final class UserPathQATests: XCTestCase {
         let dialog = app.staticTexts["Боб Тестов"]
         XCTAssertTrue(dialog.waitForExistence(timeout: 40), "The seeded dialog with Bob must be listed.")
 
-        // 3. Open the chat and see the history.
+        // 3. Open the chat and see the history. Bob writes first, so the newest message is known.
+        let latest = "QA последнее \(stamp)"
+        XCTAssertTrue(StandAPI(baseURL: standURL).sendDirect(from: bob, to: alice.username, text: latest), "The stand must accept Bob's message.")
         let chatBar = app.navigationBars["Боб Тестов"]
         for _ in 0..<3 where !chatBar.exists {
             tap(dialog)
@@ -63,14 +65,23 @@ final class UserPathQATests: XCTestCase {
             .matching(NSPredicate(format: "placeholderValue == %@ OR label == %@", "Сообщение...", "Сообщение...")).firstMatch
         if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:\n" + app.debugDescription) }
         XCTAssertTrue(composer.exists, "The message composer must be shown.")
+        // The chat opens at its newest message: on screen, nothing to jump to.
+        let newest = app.staticTexts[latest]
+        XCTAssertTrue(newest.waitForExistence(timeout: 30), "The newest message must be loaded.")
+        pause(2)
+        XCTAssertTrue(newest.isHittable, "A long chat opens at its newest message, on screen")
+        let jumpToLatest = app.buttons["chat-jump-latest"]
+        XCTAssertFalse(jumpToLatest.exists, "An opened chat is at its end: no «↓» pill")
+        // The seeded history is there above it (scrolled to: the list is lazy).
         let seededMessage = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
-        if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:\n" + app.debugDescription) }
+        for _ in 0..<15 where !(seededMessage.exists && seededMessage.isHittable) {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+            from.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)))
+            _ = seededMessage.waitForExistence(timeout: 1)
+        }
+        if !seededMessage.exists { print("UI-DUMP history:\n" + app.debugDescription) }
         XCTAssertTrue(seededMessage.exists, "The seeded history must load in the chat.")
-        // The chat opens at its newest message: nothing to jump to.
-        let jumpToLatest = app.buttons["chat-jump-latest"]
-        pause(2)
-        XCTAssertFalse(jumpToLatest.exists, "An opened chat is at its end: no «↓» pill")
 
         // 4. Send a message.
         type(outgoing, into: composer, of: app)

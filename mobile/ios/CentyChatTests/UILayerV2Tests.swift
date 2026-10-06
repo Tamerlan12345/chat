@@ -74,6 +74,15 @@ final class ConnectionStatusTests: XCTestCase {
         XCTAssertEqual(said.items, ["Переподключение…", "Нет сети", "Переподключение…", "Снова в сети"])
     }
 
+    func testSigningOutDuringAProblemIsNotAnnouncedAsBackOnline() {
+        let said = Spoken()
+        let status = ConnectionStatus(grace: .zero, backOnline: .seconds(5), announce: { said.items.append($0) })
+        status.connectionChanged(.reconnecting(attempt: 1, delay: 1), isRunning: true)
+        // Sign-out: the session stops listening on the way to the login screen.
+        status.connectionChanged(.disconnected, isRunning: false)
+        XCTAssertEqual(said.items, ["Переподключение…"], "No «Снова в сети» on the way to login")
+    }
+
     func testALastingDropShowsThenRecoversThroughBackOnline() async {
         let status = ConnectionStatus(grace: .milliseconds(50), backOnline: .milliseconds(150))
         status.connectionChanged(.reconnecting(attempt: 1, delay: 1), isRunning: true)
