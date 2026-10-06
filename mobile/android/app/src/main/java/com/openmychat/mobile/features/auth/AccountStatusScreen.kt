@@ -82,7 +82,7 @@ fun AccountStatusContent(status: AccountStatus, onBackToLogin: () -> Unit, modif
                     modifier = Modifier.size(44.dp)
                 )
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(24.dp))
             Text(
                 text = stringResource(if (rejected) R.string.account_rejected_title else R.string.account_pending_title),
                 style = MaterialTheme.typography.headlineSmall,

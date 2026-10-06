@@ -14,7 +14,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -79,8 +78,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -112,7 +109,6 @@ fun LoginScreen(
     val uiState by viewModel.uiState.collectAsState()
     val canSubmit by viewModel.canSubmit.collectAsState()
     val retryAfter by viewModel.retryAfterSeconds.collectAsState()
-    val companyName by viewModel.companyName.collectAsState()
     val mustChangePasswordVisible by viewModel.mustChangePasswordDialogVisible.collectAsState()
     val changePasswordLoading by viewModel.changePasswordLoading.collectAsState()
     val changePasswordError by viewModel.changePasswordError.collectAsState()
@@ -164,7 +160,6 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 BrandHeader(
-                    companyName = companyName ?: stringResource(R.string.login_company_fallback),
                     animate = !viewModel.introPlayed,
                     onIntroPlayed = { viewModel.introPlayed = true }
                 )
@@ -220,7 +215,8 @@ fun LoginScreen(
 }
 
 @Composable
-private fun BrandHeader(companyName: String, animate: Boolean, onIntroPlayed: () -> Unit) {
+/** The CentyChat lockup alone (owner: it is a chat, that is obvious - no company or tagline line). */
+private fun BrandHeader(animate: Boolean, onIntroPlayed: () -> Unit) {
     val reduceMotion = rememberReduceMotion()
     val play = animate && !reduceMotion
     val alpha = remember { Animatable(if (play) 0f else 1f) }
@@ -254,16 +250,6 @@ private fun BrandHeader(companyName: String, animate: Boolean, onIntroPlayed: ()
             color = CentyTheme.tokens.textStrong,
             modifier = Modifier.semantics { heading() }
         )
-        Spacer(Modifier.height(4.dp))
-        // Server-provided text: plain Text only (sanitised in the ViewModel), never markup or links.
-        Text(
-            text = companyName,
-            style = MaterialTheme.typography.bodyMedium,
-            color = CentyTheme.tokens.textSecondary,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -292,7 +278,7 @@ private fun LoginCard(
         border = BorderStroke(1.dp, tokens.border)
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             AnimatedVisibility(
@@ -386,9 +372,9 @@ internal fun ErrorBox(text: String, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // A soft danger tone, no outline (polish pass, rule 1).
             .background(tokens.dangerSoft, RoundedCornerShape(8.dp))
-            .border(1.dp, tokens.dangerLine, RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {

@@ -76,10 +76,6 @@ class LoginViewModel @Inject constructor(
     private val _retryAfterSeconds = MutableStateFlow(0L)
     val retryAfterSeconds: StateFlow<Long> = _retryAfterSeconds.asStateFlow()
 
-    /** Sanitised `company_name` from the server; null means "show the default subtitle". */
-    private val _companyName = MutableStateFlow<String?>(null)
-    val companyName: StateFlow<String?> = _companyName.asStateFlow()
-
     val canSubmit: StateFlow<Boolean> = combine(_username, _password, _uiState, _retryAfterSeconds) { name, pass, state, wait ->
         isSubmittable(name, pass, state, wait)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -124,20 +120,12 @@ class LoginViewModel @Inject constructor(
     fun submit() = login(_username.value, _password.value)
 
     /**
-     * Runs once per login screen: loads the company name for the header and announces the device
-     * to the server (`/auth/knock`, formerly part of server setup). A paired device with a valid
+     * Runs once per login screen: announces the device to the server (`/auth/knock`, formerly part of server setup). A paired device with a valid
      * session signs in without a password; any failure just leaves the form in place.
      */
     fun onScreenShown() {
         if (screenShown) return
         screenShown = true
-        viewModelScope.launch {
-            _companyName.value = try {
-                CompanyName.sanitize(authRepository.companyName())
-            } catch (_: Exception) {
-                null
-            }
-        }
         viewModelScope.launch {
             val paired = try {
                 authRepository.knock()

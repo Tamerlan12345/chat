@@ -141,4 +141,56 @@ class ChatViewModelSafetyTest {
         assertEquals(ComposerLock.NONE, vm.composerLock.value)
         assertNull(vm.blocks)
     }
+
+    private fun refuse(vm: ChatViewModel, text: String) {
+        vm.sendMessage(text)
+        val local = vm.shown.last()
+        realtime.emit(WsEvent.GenericError("send_message", "Сообщение не может быть доставлено", text, local.clientMsgId, code = "DM_NOT_ALLOWED"))
+    }
+
+    @Test
+    fun aSuccessfulHistoryReloadReopensARefusedChat() {
+        val vm = open()
+        refuse(vm, "привет")
+        assertEquals(ComposerLock.NOT_DELIVERABLE, vm.composerLock.value)
+
+        vm.loadMessages() // e.g. after a reconnect: the server answers this conversation again
+
+        assertEquals(ComposerLock.NONE, vm.composerLock.value)
+        realtime.sent.clear()
+        vm.sendMessage("ещё раз")
+        assertTrue("sending works again", realtime.sent.any { it.startsWith("send_message") })
+    }
+
+    @Test
+    fun aMessageFromThePeerReopensARefusedChat() {
+        val vm = open()
+        refuse(vm, "привет")
+
+        realtime.emit(WsEvent.NewMessage(message(id = 20, from = alice, to = ME, text = "Я вас разблокировала")))
+
+        assertEquals(ComposerLock.NONE, vm.composerLock.value)
+    }
+
+    @Test
+    fun aNewRefusalAfterReopeningClosesTheChatAgain() {
+        val vm = open()
+        refuse(vm, "привет")
+        vm.loadMessages()
+        assertEquals(ComposerLock.NONE, vm.composerLock.value)
+
+        refuse(vm, "снова")
+
+        assertEquals(ComposerLock.NOT_DELIVERABLE, vm.composerLock.value)
+    }
+
+    @Test
+    fun myOwnEchoDoesNotReopenARefusedChat() {
+        val vm = open()
+        refuse(vm, "привет")
+
+        realtime.emit(WsEvent.NewMessage(message(id = 21, from = ME, to = alice, text = "с другого устройства")))
+
+        assertEquals(ComposerLock.NOT_DELIVERABLE, vm.composerLock.value)
+    }
 }

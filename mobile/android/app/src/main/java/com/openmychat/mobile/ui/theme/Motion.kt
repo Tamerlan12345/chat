@@ -20,10 +20,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * The motion grammar from the brief, taken from desktop `theme.css`:
- * ease-out `cubic-bezier(.22,1,.36,1)`, fast 120 ms, base 180 ms, slow 280 ms.
- * Exits are faster than entrances. Every spatial effect has a crossfade-or-instant fallback when
- * the system "Remove animations" setting is on ([LocalReduceMotion]).
+ * The motion grammar, taken from desktop `theme.css`: ease-out `cubic-bezier(.22,1,.36,1)`, fast
+ * 120 ms, base 180 ms, slow 280 ms; the UI layer v2 decelerate [EaseOutExpo] for arrivals. Exits are
+ * faster than entrances. Every spatial effect has a crossfade-or-instant fallback when the system
+ * "Remove animations" setting is on ([LocalReduceMotion]).
+ *
+ * What the app does today (kept in step with the code, not with the brief's first draft):
+ *
+ * | Effect | Motion | Reduce motion |
+ * |---|---|---|
+ * | Own message, text fits 6 lines | the composer text travels into its bubble ([SEND], expo); the bubble is revealed under it as it lands (`ChatLanding`) | no flight: 120 ms fade |
+ * | Own message without a flight (too long, sent elsewhere) | fade + 8 dp rise ([INCOMING], ease-out) — the same as an incoming one | 120 ms fade |
+ * | Incoming message | fade + 8 dp rise ([INCOMING]) | 120 ms fade |
+ * | Rows making room | `animateItem` placement [SEND], expo; removed rows fade out [FAST] | no placement motion |
+ * | Delivery glyph | each state strokes in [GLYPH_DRAW]; on a landed bubble after 0.6 × [SEND] | instant swap |
+ * | Failed glyph | one 4 dp shake [SHAKE] + warning haptic | colour only, haptic stays |
+ * | Inbox ↔ chat, row ↔ card | shared avatar and name [SHARED]; the rest fades through (out [FADE_THROUGH_OUT], in after it) | [REDUCED_CROSSFADE] crossfade |
+ * | Other navigation | shared-axis X, [SLOW] slide by 1/12 width + fade | [REDUCED_CROSSFADE] crossfade |
+ * | Tab switch | 150 ms crossfade, no slide | same |
+ * | Bottom bar on inbox ↔ chat | the scaffold's one slide, started in the same frame as the navigation (`rememberBottomBarState`) | cut |
+ * | Top bar lift on scroll | tone + hairline, [LIFT] | 120 ms |
+ * | Composer height | grows at once, shrinks with [grow] (spring 0.85) | steps |
+ * | Attach ↔ send | scale 0.7 ↔ 1 + crossfade, [LIFT] | 120 ms crossfade |
+ * | Connection banner | expands [SLOW]; «Снова в сети» holds [BACK_ONLINE] | fade |
+ * | «Ознакомлен» | check draws in [STAMP] | drawn |
+ * | Typing dots | [TYPING_CYCLE] wave, [TYPING_STAGGER] stagger, only while typing | still |
+ * | Skeleton | [SHIMMER] sweep | still |
  */
 object CentyMotion {
     val EaseOut = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
@@ -39,7 +61,10 @@ object CentyMotion {
      */
     val EaseOutExpo = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 
-    /** Own message lifting out of the composer into its bubble ("the message lands"). */
+    /**
+     * "The message lands": the composer text travelling into its own bubble. Also the placement of
+     * rows making room for it.
+     */
     const val SEND = 240
 
     /** Delivery glyph: each state draws its stroke in this time. */
@@ -64,7 +89,10 @@ object CentyMotion {
     /** «Ознакомлен» stamp: the check draws in. */
     const val STAMP = 280
 
-    /** Incoming message fade + rise (desktop `message-in` 0.26 s). */
+    /**
+     * Fade + 8 dp rise of a fresh bubble without a flight: incoming, own from another device, or own
+     * text too long to travel (desktop `message-in` 0.26 s).
+     */
     const val INCOMING = 260
 
     /** Skeleton shimmer sweep. */

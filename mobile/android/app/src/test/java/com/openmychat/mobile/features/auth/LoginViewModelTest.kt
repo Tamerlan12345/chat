@@ -250,30 +250,4 @@ class LoginViewModelTest {
         assertNull(preferences.lastUsername)
         assertEquals("the form keeps what was typed", "typo-name", vm.username.value)
     }
-
-    // --- company name --------------------------------------------------------------------------
-
-    @Test
-    fun theCompanyNameFromTheServerIsShownAsSanitisedPlainText() = runTest(dispatcher) {
-        auth.onCompanyName = { "АО «Сентрас‮ Иншуранс»\u0000" }
-        val vm = viewModel()
-
-        vm.onScreenShown()
-        runCurrent()
-
-        assertEquals("АО «Сентрас Иншуранс»", vm.companyName.value)
-    }
-
-    @Test
-    fun noCompanyNameFallsBackToTheDefaultSubtitle() = runTest(dispatcher) {
-        listOf<suspend () -> String?>({ null }, { "   " }, { throw ApiException(0, "NETWORK_ERROR", "offline") }).forEach { source ->
-            auth.onCompanyName = source
-            val vm = viewModel()
-
-            vm.onScreenShown()
-            runCurrent()
-
-            assertNull(vm.companyName.value)
-        }
-    }
 }

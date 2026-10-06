@@ -6,6 +6,7 @@ import com.openmychat.mobile.testing.MainDispatcherRule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -80,5 +81,48 @@ class DeleteAccountUnsentTest {
         vm.delete()
 
         assertEquals(0, queue.discarded)
+    }
+
+    @Test
+    fun aFailedLocalWipeSaysTheSecureStorageIsUnavailable() {
+        account.onLocalClear = { throw com.openmychat.mobile.core.session.SecureStorageUnavailableException() }
+        val vm = DeleteAccountViewModel(account, Queue(0)) { 0L }
+        vm.onPasswordChange("secret")
+
+        vm.delete()
+
+        assertEquals(com.openmychat.mobile.features.account.AccountFailure.StorageUnavailable, vm.state.value.failure)
+    }
+
+    @Test
+    fun aRateLimitHoldsTheDeleteButtonUntilTheWaitEnds() {
+        var now = 1_000L
+        account.onDelete = { throw com.openmychat.mobile.core.network.ApiException(429, null, "Слишком часто", retryAfterSeconds = 30) }
+        val vm = DeleteAccountViewModel(account, Queue(0)) { now }
+        vm.onPasswordChange("secret")
+        vm.delete()
+        account.onDelete = {}
+
+        // Editing the password does not lift the server's wait.
+        vm.onPasswordChange("secret2")
+        assertFalse(vm.state.value.canDeleteAt(now))
+        vm.delete()
+        assertEquals("nothing is sent during the wait", listOf("secret"), account.deletions)
+
+        now = 31_000L
+        assertTrue(vm.state.value.canDeleteAt(now))
+        vm.delete()
+        assertTrue(vm.state.value.deleted)
+    }
+
+    @Test
+    fun aCancelledDeletionIsNotReportedAsAFailure() {
+        account.onDelete = { throw kotlinx.coroutines.CancellationException("left the screen") }
+        val vm = DeleteAccountViewModel(account, Queue(0)) { 0L }
+        vm.onPasswordChange("secret")
+
+        vm.delete()
+
+        assertEquals(null, vm.state.value.failure)
     }
 }

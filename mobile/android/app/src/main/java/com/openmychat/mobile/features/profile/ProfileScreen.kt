@@ -2,7 +2,6 @@ package com.openmychat.mobile.features.profile
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -83,7 +82,10 @@ import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.components.presenceLabel
 import com.openmychat.mobile.ui.components.rememberHaptics
 import com.openmychat.mobile.ui.theme.CentyRadius
+import com.openmychat.mobile.ui.theme.CentySpace
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.components.InsetDivider
+import com.openmychat.mobile.ui.components.SectionHeader
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @Composable
@@ -135,26 +137,25 @@ fun ProfileScreen(
                 .consumeWindowInsets(innerPadding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
+                .padding(bottom = CentySpace.xl),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(Modifier.widthIn(max = 600.dp).fillMaxWidth()) {
                 ProfileHeader(user, status = if (dnd) UserStatus.DND else presence.status)
 
                 if (storageError != null || logoutError != null) {
-                    Spacer(Modifier.size(12.dp))
-                    InlineNotice(stringResource(R.string.profile_storage_error))
+                    Spacer(Modifier.size(CentySpace.m))
+                    InlineNotice(stringResource(R.string.profile_storage_error), modifier = Modifier.padding(horizontal = CentySpace.gutter))
                 }
 
                 SectionTitle(stringResource(R.string.profile_status_section))
                 Group {
                     // Присутствие автоматическое, как на настольном клиенте: только для показа.
                     PresenceRow(presence)
-                    HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
+                    InsetDivider(DotTextEdge)
                     DndRow(enabled = dnd, onChange = viewModel::setDnd)
-                    HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    InsetDivider(DotTextEdge)
+                    Column(Modifier.padding(horizontal = CentySpace.gutter, vertical = CentySpace.m), verticalArrangement = Arrangement.spacedBy(CentySpace.m)) {
                         OutlinedTextField(
                             value = uiState.customStatusInput,
                             onValueChange = viewModel::updateCustomStatusInput,
@@ -188,14 +189,14 @@ fun ProfileScreen(
                         user?.phone?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.profile_phone) to it }
                     )
                     rows.forEachIndexed { index, (label, value) ->
-                        if (index > 0) HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
+                        if (index > 0) InsetDivider(CentySpace.gutter)
                         InfoRow(label, value)
                     }
                 }
 
                 SectionTitle(stringResource(R.string.profile_wake_section))
                 Group {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.padding(horizontal = CentySpace.gutter, vertical = CentySpace.s), verticalArrangement = Arrangement.spacedBy(CentySpace.m)) {
                         Text(stringResource(R.string.profile_wake_hint), style = MaterialTheme.typography.bodyMedium, color = tokens.textSecondary)
                         // Stacked, so the field and the button stay usable at large font sizes.
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -238,9 +239,9 @@ fun ProfileScreen(
                 SectionTitle(stringResource(R.string.profile_app_section))
                 Group {
                     InfoRow(stringResource(R.string.profile_server), BuildConfig.SERVER_URL.toHttpUrlOrNull()?.host ?: BuildConfig.SERVER_URL)
-                    HorizontalDivider(Modifier.padding(start = 16.dp), color = tokens.border)
+                    InsetDivider(CentySpace.gutter)
                     Row(
-                        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp),
+                        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = CentySpace.gutter),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // The brand mark speaks here (brief: «О приложении»).
@@ -255,7 +256,7 @@ fun ProfileScreen(
                     }
                 }
 
-                Spacer(Modifier.size(24.dp))
+                Spacer(Modifier.size(CentySpace.section))
                 Group {
                     Row(
                         modifier = Modifier
@@ -271,8 +272,8 @@ fun ProfileScreen(
                     }
                 }
 
-                Spacer(Modifier.size(24.dp))
                 Group {
+                    InsetDivider(IconTextEdge)
                     NavigationRow(
                         icon = Icons.Outlined.DeleteForever,
                         text = stringResource(R.string.profile_delete_account),
@@ -285,7 +286,7 @@ fun ProfileScreen(
                     stringResource(R.string.profile_delete_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.textDim,
-                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    modifier = Modifier.padding(start = CentySpace.gutter, end = CentySpace.gutter, top = CentySpace.s)
                 )
             }
         }
@@ -314,9 +315,9 @@ fun ProfileScreen(
 private fun ProfileHeader(user: User?, status: UserStatus) {
     val tokens = CentyTheme.tokens
     val name = user?.fullName ?: stringResource(R.string.profile_unknown_user)
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(start = CentySpace.gutter, end = CentySpace.gutter, top = CentySpace.s), verticalAlignment = Alignment.CenterVertically) {
         CentyAvatar(name = name, avatarUrl = user?.avatarUrl, status = status, size = 64.dp)
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(CentySpace.l))
         Column(Modifier.weight(1f)) {
             Text(
                 name,
@@ -342,12 +343,13 @@ private fun PresenceRow(presence: Presence) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .semantics(mergeDescendants = true) {}
             .testTag("presence-now"),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        StatusDot(presence.status, size = 10.dp)
+        // On the title's line, not in the middle of a two-line row.
+        StatusDot(presence.status, size = 10.dp, modifier = Modifier.padding(top = DotTop))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -373,11 +375,11 @@ private fun DndRow(enabled: Boolean, onChange: (Boolean) -> Unit) {
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .toggleable(value = enabled, role = Role.Switch, onValueChange = onChange)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag("dnd-switch"),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        StatusDot(UserStatus.DND, size = 10.dp)
+        StatusDot(UserStatus.DND, size = 10.dp, modifier = Modifier.padding(top = DotTop))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(stringResource(R.string.status_dnd), style = MaterialTheme.typography.bodyLarge, color = tokens.textStrong)
@@ -385,6 +387,7 @@ private fun DndRow(enabled: Boolean, onChange: (Boolean) -> Unit) {
         }
         Spacer(Modifier.width(12.dp))
         Switch(
+            modifier = Modifier.align(Alignment.CenterVertically),
             checked = enabled,
             onCheckedChange = null,
             colors = SwitchDefaults.colors(
@@ -419,31 +422,27 @@ private fun NavigationRow(icon: ImageVector, text: String, onClick: () -> Unit, 
     }
 }
 
+/** A section header of the native grouped list (polish pass, rule 8). */
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = CentyTheme.tokens.textSecondary,
-        modifier = Modifier
-            .padding(start = 4.dp, top = 24.dp, bottom = 8.dp)
-            .semantics { heading() }
-    )
-}
+private fun SectionTitle(text: String) = SectionHeader(text)
 
+/**
+ * The rows of one section, borderless on the list plane with inset hairlines between them
+ * (polish pass, rules 1 and 8; Android settings style rather than iOS inset cards).
+ */
 @Composable
 private fun Group(content: @Composable ColumnScope.() -> Unit) {
-    val tokens = CentyTheme.tokens
-    val shape = RoundedCornerShape(CentyRadius.card)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(tokens.card)
-            .border(1.dp, tokens.border, shape),
-        content = content
-    )
+    Column(modifier = Modifier.fillMaxWidth(), content = content)
 }
+
+/** Puts a 10 dp dot on the centre of a bodyLarge first line (23 sp line). */
+private val DotTop = 7.dp
+
+/** Where the text of a row with a 10 dp status dot starts. */
+private val DotTextEdge = CentySpace.gutter + 10.dp + CentySpace.rowGap
+
+/** Where the text of a row with a 24 dp icon starts. */
+private val IconTextEdge = CentySpace.gutter + 24.dp + CentySpace.rowGap
 
 @Composable
 private fun InfoRow(label: String, value: String) {

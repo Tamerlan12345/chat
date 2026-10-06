@@ -30,6 +30,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
+import com.openmychat.mobile.ui.components.textEdgeAfter
+import com.openmychat.mobile.ui.theme.CentySpace
 import com.openmychat.mobile.ui.components.Illustration
 import com.openmychat.mobile.ui.components.SharedKeys
 import com.openmychat.mobile.ui.components.liftSurface
@@ -51,7 +56,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -112,6 +117,18 @@ import com.openmychat.mobile.ui.theme.CentyRadius
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import com.openmychat.mobile.ui.theme.CentyTheme
 
+/** Avatar of an inbox row. */
+private val ConversationAvatarSize = 44.dp
+
+/** Counters of the «Личные / Каналы» segments (polish pass, rule 6). */
+internal object InboxBadges {
+    fun unreadConversations(list: List<DirectConversation>): Int = list.count { it.unreadCount > 0 }
+    fun unreadChannels(list: List<Channel>): Int = list.count { it.unreadCount > 0 }
+
+    /** No badge on the segment that is open: its rows already carry the pills. */
+    fun segmentCount(selected: Boolean, unreadConversations: Int): Int = if (selected) 0 else unreadConversations
+}
+
 interface ConversationsActions {
     fun onSelectTab(tab: ConversationsTab) {}
     fun onSearch(query: String) {}
@@ -119,6 +136,9 @@ interface ConversationsActions {
     fun onRetry() {}
     fun onOpenDirect(conversation: DirectConversation) {}
     fun onOpenChannel(channel: Channel) {}
+
+    /** The empty inbox's next step: «Найти сотрудника» opens «Сотрудники». */
+    fun onFindPerson() {}
 }
 
 @Composable
@@ -190,6 +210,7 @@ fun ConversationsScreen(
             override fun onOpenDirect(conversation: DirectConversation) =
                 onOpenDirectChat(conversation.userId, conversation.fullName, conversation.avatarUrl, conversation.status.value)
             override fun onOpenChannel(channel: Channel) = onOpenChannel(channel.id, channel.name)
+            override fun onFindPerson() = onShowAllPeople()
         }
     }
 
@@ -276,7 +297,7 @@ fun ConversationsContent(
                     onFocusChange = onSearchFocusChange,
                     onSearch = { openFirstResult(search, searchActions) },
                     testTag = "inbox-search",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(start = CentySpace.gutter, end = CentySpace.gutter, top = CentySpace.xs, bottom = CentySpace.s)
                 )
                 AnimatedVisibility(
                     visible = !searchActive,
@@ -350,8 +371,10 @@ private fun openFirstResult(state: UniversalSearchState, actions: UniversalSearc
 private fun Segments(selected: ConversationsTab, uiState: ConversationsUiState, onSelect: (ConversationsTab) -> Unit) {
     val tokens = CentyTheme.tokens
     val content = uiState as? ConversationsUiState.Content
-    val directUnread = content?.directConversations?.sumOf { it.unreadCount } ?: 0
-    val channelUnread = content?.channels?.sumOf { it.unreadCount } ?: 0
+    // Badge rule (polish pass, rule 6): conversations with something unread, not messages, and no
+    // counter on the segment that is already open.
+    val directUnread = content?.directConversations?.let(InboxBadges::unreadConversations) ?: 0
+    val channelUnread = content?.channels?.let(InboxBadges::unreadChannels) ?: 0
     val colors = SegmentedButtonDefaults.colors(
         activeContainerColor = tokens.primarySoft,
         activeContentColor = tokens.accentText,
@@ -363,7 +386,7 @@ private fun Segments(selected: ConversationsTab, uiState: ConversationsUiState, 
     SingleChoiceSegmentedButtonRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(start = CentySpace.gutter, end = CentySpace.gutter, bottom = CentySpace.s)
     ) {
         listOf(
             Triple(ConversationsTab.CHATS, R.string.inbox_segment_direct, directUnread),
@@ -378,7 +401,7 @@ private fun Segments(selected: ConversationsTab, uiState: ConversationsUiState, 
                 label = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(stringResource(label), maxLines = 1)
-                        UnreadPill(unread)
+                        UnreadPill(InboxBadges.segmentCount(selected == tab, unread))
                     }
                 }
             )
@@ -409,14 +432,15 @@ private fun DirectList(
             illustration = Illustration.INBOX,
             title = stringResource(R.string.inbox_empty_direct),
             message = stringResource(R.string.inbox_empty_direct_message),
-            actionLabel = stringResource(R.string.action_refresh),
-            onAction = actions::onRefresh
+            actionLabel = stringResource(R.string.inbox_find_person),
+            onAction = actions::onFindPerson
         )
         else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
-            items(list, key = { "d-${it.userId}" }) { conversation ->
+            itemsIndexed(list, key = { _, it -> "d-${it.userId}" }) { index, conversation ->
                 val ref = ConversationRef(ConversationType.DIRECT, conversation.userId)
                 DirectRow(
                     conversation = conversation,
+                    divider = index < list.lastIndex,
                     isTyping = ref in typing,
                     isSelected = ref == open,
                     currentUserId = currentUserId,
@@ -452,10 +476,11 @@ private fun ChannelList(
             message = stringResource(R.string.inbox_empty_channels_message)
         )
         else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
-            items(list, key = { "c-${it.id}" }) { channel ->
+            itemsIndexed(list, key = { _, it -> "c-${it.id}" }) { index, channel ->
                 val ref = ConversationRef(ConversationType.CHANNEL, channel.id)
                 ChannelRow(
                     channel = channel,
+                    divider = index < list.lastIndex,
                     isTyping = ref in typing,
                     isSelected = ref == open,
                     onClick = { actions.onOpenChannel(channel) },
@@ -469,6 +494,7 @@ private fun ChannelList(
 @Composable
 private fun DirectRow(
     conversation: DirectConversation,
+    divider: Boolean,
     isTyping: Boolean,
     isSelected: Boolean,
     currentUserId: Long?,
@@ -491,6 +517,7 @@ private fun DirectRow(
         unread = conversation.unreadCount,
         isTyping = isTyping,
         isSelected = isSelected,
+        divider = divider,
         onClick = onClick,
         modifier = modifier,
         avatar = { ring ->
@@ -498,7 +525,7 @@ private fun DirectRow(
                 conversation.fullName,
                 avatarUrl = conversation.avatarUrl,
                 status = conversation.status,
-                size = 44.dp,
+                size = ConversationAvatarSize,
                 ringColor = ring,
                 typing = isTyping,
                 modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared))
@@ -508,7 +535,7 @@ private fun DirectRow(
 }
 
 @Composable
-private fun ChannelRow(channel: Channel, isTyping: Boolean, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ChannelRow(channel: Channel, divider: Boolean, isTyping: Boolean, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val preview = channel.lastMessageText?.takeIf { it.isNotBlank() }
         ?: channel.topic?.takeIf { it.isNotBlank() }
         ?: pluralStringResource(R.plurals.channel_members, channel.membersCount, channel.membersCount)
@@ -521,10 +548,11 @@ private fun ChannelRow(channel: Channel, isTyping: Boolean, isSelected: Boolean,
         unread = channel.unreadCount,
         isTyping = isTyping,
         isSelected = isSelected,
+        divider = divider,
         onClick = onClick,
         modifier = modifier,
         avatar = { ring ->
-            CentyAvatar(channel.name, size = 44.dp, isChannel = true, ringColor = ring, modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared)))
+            CentyAvatar(channel.name, size = ConversationAvatarSize, isChannel = true, ringColor = ring, modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared)))
         }
     )
 }
@@ -538,6 +566,7 @@ private fun ConversationRow(
     unread: Int,
     isTyping: Boolean,
     isSelected: Boolean,
+    divider: Boolean,
     onClick: () -> Unit,
     avatar: @Composable (ringColor: androidx.compose.ui.graphics.Color) -> Unit,
     modifier: Modifier = Modifier
@@ -553,21 +582,30 @@ private fun ConversationRow(
     )
     val unreadText = if (unread > 0) pluralStringResource(R.plurals.unread_messages, unread, unread) else null
     val typingText = stringResource(R.string.inbox_typing)
+    val hairline = tokens.border
+    val textEdge = textEdgeAfter(ConversationAvatarSize)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 72.dp)
             .background(background)
+            // Borderless rows, a hairline from the text edge (polish pass, rule 1).
+            .drawBehind {
+                if (divider) {
+                    val y = size.height - 0.5.dp.toPx()
+                    drawLine(hairline, Offset(textEdge.toPx(), y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                }
+            }
             .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick, role = Role.Button)
             .semantics(mergeDescendants = true) {
                 if (unreadText != null) stateDescription = unreadText
             }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = CentySpace.gutter, vertical = CentySpace.m),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // The presence dot is cut out of whatever is behind the row.
         avatar(if (isSelected) tokens.primarySoft.compositeOver(tokens.list) else tokens.list)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(CentySpace.rowGap))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
@@ -581,8 +619,9 @@ private fun ConversationRow(
                     )
                 }
                 if (time.isNotEmpty()) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(time, style = MaterialTheme.typography.labelSmall, color = if (unread > 0) tokens.accentText else tokens.textDim)
+                    Spacer(Modifier.width(CentySpace.s))
+                    // Meta is one step: labelSmall in text-dim, read or not (rule 3).
+                    Text(time, style = MaterialTheme.typography.labelSmall, color = tokens.textDim)
                 }
             }
             Spacer(Modifier.size(2.dp))
@@ -591,16 +630,19 @@ private fun ConversationRow(
                     if (isTyping) {
                         TypingIndicator(typingText)
                     } else {
+                        // Unread: the preview steps up to text-main 600, so the row reads as unread
+                        // without the pill (rule 3).
                         Text(
                             preview,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = tokens.textSecondary,
+                            fontWeight = if (unread > 0) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (unread > 0) tokens.textMain else tokens.textSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(CentySpace.s))
                 UnreadPill(unread)
             }
         }

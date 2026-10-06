@@ -46,6 +46,8 @@ import com.openmychat.mobile.ui.components.CentyTextButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyRadius
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.features.auth.rememberClock
+import androidx.compose.runtime.getValue
 
 /** «Пожаловаться» as a bottom sheet over the person card or the chat. Closing it while sending is not possible. */
 @Composable
@@ -79,13 +81,15 @@ fun ReportSheetContent(
     modifier: Modifier = Modifier
 ) {
     val tokens = CentyTheme.tokens
+    // Ticks every second: a server wait (429) counts down and «Отправить жалобу» comes back at 0.
+    val now by rememberClock()
     Column(
         modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .imePadding()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .padding(bottom = 16.dp)
             .testTag("report-sheet"),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -149,7 +153,7 @@ fun ReportSheetContent(
             modifier = Modifier.fillMaxWidth().testTag("report-details")
         )
         sheet.failure?.let { failure ->
-            accountFailureText(failure, System.currentTimeMillis())?.let {
+            accountFailureText(failure, now)?.let {
                 Text(
                     it,
                     style = MaterialTheme.typography.bodyMedium,
@@ -161,7 +165,7 @@ fun ReportSheetContent(
         CentyPrimaryButton(
             text = stringResource(R.string.report_send),
             onClick = onSend,
-            enabled = !sheet.sending,
+            enabled = sheet.canSendAt(now) || sheet.sending,
             loading = sheet.sending,
             loadingDescription = stringResource(R.string.report_sending),
             modifier = Modifier.fillMaxWidth().testTag("report-submit")

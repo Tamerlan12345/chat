@@ -23,7 +23,7 @@ import java.time.LocalDate
 /** The day separator inside the history. */
 @Composable
 internal fun DaySeparatorRow(date: LocalDate, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(top = 16.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
         DateSeparator(dayLabel(date))
     }
 }

@@ -13,7 +13,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -254,8 +254,8 @@ internal fun ChatComposer(
                                 // Grows at once, shrinks with a spring; reduce motion steps.
                                 .then(if (reduce) Modifier else Modifier.shrinkSmoothly())
                                 .heightIn(min = 48.dp)
-                                .background(tokens.card, shape)
-                                .border(1.dp, tokens.borderStrong, shape)
+                                // A filled field on the L3 composer, no outline (polish pass, rule 7).
+                                .background(tokens.sunken, shape)
                                 .padding(horizontal = 12.dp, vertical = 12.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
@@ -313,6 +313,7 @@ internal fun ComposerAction(canSend: Boolean, editing: Boolean, onSend: () -> Un
     }
 }
 
+/** Send: a 40 dp primary circle in a 48 dp target (buttons brief); dimmed while there is nothing to send. */
 @Composable
 private fun SendButton(canSend: Boolean, editing: Boolean, onClick: () -> Unit) {
     val tokens = CentyTheme.tokens
@@ -326,15 +327,22 @@ private fun SendButton(canSend: Boolean, editing: Boolean, onClick: () -> Unit) 
         enabled = canSend,
         modifier = Modifier
             .size(48.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .background(container, RoundedCornerShape(CentyRadius.control))
             .testTag("composer-send")
     ) {
-        Icon(
-            imageVector = if (editing) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.Send,
-            contentDescription = label,
-            tint = content
-        )
+        Box(
+            Modifier
+                .size(40.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .background(container, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (editing) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.Send,
+                contentDescription = label,
+                tint = content,
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
@@ -349,7 +357,7 @@ private fun ComposerBannerRow(icon: ImageVector, title: String, text: String, cl
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, contentDescription = null, tint = tokens.accentText, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         // The quote bar: the same 2dp indigo as the reply inside a bubble.
         Box(Modifier.width(2.dp).heightIn(min = 34.dp).background(tokens.primary))
         Spacer(Modifier.width(8.dp))

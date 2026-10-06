@@ -1,6 +1,7 @@
 package com.openmychat.mobile.features.account
 
 import com.openmychat.mobile.data.repository.AccountRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,6 +33,11 @@ class BlockController(
         .map { list -> list.any { it.id == userId } }
         .stateIn(scope, SharingStarted.Eagerly, account.blocked.value.any { it.id == userId })
 
+    private val _retryAt = MutableStateFlow<Long?>(null)
+
+    /** The server asked to wait (429) until this time: nothing is sent before it. */
+    val retryAt: StateFlow<Long?> = _retryAt.asStateFlow()
+
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
@@ -48,15 +54,23 @@ class BlockController(
 
     private fun run(success: SafetyNotice, request: suspend () -> Unit) {
         if (_busy.value) return
+        if (_retryAt.value?.let { clock() < it } == true) return
         _busy.value = true
         scope.launch {
-            _notice.value = try {
-                request()
-                success
-            } catch (error: Exception) {
-                SafetyNotice.Failed(AccountFailure.from(error, AccountFailure.Context.GENERIC, clock()))
+            try {
+                _notice.value = try {
+                    request()
+                    success
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val failure = AccountFailure.from(error, AccountFailure.Context.GENERIC, clock())
+                    _retryAt.value = failure.retryDeadline
+                    SafetyNotice.Failed(failure)
+                }
+            } finally {
+                _busy.value = false
             }
-            _busy.value = false
         }
     }
 }

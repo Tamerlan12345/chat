@@ -76,7 +76,7 @@ fun AttachmentChooserSheet(onPhoto: () -> Unit, onFile: () -> Unit, onDismiss: (
                 stringResource(R.string.attachment_pick_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = tokens.textStrong,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp).semantics { heading() }
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).semantics { heading() }
             )
             ChooserRow(Icons.Outlined.Image, stringResource(R.string.attachment_pick_photo), stringResource(R.string.attachment_pick_photo_hint), "attach-photo", onPhoto)
             ChooserRow(Icons.Outlined.Description, stringResource(R.string.attachment_pick_file), stringResource(R.string.attachment_pick_file_hint), "attach-file", onFile)
@@ -92,7 +92,7 @@ private fun ChooserRow(icon: ImageVector, title: String, hint: String, tag: Stri
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag(tag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)

@@ -100,23 +100,16 @@ class LoginScreenTest {
     }
 
     @Test
-    fun theLockupAndCompanyNameAppearOnceWithoutADuplicateTitle() {
-        scripted.companyName = "АО «Тестовая компания»"
+    fun theLockupStandsAloneWithoutACompanyLine() {
+        // Owner request (Task 6): it is a chat, that is obvious - no company or tagline under the brand.
         launch()
 
-        waitForText("АО «Тестовая компания»")
+        waitForText("Логин")
+        composeRule.waitForIdle()
         composeRule.onAllNodes(hasText("CentyChat")).assertCountEquals(1)
         composeRule.onAllNodes(hasText("Вход в CentyChat")).assertCountEquals(0)
         composeRule.onAllNodes(hasText("Корпоративный мессенджер")).assertCountEquals(0)
         submit.assertIsDisplayed().assertIsNotEnabled()
-    }
-
-    @Test
-    fun withoutACompanyNameTheDefaultSubtitleIsShown() {
-        scripted.companyName = null
-        launch()
-
-        waitForText("Корпоративный мессенджер")
     }
 
     @Test
@@ -221,12 +214,10 @@ class ScriptedAuthRepository : AuthRepository {
     override val isPasswordChangeForced: Boolean get() = false
     override val hasSessionToken: Boolean get() = false
 
-    @Volatile var companyName: String? = null
     @Volatile var onLogin: suspend (String, String) -> LoginResult = { _, _ -> LoginResult.SUCCESS }
     val attempts = CopyOnWriteArrayList<String>()
 
     override suspend fun knock(): Boolean = false
-    override suspend fun companyName(): String? = companyName
 
     override suspend fun login(username: String, password: String): LoginResult {
         attempts += username

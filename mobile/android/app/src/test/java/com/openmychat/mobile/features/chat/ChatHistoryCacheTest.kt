@@ -92,4 +92,20 @@ class ChatHistoryCacheTest {
         assertEquals(listOf(10L), reopened.ids())
         assertEquals(true, reopened.refreshFailed.value)
     }
+
+    @Test
+    fun deletingTheAccountClearsTheChatCache() {
+        open()
+        assertEquals(listOf(10L), delivery.engine.state.value.messages["direct:$bob"]?.map { it.id })
+        val deletion = com.openmychat.mobile.features.profile.DeleteAccountViewModel(
+            com.openmychat.mobile.testing.FakeAccountRepository(), delivery.runtime
+        ) { 0L }
+        deletion.onPasswordChange("Secret-12")
+
+        deletion.delete()
+
+        assertTrue(deletion.state.value.deleted)
+        assertNull("the deleted account's chats are gone from memory", delivery.engine.state.value.messages["direct:$bob"])
+        assertTrue("and from disk", delivery.store.stored.cache.isEmpty())
+    }
 }

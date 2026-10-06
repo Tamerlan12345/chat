@@ -1,7 +1,6 @@
 package com.openmychat.mobile.features.profile
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,7 +60,9 @@ import com.openmychat.mobile.ui.components.CentyConfirmDialog
 import com.openmychat.mobile.ui.components.CentyDangerButton
 import com.openmychat.mobile.ui.components.centyFieldColors
 import com.openmychat.mobile.ui.theme.CentyRadius
+import com.openmychat.mobile.ui.theme.CentySpace
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.features.auth.rememberClock
 
 @Composable
 fun DeleteAccountScreen(viewModel: DeleteAccountViewModel, onBack: () -> Unit, onDeleted: () -> Unit) {
@@ -90,9 +91,12 @@ fun DeleteAccountContent(
     val focus = LocalFocusManager.current
     var passwordVisible by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(initiallyConfirming) }
+    // Ticks every second: a server wait (429) counts down in the error and frees the button at 0.
+    val now by rememberClock()
+    val canDelete = state.canDeleteAt(now)
     val ask = {
         focus.clearFocus()
-        if (state.canDelete) confirming = true
+        if (canDelete) confirming = true
     }
     Scaffold(
         modifier = modifier.testTag("delete-account"),
@@ -126,12 +130,12 @@ fun DeleteAccountContent(
         ) {
             Column(Modifier.widthIn(max = 600.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 val shape = RoundedCornerShape(CentyRadius.card)
+                // A soft danger tone, no outline (polish pass, rule 1).
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .background(tokens.dangerSoft, shape)
-                        .border(1.dp, tokens.dangerLine, shape)
-                        .padding(16.dp)
+                        .padding(CentySpace.l)
                         .testTag("delete-warning")
                 ) {
                     Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = tokens.dangerText, modifier = Modifier.size(22.dp))
@@ -146,7 +150,7 @@ fun DeleteAccountContent(
                     enabled = !state.deleting,
                     isError = state.failure != null,
                     supportingText = state.failure?.let { failure ->
-                        accountFailureText(failure, System.currentTimeMillis())?.let { text ->
+                        accountFailureText(failure, now)?.let { text ->
                             { Text(text, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("delete-error")) }
                         }
                     },
@@ -171,7 +175,7 @@ fun DeleteAccountContent(
                 CentyDangerButton(
                     text = stringResource(if (state.deleting) R.string.delete_in_progress else R.string.profile_delete_account),
                     onClick = ask,
-                    enabled = state.canDelete,
+                    enabled = canDelete,
                     modifier = Modifier.fillMaxWidth().testTag("delete-confirm")
                 )
             }

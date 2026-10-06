@@ -1,18 +1,14 @@
 package com.openmychat.mobile
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.SnackbarDuration
@@ -24,7 +20,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.openmychat.mobile.core.audio.CallAudio
 import com.openmychat.mobile.core.network.WsEvent
@@ -34,6 +29,7 @@ import com.openmychat.mobile.ui.navigation.AppNavigationState
 import com.openmychat.mobile.ui.navigation.AppNavigator
 import com.openmychat.mobile.ui.navigation.CentyNavigation
 import com.openmychat.mobile.ui.navigation.NavKey
+import com.openmychat.mobile.features.notifications.NotificationPermissionPrompt
 import com.openmychat.mobile.ui.navigation.SessionRouteGuard
 import com.openmychat.mobile.ui.navigation.rememberAppNavigationState
 import com.openmychat.mobile.ui.components.LocalSnackbarAnchor
@@ -50,6 +46,10 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var connectionManager: RealtimeConnectionManager
+
+    /** This activity's claim on the realtime link (a token, so the singleton never holds the activity). */
+    private val linkOwner = Any()
+
     @Inject lateinit var callAudio: CallAudio
 
     private val appViewModel: AppViewModel by viewModels()
@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        connectionManager.start()
+        connectionManager.start(owner = linkOwner)
 
         setContent {
             CentyChatTheme {
@@ -102,22 +102,10 @@ class MainActivity : ComponentActivity() {
                 // Transient feedback is a Material snackbar, never a Toast.
                 val snackbarHostState = remember { SnackbarHostState() }
 
-                // Runtime permission request for notifications on Android 13+ (API 33+)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.RequestPermission()
-                    ) { /* isGranted */ }
-
-                    LaunchedEffect(Unit) {
-                        if (ContextCompat.checkSelfPermission(
-                                this@MainActivity,
-                                Manifest.permission.POST_NOTIFICATIONS
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                    }
-                }
+                // Notifications (Android 13+) are asked after sign-in, with a sentence on why (QA D8).
+                NotificationPermissionPrompt(
+                    signedIn = SessionRouteGuard.hasAuthenticatedSession(session) && !navigator.state.isAuthFlow
+                )
 
                 LaunchedEffect(navigator) {
                     notificationOpen.collect { chat ->
@@ -225,9 +213,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Recreation (theme, locale) keeps the socket; leaving the app tears it down.
+        // Recreation (theme, locale) keeps the socket; leaving the app tears it down, unless the app
+        // was reopened already (the new activity is created before this one is destroyed).
         if (isFinishing) {
-            connectionManager.stop()
+            connectionManager.stop(owner = linkOwner)
             callAudio.stop()
         }
     }

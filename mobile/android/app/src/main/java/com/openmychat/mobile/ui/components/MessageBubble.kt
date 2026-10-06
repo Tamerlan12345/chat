@@ -16,10 +16,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.AlignmentLine
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.Layout
@@ -66,6 +73,65 @@ private val BubbleShapes: List<RoundedCornerShape> = listOf(false, true).flatMap
     }
 }
 
+/**
+ * The neighbours a bubble shares its contour with, inside one group: their measured widths (px), or
+ * null where the bubble has no touching neighbour on that side (a group edge, a failed message with
+ * its «Повторить / Удалить» row in between, or a width not measured yet). Read in the draw phase.
+ */
+@Stable
+class BubbleContour(val aboveWidth: () -> Int?, val belowWidth: () -> Int?)
+
+/**
+ * One contour per group (polish pass, rule 7): the bubbles of a group touch (overlapping by the
+ * hairline) and the edge they share is painted over with the fill, so no line runs between them.
+ * Where one is wider, its edge stays visible beyond the other: the contour steps. Where the edges
+ * line up (the sender side always; the free side when both bubbles are equally wide, e.g. two
+ * wrapped messages) the corners at the join are squared, so the side runs as one straight line
+ * instead of pinching in. Drawn outside the bubble's clip, so it must come before `clip` in the chain.
+ */
+private fun Modifier.groupContour(
+    contour: BubbleContour?,
+    own: Boolean,
+    position: BubblePosition,
+    fill: Color,
+    outline: Color,
+    free: Dp,
+    joined: Dp
+): Modifier = if (contour == null) this else drawWithContent {
+    drawContent()
+    val stroke = 1.dp.toPx()
+    val w = size.width
+    val h = size.height
+    // Squares the corner of side [atStart] at the join ([top] or bottom edge): fill over the arc,
+    // then the straight outline it replaces.
+    fun square(radius: Float, atStart: Boolean, top: Boolean) {
+        val x = if (atStart) 0f else w - radius
+        val y = if (top) 0f else h - radius
+        drawRect(fill, topLeft = Offset(x, y), size = Size(radius, radius))
+        drawRect(outline, topLeft = Offset(if (atStart) 0f else w - stroke, y), size = Size(stroke, radius))
+    }
+    fun erase(neighbor: Int?, top: Boolean) {
+        if (neighbor == null || neighbor <= 0) return
+        val overlap = minOf(w, neighbor.toFloat())
+        val freeEdgeAligned = kotlin.math.abs(neighbor - w) < 1.5f
+        // Own bubbles hang from the end, incoming ones from the start.
+        val (from, to) = if (own) {
+            (if (freeEdgeAligned) stroke else w - overlap + free.toPx()) to (w - stroke)
+        } else {
+            stroke to (if (freeEdgeAligned) w - stroke else overlap - free.toPx())
+        }
+        if (to <= from) return
+        // Whole pixels and one more: the antialiased edge of the stroke must not leave a faint seam.
+        val band = ceil(stroke) + 1f
+        drawRect(fill, topLeft = Offset(from, if (top) 0f else h - band), size = Size(to - from, band))
+        // The sender side always lines up; the free side only when both bubbles are as wide.
+        square(joined.toPx(), atStart = !own, top = top)
+        if (freeEdgeAligned) square(free.toPx(), atStart = own, top = top)
+    }
+    if (!position.startsGroup) erase(contour.aboveWidth(), top = true)
+    if (!position.endsGroup) erase(contour.belowWidth(), top = false)
+}
+
 /** A quoted message inside a bubble. */
 @Immutable
 data class ReplyPreview(val sender: String?, val text: String)
@@ -82,8 +148,9 @@ data class BubbleMeta(
 
 /**
  * The chat bubble. Own: primary-soft fill, primary-line outline, accent text. Incoming: card and
- * border. The meta sits at the end of the last text line when it fits there, so a short message
- * stays one line tall. Interaction and semantics come through [bubbleModifier].
+ * border. Inside a group the outline runs around the group, not around each bubble ([contour]).
+ * The meta sits at the end of the last text line, on its baseline, when it fits there; otherwise
+ * on its own line. Interaction and semantics come through [bubbleModifier].
  *
  * A failed own message shows a row under the bubble with «Повторить» / «Удалить» (wired by the send
  * queue, Task 15).
@@ -102,7 +169,9 @@ fun MessageBubble(
     failed: Boolean = false,
     onRetry: (() -> Unit)? = null,
     onDiscard: (() -> Unit)? = null,
-    attachment: (@Composable () -> Unit)? = null
+    attachment: (@Composable () -> Unit)? = null,
+    /** In the list: the neighbours this bubble shares one group contour with. */
+    contour: BubbleContour? = null
 ) {
     val tokens = CentyTheme.tokens
     val shape = bubbleShape(own, position)
@@ -119,6 +188,7 @@ fun MessageBubble(
     Column(modifier, horizontalAlignment = if (own) Alignment.End else Alignment.Start) {
         Column(
             bubbleModifier
+                .groupContour(contour, own, position, container, outline, free = CentyRadius.control, joined = CentyRadius.joined)
                 .clip(shape)
                 .background(container, shape)
                 .border(1.dp, outline, shape)
@@ -200,11 +270,16 @@ internal fun TextWithTrailingMeta(
         val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
         val inline = lastLineRight + gap + metaPlaceable.width <= maxWidth
         val width = if (inline) max(textPlaceable.width, lastLineRight + gap + metaPlaceable.width) else max(textPlaceable.width, metaPlaceable.width)
-        val height = if (inline) max(textPlaceable.height, metaPlaceable.height) else textPlaceable.height + metaPlaceable.height
+        // On the last line's baseline (polish pass, rule 7); bottom-aligned when either baseline is unknown.
+        val lastBaseline = layout?.let { it.getLineBaseline(it.lineCount - 1).toInt() }
+        val metaBaseline = metaPlaceable[FirstBaseline].takeIf { it != AlignmentLine.Unspecified }
+        val inlineY = if (lastBaseline != null && metaBaseline != null) {
+            lastBaseline - metaBaseline
+        } else textPlaceable.height - metaPlaceable.height
+        val height = if (inline) max(textPlaceable.height, inlineY + metaPlaceable.height) else textPlaceable.height + metaPlaceable.height
         layout(width.coerceAtLeast(constraints.minWidth), height) {
             textPlaceable.place(0, 0)
-            // Bottom-aligned with the last line.
-            val metaY = if (inline) height - metaPlaceable.height else textPlaceable.height
+            val metaY = if (inline) inlineY.coerceAtLeast(0) else textPlaceable.height
             metaPlaceable.place(width - metaPlaceable.width, metaY)
         }
     }

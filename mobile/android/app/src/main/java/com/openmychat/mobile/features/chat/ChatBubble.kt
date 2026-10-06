@@ -20,13 +20,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
@@ -44,6 +44,7 @@ import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.Message
 import com.openmychat.mobile.features.attachments.Attachments
 import com.openmychat.mobile.features.attachments.MessageAttachmentView
+import com.openmychat.mobile.ui.components.BubbleContour
 import com.openmychat.mobile.ui.components.BubbleMeta
 import com.openmychat.mobile.ui.components.DeliveryMark
 import com.openmychat.mobile.ui.components.LiftedMessage
@@ -56,18 +57,21 @@ import com.openmychat.mobile.ui.components.SwipeToReply
 import com.openmychat.mobile.ui.components.deliveryLabel
 import com.openmychat.mobile.ui.components.label
 import com.openmychat.mobile.ui.theme.CentyMotion
+import com.openmychat.mobile.ui.theme.CentySpace
 import com.openmychat.mobile.ui.theme.LocalReduceMotion
 import kotlinx.coroutines.launch
 
 /**
  * One message row: the grouped bubble, its entrance, swipe-to-reply and the long-press lift.
  *
- * "The message lands": the composer's text travels into a fresh own bubble ([LandingOverlay]); the
- * bubble stays hidden under it and appears as it lands, then its delivery glyph draws in. Any other
- * fresh bubble (incoming, sent elsewhere, too long to travel) fades and rises 8dp.
- * Reduce motion: a fade. Values are read in the layer only.
+ * Entrances (see the motion table in [CentyMotion]): a fresh own bubble whose text travels from the
+ * composer ([LandingOverlay]) stays hidden under it and appears as it lands, then its delivery glyph
+ * draws in. Every other fresh bubble — incoming, sent from another device, or own text too long to
+ * travel — fades in while rising 8 dp ([CentyMotion.INCOMING]). Reduce motion: a 120 ms fade, no
+ * rise. Values are read in the layer only.
  *
- * Within a group, a bubble overlaps the one above it by its hairline, so the group has one outline.
+ * Within a group, a bubble overlaps the one above it by its hairline and the shared edge is painted
+ * over ([BubbleContour]), so the group has one contour. Groups are 8 dp apart.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -82,7 +86,11 @@ internal fun ChatBubbleRow(
     onReply: (Message) -> Unit,
     onEdit: (Message) -> Unit,
     onRequestDelete: (Message) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The touching neighbours in this group, for the one-contour outline; null outside the list. */
+    contour: BubbleContour? = null,
+    /** This bubble's measured width, for its neighbours' contour. */
+    onWidth: (Int) -> Unit = {}
 ) {
     val message = item.message
     val isOwn = item.isOwn
@@ -108,7 +116,7 @@ internal fun ChatBubbleRow(
             )
         }
     }
-    // Without a flight (sent elsewhere, or too long to travel) an own bubble fades and rises 8dp like an incoming one.
+    // Without a flight (sent elsewhere, or too long to travel) an own bubble fades and rises 8 dp like an incoming one.
     val rise = with(LocalDensity.current) { 8.dp.toPx() }
 
     val time = remember(message.createdAt) { DateTimeUtils.formatTime(message.createdAt) }
@@ -123,9 +131,10 @@ internal fun ChatBubbleRow(
     val transfer = attachment?.fileId?.let(actions::transfer)
     val thumbnail = attachment?.let(actions::thumbnailUrl)
 
-    // Draws the bubble without interaction: in the list, and again lifted over the menu scrim.
-    // The middle modifier is the attachment's own tap (open) and long press (menu).
-    val bubble: @Composable (Modifier, Modifier, Modifier) -> Unit = { outer, tile, surface ->
+    // Draws the bubble without interaction: in the list (with its group contour), and again lifted
+    // over the menu scrim (alone, fully outlined). The middle modifier is the attachment's own tap
+    // (open) and long press (menu).
+    val bubble: @Composable (Modifier, Modifier, Modifier, BubbleContour?) -> Unit = { outer, tile, surface, groupContour ->
         MessageBubble(
             own = isOwn,
             position = item.position,
@@ -139,6 +148,7 @@ internal fun ChatBubbleRow(
             failed = failed,
             onRetry = { actions.onRetrySend(message) },
             onDiscard = { onRequestDelete(message) },
+            contour = groupContour,
             attachment = attachment?.let { file ->
                 {
                     MessageAttachmentView(
@@ -186,7 +196,7 @@ internal fun ChatBubbleRow(
                     onAction = ::perform,
                     // Reads the row's latest bubble, so a status that changes while the menu is
                     // open shows on the lifted copy too.
-                    content = { latestBubble.value(Modifier, Modifier, Modifier) }
+                    content = { latestBubble.value(Modifier, Modifier, Modifier, null) }
                 )
             )
         }
@@ -210,7 +220,7 @@ internal fun ChatBubbleRow(
             .fillMaxWidth()
             .then(
                 if (item.startsGroup) {
-                    Modifier.padding(top = 10.dp)
+                    Modifier.padding(top = CentySpace.chatGroupGap)
                 } else {
                     // Overlap the bubble above by the hairline: one shared edge, not two.
                     Modifier.layout { measurable, constraints ->
@@ -231,7 +241,6 @@ internal fun ChatBubbleRow(
                         alpha = if (menuState.isLifted(item.key) || landing.hides(item.key)) 0f else p
                         if (!reduce && p < 1f) {
                             translationY = (1f - p) * rise
-
                         }
                     },
                     tileModifier,
@@ -242,6 +251,7 @@ internal fun ChatBubbleRow(
                             coordinates[0] = it
                             if (carried) landing.aim(item.key, it.positionInRoot() + textInset)
                         }
+                        .onSizeChanged { onWidth(it.width) }
                         // A tap opens the same menu as a long press, so TalkBack's click is a real
                         // action; combinedClickable performs the long-press haptic itself.
                         .combinedClickable(
@@ -261,7 +271,8 @@ internal fun ChatBubbleRow(
                             customActions = menuActions().map { action ->
                                 CustomAccessibilityAction(strings.action(action)) { perform(action); true }
                             }
-                        }
+                        },
+                    contour
                 )
             }
         }

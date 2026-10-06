@@ -14,7 +14,6 @@ import com.openmychat.mobile.ui.components.AcknowledgeButton
 import com.openmychat.mobile.ui.components.Illustration
 import com.openmychat.mobile.ui.components.liftSurface
 import com.openmychat.mobile.ui.components.rememberLift
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,7 +78,15 @@ import com.openmychat.mobile.ui.components.ConnectionBanner
 import com.openmychat.mobile.ui.components.EmptyState
 import com.openmychat.mobile.ui.components.ErrorState
 import com.openmychat.mobile.ui.components.LocalSnackbarHostState
-import com.openmychat.mobile.ui.components.PriorityBadge
+import com.openmychat.mobile.ui.components.PriorityMarker
+import com.openmychat.mobile.ui.components.SectionHeader
+import com.openmychat.mobile.ui.theme.CentySpace
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
 import com.openmychat.mobile.ui.components.rememberHaptics
 import com.openmychat.mobile.ui.theme.CentyMotion
 import com.openmychat.mobile.ui.theme.CentyRadius
@@ -121,6 +128,24 @@ fun AnnouncementsScreen(viewModel: AnnouncementsViewModel) {
         }
     }
     AnnouncementsContent(uiState, connection, actions)
+}
+
+/** The list's two sections, in the server's order inside each. */
+internal object AnnouncementSections {
+    enum class Kind(val title: Int) {
+        NEEDS_ACK(R.string.announcements_section_new),
+        READ(R.string.announcements_section_read)
+    }
+
+    data class Section(val kind: Kind, val items: List<Announcement>)
+
+    fun of(all: List<Announcement>): List<Section> {
+        val (read, open) = all.partition { it.isConfirmed }
+        return listOfNotNull(
+            open.takeIf { it.isNotEmpty() }?.let { Section(Kind.NEEDS_ACK, it) },
+            read.takeIf { it.isNotEmpty() }?.let { Section(Kind.READ, it) }
+        )
+    }
 }
 
 @Composable
@@ -184,23 +209,31 @@ fun AnnouncementsContent(
                             )
                         } else {
                             val reduce = LocalReduceMotion.current
+                            // A native grouped list (polish pass, rule 8): what still needs «Ознакомлен»
+                            // first, then the rest, each under a titleSmall header; borderless rows.
+                            val sections = remember(uiState.announcements) { AnnouncementSections.of(uiState.announcements) }
+                            val placement = if (reduce) null else androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(CentyMotion.BASE, easing = CentyMotion.EaseOut)
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxSize().testTag("announcement-list"),
-                                contentPadding = PaddingValues(
-                                    start = 16.dp, end = 16.dp, top = 8.dp,
-                                    bottom = innerPadding.calculateBottomPadding() + 16.dp
-                                ),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                contentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding() + CentySpace.l)
                             ) {
-                                items(uiState.announcements, key = { it.id }) { item ->
-                                    AnnouncementCard(
-                                        item,
-                                        onClick = { actions.onOpen(item) },
-                                        modifier = Modifier.animateItem(
-                                            placementSpec = if (reduce) null else androidx.compose.animation.core.tween(CentyMotion.BASE, easing = CentyMotion.EaseOut)
+                                sections.forEachIndexed { sectionIndex, section ->
+                                    item(key = "header-${section.kind}", contentType = "header") {
+                                        SectionHeader(
+                                            stringResource(section.kind.title),
+                                            first = sectionIndex == 0,
+                                            modifier = Modifier.animateItem(placementSpec = placement)
                                         )
-                                    )
+                                    }
+                                    itemsIndexed(section.items, key = { _, it -> it.id }, contentType = { _, _ -> "row" }) { index, item ->
+                                        AnnouncementRow(
+                                            item,
+                                            divider = index < section.items.lastIndex,
+                                            onClick = { actions.onOpen(item) },
+                                            modifier = Modifier.animateItem(placementSpec = placement)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -219,63 +252,59 @@ fun AnnouncementsContent(
     }
 }
 
+/**
+ * One announcement as a list row, three type steps (polish pass, rule 3): the title in titleMedium
+ * (600 while it still waits for «Ознакомлен», regular once read), two lines of text in bodyMedium
+ * text-secondary, and the meta line in labelSmall text-dim — the importance dot with its label, the
+ * author and the time.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AnnouncementCard(announcement: Announcement, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun AnnouncementRow(announcement: Announcement, divider: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val tokens = CentyTheme.tokens
-    val shape = RoundedCornerShape(CentyRadius.card)
     val state = stringResource(if (announcement.isConfirmed) R.string.announcements_acknowledged else R.string.announcements_needs_ack)
+    val hairline = tokens.border
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(tokens.card, shape)
-            .border(1.dp, tokens.border, shape)
-            .clip(shape)
+            .drawBehind {
+                if (divider) {
+                    val y = size.height - 0.5.dp.toPx()
+                    drawLine(hairline, Offset(CentySpace.gutter.toPx(), y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                }
+            }
             .clickable(onClick = onClick, role = Role.Button)
             .semantics(mergeDescendants = true) { stateDescription = state }
-            .padding(16.dp)
+            .padding(horizontal = CentySpace.gutter, vertical = CentySpace.m)
+            .testTag("announcement-row")
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PriorityBadge(announcement.priority)
-            Spacer(Modifier.weight(1f))
-            AckState(announcement.isConfirmed)
-        }
-        Spacer(Modifier.size(10.dp))
         Text(
             announcement.title,
             style = MaterialTheme.typography.titleMedium,
+            fontWeight = if (announcement.isConfirmed) FontWeight.Normal else FontWeight.SemiBold,
             color = tokens.textStrong,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Spacer(Modifier.size(4.dp))
+        Spacer(Modifier.size(CentySpace.xs))
         Text(
             announcement.content,
             style = MaterialTheme.typography.bodyMedium,
             color = tokens.textSecondary,
-            maxLines = 3,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Spacer(Modifier.size(10.dp))
-        Text(
-            stringResource(R.string.announcements_author, announcement.authorName, DateTimeUtils.formatDateTime(announcement.createdAt)),
-            style = MaterialTheme.typography.labelSmall,
-            color = tokens.textDim
-        )
-    }
-}
-
-@Composable
-private fun AckState(confirmed: Boolean) {
-    val tokens = CentyTheme.tokens
-    if (confirmed) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = tokens.success, modifier = Modifier.size(16.dp))
-            Text(stringResource(R.string.announcements_acknowledged), style = MaterialTheme.typography.labelMedium, color = tokens.successText)
-        }
-    } else {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.size(8.dp).background(tokens.primary, CircleShape))
-            Text(stringResource(R.string.announcements_needs_ack), style = MaterialTheme.typography.labelMedium, color = tokens.accentText)
+        Spacer(Modifier.size(CentySpace.s))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(CentySpace.s),
+            itemVerticalAlignment = Alignment.CenterVertically
+        ) {
+            PriorityMarker(announcement.priority)
+            Text(
+                stringResource(R.string.announcements_author, announcement.authorName, DateTimeUtils.formatDateTime(announcement.createdAt)),
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.textDim
+            )
         }
     }
 }
@@ -304,8 +333,8 @@ private fun AnnouncementSheet(
                 .padding(bottom = 16.dp)
         ) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                PriorityBadge(announcement.priority)
-                Spacer(Modifier.size(12.dp))
+                PriorityMarker(announcement.priority, style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.size(CentySpace.m))
                 Text(
                     announcement.title,
                     style = MaterialTheme.typography.headlineSmall,

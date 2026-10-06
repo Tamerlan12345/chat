@@ -155,7 +155,6 @@ class FakeAuthRepository : AuthRepository {
     override var hasSessionToken: Boolean = false
 
     var onKnock: suspend () -> Boolean = { false }
-    var onCompanyName: suspend () -> String? = { null }
     var onLogin: suspend (String, String) -> LoginResult = { _, _ -> LoginResult.SUCCESS }
     val loginAttempts = mutableListOf<Pair<String, String>>()
     var knocks = 0
@@ -164,8 +163,6 @@ class FakeAuthRepository : AuthRepository {
         knocks++
         return onKnock()
     }
-
-    override suspend fun companyName(): String? = onCompanyName()
 
     override suspend fun login(username: String, password: String): LoginResult {
         loginAttempts += username to password

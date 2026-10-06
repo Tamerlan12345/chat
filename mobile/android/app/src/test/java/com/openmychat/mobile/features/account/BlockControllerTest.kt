@@ -69,4 +69,33 @@ class BlockControllerTest {
         assertEquals(listOf("block 8"), account.blockCalls)
         assertFalse(blocks.busy.value)
     }
+
+    @Test
+    fun theServersWaitHoldsTheNextRequestUntilItEnds() = runTest(UnconfinedTestDispatcher()) {
+        var now = 1_000L
+        account.onBlock = { throw ApiException(429, null, "Слишком часто", retryAfterSeconds = 10) }
+        val blocks = BlockController(account, backgroundScope, userId = 8) { now }
+        blocks.block("Ева")
+        account.onBlock = {}
+
+        assertEquals(11_000L, blocks.retryAt.value)
+        blocks.block("Ева")
+        assertEquals("nothing is sent while the wait runs", listOf("block 8"), account.blockCalls)
+
+        now = 11_000L
+        blocks.block("Ева")
+        assertEquals(listOf("block 8", "block 8"), account.blockCalls)
+        assertTrue(blocks.blocked.value)
+    }
+
+    @Test
+    fun aCancelledRequestIsNotAFailureAndFreesTheButton() = runTest(UnconfinedTestDispatcher()) {
+        account.onBlock = { throw kotlinx.coroutines.CancellationException("screen closed") }
+        val blocks = BlockController(account, backgroundScope, userId = 8) { 0L }
+
+        blocks.block("Ева")
+
+        assertNull(blocks.notice.value)
+        assertFalse(blocks.busy.value)
+    }
 }

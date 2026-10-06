@@ -64,7 +64,10 @@ object DeliveryModule {
     @Singleton
     fun attachmentSends(runtime: DeliveryRuntime): AttachmentSends = runtime.also { it.start() }.sends
 
-    /** Sign-out asks about unsent messages and deletes them through the runtime. */
+    /**
+     * Sign-out asks about unsent messages and deletes them through the runtime — a running one: a
+     * core nobody started would never answer `discardForSignOut`, and sign-out would never finish.
+     */
     @Provides
-    fun outgoing(runtime: DeliveryRuntime): OutgoingQueue = runtime
+    fun outgoing(runtime: DeliveryRuntime): OutgoingQueue = runtime.also { it.start() }
 }

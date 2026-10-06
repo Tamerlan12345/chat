@@ -125,7 +125,7 @@ private fun IllustrationsPreview() = Plane({ CentyTheme.tokens.list }) {
 @Preview(name = "EmptyState · inbox", widthDp = 360, heightDp = 420)
 @Composable
 private fun EmptyInboxPreview() = Plane({ CentyTheme.tokens.list }) {
-    EmptyState(illustration = Illustration.INBOX, title = "Пока нет диалогов", message = "Когда вы или коллега напишете первое сообщение, диалог появится здесь.", actionLabel = "Обновить", onAction = {})
+    EmptyState(illustration = Illustration.INBOX, title = "Пока нет диалогов", message = "Когда вы или коллега напишете первое сообщение, диалог появится здесь.", actionLabel = "Найти сотрудника", onAction = {})
 }
 
 @Preview(name = "SwipeToReply · MessageContextMenu (static)")

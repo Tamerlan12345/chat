@@ -237,4 +237,35 @@ class RegistrationViewModelTest {
         assertNull(state.failure)
         assertEquals("Secret-12", state.password)
     }
+
+    @Test
+    fun aRateLimitedCodeCheckWaitsForItsDeadline() = runTest {
+        onCodeStep()
+        vm.onCodeChange("123456")
+        account.onVerify = { _, _ -> throw ApiException(429, null, "Слишком часто", retryAfterSeconds = 30) }
+        vm.verify()
+        assertEquals(AccountFailure.Throttled(now + 30_000), state.failure)
+
+        account.onVerify = { _, _ -> RegistrationOutcome.Pending }
+        assertFalse(state.canVerifyAt(now))
+        vm.verify()
+        assertEquals("no second check while the server's wait runs", 1, account.verifications.size)
+
+        now += 30_000
+        assertTrue("the wait is over: «Подтвердить» works again", state.canVerifyAt(now))
+        vm.verify()
+        assertEquals(2, account.verifications.size)
+        assertEquals(Step.PENDING, state.step)
+    }
+
+    @Test
+    fun aCancelledCodeCheckIsNotReportedAsAFailure() = runTest {
+        onCodeStep()
+        vm.onCodeChange("123456")
+        account.onVerify = { _, _ -> throw kotlinx.coroutines.CancellationException("screen closed") }
+
+        vm.verify()
+
+        assertNull(state.failure)
+    }
 }
