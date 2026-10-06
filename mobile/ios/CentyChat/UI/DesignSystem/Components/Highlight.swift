@@ -31,17 +31,12 @@ public enum Highlight {
         return runs
     }
 
-    /// The text with its highlighted runs in `color`, weight 600 (the rest keeps the caller's style).
-    public static func attributed(_ text: String, _ ranges: [Range<Int>], color: Color = CentyColors.accentText) -> AttributedString {
-        var result = AttributedString()
-        for run in runs(text, ranges) {
-            var part = AttributedString(run.text)
-            if run.highlighted {
-                part.foregroundColor = color
-                part.inlinePresentationIntent = .stronglyEmphasized
-            }
-            result += part
+    /// The text with its highlighted runs in `color` at weight 600 (semibold — not the bold 700 of
+    /// "strongly emphasised"); the rest keeps the caller's font and colour.
+    public static func text(_ text: String, _ ranges: [Range<Int>], color: Color = CentyColors.accentText) -> Text {
+        runs(text, ranges).reduce(Text(verbatim: "")) { result, run in
+            let part = Text(verbatim: run.text)
+            return result + (run.highlighted ? part.fontWeight(.semibold).foregroundColor(color) : part)
         }
-        return result
     }
 }
