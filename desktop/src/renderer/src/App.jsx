@@ -885,16 +885,15 @@ export default function App() {
   }, [unreadMap, windowFocused]);
   // Set Window Title dynamically matching Screenshot 1 & 2
   useEffect(() => {
-    const company = serverInfo?.company_name || 'АО "Страховая компания "Сентрас Иншуранс"';
     if (currentUser) {
       const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошёл' : currentUser.status === 'dnd' ? 'Не беспокоить' : 'Не в сети';
       const extText = currentUser.extension ? ` (в.н.${currentUser.extension})` : '';
       const name = currentUser.full_name || currentUser.username;
-      document.title = `CentyChat — ${name}${extText} [${company}] (${statusText})`;
+      document.title = `CentyChat — ${name}${extText} (${statusText})`;
     } else {
-      document.title = `CentyChat — [${company}]`;
+      document.title = 'CentyChat';
     }
-  }, [currentUser, serverInfo]);
+  }, [currentUser]);
 
   // Ровно одно уведомление на событие. Раньше показывались оба сразу —
   // карточка в приложении и системное окно Windows поверх неё.
