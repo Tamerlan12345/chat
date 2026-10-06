@@ -333,11 +333,6 @@ private struct ChatDetailContent: View {
                     Color.clear
                         .frame(height: 1)
                         .id(Self.bottomID)
-                        .onAppear {
-                            isAtBottom = true
-                            newWhileAway = 0
-                        }
-                        .onDisappear { isAtBottom = false }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -345,6 +340,13 @@ private struct ChatDetailContent: View {
                 .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText != nil)
             }
             .scrollDismissesKeyboard(.interactively)
+            // «At the end» from the scroll geometry, not from a row appearing and disappearing:
+            // a lazy row's lifecycle can ping-pong with the state it sets and starve the main loop.
+            .modifier(BottomTracking { atBottom in
+                guard atBottom != isAtBottom else { return }
+                isAtBottom = atBottom
+                if atBottom { newWhileAway = 0 }
+            })
             .onAppear {
                 // Opens at the newest message (the list keeps no anchor of its own: a bottom
                 // anchor over a lazy, pinned stack could loop its layout).
@@ -991,3 +993,21 @@ enum PhotoAttachment {
     .previewEnvironment()
 }
 #endif
+
+/// Reports whether the list shows its end (iOS 18 scroll geometry). Before iOS 18 the list counts
+/// as at the end, so the jump pill never shows there.
+private struct BottomTracking: ViewModifier {
+    let changed: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
+            } action: { _, atBottom in
+                changed(atBottom)
+            }
+        } else {
+            content
+        }
+    }
+}
