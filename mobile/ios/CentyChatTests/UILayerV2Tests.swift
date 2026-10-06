@@ -98,17 +98,18 @@ final class ConnectionStatusTests: XCTestCase {
     }
 }
 
-/// «At the end of the chat» is inset-aware: the bars above the list are a top inset larger than the
-/// tolerance, so a check on offset + container alone never sees the end of a long history.
+/// «At the end of the chat» from the bottom of the visible rect (inset-aware by itself), with a
+/// 48-pt tolerance: the «↓» pill appears as soon as the reader is a little more than that away.
 final class ChatScrollEndTests: XCTestCase {
-    func testTheEndBehindATallTopInsetCountsAsTheEnd() {
-        // 2 000-pt history, 640-pt container under a 140-pt top inset, scrolled to the end.
-        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 1_860, offsetY: 1_220, containerHeight: 640, topInset: 140, contentHeight: 2_000))
-        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 2_000, offsetY: 1_360, containerHeight: 640, topInset: 0, contentHeight: 2_000))
+    func testTheVisibleBottomWithinTheToleranceIsTheEnd() {
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 2_000, contentHeight: 2_000))
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 1_960, contentHeight: 2_000))
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 640, contentHeight: 300), "A short chat is always at its end")
     }
 
-    func testScrolledUpIsNotTheEnd() {
-        XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_500, offsetY: 720, containerHeight: 640, topInset: 140, contentHeight: 2_000))
+    func testAFewRowsUpIsNotTheEnd() {
+        XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_940, contentHeight: 2_000), "60 pt up: the pill shows")
+        XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_500, contentHeight: 2_000))
     }
 }
 

@@ -119,8 +119,14 @@ final class ConnectionStatus {
 
     private func apply() {
         let previous = phase
+        guard isRunning else {
+            // Signed out (or not listening yet): nothing to report, and certainly not «back online».
+            phase = .hidden
+            return
+        }
         phase = ConnectionBannerMachine.onLink(phase, problem)
-        if phase != previous, let text = Self.spoken(phase) {
+        // Not while the session stops listening (sign-out): «Снова в сети» on the way to login is false.
+        if phase != previous, isRunning, let text = Self.spoken(phase) {
             announce(text)
         }
         guard phase == .backOnline else { return }

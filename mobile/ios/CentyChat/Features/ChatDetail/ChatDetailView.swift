@@ -111,6 +111,8 @@ private struct ChatDetailContent: View {
         self.status = status
         self.highlightMessageId = highlightMessageId
         self.hidesTabBar = hidesTabBar
+        // Opening at a search hit: the hit, not the end.
+        _pinnedToEnd = State(initialValue: highlightMessageId == nil)
     }
 
     @State private var inputText: String = ""
@@ -131,6 +133,11 @@ private struct ChatDetailContent: View {
     /// The newest message is on screen (the list follows it); scrolled up, new ones are counted.
     @State private var isAtBottom = true
     @State private var newWhileAway = 0
+    /// The list follows its end (open, own message, back at the end); the reader's drag stops it.
+    @State private var pinnedToEnd: Bool
+    /// Asks the iOS 18 scroll position to go to the bottom edge (animated or not).
+    @State private var endRequests = 0
+    @State private var endRequestAnimated = false
     /// The first page is on screen: later inserts animate ("the message lands"), it did not.
     @State private var settled = false
     @FocusState private var composerFocused: Bool
@@ -348,67 +355,70 @@ private struct ChatDetailContent: View {
                 .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText != nil)
             }
             .scrollDismissesKeyboard(.interactively)
-            // «At the end» from the scroll geometry, not from a row appearing and disappearing:
-            // a lazy row's lifecycle can ping-pong with the state it sets and starve the main loop.
-            .modifier(BottomTracking { atBottom in
-                guard atBottom != isAtBottom else { return }
-                isAtBottom = atBottom
-                if atBottom { newWhileAway = 0 }
+            // iOS 18: a scroll position pinned to the bottom edge, kept there while the lazy rows
+            // measure themselves; «at the end» from the scroll geometry (never from a row's
+            // appear/disappear, which can ping-pong with the state it sets).
+            .modifier(ChatEndBehaviour(
+                pinned: $pinnedToEnd,
+                requests: endRequests,
+                animated: endRequestAnimated,
+                reduceMotion: reduceMotion
+            ) { atEnd in
+                guard atEnd != isAtBottom else { return }
+                isAtBottom = atEnd
+                if atEnd {
+                    newWhileAway = 0
+                    // Back at the end by hand: follow again.
+                    pinnedToEnd = true
+                }
             })
             .onAppear {
-                // Opens at the newest message (the list keeps no anchor of its own: a bottom
-                // anchor over a lazy, pinned stack could loop its layout).
-                if isFollowingBottom, let last = rows.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                if isFollowingBottom, !rows.isEmpty {
+                    scrollToEnd(proxy, animated: false)
                     settled = true
                 }
             }
             // Follows what the list shows: messages of blocked people are not rows.
             .onChange(of: rows.last?.id) { old, last in
                 // Opening at a search hit: the list waits for the history around it.
-                guard isFollowingBottom, let last else { return }
+                guard isFollowingBottom, last != nil else { return }
                 let isOwn = rows.last?.message.senderId == session.currentUser?.id
                 if old == nil {
-                    // The first page: straight to the end, then once more after the lazy rows
-                    // measured themselves.
-                    proxy.scrollTo(last, anchor: .bottom)
+                    // The first page: to the end, and kept there while the rows settle.
+                    scrollToEnd(proxy, animated: false)
                     Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(80))
-                        proxy.scrollTo(last, anchor: .bottom)
+                        try? await Task.sleep(for: .milliseconds(300))
                         // From now on new messages land with the lift (not the first page).
                         settled = true
                     }
-                    newWhileAway = 0
-                } else if isAtBottom || isOwn {
-                    withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
-                        proxy.scrollTo(last, anchor: .bottom)
-                    }
-                    newWhileAway = 0
+                } else if pinnedToEnd || isAtBottom || isOwn {
+                    scrollToEnd(proxy, animated: true)
                 } else {
                     newWhileAway += 1
                 }
             }
             .onChange(of: scrollRequest) { _, request in
                 guard let request else { return }
-                proxy.scrollTo(request.rowID, anchor: request.pulses ? .center : .bottom)
                 settled = true
-                if request.pulses { pulse(request.rowID) }
+                if request.pulses {
+                    // A search hit: stay on it, do not follow the end.
+                    pinnedToEnd = false
+                    proxy.scrollTo(request.rowID, anchor: .center)
+                    pulse(request.rowID)
+                } else {
+                    scrollToEnd(proxy, animated: false)
+                }
             }
             .onChange(of: composerFocused) { _, focused in
                 // The keyboard rises: the conversation follows only if the reader was at the end.
-                guard focused, isAtBottom, let last = rows.last else { return }
-                withAnimation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
+                guard focused, isAtBottom || pinnedToEnd, !rows.isEmpty else { return }
+                scrollToEnd(proxy, animated: true)
             }
             .overlay(alignment: .bottomTrailing) {
                 ZStack {
-                    if !isAtBottom && !rows.isEmpty {
+                    if !isAtBottom && !pinnedToEnd && !rows.isEmpty {
                         JumpToLatestPill(newCount: newWhileAway) {
-                            withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
-                                proxy.scrollTo(Self.bottomID, anchor: .bottom)
-                            }
-                            newWhileAway = 0
+                            scrollToEnd(proxy, animated: true)
                         }
                         .padding(.trailing, 12)
                         .padding(.bottom, 8)
@@ -613,6 +623,26 @@ private struct ChatDetailContent: View {
     /// The person's card over this chat; its «Написать» comes back here.
     private func openCard() {
         router?.push(.person(PersonRoute(id: targetId, name: title, avatarUrl: avatarUrl)))
+    }
+
+    /// To the newest message, and follow it from now on.
+    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
+        pinnedToEnd = true
+        newWhileAway = 0
+        if #available(iOS 18.0, *) {
+            endRequestAnimated = animated
+            endRequests += 1
+        } else {
+            guard let last = rows.last?.id else { return }
+            withAnimation(animated ? CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion) : nil) {
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+            // iOS 17: once more after the lazy rows measured themselves.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+        }
     }
 
     // MARK: - Jump to a search hit
@@ -1003,39 +1033,74 @@ enum PhotoAttachment {
 }
 #endif
 
-/// Reports whether the list shows its end (iOS 18 scroll geometry). Before iOS 18 the list counts
-/// as at the end, so the jump pill never shows there.
-private struct BottomTracking: ViewModifier {
-    let changed: (Bool) -> Void
+/// The end of the chat (iOS 18): a scroll position pinned to the bottom edge — the first frame
+/// opens there (`.initialOffset`), and while pinned every change of the content height (lazy rows
+/// measuring themselves, a new message) scrolls to the edge again, so estimated row heights never
+/// leave the newest message off screen. The reader's drag unpins it. Before iOS 18 the list counts
+/// as at the end and the view scrolls with its proxy.
+private struct ChatEndBehaviour: ViewModifier {
+    @Binding var pinned: Bool
+    let requests: Int
+    let animated: Bool
+    let reduceMotion: Bool
+    let atEndChanged: (Bool) -> Void
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geometry in
-                ChatScrollEnd.isAtEnd(
-                    visibleMaxY: geometry.visibleRect.maxY,
-                    offsetY: geometry.contentOffset.y,
-                    containerHeight: geometry.containerSize.height,
-                    topInset: geometry.contentInsets.top,
-                    contentHeight: geometry.contentSize.height
-                )
-            } action: { _, atBottom in
-                changed(atBottom)
-            }
+            content.modifier(EndPinning(pinned: $pinned, requests: requests, animated: animated, reduceMotion: reduceMotion, atEndChanged: atEndChanged))
         } else {
             content
         }
     }
 }
 
-/// Whether the chat shows its last row, from the scroll geometry. The bars above the list (status
-/// bar, navigation bar, connection banner) are a top content inset larger than the tolerance, so the
-/// visible bottom is taken inset-aware: the visible rect, or the offset plus the container plus the
-/// top inset — whichever reaches further.
+@available(iOS 18.0, *)
+private struct EndPinning: ViewModifier {
+    @Binding var pinned: Bool
+    let requests: Int
+    let animated: Bool
+    let reduceMotion: Bool
+    let atEndChanged: (Bool) -> Void
+
+    @State private var position = ScrollPosition(edge: .bottom)
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentSize.height
+            } action: { _, _ in
+                guard pinned else { return }
+                position.scrollTo(edge: .bottom)
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                ChatScrollEnd.isAtEnd(visibleMaxY: geometry.visibleRect.maxY, contentHeight: geometry.contentSize.height)
+            } action: { _, atEnd in
+                atEndChanged(atEnd)
+            }
+            .onScrollPhaseChange { _, phase in
+                // The reader takes over: following stops until they are back at the end.
+                if phase == .interacting { pinned = false }
+            }
+            .onChange(of: requests) {
+                if animated {
+                    withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
+                        position.scrollTo(edge: .bottom)
+                    }
+                } else {
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+    }
+}
+
+/// Whether the chat shows its last row: the bottom of the visible rect (inset-aware) within the
+/// tolerance of the content's end.
 enum ChatScrollEnd {
     static let tolerance: CGFloat = 48
 
-    static func isAtEnd(visibleMaxY: CGFloat, offsetY: CGFloat, containerHeight: CGFloat, topInset: CGFloat, contentHeight: CGFloat) -> Bool {
-        let bottom = max(visibleMaxY, offsetY + containerHeight + topInset)
-        return bottom >= contentHeight - tolerance
+    static func isAtEnd(visibleMaxY: CGFloat, contentHeight: CGFloat) -> Bool {
+        visibleMaxY >= contentHeight - tolerance
     }
 }
