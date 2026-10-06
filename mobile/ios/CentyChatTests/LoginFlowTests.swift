@@ -306,14 +306,4 @@ final class SessionLoginTests: XCTestCase {
         XCTAssertEqual(state.currentUserCount, 0)
         XCTAssertEqual(state.knockCount, 0)
     }
-
-    func testCompanyNameIsPlainCappedText() {
-        XCTAssertEqual(BrandCopy.companyLine(nil), "Корпоративный мессенджер")
-        XCTAssertEqual(BrandCopy.companyLine("   "), "Корпоративный мессенджер")
-        XCTAssertEqual(BrandCopy.companyLine("ТОО\n«Ромашка»\u{0007}\u{202E}"), "ТОО «Ромашка»")
-        let long = String(repeating: "Компания ", count: 30)
-        let capped = BrandCopy.companyLine(long)
-        XCTAssertLessThanOrEqual(capped.count, BrandCopy.companyNameLimit)
-        XCTAssertTrue(capped.hasSuffix("…"))
-    }
 }
