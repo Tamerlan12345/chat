@@ -149,6 +149,9 @@ class ChatSafetyUiTest {
                 ChatScreen(viewModel = viewModel, title = "Боб Тестов", onNavigateBack = {}, onStartCall = { _, _ -> })
             }
         }
+        // The history comes through the delivery engine and Room (suspend DAOs) — work Compose's
+        // idling does not track, so wait for it instead of asserting right after setContent.
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Купите слона")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Купите слона").assertIsDisplayed()
         compose.onNodeWithTag("composer-field").assertIsEnabled()
 
