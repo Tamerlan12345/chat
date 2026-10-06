@@ -81,6 +81,32 @@ class RealtimeConnectionManagerTest {
         assertEquals(ConnectionState.Disconnected, client.connectionState.value)
     }
 
+    @Test
+    fun aFinishingScreenDoesNotStopTheLinkOfTheScreenThatReplacedIt() {
+        // Back at the root finishes the activity; reopening the app at once creates the new one
+        // before the old one's onDestroy runs.
+        val finishing = Any()
+        val reopened = Any()
+        manager.start(finishing)
+        manager.start(reopened)
+
+        manager.stop(finishing)
+
+        assertEquals(ConnectionState.Connecting, client.connectionState.value)
+        sessionManager.clearSession()
+        assertEquals(ConnectionState.Disconnected, client.connectionState.value)
+    }
+
+    @Test
+    fun theLastScreenLeavingStopsTheLink() {
+        val screen = Any()
+        manager.start(screen)
+
+        manager.stop(screen)
+
+        assertEquals(ConnectionState.Disconnected, client.connectionState.value)
+    }
+
     private class FakeSocket(private val request: Request) : WebSocket {
         override fun request(): Request = request
         override fun queueSize(): Long = 0

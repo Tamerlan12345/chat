@@ -46,6 +46,10 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var connectionManager: RealtimeConnectionManager
+
+    /** This activity's claim on the realtime link (a token, so the singleton never holds the activity). */
+    private val linkOwner = Any()
+
     @Inject lateinit var callAudio: CallAudio
 
     private val appViewModel: AppViewModel by viewModels()
@@ -76,7 +80,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        connectionManager.start()
+        connectionManager.start(owner = linkOwner)
 
         setContent {
             CentyChatTheme {
@@ -209,9 +213,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Recreation (theme, locale) keeps the socket; leaving the app tears it down.
+        // Recreation (theme, locale) keeps the socket; leaving the app tears it down, unless the app
+        // was reopened already (the new activity is created before this one is destroyed).
         if (isFinishing) {
-            connectionManager.stop()
+            connectionManager.stop(owner = linkOwner)
             callAudio.stop()
         }
     }

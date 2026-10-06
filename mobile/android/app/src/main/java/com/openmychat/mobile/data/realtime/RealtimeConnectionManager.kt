@@ -31,8 +31,16 @@ class RealtimeConnectionManager @Inject constructor(
 ) {
     private var job: Job? = null
 
+    /** The screen that started the link last; only it may stop it. */
+    private var owner: Any? = null
+
+    /**
+     * Starts the link for [owner] (the activity's token). A newer owner takes over: an activity finished by
+     * Back is destroyed only after the reopened one was created, and its stop must not end the link.
+     */
     @Synchronized
-    fun start() {
+    fun start(owner: Any? = null) {
+        this.owner = owner
         if (job?.isActive == true) return
         job = scope.launch {
             launch {
@@ -62,8 +70,11 @@ class RealtimeConnectionManager @Inject constructor(
         }
     }
 
+    /** Ends the link when [owner] is the screen that started it last; a replaced screen's stop is ignored. */
     @Synchronized
-    fun stop() {
+    fun stop(owner: Any? = null) {
+        if (owner !== this.owner) return
+        this.owner = null
         job?.cancel()
         job = null
         webSocketClient.disconnect()
