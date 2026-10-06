@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -33,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -165,25 +167,43 @@ private fun BlockedRow(user: BlockedUser, busy: Boolean, onUnblock: () -> Unit) 
     ) {
         CentyAvatar(name = name, size = BlockedAvatar, ringColor = tokens.list)
         Spacer(Modifier.width(CentySpace.rowGap))
-        Text(
-            name,
-            style = MaterialTheme.typography.titleMedium,
-            color = tokens.textStrong,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(Modifier.width(8.dp))
-        CentyTonalButton(
-            text = stringResource(R.string.safety_unblock),
-            onClick = onUnblock,
-            enabled = !busy,
-            loading = busy,
-            modifier = Modifier
-                .semantics { contentDescription = unblockLabel }
-                .testTag("unblock-${user.id}")
-        )
+        val nameText = @Composable { textModifier: Modifier ->
+            Text(
+                name,
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.textStrong,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = textModifier
+            )
+        }
+        val button = @Composable {
+            CentyTonalButton(
+                text = stringResource(R.string.safety_unblock),
+                onClick = onUnblock,
+                enabled = !busy,
+                loading = busy,
+                modifier = Modifier
+                    .semantics { contentDescription = unblockLabel }
+                    .testTag("unblock-${user.id}")
+            )
+        }
+        // At a large system font the button would squeeze the name into broken syllables: it goes
+        // under the name instead.
+        if (LocalDensity.current.fontScale >= STACK_FONT_SCALE) {
+            Column(Modifier.weight(1f)) {
+                nameText(Modifier)
+                Spacer(Modifier.height(CentySpace.s))
+                button()
+            }
+        } else {
+            nameText(Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            button()
+        }
     }
 }
+
+private const val STACK_FONT_SCALE = 1.5f
 
 private val BlockedAvatar = 40.dp
