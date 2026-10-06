@@ -639,6 +639,12 @@ final class ScreenshotTourTests: XCTestCase {
         let start = application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
         start.press(forDuration: 0.05, thenDragTo: application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
         _ = application.keyboards.firstMatch.waitForNonExistence(timeout: 3)
+        // The drag also scrolled the history up: «↓» brings the newest message back.
+        let jump = application.buttons["chat-jump-latest"]
+        if jump.waitForExistence(timeout: 2) {
+            jump.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            pause(1.5)
+        }
     }
 
     /// The first call asks for the microphone (SpringBoard alert): declined, the stage explains it.
