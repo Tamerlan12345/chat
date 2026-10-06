@@ -155,8 +155,12 @@ public final class PeopleModel {
         applyPendingRequest()
     }
 
+    /// How many times the screen state was built (tests: once per change, not per read).
+    @ObservationIgnored private(set) var presentations = 0
+
     public var state: PeopleUIState {
-        Self.present(directory.state, filters)
+        presentations += 1
+        return Self.present(directory.state, filters)
     }
 
     public func setQuery(_ query: String) {

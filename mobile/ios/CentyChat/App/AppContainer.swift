@@ -32,6 +32,8 @@ public final class AppContainer: SessionLifecycleDelegate {
     let downloads: AttachmentDownloader
     /// Image previews of attachments (memory only); wiped when the session ends.
     let thumbnails: AttachmentThumbnails
+    /// Decoded avatar photos for synchronous display; wiped when the session ends.
+    let avatarMemo = AvatarImageMemo()
     private let networkPath = NetworkPathWatcher()
 
     init(

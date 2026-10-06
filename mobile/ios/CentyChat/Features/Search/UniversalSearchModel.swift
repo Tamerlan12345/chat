@@ -20,6 +20,9 @@ public struct MessageHit: Equatable, Sendable, Identifiable {
     public var isOwn: Bool
     public var snippet: String
     public var highlights: [Range<Int>]
+    /// Whose avatar the row shows: the author (yours next to «Вы»).
+    public var avatarName: String
+    public var avatarUrl: String?
 
     public var id: Int64 { message.id }
 
@@ -105,11 +108,15 @@ public final class UniversalSearchModel {
         self.debounce = debounce
     }
 
+    /// How many times the directory was ranked (tests: once per change, not per read).
+    @ObservationIgnored private(set) var rankings = 0
+
     public var state: UniversalSearchState {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var state = UniversalSearchState(query: query, recents: recents.items)
         guard !trimmed.isEmpty else { return state }
         let ranked = PeopleSearch.rank(directory.state.people, query: trimmed)
+        rankings += 1
         state.people = Array(ranked.prefix(Self.maxPeople))
         state.peopleTotal = ranked.count
         state.channels = Array(Self.matchChannels(channels(), query: trimmed).prefix(Self.maxChannels))
@@ -253,7 +260,9 @@ public final class UniversalSearchModel {
             senderName: sender,
             isOwn: isOwn,
             snippet: snippet,
-            highlights: highlights
+            highlights: highlights,
+            avatarName: title.isEmpty ? sender : title,
+            avatarUrl: isOwn ? nil : message.senderAvatar
         )
     }
 

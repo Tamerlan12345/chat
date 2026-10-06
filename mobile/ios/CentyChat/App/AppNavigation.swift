@@ -34,6 +34,18 @@ public final class NavigationRouter {
     public func popToRoot() {
         path.removeAll()
     }
+
+    /// «Написать» from a card.
+    public func open(chat: ChatRoute) {
+        push(.chat(chat))
+    }
+}
+
+/// The number on a tab.
+enum TabBadge {
+    static func text(_ count: Int, isSelected: Bool) -> String? {
+        count > 0 ? "\(count)" : nil
+    }
 }
 
 /// A chat to open, optionally at a message found by the search.

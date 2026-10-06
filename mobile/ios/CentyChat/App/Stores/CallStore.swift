@@ -9,6 +9,8 @@ public final class CallStore: RealtimeEventHandling {
     public var activeCall: CallSession?
     public private(set) var callAudioError: String?
     public private(set) var callAudioRequiresMicrophonePermission = false
+    /// The peer's voice level, 0…1, for the call stage's meter.
+    public private(set) var peerLevel: Float = 0
 
     @ObservationIgnored private let realtime: RealtimeStore
     @ObservationIgnored private let audioRelayFactory: @MainActor (Int64) -> AudioCallRelay

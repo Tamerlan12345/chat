@@ -70,6 +70,29 @@ final class ChatJumpTests: XCTestCase {
         XCTAssertEqual(chat.messages.map(\.id), Array(Int64(151)...Int64(200)))
     }
 
+    func testOpeningAtAGoneHitSaysSo() async {
+        app.chat.state.withValue { state in
+            state.messages[key] = state.messages[key]?.filter { $0.id != 40 }
+        }
+        let chat = app.container.chats.store(for: key)
+        await chat.load()
+
+        let found = await chat.open(at: 40)
+
+        XCTAssertFalse(found)
+        XCTAssertEqual(chat.notice?.text, "Сообщение не найдено — возможно, его удалили")
+    }
+
+    func testOpeningAtAnExistingHitSaysNothing() async {
+        let chat = app.container.chats.store(for: key)
+        await chat.load()
+
+        let found = await chat.open(at: 40)
+
+        XCTAssertTrue(found)
+        XCTAssertNil(chat.notice)
+    }
+
     func testAMessageAlreadyOnScreenNeedsNoRequest() async {
         let chat = app.container.chats.store(for: key)
         await chat.load()

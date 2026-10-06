@@ -33,6 +33,16 @@ public final class ConversationsStore: RealtimeEventHandling {
         channels.reduce(0) { $0 + $1.unreadCount }
     }
 
+    /// Dialogs with unread messages (the tab and segment counters).
+    public var unreadDirectConversations: Int {
+        totalDirectUnread
+    }
+
+    /// Channels with unread messages.
+    public var unreadChannelConversations: Int {
+        totalChannelUnread
+    }
+
     public static func typingKey(for conversation: ConversationKey) -> String {
         "\(conversation.type.rawValue)_\(conversation.targetId)"
     }

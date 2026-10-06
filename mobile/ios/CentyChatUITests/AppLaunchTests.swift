@@ -21,6 +21,10 @@ final class AppLaunchTests: XCTestCase {
                 "Login must not offer a way to change the server."
             )
             XCTAssertFalse(application.textFields.matching(NSPredicate(format: "placeholderValue CONTAINS %@", "https")).firstMatch.exists)
+            // Owner: «это чат, понятно» — only the CentyChat lockup, no company line and no tagline.
+            XCTAssertTrue(application.descendants(matching: .any)["login-brand"].exists)
+            XCTAssertFalse(application.descendants(matching: .any)["login-company"].exists, "No company caption under the brand")
+            XCTAssertFalse(application.staticTexts["Корпоративный мессенджер"].exists, "No replacement tagline")
         }
     }
 }

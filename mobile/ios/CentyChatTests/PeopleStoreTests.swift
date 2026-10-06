@@ -100,6 +100,21 @@ final class PeopleModelTests: XCTestCase {
         XCTAssertEqual(state.online, 1)
     }
 
+    func testTheListIsBuiltOncePerChangeNotOnEveryRead() {
+        let people = directory()
+        let model = PeopleModel(directory: people, requests: PeopleRequests())
+        _ = model.state
+        _ = model.state
+        _ = model.state
+        XCTAssertEqual(model.presentations, 1, "Reading the state again must not sort and rank again")
+        model.setQuery("боб")
+        _ = model.state
+        XCTAssertEqual(model.presentations, 2)
+        people.state.people[0].status = .offline
+        _ = model.state
+        XCTAssertEqual(model.presentations, 3, "Presence changes rebuild it")
+    }
+
     func testTheOnlineFilterKeepsOnlyReachablePeople() {
         let model = PeopleModel(directory: directory(), requests: PeopleRequests())
         model.toggleOnlineOnly()

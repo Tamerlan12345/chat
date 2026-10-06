@@ -51,11 +51,21 @@ final class PeopleSearchUITests: XCTestCase {
         // «Написать» pushes the chat onto the same stack.
         tapCentre(write)
         XCTAssertTrue(app.navigationBars["Боб Тестов"].waitForExistence(timeout: 15), "«Написать» must open the dialog")
-        XCTAssertEqual(app.tabBars.buttons["Чаты"].isSelected, true, "No tab switch: the chat opens in «Чаты»")
+        // The chat takes the whole screen: no tab bar under the composer.
+        XCTAssertTrue(waitUntil(app.tabBars.firstMatch, "exists == false OR hittable == false"), "The tab bar must hide inside a chat")
+
+        // The header avatar opens the same card over the chat; «Написать» there returns to the chat.
+        let headerAvatar = app.buttons["chat-header-avatar"]
+        XCTAssertTrue(headerAvatar.waitForExistence(timeout: 10), "The chat header must offer the person's card")
+        tapCentre(headerAvatar)
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "The header avatar must open the card")
+        tapCentre(app.buttons["person-write"])
+        XCTAssertTrue(app.navigationBars["Боб Тестов"].waitForExistence(timeout: 15))
 
         // Back → card → search results.
         goBack(app)
         XCTAssertTrue(card.waitForExistence(timeout: 10), "Back from the chat returns to the card")
+        XCTAssertEqual(app.tabBars.buttons["Чаты"].isSelected, true, "No tab switch: the chat opened in «Чаты»")
         goBack(app)
         XCTAssertTrue(results.waitForExistence(timeout: 10), "Back from the card returns to the search results")
 
