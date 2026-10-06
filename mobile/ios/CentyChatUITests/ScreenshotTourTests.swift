@@ -219,6 +219,8 @@ final class ScreenshotTourTests: XCTestCase {
         continueAfterFailure = true
         defer { XCUIDevice.shared.appearance = .light }
         let appearance: XCUIDevice.Appearance = mode == "dark" ? .dark : .light
+        // Unique per recording: the Reduce Motion pass runs in light after the light pass.
+        let motionText = "Движение \(mode) \(Int(Date().timeIntervalSince1970) % 100_000)"
         let app = launchFreshInstall(server: standURL, appearance: appearance)
         XCTAssertTrue(loginScreen(of: app).waitForExistence(timeout: 15))
         signIn(app, username: "alice", password: "Alice-Dev-Stand-5271")
@@ -232,7 +234,7 @@ final class ScreenshotTourTests: XCTestCase {
             // The keyboard: open, type, send (the message lands), interactive dismiss.
             let composer = composerField(app)
             if composer.waitForExistence(timeout: 10) {
-                type("Движение \(mode)", into: composer, of: app)
+                type(motionText, into: composer, of: app)
                 pause(0.6)
                 let send = app.buttons["Отправить"]
                 if waitUntil(send, "isEnabled == true", timeout: 5) { send.tap() }
@@ -241,7 +243,7 @@ final class ScreenshotTourTests: XCTestCase {
                 pause(1)
             }
             // Swipe-to-reply on the own message, then cancel the reply.
-            let own = app.staticTexts["Движение \(mode)"]
+            let own = app.staticTexts[motionText]
             if own.waitForExistence(timeout: 5) {
                 let start = own.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
                 start.press(forDuration: 0.05, thenDragTo: own.coordinate(withNormalizedOffset: CGVector(dx: -0.6, dy: 0.5)))
