@@ -22,7 +22,7 @@ permissions:
 jobs:
   ios-simulator-tests:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Validate iOS privacy manifest

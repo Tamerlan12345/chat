@@ -274,6 +274,49 @@ final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
         return send(request) != nil
     }
 
+    /// A photo from `sender` to `recipient` (`POST /api/files/upload`, then an `image` message), so
+    /// the chat shows an image attachment the viewer can open.
+    func sendPhotoDirect(from sender: (username: String, password: String), to recipient: String) -> Bool {
+        guard
+            let login = post("/api/auth/login", ["username": sender.username, "password": sender.password], token: nil),
+            let token = login["token"] as? String,
+            let recipientId = userId(named: recipient, token: token)
+        else { return false }
+        let jpeg = StandPhotos.landscape()
+        let name = "Фото со стенда.jpg"
+        let boundary = "CentyChatUITest-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/api/files/upload"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"stand-photo.jpg\"\r\n".utf8))
+        body.append(Data("Content-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(jpeg)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+        guard let uploaded = send(request) as? [String: Any], let fileId = uploaded["id"] as? Int else { return false }
+        let message: [String: Any] = [
+            "text": name,
+            "type": "image",
+            "metadata": [
+                "file_id": fileId,
+                "file_name": name,
+                "mime_type": "image/jpeg",
+                "size": jpeg.count,
+                "width": 480,
+                "height": 320,
+            ],
+        ]
+        var post = URLRequest(url: baseURL.appendingPathComponent("/api/messages/direct/\(recipientId)"))
+        post.httpMethod = "POST"
+        post.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        post.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        post.httpBody = try? JSONSerialization.data(withJSONObject: message)
+        return send(post) != nil
+    }
+
     private func userId(named username: String, token: String) -> Int? {
         guard let users = get("/api/users", token: token) as? [[String: Any]] else { return nil }
         return users.first { ($0["username"] as? String) == username }?["id"] as? Int
@@ -311,6 +354,29 @@ final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
 
     private final class ResultBox: @unchecked Sendable {
         var value: Any?
+    }
+}
+
+/// A landscape picture for an image message (a sunset over hills): clearly a photo in the bubble.
+enum StandPhotos {
+    static func landscape() -> Data {
+        let size = CGSize(width: 480, height: 320)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.jpegData(withCompressionQuality: 0.85) { context in
+            let cg = context.cgContext
+            let sky = [UIColor(red: 0.98, green: 0.62, blue: 0.42, alpha: 1).cgColor, UIColor(red: 0.42, green: 0.36, blue: 0.78, alpha: 1).cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: sky, locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: CGPoint(x: 0, y: size.height), end: .zero, options: [])
+            }
+            UIColor(red: 1.0, green: 0.86, blue: 0.55, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 300, y: 120, width: 90, height: 90)).fill()
+            UIColor(red: 0.20, green: 0.30, blue: 0.36, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: -80, y: 210, width: 420, height: 220)).fill()
+            UIColor(red: 0.14, green: 0.22, blue: 0.28, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 180, y: 230, width: 400, height: 200)).fill()
+        }
     }
 }
 
