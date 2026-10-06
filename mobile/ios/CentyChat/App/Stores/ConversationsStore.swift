@@ -35,12 +35,12 @@ public final class ConversationsStore: RealtimeEventHandling {
 
     /// Dialogs with unread messages (the tab and segment counters).
     public var unreadDirectConversations: Int {
-        totalDirectUnread
+        directConversations.reduce(0) { $0 + ($1.unreadCount > 0 ? 1 : 0) }
     }
 
     /// Channels with unread messages.
     public var unreadChannelConversations: Int {
-        totalChannelUnread
+        channels.reduce(0) { $0 + ($1.unreadCount > 0 ? 1 : 0) }
     }
 
     public static func typingKey(for conversation: ConversationKey) -> String {

@@ -35,16 +35,24 @@ public final class NavigationRouter {
         path.removeAll()
     }
 
-    /// «Написать» from a card.
+    /// «Написать» from a card: the chat pushes onto this stack — unless the card was opened from
+    /// that very chat's header, then back is the chat (no second copy of it on the stack).
     public func open(chat: ChatRoute) {
-        push(.chat(chat))
+        if path.count >= 2, case .chat(let below) = path[path.count - 2],
+           below.type == chat.type, below.targetId == chat.targetId {
+            path.removeLast()
+        } else {
+            push(.chat(chat))
+        }
     }
 }
 
-/// The number on a tab.
+/// The number on a tab (anti-generated polish rule 6): conversations, not messages; none on the
+/// tab the user is on.
 enum TabBadge {
     static func text(_ count: Int, isSelected: Bool) -> String? {
-        count > 0 ? "\(count)" : nil
+        guard count > 0, !isSelected else { return nil }
+        return count > 99 ? "99+" : "\(count)"
     }
 }
 
@@ -57,6 +65,8 @@ public struct ChatRoute: Hashable, Sendable {
     public var status: UserStatus?
     /// Scroll to this message and pulse it (a search hit).
     public var highlightMessageId: Int64?
+    /// The inbox row's avatar is a zoom source for the push (iOS 18+).
+    public var zoomsFromRow: Bool
 
     public init(
         type: ConversationType,
@@ -64,7 +74,8 @@ public struct ChatRoute: Hashable, Sendable {
         title: String,
         avatarUrl: String? = nil,
         status: UserStatus? = nil,
-        highlightMessageId: Int64? = nil
+        highlightMessageId: Int64? = nil,
+        zoomsFromRow: Bool = false
     ) {
         self.type = type
         self.targetId = targetId
@@ -72,6 +83,7 @@ public struct ChatRoute: Hashable, Sendable {
         self.avatarUrl = avatarUrl
         self.status = status
         self.highlightMessageId = highlightMessageId
+        self.zoomsFromRow = zoomsFromRow
     }
 
     public static func direct(with person: Person) -> ChatRoute {

@@ -158,9 +158,20 @@ public final class PeopleModel {
     /// How many times the screen state was built (tests: once per change, not per read).
     @ObservationIgnored private(set) var presentations = 0
 
+    /// The last screen state and what it was built from: reused while nothing changed, since SwiftUI
+    /// reads `state` on every redraw and building it sorts, ranks and folds the tree.
+    @ObservationIgnored private var presented: (data: PeopleState, filters: PeopleFilters, state: PeopleUIState)?
+
     public var state: PeopleUIState {
+        let data = directory.state
+        let filters = self.filters
+        if let presented, presented.filters == filters, presented.data == data {
+            return presented.state
+        }
         presentations += 1
-        return Self.present(directory.state, filters)
+        let state = Self.present(data, filters)
+        presented = (data, filters, state)
+        return state
     }
 
     public func setQuery(_ query: String) {

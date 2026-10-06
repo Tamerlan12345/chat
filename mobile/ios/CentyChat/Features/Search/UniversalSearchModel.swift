@@ -111,15 +111,45 @@ public final class UniversalSearchModel {
     /// How many times the directory was ranked (tests: once per change, not per read).
     @ObservationIgnored private(set) var rankings = 0
 
+    /// The local results of the last query, reused while the query, the directory and the channels
+    /// are the same: SwiftUI reads `state` on every redraw, ranking is not that cheap.
+    private struct LocalResults {
+        let query: String
+        let people: [Person]
+        let channels: [Channel]
+        let ranked: [PersonMatch]
+        let channelMatches: [ChannelMatch]
+    }
+
+    @ObservationIgnored private var local: LocalResults?
+
+    private func localResults(for trimmed: String) -> LocalResults {
+        // Read every input (also for observation) before deciding to reuse.
+        let people = directory.state.people
+        let channels = self.channels()
+        if let local, local.query == trimmed, local.people == people, local.channels == channels {
+            return local
+        }
+        rankings += 1
+        let fresh = LocalResults(
+            query: trimmed,
+            people: people,
+            channels: channels,
+            ranked: PeopleSearch.rank(people, query: trimmed),
+            channelMatches: Self.matchChannels(channels, query: trimmed)
+        )
+        local = fresh
+        return fresh
+    }
+
     public var state: UniversalSearchState {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var state = UniversalSearchState(query: query, recents: recents.items)
         guard !trimmed.isEmpty else { return state }
-        let ranked = PeopleSearch.rank(directory.state.people, query: trimmed)
-        rankings += 1
-        state.people = Array(ranked.prefix(Self.maxPeople))
-        state.peopleTotal = ranked.count
-        state.channels = Array(Self.matchChannels(channels(), query: trimmed).prefix(Self.maxChannels))
+        let results = localResults(for: trimmed)
+        state.people = Array(results.ranked.prefix(Self.maxPeople))
+        state.peopleTotal = results.ranked.count
+        state.channels = Array(results.channelMatches.prefix(Self.maxChannels))
         state.messages = messages
         return state
     }
@@ -251,6 +281,10 @@ public final class UniversalSearchModel {
         } else {
             sender = message.senderName
         }
+        // The row's avatar is the author's: yours next to «Вы», the colleague's otherwise.
+        let author = isOwn ? directory.state.selfPerson : people.first(where: { $0.id == message.senderId })
+        let avatarName = author?.fullName ?? (sender.isEmpty ? title : sender)
+        let avatarUrl = author?.avatarUrl ?? (isOwn ? nil : message.senderAvatar)
         let (snippet, highlights) = Snippet.of(message.text, query: query)
         return MessageHit(
             message: message,
@@ -261,8 +295,8 @@ public final class UniversalSearchModel {
             isOwn: isOwn,
             snippet: snippet,
             highlights: highlights,
-            avatarName: title.isEmpty ? sender : title,
-            avatarUrl: isOwn ? nil : message.senderAvatar
+            avatarName: avatarName,
+            avatarUrl: avatarUrl
         )
     }
 
@@ -310,15 +344,36 @@ public enum Snippet {
 
 /// When a found message was written, for the result row: «09:32» today, «2 окт., 16:00» otherwise.
 /// Always Russian and 24-hour, like the inbox, whatever the device region.
+/// The formatters are built once per time zone and pattern (a row is drawn often while scrolling).
 public enum SearchHitTime {
     public static func text(for date: Date, now: Date = Date(), timeZone: TimeZone = .current) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.calendar = calendar
-        formatter.timeZone = timeZone
-        formatter.dateFormat = calendar.isDate(date, inSameDayAs: now) ? "HH:mm" : "d MMM, HH:mm"
-        return formatter.string(from: date)
+        let pattern = calendar.isDate(date, inSameDayAs: now) ? "HH:mm" : "d MMM, HH:mm"
+        return formatters.formatter(timeZone: timeZone, pattern: pattern).string(from: date)
+    }
+
+    private static let formatters = FormatterCache()
+
+    /// `DateFormatter` formats thread-safely; the cache itself is guarded by a lock.
+    private final class FormatterCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var formatters: [String: DateFormatter] = [:]
+
+        func formatter(timeZone: TimeZone, pattern: String) -> DateFormatter {
+            lock.lock()
+            defer { lock.unlock() }
+            let key = timeZone.identifier + "|" + pattern
+            if let formatter = formatters[key] { return formatter }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ru_RU")
+            formatter.calendar = calendar
+            formatter.timeZone = timeZone
+            formatter.dateFormat = pattern
+            formatters[key] = formatter
+            return formatter
+        }
     }
 }
