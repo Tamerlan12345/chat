@@ -123,6 +123,8 @@ private struct ChatDetailContent: View {
     /// The newest message is on screen (the list follows it); scrolled up, new ones are counted.
     @State private var isAtBottom = true
     @State private var newWhileAway = 0
+    /// The first page is on screen: later inserts animate ("the message lands"), it did not.
+    @State private var settled = false
     @FocusState private var composerFocused: Bool
 
     // Вложения
@@ -339,20 +341,37 @@ private struct ChatDetailContent: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .animation(CentyMotion.lift(reduceMotion: reduceMotion), value: rows.last?.id)
+                .animation(settled ? CentyMotion.lift(reduceMotion: reduceMotion) : nil, value: rows.last?.id)
                 .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText != nil)
             }
-            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                // Opens at the newest message (the list keeps no anchor of its own: a bottom
+                // anchor over a lazy, pinned stack could loop its layout).
+                if isFollowingBottom, let last = store.messages.last {
+                    proxy.scrollTo(last.rowID, anchor: .bottom)
+                    settled = true
+                }
+            }
             .onChange(of: store.messages.last?.rowID) { old, last in
                 // Opening at a search hit: the list waits for the history around it.
                 guard isFollowingBottom, let last else { return }
                 let isOwn = store.messages.last?.senderId == session.currentUser?.id
-                if isAtBottom || isOwn || old == nil {
-                    withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
-                        proxy.scrollTo(Self.bottomID, anchor: .bottom)
+                if old == nil {
+                    // The first page: straight to the end, then once more after the lazy rows
+                    // measured themselves.
+                    proxy.scrollTo(last, anchor: .bottom)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(80))
+                        proxy.scrollTo(last, anchor: .bottom)
+                        // From now on new messages land with the lift (not the first page).
+                        settled = true
                     }
-                    _ = last
+                    newWhileAway = 0
+                } else if isAtBottom || isOwn {
+                    withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
                     newWhileAway = 0
                 } else {
                     newWhileAway += 1
@@ -361,29 +380,33 @@ private struct ChatDetailContent: View {
             .onChange(of: scrollRequest) { _, request in
                 guard let request else { return }
                 proxy.scrollTo(request.rowID, anchor: request.pulses ? .center : .bottom)
+                settled = true
                 if request.pulses { pulse(request.rowID) }
             }
             .onChange(of: composerFocused) { _, focused in
                 // The keyboard rises: the conversation follows only if the reader was at the end.
-                guard focused, isAtBottom else { return }
+                guard focused, isAtBottom, let last = store.messages.last else { return }
                 withAnimation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion)) {
-                    proxy.scrollTo(Self.bottomID, anchor: .bottom)
+                    proxy.scrollTo(last.rowID, anchor: .bottom)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !isAtBottom && !rows.isEmpty {
-                    JumpToLatestPill(newCount: newWhileAway) {
-                        withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
-                            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+                ZStack {
+                    if !isAtBottom && !rows.isEmpty {
+                        JumpToLatestPill(newCount: newWhileAway) {
+                            withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
+                                proxy.scrollTo(Self.bottomID, anchor: .bottom)
+                            }
+                            newWhileAway = 0
                         }
-                        newWhileAway = 0
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 8)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
                     }
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 8)
-                    .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
                 }
+                // Only the pill animates, never the list.
+                .animation(CentyMotion.or(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion), value: isAtBottom)
             }
-            .animation(CentyMotion.or(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion), value: isAtBottom)
         }
     }
 

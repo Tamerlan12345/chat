@@ -79,16 +79,16 @@ public struct ProfileView: View {
 
                 if let user = session.currentUser {
                     Section {
-                        if let email = user.email {
+                        if let email = user.email, !email.isEmpty {
                             LabeledContent("Эл. почта", value: email)
                         }
-                        if let phone = user.phone {
+                        if let phone = user.phone, !phone.isEmpty {
                             LabeledContent("Телефон", value: phone)
                         }
-                        if let ext = user.extension {
+                        if let ext = user.extension, !ext.isEmpty {
                             LabeledContent("Внутренний номер", value: ext)
                         }
-                        if let company = user.company {
+                        if let company = user.company, !company.isEmpty {
                             LabeledContent("Компания", value: company)
                         }
                         if let uin = user.uin {

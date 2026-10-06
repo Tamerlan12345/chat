@@ -51,7 +51,19 @@ struct DesignGalleryView: View {
         case .messages: messages
         case .states: states
         case .controls: controls
-        case .call: call
+        case .call:
+            VStack(spacing: 16) {
+                // The real call stage with a canned outgoing call (the stand's peer never answers).
+                CallView()
+                    .frame(height: 620)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .onAppear {
+                        if container.calls.activeCall == nil {
+                            container.calls.activeCall = CallSession(peerId: 2, peerName: "Боб Тестов", state: .calling, direction: .outgoing)
+                        }
+                    }
+                call
+            }
         }
     }
 
@@ -106,7 +118,7 @@ struct DesignGalleryView: View {
             ConnectionBanner(phase: .problem(.offline))
             ConnectionBanner(phase: .problem(.reconnecting))
             ConnectionBanner(phase: .backOnline)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                 ForEach(SpotIllustration.allCases, id: \.self) { kind in
                     SpotIllustrationView(kind: kind)
                         .frame(maxWidth: .infinity)

@@ -226,6 +226,8 @@ private struct PeopleContent: View {
                             .padding(.vertical, 2)
                             .accessibilityAddTraits(.isHeader)
                     }
+                    // Hairlines only between rows, from the text edge: none above a letter.
+                    .listSectionSeparator(.hidden)
                 }
             }
             .listStyle(.plain)

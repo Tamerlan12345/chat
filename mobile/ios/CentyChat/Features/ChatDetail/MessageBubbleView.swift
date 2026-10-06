@@ -84,6 +84,8 @@ struct MessageBubbleView: View {
 
     private var foreground: Color { isCurrentUser ? CentyColors.accentText : CentyColors.textMain }
 
+    private var hasText: Bool { message.type == .text && !message.text.isEmpty }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
             if isCurrentUser { Spacer(minLength: 48) }
@@ -125,6 +127,18 @@ struct MessageBubbleView: View {
                 if let attachment {
                     if attachment.isImage {
                         AttachmentImageView(attachment: attachment, thumbnails: thumbnails, upload: message.localUpload, transfer: transfer)
+                            // A photo without a caption carries its time on itself: the bubble
+                            // hugs the picture instead of a full-width time row.
+                            .overlay(alignment: .bottomTrailing) {
+                                if showsMeta && !hasText {
+                                    meta
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Capsule().fill(Color.black.opacity(0.5)))
+                                        .environment(\.colorScheme, .dark)
+                                        .padding(10)
+                                }
+                            }
                             .onTapGesture { onOpenAttachment(attachment) }
                             .accessibilityAddTraits(.isButton)
                             .accessibilityLabel(Text("Фото \(attachment.name)"))
@@ -134,12 +148,12 @@ struct MessageBubbleView: View {
                             .onTapGesture { onOpenAttachment(attachment) }
                     }
                 }
-                if message.type == .text && !message.text.isEmpty {
+                if hasText {
                     textAndMeta
                         .padding(.horizontal, 12)
                         .padding(.top, message.replyQuote == nil ? 8 : 4)
                         .padding(.bottom, 8)
-                } else if showsMeta {
+                } else if showsMeta && attachment?.isImage != true {
                     meta
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .padding(.horizontal, 10)
@@ -227,7 +241,7 @@ struct MessageBubbleView: View {
             .font(.footnote)
             .foregroundStyle(CentyColors.dangerText)
             .multilineTextAlignment(.trailing)
-            HStack(spacing: 4) {
+            HStack(spacing: 16) {
                 Button("Повторить") { onAction(.retry, message) }
                     .buttonStyle(CentyLinkButtonStyle())
                     .accessibilityIdentifier("message-retry")

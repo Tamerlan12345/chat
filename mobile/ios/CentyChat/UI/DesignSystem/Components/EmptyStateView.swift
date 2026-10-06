@@ -93,11 +93,11 @@ struct SpotIllustrationView: View {
                 check.move(to: point(81, 73)); check.addLine(to: point(87, 79)); check.addLine(to: point(97, 67))
                 context.stroke(check, with: accent, style: line)
             case .offline:
-                var cloud = Path()
-                cloud.addEllipse(in: rect(22, 46, 36, 30))
-                cloud.addEllipse(in: rect(40, 30, 44, 42))
-                cloud.addEllipse(in: rect(66, 46, 34, 30))
-                cloud.addRoundedRect(in: rect(36, 56, 50, 20), cornerSize: CGSize(width: 6 * unit, height: 6 * unit))
+                // One outline: the lobes merged, no inner lines.
+                let cloud = Path(ellipseIn: rect(22, 46, 36, 30))
+                    .union(Path(ellipseIn: rect(40, 30, 44, 42)))
+                    .union(Path(ellipseIn: rect(66, 46, 34, 30)))
+                    .union(Path(roundedRect: rect(36, 56, 50, 20), cornerRadius: 6 * unit))
                 context.fill(cloud, with: soft)
                 context.stroke(cloud, with: graphite, style: line)
                 var link = Path()
