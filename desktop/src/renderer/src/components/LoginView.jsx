@@ -284,13 +284,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
   };
 
-  const companyName = serverInfo?.company_name || '';
   const allowRegistration = Boolean(serverInfo?.allow_registration);
 
   return (
     <div className="login-container">
       <div className="login-card login-card--split">
-        {/* Фирменная сторона: знак, название и компания. В узком окне она
+        {/* Фирменная сторона: знак и название. В узком окне она
             скрывается, и знак с названием переезжают в шапку формы. */}
         <aside className="login-brand">
           <svg className="login-brand-glyph" viewBox="0 0 880 880" aria-hidden="true" focusable="false">
@@ -298,14 +297,12 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
           </svg>
           <BrandLockup size={40} className="login-brand-lockup" />
           <p className="login-brand-lead">Корпоративный мессенджер для сотрудников</p>
-          {companyName && <p className="login-brand-company">{companyName}</p>}
         </aside>
 
         <div className="login-main">
           <div className="login-header">
             <div className="login-compact-brand">
               <BrandLockup size={36} />
-              {companyName && <p className="login-compact-company">{companyName}</p>}
             </div>
             <h1 className="login-title">
               {isRegister ? 'Регистрация сотрудника' : 'Вход в CentyChat'}
