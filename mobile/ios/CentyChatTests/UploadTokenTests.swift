@@ -25,6 +25,11 @@ final class UploadTokenTests: XCTestCase {
         APIClient(session: ScriptedHTTP.session(), keychain: keychain, environment: .test)
     }
 
+    /// Waits on a semaphore off the cooperative pool (a URL-loading thread holds the other end).
+    private static func block(on semaphore: DispatchSemaphore) {
+        semaphore.wait()
+    }
+
     private static let uploaded = #"{"id":42,"originalName":"a.pdf","storedFilename":"x","fileSize":6,"mimeType":"application/pdf","url":"/api/files/download/42"}"#
 
     func testAFileOfTheOldSessionNeverGoesUpWithTheNextAccountsToken() async throws {
@@ -97,7 +102,7 @@ final class UploadTokenTests: XCTestCase {
         let client = client()
 
         async let current = client.getCurrentUser()
-        await Task.detached { entered.wait() }.value
+        await Task.detached { Self.block(on: entered) }.value
         _ = try await client.changePassword(request: ChangePasswordRequest(oldPassword: "старый", newPassword: "Новый-пароль-1"))
         release.signal()
         let user2 = try await current
