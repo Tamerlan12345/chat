@@ -174,3 +174,27 @@ Tests: new `UILayerV2Tests.swift`; `UniversalSearchTests`, `PeopleStoreTests`, `
 | 5 | `08-call` was byte-identical to the chat screenshot. | The tour captures `08-call-*` only when `call-stage` is on screen; on the stand it never is, so there is no misleading file. | `a45208d/` has no `08-call-*`. The call stage evidence is `40-gallery-4-*` (the real `CallView`). The «Call» row in the per-screen table already points there. |
 
 **Observation for review.** In `51-ipad-split-chat-light` the iPad detail chat shows messages up to 10:38, with empty space below them. The sidebar's newest preview is 10:47 (from the motion recordings). Either the lazy list had not drawn its last rows 2 s after selection, or the first scroll to the end does not take in the detail column. The tab bar part of the finding is verified. This open-at-end question on iPad is not, and nothing tests it.
+
+## Fix round 2 — Stopped 2026-10-06 17:05 (owner stop time)
+
+The working tree is clean; nothing is left uncommitted. Head on `mobile/ios` is **bbd7480**, pushed.
+
+**RED run 37453755106 (7c47540, tests only).** Log: `task-10-fix2-red.log`.
+- iPhone: `UserPathQATests.swift:72` failed with «A long chat opens at its newest message, on screen». The bug is reproduced on a45208d.
+- `testSigningOutDuringAProblemIsNotAnnouncedAsBackOnline` failed: VoiceOver also heard «Снова в сети».
+- iPad: `testIPadSplitViewKeepsTheTabBar` **passed** on a45208d, so the iPad RED was not reproduced in that run.
+
+**Fix run 37453946352 (bbd7480) failed.** bbd7480 is an iOS 18 scroll position pinned to the bottom edge, re-scrolled on every content-height change until the reader drags. It also takes the end check from `visibleRect.maxY` alone and hides the banner on sign-out.
+- Passing: unit 492/492; iPhone UI 20 passed (2 skipped by design), including the new «newest message on screen» assertion; motion light, dark and Reduce Motion.
+- Failing: the iPad step, `ScreenshotTourTests.swift:258` «A long chat opens at its newest message, on screen».
+- No iPad chat screenshot exists, because the capture comes after the assertion.
+
+**Hypothesis.** Either is possible:
+- In the iPad detail column (landscape, inside a split view with `.id(selectedChat)`), `position.scrollTo(edge: .bottom)` lands under the composer, or short of the end. Possible causes: the bottom safe-area inset, or the column resizing after the last content-height change.
+- `isHittable` fails for an element that sits behind the composer bar.
+
+**Next step.**
+1. Capture the iPad screenshot before the assertion and print the newest bubble's frame against the window and composer frames.
+2. Add one deferred re-scroll to the bottom edge (about 250 ms after a request, while still pinned).
+3. If the edge ignores the bottom inset, scroll to the last row id with `.bottom` anchor through the same `ScrollPosition`.
+4. Re-run CI.
