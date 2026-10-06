@@ -82,9 +82,8 @@ final class UploadTokenTests: XCTestCase {
             switch request.url?.path {
             case "/api/auth/me":
                 if index == 0 {
-                    // Sent with T1; its 401 arrives only after the password change stored T2.
+                    // Sent with T1; its 401 is held back until the password change stored T2.
                     entered.withValue { $0 = true }
-                    release.wait()
                     return (401, #"{"error":"Токен отозван"}"#)
                 }
                 return (200, me)
@@ -94,6 +93,7 @@ final class UploadTokenTests: XCTestCase {
                 return (500, "{}")
             }
         }
+        ScriptedHTTP.hold("/api/auth/me", index: 0, until: release)
         let client = client()
 
         async let current = client.getCurrentUser()
@@ -129,7 +129,7 @@ final class UploadTokenTests: XCTestCase {
 final class ScriptedHTTP: URLProtocol {
     typealias Handler = @Sendable (URLRequest, Int) -> (Int, String)
 
-    private static let state = Locked<(requests: [URLRequest], handler: Handler?)>(([], nil))
+    private static let state = Locked<(requests: [URLRequest], handler: Handler?, holds: [String: DispatchSemaphore])>(([], nil, [:]))
 
     static var requests: [URLRequest] { state.value.requests }
 
@@ -139,7 +139,13 @@ final class ScriptedHTTP: URLProtocol {
     }
 
     static func reset() {
-        state.withValue { $0 = ([], nil) }
+        state.withValue { $0 = ([], nil, [:]) }
+    }
+
+    /// The answer to the `index`-th request of `path` is delivered only after `release` is signalled
+    /// (without blocking the URL-loading thread, so other requests go on meanwhile).
+    static func hold(_ path: String, index: Int, until release: DispatchSemaphore) {
+        state.withValue { $0.holds["\(path)#\(index)"] = release }
     }
 
     static func session() -> URLSession {
@@ -153,20 +159,47 @@ final class ScriptedHTTP: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let (index, handler) = Self.state.withValue { state -> (Int, Handler?) in
+        let (index, handler, hold) = Self.state.withValue { state -> (Int, Handler?, DispatchSemaphore?) in
             let samePath = state.requests.filter { $0.url?.path == request.url?.path }.count
             state.requests.append(request)
-            return (samePath, state.handler)
+            return (samePath, state.handler, state.holds["\(request.url?.path ?? "")#\(samePath)"])
         }
         guard let url = request.url, let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
         let (status, body) = handler(request, index)
-        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        pending = (HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!, Data(body.utf8))
+        guard let hold else {
+            deliverPending()
+            return
+        }
+        // Answer later, on the loading thread, once the test releases it.
+        let target = Delivery(proto: self, thread: Thread.current)
+        DispatchQueue.global().async {
+            hold.wait()
+            target.proto.perform(#selector(ScriptedHTTP.deliverPending), on: target.thread, with: nil, waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue])
+        }
+    }
+
+    private var pending: (HTTPURLResponse, Data)?
+
+    @objc private func deliverPending() {
+        guard let (response, data) = pending else { return }
+        pending = nil
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private final class Delivery: @unchecked Sendable {
+        let proto: ScriptedHTTP
+        let thread: Thread
+
+        init(proto: ScriptedHTTP, thread: Thread) {
+            self.proto = proto
+            self.thread = thread
+        }
     }
 
     override func stopLoading() {}
