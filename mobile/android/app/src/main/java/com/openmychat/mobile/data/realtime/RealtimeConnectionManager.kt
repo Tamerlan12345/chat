@@ -39,7 +39,7 @@ class RealtimeConnectionManager @Inject constructor(
      * Back is destroyed only after the reopened one was created, and its stop must not end the link.
      */
     @Synchronized
-    fun start(owner: Any? = null) {
+    fun start(owner: Any) {
         this.owner = owner
         if (job?.isActive == true) return
         job = scope.launch {
@@ -72,7 +72,7 @@ class RealtimeConnectionManager @Inject constructor(
 
     /** Ends the link when [owner] is the screen that started it last; a replaced screen's stop is ignored. */
     @Synchronized
-    fun stop(owner: Any? = null) {
+    fun stop(owner: Any) {
         if (owner !== this.owner) return
         this.owner = null
         job?.cancel()

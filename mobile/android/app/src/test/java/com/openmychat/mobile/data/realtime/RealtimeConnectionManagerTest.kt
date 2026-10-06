@@ -33,6 +33,8 @@ class RealtimeConnectionManagerTest {
     })
     private val scope = TestScope(UnconfinedTestDispatcher())
     private var verifications = 0
+    /** The activity's token in these tests. */
+    private val screen = Any()
     private val manager = RealtimeConnectionManager(
         sessionRepository = DefaultSessionRepository(sessionManager),
         webSocketClient = client,
@@ -42,7 +44,7 @@ class RealtimeConnectionManagerTest {
 
     @After
     fun tearDown() {
-        manager.stop()
+        manager.stop(screen)
         scope.coroutineContext[Job]?.cancel()
     }
 
@@ -55,7 +57,7 @@ class RealtimeConnectionManagerTest {
 
     @Test
     fun aRejectedTokenIsVerifiedOverHttpOnce() {
-        manager.start()
+        manager.start(screen)
 
         serverSays("""{"type":"auth_error","code":"INVALID_TOKEN","message":"bad"}""")
 
@@ -64,7 +66,7 @@ class RealtimeConnectionManagerTest {
 
     @Test
     fun transientRefusalsDoNotTriggerAVerification() {
-        manager.start()
+        manager.start(screen)
 
         serverSays("""{"type":"auth_error","code":"RATE_LIMITED","message":"later"}""")
 
@@ -73,7 +75,7 @@ class RealtimeConnectionManagerTest {
 
     @Test
     fun losingTheSessionDisconnects() {
-        manager.start()
+        manager.start(screen)
         assertEquals(ConnectionState.Connecting, client.connectionState.value)
 
         sessionManager.clearSession()
@@ -99,7 +101,6 @@ class RealtimeConnectionManagerTest {
 
     @Test
     fun theLastScreenLeavingStopsTheLink() {
-        val screen = Any()
         manager.start(screen)
 
         manager.stop(screen)
