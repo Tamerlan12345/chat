@@ -25,11 +25,6 @@ final class UploadTokenTests: XCTestCase {
         APIClient(session: ScriptedHTTP.session(), keychain: keychain, environment: .test)
     }
 
-    /// Waits on a semaphore off the cooperative pool (a URL-loading thread holds the other end).
-    private static func block(on semaphore: DispatchSemaphore) {
-        semaphore.wait()
-    }
-
     private static let uploaded = #"{"id":42,"originalName":"a.pdf","storedFilename":"x","fileSize":6,"mimeType":"application/pdf","url":"/api/files/download/42"}"#
 
     func testAFileOfTheOldSessionNeverGoesUpWithTheNextAccountsToken() async throws {
@@ -81,14 +76,14 @@ final class UploadTokenTests: XCTestCase {
         let me = try String(contentsOf: fixtures.appendingPathComponent("http/auth.me.json"), encoding: .utf8)
         let user = try XCTUnwrap(JSONValue.parse(me)?["user"])
         let changed = JSONValue.object(["success": true, "message": "Пароль изменён", "token": "token-T2", "user": user]).jsonText
-        let entered = DispatchSemaphore(value: 0)
+        let entered = Locked(false)
         let release = DispatchSemaphore(value: 0)
         ScriptedHTTP.handler = { request, index in
             switch request.url?.path {
             case "/api/auth/me":
                 if index == 0 {
                     // Sent with T1; its 401 arrives only after the password change stored T2.
-                    entered.signal()
+                    entered.withValue { $0 = true }
                     release.wait()
                     return (401, #"{"error":"Токен отозван"}"#)
                 }
@@ -102,7 +97,7 @@ final class UploadTokenTests: XCTestCase {
         let client = client()
 
         async let current = client.getCurrentUser()
-        await Task.detached { Self.block(on: entered) }.value
+        while !entered.value { try await Task.sleep(nanoseconds: 10_000_000) }
         _ = try await client.changePassword(request: ChangePasswordRequest(oldPassword: "старый", newPassword: "Новый-пароль-1"))
         release.signal()
         let user2 = try await current
