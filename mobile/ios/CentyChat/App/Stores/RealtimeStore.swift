@@ -14,6 +14,11 @@ public final class RealtimeStore {
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var audioTask: Task<Void, Never>?
     @ObservationIgnored private var stateTask: Task<Void, Never>?
+    @ObservationIgnored private var frameTask: Task<Void, Never>?
+    /// Called with every connection state (the file queue goes up only while connected).
+    @ObservationIgnored var onConnectionStateChange: (@MainActor (RealtimeConnectionState) -> Void)?
+    /// Receives every raw frame and every close, in order (the delivery engine).
+    @ObservationIgnored var deliverySink: (@MainActor (DeliveryLinkFrame) -> Void)?
     @ObservationIgnored private var lifecycle = 0
     /// The server sends `new_message` together with `direct_message`/`channel_message`
     /// for the same message; each message id is delivered to the stores once.
@@ -41,7 +46,14 @@ public final class RealtimeStore {
         let events = await repository.events()
         let states = await repository.connectionStates()
         let audio = await repository.incomingAudio()
+        let frames = await repository.deliveryFrames()
         guard generation == lifecycle else { return }
+
+        frameTask = Task { [weak self] in
+            for await frame in frames {
+                self?.deliverySink?(frame)
+            }
+        }
 
         eventTask = Task { [weak self] in
             for await event in events {
@@ -51,6 +63,7 @@ public final class RealtimeStore {
         stateTask = Task { [weak self] in
             for await state in states {
                 self?.connectionState = state
+                self?.onConnectionStateChange?(state)
             }
         }
         audioTask = Task { [weak self] in
@@ -69,12 +82,23 @@ public final class RealtimeStore {
         eventTask?.cancel()
         stateTask?.cancel()
         audioTask?.cancel()
+        frameTask?.cancel()
         eventTask = nil
         stateTask = nil
         audioTask = nil
+        frameTask = nil
         deliveredMessageIDs.removeAll()
         connectionState = .disconnected
+        onConnectionStateChange?(.disconnected)
+        // The subscription is gone before the socket's own close could arrive.
+        deliverySink?(.closed)
         await repository.disconnect()
+    }
+
+    /// A reconnect waiting for its backoff goes now (the network came back).
+    func reconnectNow() async {
+        guard isRunning else { return }
+        await repository.reconnectNow()
     }
 
     /// Opens a fresh socket so it authenticates with the current token.

@@ -1,27 +1,37 @@
 import Foundation
 import Observation
 
-/// Messages of one conversation.
+/// Messages of one conversation: what the delivery model holds for it (`delivery-state.md` §3.4),
+/// projected for the screen, and the user's actions on it — all through the delivery engine, the
+/// only writer of message frames.
 @Observable
 @MainActor
 public final class ChatStore: RealtimeEventHandling {
     public let conversation: ConversationKey
+    /// Server messages by id, then the queue by `seq`, then files still going up.
     public private(set) var messages: [Message] = []
     public private(set) var loadState: LoadState = .idle
-    public private(set) var isUploadingAttachment = false
     /// True while the chat screen is on screen.
     public private(set) var isVisible = false
+    /// The newest page was loaded once (the screen stops showing the spinner).
+    public private(set) var reachedStart = false
+    public private(set) var isLoadingOlder = false
+    /// A short notice for the open chat (a refused file, a delete the server did not take…).
+    public private(set) var notice: ChatNotice?
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let realtime: RealtimeStore
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private let conversations: ConversationsStore
+    @ObservationIgnored private let delivery: DeliveryRuntime
     /// Tells the server which chat this device shows (`viewing`).
     @ObservationIgnored private let presenceController: PresenceController?
+    @ObservationIgnored private let projection: ChatProjection
     @ObservationIgnored private var lastTypingSent = Date.distantPast
-    /// Optimistic messages awaiting the server echo; they use negative ids.
-    @ObservationIgnored private var pendingMessageIDs: [Int64] = []
-    @ObservationIgnored private var nextPendingID: Int64 = -1
+    @ObservationIgnored private var lastInput: ProjectionInput?
+    @ObservationIgnored private var noticeSerial = 0
+
+    static let pageSize = 50
 
     init(
         conversation: ConversationKey,
@@ -29,6 +39,7 @@ public final class ChatStore: RealtimeEventHandling {
         realtime: RealtimeStore,
         session: SessionStore,
         conversations: ConversationsStore,
+        delivery: DeliveryRuntime,
         presenceController: PresenceController? = nil
     ) {
         self.conversation = conversation
@@ -36,7 +47,59 @@ public final class ChatStore: RealtimeEventHandling {
         self.realtime = realtime
         self.session = session
         self.conversations = conversations
+        self.delivery = delivery
         self.presenceController = presenceController
+        self.projection = ChatProjection(conversationType: conversation.type, targetId: conversation.targetId)
+        rebuild()
+    }
+
+    private var key: String { conversation.deliveryKey }
+    private var engine: DeliveryEngine { delivery.engine }
+    private var uploads: AttachmentUploads { delivery.uploads }
+
+    // MARK: - Projection
+
+    /// What the projection of this chat depends on; unchanged input — nothing to rebuild.
+    private struct ProjectionInput: Equatable {
+        let me: Int64?
+        let owner: Int64?
+        let messages: [Msg]?
+        let outbox: [OutboxEntry]
+        let deleting: [Int64]
+        let uploads: [AttachmentUploads.Item]
+        let handedOver: [String]
+        let myName: String
+    }
+
+    /// Rebuilds `messages` when this chat's part of the model changed.
+    func rebuild() {
+        let state = engine.state
+        let me = session.currentUser?.id
+        let input = ProjectionInput(
+            me: me,
+            owner: state.me,
+            messages: state.messages[key],
+            outbox: state.outbox.filter { $0.conversation == key },
+            deleting: state.ops.filter { $0.op == DeliveryOp.delete }.compactMap(\.messageId),
+            uploads: uploads.items.filter { $0.pending.conversation == key && $0.pending.owner == me },
+            handedOver: uploads.handedOver.keys.sorted(),
+            myName: session.currentUser?.fullName ?? ""
+        )
+        guard input != lastInput else { return }
+        lastInput = input
+        guard let me else {
+            messages = []
+            return
+        }
+        let files = uploads.files
+        messages = projection.build(
+            state: state,
+            me: me,
+            myName: input.myName.isEmpty ? String(localized: "Я") : input.myName,
+            uploads: input.uploads,
+            handedOver: uploads.handedOver,
+            fileURL: { files.url($0) }
+        )
     }
 
     // MARK: - Visibility
@@ -58,18 +121,22 @@ public final class ChatStore: RealtimeEventHandling {
     /// The app moved between foreground and background while the screen may be shown.
     /// Coming back to an open chat marks what arrived meanwhile as read.
     public func sceneActivityChanged(isActive: Bool) async {
-        let wasVisible = presence.isVisible
         presence.sceneIsActive = isActive
         applyPresence()
-        if presence.isVisible && !wasVisible {
-            await markAsRead()
-        }
     }
 
-    /// While visible, incoming messages are marked read instead of raising the unread counter.
+    /// While visible, incoming messages are marked read instead of raising the unread counter
+    /// (`conversation_opened` / `conversation_closed`, §7.8).
     private func applyPresence() {
+        let wasVisible = isVisible
         isVisible = presence.isVisible
         conversations.setConversation(conversation, visible: isVisible)
+        if isVisible && !wasVisible {
+            conversations.markConversationRead(conversation)
+            engine.conversationOpened(key)
+        } else if !isVisible && wasVisible {
+            engine.conversationClosed(key)
+        }
         // The server hears only the open screen; foreground/background is the presence controller's.
         if presence.appeared {
             presenceController?.setViewing(conversation)
@@ -80,16 +147,29 @@ public final class ChatStore: RealtimeEventHandling {
 
     // MARK: - Loading
 
+    /// Ids of this chat's server messages in the model now.
+    private func serverIds() -> Set<Int64> {
+        Set((engine.state.messages[key] ?? []).map(\.id))
+    }
+
+    /// The newest page replaces what the model holds from that page on: messages the server no longer
+    /// returns there (hidden by a block, gone) are dropped; older history (a jump's window) stays.
     public func load() async {
         loadState = .loading
+        // The page is the account's that asked for it, whoever is signed in when it arrives.
+        let owner = session.currentUser?.id
         do {
-            let loaded = try await repository.messages(in: conversation, limit: 50, beforeId: nil)
-            // Keep what arrived over realtime (or is still pending) while the page was loading, and
-            // history loaded around a search hit, in order.
-            messages = Self.merged(page: loaded, into: messages)
+            let records = try await repository.messageRecords(in: conversation, limit: Self.pageSize, beforeId: nil)
+            let shownBefore = serverIds()
+            let oldest = records.compactMap { $0["id"]?.int64 }.min()
+            let stale = oldest.map { first in shownBefore.filter { $0 >= first } } ?? shownBefore
+            try await engine.replaceHistory(key, records: records, stale: stale, owner: owner)
+            if records.count < Self.pageSize { reachedStart = true }
+            rebuild()
             loadState = .loaded
         } catch {
             Log.chat.error("Loading messages failed: \(error.localizedDescription, privacy: .public)")
+            // What the model already holds stays on screen.
             loadState = .failed(error.userMessage)
         }
     }
@@ -99,17 +179,18 @@ public final class ChatStore: RealtimeEventHandling {
     public func loadAround(_ messageId: Int64) async -> Bool {
         // What is on screen is already continuous up to the newest message.
         if messages.contains(where: { $0.id == messageId }) { return true }
+        let owner = session.currentUser?.id
         let repository = self.repository
         let conversation = self.conversation
-        let window: [Message]?
+        let window: [MessageRecord]?
         do {
             window = try await HistoryWindow.around(
                 messageId,
                 before: { beforeId, limit in
-                    try await repository.messages(in: conversation, limit: limit, beforeId: beforeId)
+                    try await repository.messageRecords(in: conversation, limit: limit, beforeId: beforeId).compactMap(MessageRecord.init)
                 },
                 after: { afterId, limit in
-                    try await repository.messages(in: conversation, limit: limit, afterId: afterId)
+                    try await repository.messageRecords(in: conversation, limit: limit, afterId: afterId).compactMap(MessageRecord.init)
                 }
             )
         } catch {
@@ -118,26 +199,39 @@ public final class ChatStore: RealtimeEventHandling {
         }
         // Gone or too far back: the chat stays on its newest page, without a second stretch.
         guard let window, let newest = window.last?.id else { return false }
-        // The window replaces the history; what arrived meanwhile (newer ids, pending) stays.
-        let arrived = messages.filter { $0.id <= 0 || $0.id > newest }
-        messages = Self.merged(page: window, into: arrived)
+        // The window replaces the history up to its newest message; what arrived meanwhile stays.
+        let stale = serverIds().filter { $0 <= newest }
+        do {
+            try await engine.replaceHistory(key, records: window.map(\.json), stale: stale, owner: owner)
+        } catch {
+            Log.chat.error("Applying the history around a message failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        rebuild()
         return true
     }
 
-    /// Server history merged with what is on screen: one copy per id (the page wins), ordered by
-    /// id, optimistic messages (negative ids) last in the order they were sent.
-    static func merged(page: [Message], into current: [Message]) -> [Message] {
-        var seen = Set<Int64>()
-        var stored: [Message] = []
-        for message in page + current where message.id > 0 && seen.insert(message.id).inserted {
-            stored.append(message)
+    /// The page before the oldest loaded message (`beforeId`), when the reader reaches the top.
+    public func loadOlder() async {
+        guard !isLoadingOlder, !reachedStart, let oldest = engine.state.messages[key]?.first?.id else { return }
+        let owner = session.currentUser?.id
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        do {
+            let records = try await repository.messageRecords(in: conversation, limit: Self.pageSize, beforeId: oldest)
+            if records.count < Self.pageSize { reachedStart = true }
+            if !records.isEmpty { await engine.historyPage(records, owner: owner) }
+            rebuild()
+        } catch {
+            // The next scroll to the top asks again.
+            Log.chat.error("Loading older messages failed: \(error.localizedDescription, privacy: .public)")
         }
-        return stored.sorted { $0.id < $1.id } + current.filter { $0.id <= 0 }
     }
 
+    /// Marks the open chat read (the screen finished loading).
     public func markAsRead() async {
-        await realtime.send(.markRead(conversationType: conversation.type, targetId: conversation.targetId))
         conversations.markConversationRead(conversation)
+        if isVisible { engine.conversationOpened(key) }
     }
 
     // MARK: - Outgoing
@@ -148,163 +242,135 @@ public final class ChatStore: RealtimeEventHandling {
         await realtime.send(.typing(conversationType: conversation.type, targetId: conversation.targetId, isTyping: true))
     }
 
-    public func send(text rawText: String) async {
-        let text = rawText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        await realtime.send(.sendMessage(
-            conversationType: conversation.type,
-            targetId: conversation.targetId,
+    /// Queues a text message. True once it is on disk: only then may the composer clear (§7.4).
+    @discardableResult
+    public func send(text: String, replyTo: Message? = nil) async -> Bool {
+        // Whether the text is empty is the contract's decision (§6.1 whitespace set), not the platform's.
+        guard !text.isEmpty, let me = session.currentUser?.id else { return false }
+        let outcome = await engine.enqueue(
+            conversation: key,
             text: text,
-            msgType: .text
-        ))
-
-        // Оптимистичное добавление; заменяется эхом сервера с настоящим id
-        let pendingID = nextPendingID
-        nextPendingID -= 1
-        pendingMessageIDs.append(pendingID)
-        let pending = Message(
-            id: pendingID,
-            conversationType: conversation.type,
-            targetId: conversation.targetId,
-            senderId: session.currentUser?.id ?? 0,
-            text: text,
-            type: .text,
-            createdAt: Date(),
-            senderName: session.currentUser?.fullName ?? String(localized: "Я"),
-            deliveryStatus: .sent
+            replyToId: replyTo.flatMap { $0.id > 0 ? $0.id : nil },
+            owner: me
         )
-        messages.append(pending)
-    }
-
-    public func edit(_ message: Message, text rawText: String) async {
-        let text = rawText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        await realtime.send(.editMessage(messageId: message.id, text: text))
-        if let index = messages.firstIndex(where: { $0.id == message.id }) {
-            messages[index].text = text
-            messages[index].updatedAt = Date()
+        rebuild()
+        if !outcome.composerCleared {
+            show(DeliveryNotices.text(outcome.userError) ?? String(localized: "Сообщение не сохранено — попробуйте ещё раз"))
         }
+        return outcome.composerCleared
     }
 
-    public func delete(_ message: Message) async {
-        await realtime.send(.deleteMessage(messageId: message.id))
-        if let index = messages.firstIndex(where: { $0.id == message.id }) {
-            messages[index].isDeleted = true
-            messages[index].text = ""
+    /// Queues a picked file: a private copy first, then the upload, then the outbox. False — nothing
+    /// was queued (`notice` says why).
+    @discardableResult
+    func sendAttachment(_ picked: PickedAttachment, replyTo: Message? = nil) async -> Bool {
+        guard let me = session.currentUser?.id else { return false }
+        let policy = try? await repository.filePolicy()
+        let size: Int64? = switch picked.source {
+        case .data(let data): Int64(data.count)
+        case .file(let url): (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
         }
-    }
-
-    /// Uploads a JPEG and posts it as an image message. Returns false on failure.
-    public func sendImage(data: Data) async -> Bool {
-        isUploadingAttachment = true
-        defer { isUploadingAttachment = false }
-        do {
-            let fileName = "photo_\(Int(Date().timeIntervalSince1970)).jpg"
-            let upload = try await repository.uploadFile(data: data, fileName: fileName, mimeType: "image/jpeg")
-            let metadata = MessageMetadata(
-                fileId: upload.id,
-                fileName: upload.originalName,
-                fileSize: upload.fileSize,
-                mimeType: upload.mimeType,
-                url: upload.url
-            )
-            await realtime.send(.sendMessage(
-                conversationType: conversation.type,
-                targetId: conversation.targetId,
-                text: fileName,
-                msgType: .image,
-                metadata: metadata
-            ))
-            return true
-        } catch {
-            Log.chat.error("Photo upload failed: \(error.localizedDescription, privacy: .public)")
+        if let problem = AttachmentRules.problem(name: picked.name, size: size, policy: policy) {
+            show(problem)
             return false
         }
+        let accepted = await uploads.add(conversation: key, picked: picked, replyToId: replyTo.flatMap { $0.id > 0 ? $0.id : nil }, owner: me)
+        rebuild()
+        if !accepted { show(String(localized: "Не удалось подготовить файл к отправке")) }
+        return accepted
+    }
+
+    /// A new text for an own message: a confirmed one through `ops` (shown once the server confirms),
+    /// an unsent one at once (§7.10).
+    @discardableResult
+    public func edit(_ message: Message, text: String) async -> Bool {
+        guard !text.isEmpty, text != message.text else { return false }
+        let outcome: DeliveryEngine.Outcome
+        if message.sendState != nil, let clientMsgId = message.clientMsgId {
+            outcome = await engine.edit(clientMsgId: clientMsgId, text: text)
+        } else {
+            outcome = await engine.edit(messageId: message.id, text: text)
+        }
+        rebuild()
+        if let error = outcome.userError { show(DeliveryNotices.text(error) ?? String(localized: "Сообщение нельзя изменить")) }
+        return outcome.persisted && outcome.userError == nil
+    }
+
+    /// «Удалить»: a confirmed own message is deleted (hidden until the tombstone), an unsent one is
+    /// withdrawn and never sent later; an administrator deleting someone else's message asks the
+    /// server directly.
+    public func delete(_ message: Message) async {
+        if message.sendState != nil, let clientMsgId = message.clientMsgId {
+            if engine.state.outbox.contains(where: { $0.clientMsgId == clientMsgId }) {
+                _ = await engine.cancel(clientMsgId: clientMsgId)
+            } else {
+                await uploads.cancel(clientMsgId)
+            }
+        } else if message.senderId == session.currentUser?.id {
+            let outcome = await engine.delete(messageId: message.id)
+            if let error = outcome.userError { show(DeliveryNotices.text(error) ?? String(localized: "Сообщение нельзя удалить")) }
+        } else {
+            // Moderation of another person's message is outside the delivery model (§6.3 `delete`).
+            await realtime.send(.deleteMessage(messageId: message.id))
+        }
+        rebuild()
+    }
+
+    /// «Повторить» on a message that was not sent.
+    public func retry(_ message: Message) async {
+        guard message.sendState == .failed, let clientMsgId = message.clientMsgId else { return }
+        if engine.state.outbox.contains(where: { $0.clientMsgId == clientMsgId }) {
+            _ = await engine.retry(clientMsgId: clientMsgId)
+        } else {
+            uploads.retry(clientMsgId)
+        }
+        rebuild()
+    }
+
+    /// A delivery `user_error` or a refused file of this chat, while it is on screen.
+    func deliveryNotice(code: String) {
+        guard isVisible, let text = DeliveryNotices.text(code) else { return }
+        show(text)
+    }
+
+    func uploadNotice(_ notice: AttachmentUploads.Notice) {
+        guard isVisible, notice.conversation == key else { return }
+        show(notice.text)
+    }
+
+    private func show(_ text: String) {
+        noticeSerial += 1
+        notice = ChatNotice(text: text, serial: noticeSerial)
+    }
+
+    public func dismissNotice() {
+        notice = nil
     }
 
     // MARK: - Realtime
 
-    func handle(_ event: WSServerEvent) {
-        switch event {
-        case .newMessage(let message, _):
-            guard belongsHere(message) else { return }
-            let isNewIncoming = receive(message) && message.senderId != session.currentUser?.id
-            if isNewIncoming && isVisible {
-                markIncomingRead()
-            }
-        case .messageStatusUpdated(let messageId, let status, _, _):
-            updateMessage(id: messageId) { $0.deliveryStatus = status }
-        case .messagesRead(let byUserId, let messageIds):
-            guard conversation == ConversationKey(type: .direct, targetId: byUserId) else { return }
-            let readIDs = Set(messageIds)
-            for index in messages.indices where readIDs.contains(messages[index].id) {
-                messages[index].deliveryStatus = .read
-            }
-        case .messageUpdated(let messageId, let text, let updatedAt):
-            updateMessage(id: messageId) {
-                $0.text = text
-                $0.updatedAt = updatedAt ?? Date()
-            }
-        case .messageDeleted(let messageId, _, _):
-            // targetId in this event is the stored target, not relative to us: match by id only.
-            updateMessage(id: messageId) {
-                $0.isDeleted = true
-                $0.text = ""
-                $0.metadata = nil
-            }
-        default:
-            break
-        }
-    }
+    /// Message frames reach the chat through the delivery engine; nothing to do here.
+    func handle(_ event: WSServerEvent) {}
+}
 
-    private func belongsHere(_ message: Message) -> Bool {
-        guard message.conversationType == conversation.type else { return false }
-        switch conversation.type {
-        case .channel:
-            return message.targetId == conversation.targetId
-        case .direct:
-            let partner = message.senderId == session.currentUser?.id ? message.targetId : message.senderId
-            return partner == conversation.targetId
-        }
-    }
+/// A short message for the open chat.
+public struct ChatNotice: Equatable, Sendable {
+    public let text: String
+    public let serial: Int
+}
 
-    private func markIncomingRead() {
-        conversations.markConversationRead(conversation)
-        let conversation = self.conversation
-        let realtime = self.realtime
-        Task {
-            await realtime.send(.markRead(conversationType: conversation.type, targetId: conversation.targetId))
+/// The Russian text of a delivery `user_error` code (`delivery-state.md` §5).
+enum DeliveryNotices {
+    static func text(_ code: String?) -> String? {
+        switch code {
+        case nil: return nil
+        case "EMPTY_TEXT": return String(localized: "Нельзя отправить пустое сообщение")
+        case "TEXT_TOO_LONG": return String(localized: "Сообщение длиннее 16 000 символов")
+        case "NOT_EDITABLE", "EDIT_REJECTED": return String(localized: "Сообщение нельзя изменить")
+        case "NOT_DELETABLE", "DELETE_REJECTED": return String(localized: "Сообщение нельзя удалить")
+        case "DELETE_NOT_CONFIRMED": return String(localized: "Сервер не подтвердил удаление — сообщение снова видно")
+        default: return String(localized: "Сообщение не сохранено — попробуйте ещё раз")
         }
-    }
-
-    /// Inserts or updates a message. Returns true when it was not shown before.
-    @discardableResult
-    private func receive(_ incoming: Message) -> Bool {
-        var message = incoming
-        let isOwn = message.senderId == session.currentUser?.id
-        if isOwn, message.deliveryStatus == nil {
-            // Live frames carry no delivery status; the server has stored the message.
-            message.deliveryStatus = .sent
-        }
-        if let index = messages.firstIndex(where: { $0.id == message.id }) {
-            messages[index] = message
-            return false
-        }
-        if isOwn,
-           let index = messages.firstIndex(where: {
-               pendingMessageIDs.contains($0.id) && $0.text == message.text && $0.type == message.type
-           }) {
-            pendingMessageIDs.removeAll { $0 == messages[index].id }
-            messages[index] = message
-            return false
-        }
-        messages.append(message)
-        return true
-    }
-
-    private func updateMessage(id: Int64, _ change: (inout Message) -> Void) {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        change(&messages[index])
     }
 }
 
@@ -316,8 +382,8 @@ struct ChatScreenPresence: Equatable {
     var isVisible: Bool { appeared && sceneIsActive }
 }
 
-/// Creates and caches one `ChatStore` per conversation for the current session
-/// and routes realtime events to them.
+/// Creates and caches one `ChatStore` per conversation for the current session, and tells them when
+/// the delivery model or the file queue changed.
 @MainActor
 public final class ChatRegistry: RealtimeEventHandling {
     private var stores: [ConversationKey: ChatStore] = [:]
@@ -344,6 +410,25 @@ public final class ChatRegistry: RealtimeEventHandling {
         stores = [:]
     }
 
+    /// The delivery model or the file queue changed: each open chat rebuilds its part.
+    func modelChanged() {
+        for store in stores.values {
+            store.rebuild()
+        }
+    }
+
+    func deliveryNotice(code: String) {
+        for store in stores.values {
+            store.deliveryNotice(code: code)
+        }
+    }
+
+    func uploadNotice(_ notice: AttachmentUploads.Notice) {
+        for store in stores.values {
+            store.uploadNotice(notice)
+        }
+    }
+
     /// Refreshes conversations that were already open, e.g. after a reconnect.
     func reloadLoaded() async {
         for store in stores.values where store.loadState == .loaded {
@@ -351,9 +436,5 @@ public final class ChatRegistry: RealtimeEventHandling {
         }
     }
 
-    func handle(_ event: WSServerEvent) {
-        for store in stores.values {
-            store.handle(event)
-        }
-    }
+    func handle(_ event: WSServerEvent) {}
 }

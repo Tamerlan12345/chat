@@ -254,6 +254,7 @@ struct BlockedUsersView: View {
 /// Re-asks for the password, then a final confirmation, then deletes the account.
 struct DeleteAccountView: View {
     @Environment(AccountStore.self) private var account
+    @Environment(AppContainer.self) private var container
     @Environment(\.dismiss) private var dismiss
 
     @State private var password = ""
@@ -346,7 +347,11 @@ struct DeleteAccountView: View {
                 Button("Отмена", role: .cancel) {}
                 Button("Удалить", role: .destructive) { delete() }
             } message: {
-                Text("Это действие нельзя отменить.")
+                if let unsent = UnsentNotice.text(container.delivery.unsentCount) {
+                    Text(verbatim: unsent + ". " + String(localized: "Это действие нельзя отменить."))
+                } else {
+                    Text("Это действие нельзя отменить.")
+                }
             }
         }
         .interactiveDismissDisabled(account.isDeleting)

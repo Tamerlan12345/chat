@@ -234,6 +234,25 @@ final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
         return post("/api/messages/direct/\(recipientId)", ["text": text], token: token) != nil
     }
 
+    /// The dialog between `user` and `peer` as `user` sees it (`GET /api/messages`, newest 100).
+    func directMessages(as user: (username: String, password: String), with peer: String) -> [[String: Any]]? {
+        guard
+            let login = post("/api/auth/login", ["username": user.username, "password": user.password], token: nil),
+            let token = login["token"] as? String,
+            let peerId = userId(named: peer, token: token)
+        else { return nil }
+        var components = URLComponents(url: baseURL.appendingPathComponent("/api/messages"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "conversationType", value: "direct"),
+            URLQueryItem(name: "targetId", value: String(peerId)),
+            URLQueryItem(name: "limit", value: "100"),
+        ]
+        guard let url = components?.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return send(request) as? [[String: Any]]
+    }
+
     /// `PUT /api/users/avatar` (multipart, field `file`) as `user`: the stand's seed has no photos.
     func uploadAvatar(as user: (username: String, password: String), jpeg: Data) -> Bool {
         guard

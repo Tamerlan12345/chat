@@ -21,6 +21,32 @@ public enum DeliveryStatus: String, Codable, Sendable, CaseIterable {
     case read
 }
 
+/// Where an own message stands before the server confirmed it (`delivery-state.md` §3.4).
+public enum SendState: String, Sendable, Equatable, Hashable {
+    /// In the queue («Ожидает отправки»).
+    case queued
+    /// On its way («Отправляется»).
+    case sending
+    /// Not sent («Не отправлено», «Повторить» / «Удалить»).
+    case failed
+}
+
+/// The quoted original of a reply, as the desktop shows it (found among the loaded messages).
+public struct ReplyQuote: Sendable, Equatable, Hashable {
+    public let senderName: String
+    public let text: String
+}
+
+/// A file of this device on its way to the server: drawn from the local copy.
+public struct LocalUpload: Sendable, Equatable, Hashable {
+    public let fileURL: URL
+    public let name: String
+    public let size: Int64?
+    public let mimeType: String?
+    /// 0…1 while it is going up.
+    public let progress: Double?
+}
+
 /// Метаданные вложения сообщения
 public struct MessageMetadata: Codable, Sendable, Equatable, Hashable {
     public var fileId: Int64?
@@ -71,7 +97,27 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
     public var senderAvatar: String?
     public var senderDepartment: String?
     public var fileOriginalName: String?
+    public var fileWidth: Int?
+    public var fileHeight: Int?
     public var deliveryStatus: DeliveryStatus?
+    /// The idempotency key the message was sent with (`client_msg_id`); the row's identity.
+    public var clientMsgId: String?
+    /// Set only for an own message the server has not confirmed yet.
+    public var sendState: SendState?
+    /// Why a failed message was not sent (the server's words), for the bubble.
+    public var failureReason: String?
+    /// The quoted original of a reply.
+    public var replyQuote: ReplyQuote?
+    /// The local file of an attachment still on its way.
+    public var localUpload: LocalUpload?
+    /// The raw `metadata` of an unsent attachment (`{ file_id, size, mimeType, url, … }`).
+    public var pendingMetadata: JSONValue?
+
+    /// The row's identity: `client_msg_id` when there is one, so a bubble does not jump when the
+    /// server's record replaces the local one (`delivery-state.md` §3.4).
+    public var rowID: String {
+        clientMsgId.map { "key:\($0)" } ?? "id:\(id)"
+    }
     
     public init(
         id: Int64,
@@ -91,7 +137,9 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         senderAvatar: String? = nil,
         senderDepartment: String? = nil,
         fileOriginalName: String? = nil,
-        deliveryStatus: DeliveryStatus? = nil
+        deliveryStatus: DeliveryStatus? = nil,
+        clientMsgId: String? = nil,
+        sendState: SendState? = nil
     ) {
         self.id = id
         self.conversationType = conversationType
@@ -111,6 +159,8 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         self.senderDepartment = senderDepartment
         self.fileOriginalName = fileOriginalName
         self.deliveryStatus = deliveryStatus
+        self.clientMsgId = clientMsgId
+        self.sendState = sendState
     }
     
     enum CodingKeys: String, CodingKey {
@@ -131,7 +181,10 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         case senderAvatar = "sender_avatar"
         case senderDepartment = "sender_department"
         case fileOriginalName = "file_original_name"
+        case fileWidth = "file_width"
+        case fileHeight = "file_height"
         case deliveryStatus = "delivery_status"
+        case clientMsgId = "client_msg_id"
     }
     
     public init(from decoder: Decoder) throws {
@@ -179,7 +232,10 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         self.senderAvatar = try container.decodeIfPresent(String.self, forKey: .senderAvatar)
         self.senderDepartment = try container.decodeIfPresent(String.self, forKey: .senderDepartment)
         self.fileOriginalName = try container.decodeIfPresent(String.self, forKey: .fileOriginalName)
-        self.deliveryStatus = try container.decodeIfPresent(DeliveryStatus.self, forKey: .deliveryStatus)
+        self.fileWidth = try? container.decodeIfPresent(Int.self, forKey: .fileWidth)
+        self.fileHeight = try? container.decodeIfPresent(Int.self, forKey: .fileHeight)
+        self.deliveryStatus = try? container.decodeIfPresent(DeliveryStatus.self, forKey: .deliveryStatus)
+        self.clientMsgId = try? container.decodeIfPresent(String.self, forKey: .clientMsgId)
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -203,6 +259,9 @@ public struct Message: Identifiable, Codable, Sendable, Equatable, Hashable {
         try container.encodeIfPresent(senderAvatar, forKey: .senderAvatar)
         try container.encodeIfPresent(senderDepartment, forKey: .senderDepartment)
         try container.encodeIfPresent(fileOriginalName, forKey: .fileOriginalName)
+        try container.encodeIfPresent(fileWidth, forKey: .fileWidth)
+        try container.encodeIfPresent(fileHeight, forKey: .fileHeight)
         try container.encodeIfPresent(deliveryStatus, forKey: .deliveryStatus)
+        try container.encodeIfPresent(clientMsgId, forKey: .clientMsgId)
     }
 }

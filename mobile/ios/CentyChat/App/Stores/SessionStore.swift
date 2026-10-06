@@ -33,6 +33,15 @@ protocol SessionLifecycleDelegate: AnyObject {
     /// turned out unusable at launch): forget everything it left on this device. Awaited before
     /// the login screen appears, so a new sign-in never interleaves with the wipe.
     func sessionDidEnd() async
+    /// An explicit sign-out the user confirmed: the account's unsent messages are deleted first. Throws
+    /// when they could not be deleted — the sign-out is then cancelled (nothing is left half-done).
+    func sessionWillSignOut() async throws
+    /// The account's data must not outlive it (the account was deleted, or the stored credentials
+    /// were another server's): its unsent messages are deleted, best effort.
+    func sessionDidDiscardAccount() async
+    /// The sign-out did not happen after all (the unsent messages could not be deleted, or the
+    /// server refused it): the account takes its queue back.
+    func sessionSignOutAborted() async
 }
 
 /// Authentication and the session lifecycle against the build's fixed server.
@@ -105,6 +114,7 @@ public final class SessionStore: RealtimeEventHandling {
         }
         if binding == .wiped {
             // Another server's session: what it left on this device goes with it.
+            await delegate?.sessionDidDiscardAccount()
             await delegate?.sessionDidEnd()
         }
         if phase == .launching && !auth.hasStoredToken && !auth.hasDeviceSecret {
@@ -255,6 +265,7 @@ public final class SessionStore: RealtimeEventHandling {
     /// The server deleted the account: forget everything stored here and return to login.
     func finishAccountDeletion() async {
         clearStoredCredentials()
+        await delegate?.sessionDidDiscardAccount()
         await endSession()
     }
 
@@ -275,14 +286,34 @@ public final class SessionStore: RealtimeEventHandling {
     // MARK: - Logout
 
     public func logout() async {
+        // The socket goes first: none of its frames may reach the model once it is emptied.
+        await realtime.stop()
+        do {
+            // The user agreed to lose what was not sent; if it cannot be deleted, nothing is signed out.
+            try await delegate?.sessionWillSignOut()
+        } catch {
+            // Nothing was deleted (the discard is all or nothing); the account takes its queue back.
+            errorMessage = String(localized: "Не удалось удалить неотправленные сообщения — выход отменён")
+            await delegate?.sessionSignOutAborted()
+            await resumeAfterAbortedSignOut()
+            return
+        }
         do {
             try await auth.logout()
         } catch {
             // Fail closed: the token is still stored, so the session stays as it is.
             errorMessage = error.userMessage
+            await delegate?.sessionSignOutAborted()
+            await resumeAfterAbortedSignOut()
             return
         }
         await endSession()
+    }
+
+    private func resumeAfterAbortedSignOut() async {
+        guard phase == .authenticated else { return }
+        hasRealtimeAuthenticated = false
+        await realtime.start()
     }
 
     private func endSession() async {

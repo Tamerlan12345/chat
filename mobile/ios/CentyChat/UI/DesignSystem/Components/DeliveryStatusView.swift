@@ -1,42 +1,57 @@
 import SwiftUI
 
-/// Индикатор статуса доставки и прочтения сообщения
-public struct DeliveryStatusView: View {
-    public let status: DeliveryStatus?
-    public var isOutgoing: Bool
-    
-    public init(status: DeliveryStatus?, isOutgoing: Bool = true) {
-        self.status = status
-        self.isOutgoing = isOutgoing
+/// The state of an own message (`delivery-state.md` §3.4): queued (clock), sending (arrow), failed
+/// (exclamation), sent (one check), delivered (two checks), read (two bright checks). On the brand
+/// bubble, so it is drawn in white tones; failed stands out in a badge.
+struct DeliveryStatusView: View {
+    let mark: DeliveryMark
+
+    init(mark: DeliveryMark) {
+        self.mark = mark
     }
-    
-    public var body: some View {
-        guard isOutgoing, let status = status else {
-            return AnyView(EmptyView())
-        }
-        
-        return AnyView(
-            HStack(spacing: -3) {
-                switch status {
-                case .sending:
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.8))
-                    
-                case .sent, .delivered:
+
+    var body: some View {
+        Group {
+            switch mark {
+            case .queued:
+                Image(systemName: "clock")
+                    .foregroundStyle(.white.opacity(0.8))
+            case .sending:
+                Image(systemName: "arrow.up.circle")
+                    .foregroundStyle(.white.opacity(0.8))
+            case .failed:
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.white)
+            case .sent:
+                Image(systemName: "checkmark")
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white.opacity(0.85))
+            case .delivered, .read:
+                HStack(spacing: -4) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.85))
-                    
-                case .read:
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white)
                 }
+                .fontWeight(.bold)
+                .foregroundStyle(mark == .read ? .white : .white.opacity(0.7))
             }
-        )
+        }
+        .font(.system(size: 10))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(mark.label))
+        .accessibilityIdentifier("delivery-mark")
+    }
+}
+
+extension DeliveryMark {
+    /// What VoiceOver says and the UI tests read.
+    var label: LocalizedStringKey {
+        switch self {
+        case .queued: "Ожидает отправки"
+        case .sending: "Отправляется"
+        case .failed: "Не отправлено"
+        case .sent: "Отправлено"
+        case .delivered: "Доставлено"
+        case .read: "Прочитано"
+        }
     }
 }

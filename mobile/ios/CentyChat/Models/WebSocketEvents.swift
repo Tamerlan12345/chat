@@ -55,10 +55,10 @@ public enum WSClientMessage: Sendable {
     case viewing(ConversationKey?)
     /// Presence with the custom status always present: nil clears it (`customStatus: null`).
     case presenceWithCustomStatus(state: PresenceState, customStatus: String?)
-    case sendMessage(conversationType: ConversationType, targetId: Int64, text: String, msgType: MessageType = .text, replyToId: Int64? = nil, metadata: MessageMetadata? = nil)
-    case editMessage(messageId: Int64, text: String)
+    // Messages, edits, deletions of one's own messages and read receipts are written only by the
+    // delivery engine (`DeliveryEngine`, raw contract frames). This one remains for a moderator
+    // deleting someone else's message, which the delivery model does not cover.
     case deleteMessage(messageId: Int64)
-    case markRead(conversationType: ConversationType, targetId: Int64)
     case typing(conversationType: ConversationType, targetId: Int64, isTyping: Bool)
     case presence(state: String, customStatus: String?)
     case setDnd(enabled: Bool, customStatus: String?)
@@ -90,35 +90,8 @@ public enum WSClientMessage: Sendable {
         case .presenceWithCustomStatus(let state, let customStatus):
             dict = ["type": "presence", "state": state.rawValue, "customStatus": customStatus.map { $0 as Any } ?? NSNull()]
 
-        case .sendMessage(let convType, let targetId, let text, let msgType, let replyToId, let metadata):
-            dict = [
-                "type": "send_message",
-                "conversationType": convType.rawValue,
-                "targetId": targetId,
-                "text": text,
-                "msgType": msgType.rawValue
-            ]
-            if let replyToId = replyToId {
-                dict["replyToId"] = replyToId
-            }
-            if let metadata = metadata {
-                var metaDict: [String: Any] = [:]
-                if let fId = metadata.fileId { metaDict["file_id"] = fId }
-                if let fName = metadata.fileName { metaDict["file_name"] = fName }
-                if let fSize = metadata.fileSize { metaDict["size"] = fSize }
-                if let fMime = metadata.mimeType { metaDict["mime_type"] = fMime }
-                if let fUrl = metadata.url { metaDict["url"] = fUrl }
-                dict["metadata"] = metaDict
-            }
-            
-        case .editMessage(let messageId, let text):
-            dict = ["type": "edit_message", "messageId": messageId, "text": text]
-            
         case .deleteMessage(let messageId):
             dict = ["type": "delete_message", "messageId": messageId]
-            
-        case .markRead(let convType, let targetId):
-            dict = ["type": "mark_read", "conversationType": convType.rawValue, "targetId": targetId]
             
         case .typing(let convType, let targetId, let isTyping):
             dict = ["type": "typing", "conversationType": convType.rawValue, "targetId": targetId, "isTyping": isTyping]

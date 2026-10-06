@@ -29,6 +29,7 @@ public struct RootView: View {
             }
         }
         .task {
+            container.startNetworkWatcher()
             await session.bootstrap()
         }
         // App on screen — «В сети», in the background — «Отошёл»; .inactive is transient.
@@ -36,6 +37,8 @@ public struct RootView: View {
             switch phase {
             case .active:
                 container.presence.sceneDidBecomeActive()
+                // Without a background task, the queue goes out when the app comes back.
+                Task { await container.appBecameActive() }
             case .background:
                 container.presence.sceneDidEnterBackground()
             default:

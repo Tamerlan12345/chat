@@ -25,7 +25,7 @@ else
   failures=$((failures + 1))
 fi
 
-for forbidden in "$override" "-centychat-server-url" "CentyChatServerURL" "CENTYCHAT_UI_TESTING" "-reset-secure-state" "-centychat-color-scheme"; do
+for forbidden in "$override" "-centychat-server-url" "CentyChatServerURL" "CENTYCHAT_UI_TESTING" "-reset-secure-state" "-centychat-color-scheme" "-centychat-ui-delivery-offline"; do
   if contains "$forbidden"; then
     echo "FAIL: Release binary contains the Debug override point '$forbidden'" >&2
     failures=$((failures + 1))
