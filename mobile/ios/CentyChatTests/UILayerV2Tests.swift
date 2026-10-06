@@ -89,6 +89,20 @@ final class ConnectionStatusTests: XCTestCase {
     }
 }
 
+/// «At the end of the chat» is inset-aware: the bars above the list are a top inset larger than the
+/// tolerance, so a check on offset + container alone never sees the end of a long history.
+final class ChatScrollEndTests: XCTestCase {
+    func testTheEndBehindATallTopInsetCountsAsTheEnd() {
+        // 2 000-pt history, 640-pt container under a 140-pt top inset, scrolled to the end.
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 1_860, offsetY: 1_220, containerHeight: 640, topInset: 140, contentHeight: 2_000))
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 2_000, offsetY: 1_360, containerHeight: 640, topInset: 0, contentHeight: 2_000))
+    }
+
+    func testScrolledUpIsNotTheEnd() {
+        XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_500, offsetY: 720, containerHeight: 640, topInset: 140, contentHeight: 2_000))
+    }
+}
+
 /// Section stagger in the search and in «Отделы»: capped, and none with Reduce Motion.
 final class StaggerTests: XCTestCase {
     func testDepartmentChildrenStaggerTwentyMillisecondsUpToSix() {

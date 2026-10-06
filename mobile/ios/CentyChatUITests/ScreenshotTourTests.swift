@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Captures review evidence (Simulator screenshots) of the login screen and, when the dev
@@ -206,6 +207,54 @@ final class ScreenshotTourTests: XCTestCase {
         }
     }
 
+    /// iPad (regular width): the inbox and the chat side by side, and the tab bar stays while a chat
+    /// is selected (a chat hides it only when pushed full screen on iPhone). Runs on the iPad
+    /// simulator only (its own CI step); skipped on iPhone.
+    func testIPadSplitViewKeepsTheTabBar() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("iPad only.")
+        }
+        guard let standURL else {
+            throw XCTSkip("The dev stand is not running (CENTYCHAT_DEV_STAND_URL is not set).")
+        }
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer {
+            XCUIDevice.shared.orientation = .portrait
+            XCUIDevice.shared.appearance = .light
+        }
+        for (appearance, suffix) in [(XCUIDevice.Appearance.light, "light"), (.dark, "dark")] {
+            let app = launchFreshInstall(server: standURL, appearance: appearance)
+            XCTAssertTrue(loginScreen(of: app).waitForExistence(timeout: 20), "Login must open first.")
+            // The iPad simulator may use a hardware keyboard: type without waiting for the on-screen one.
+            for (identifier, text, secure) in [("login-username", "alice", false), ("login-password", "Alice-Dev-Stand-5271", true)] {
+                let field = secure ? app.secureTextFields[identifier] : app.textFields[identifier]
+                XCTAssertTrue(field.waitForExistence(timeout: 10))
+                field.tap()
+                pause(0.5)
+                field.typeText(text)
+            }
+            let submit = app.buttons["login-submit"]
+            XCTAssertTrue(waitUntil(submit, "isEnabled == true"), "«Войти» must enable once both fields are filled.")
+            submit.tap()
+            let bob = app.staticTexts["Боб Тестов"]
+            XCTAssertTrue(bob.waitForExistence(timeout: 40), "The inbox must list Bob in the sidebar.")
+            app.dismissSystemPrompts()
+            let peopleTab = app.buttons.matching(NSPredicate(format: "label == %@", "Сотрудники")).firstMatch
+            XCTAssertTrue(peopleTab.waitForExistence(timeout: 10), "The tab bar must be shown on iPad")
+            pause(1)
+            capture(app, named: "50-ipad-split-\(suffix)")
+
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Боб Тестов")).firstMatch
+            tapCentre(row.exists ? row : bob)
+            XCTAssertTrue(composerField(app).waitForExistence(timeout: 15), "The chat must open in the detail column")
+            pause(2)
+            capture(app, named: "51-ipad-split-chat-\(suffix)")
+            XCTAssertTrue(peopleTab.exists && peopleTab.isHittable, "With a chat selected, the tab bar stays on iPad")
+            app.terminate()
+        }
+    }
+
     /// The motion walkthrough for the brief's screen recordings (CI records it on its own:
     /// `CENTYCHAT_MOTION_VIDEO=light|dark`): inbox → chat, the keyboard and its interactive dismiss,
     /// a message landing, swipe-to-reply, the context menu, an empty search, the people flow.
@@ -387,7 +436,11 @@ final class ScreenshotTourTests: XCTestCase {
                 tapCentre(call)
                 pause(1.5)
                 dismissMicrophonePrompt()
-                capture(app, named: "08-call-\(suffix)")
+                // Only a real call stage is evidence: the stand's Bob has no socket, so the call
+                // usually ends before it shows (the stage is in the component gallery instead).
+                if app.descendants(matching: .any)["call-stage"].waitForExistence(timeout: 2) {
+                    capture(app, named: "08-call-\(suffix)")
+                }
                 endCallIfShown(app)
                 if !app.navigationBars["Боб Тестов"].waitForExistence(timeout: 10) {
                     // The call stage would not close: start over with the stored session.

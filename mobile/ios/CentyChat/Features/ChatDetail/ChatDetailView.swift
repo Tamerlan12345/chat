@@ -15,6 +15,9 @@ public struct ChatDetailView: View {
     public let status: UserStatus?
     /// Open the chat at this message (a search hit) and pulse it.
     public let highlightMessageId: Int64?
+    /// A chat pushed onto a tab's stack (iPhone) takes the screen without the tab bar; the iPad
+    /// split view's detail column keeps it.
+    public let hidesTabBar: Bool
 
     public init(
         conversationType: ConversationType,
@@ -22,7 +25,8 @@ public struct ChatDetailView: View {
         title: String,
         avatarUrl: String? = nil,
         status: UserStatus? = nil,
-        highlightMessageId: Int64? = nil
+        highlightMessageId: Int64? = nil,
+        hidesTabBar: Bool = true
     ) {
         self.conversationType = conversationType
         self.targetId = targetId
@@ -30,6 +34,7 @@ public struct ChatDetailView: View {
         self.avatarUrl = avatarUrl
         self.status = status
         self.highlightMessageId = highlightMessageId
+        self.hidesTabBar = hidesTabBar
     }
 
     public var body: some View {
@@ -40,7 +45,8 @@ public struct ChatDetailView: View {
             title: title,
             avatarUrl: avatarUrl,
             status: status,
-            highlightMessageId: highlightMessageId
+            highlightMessageId: highlightMessageId,
+            hidesTabBar: hidesTabBar
         )
     }
 }
@@ -94,8 +100,9 @@ private struct ChatDetailContent: View {
     let avatarUrl: String?
     let status: UserStatus?
     let highlightMessageId: Int64?
+    let hidesTabBar: Bool
 
-    init(store: ChatStore, opener: AttachmentOpener, thumbnails: AttachmentThumbnails, title: String, avatarUrl: String?, status: UserStatus?, highlightMessageId: Int64?) {
+    init(store: ChatStore, opener: AttachmentOpener, thumbnails: AttachmentThumbnails, title: String, avatarUrl: String?, status: UserStatus?, highlightMessageId: Int64?, hidesTabBar: Bool) {
         self.store = store
         _opener = State(initialValue: opener)
         self.thumbnails = thumbnails
@@ -103,6 +110,7 @@ private struct ChatDetailContent: View {
         self.avatarUrl = avatarUrl
         self.status = status
         self.highlightMessageId = highlightMessageId
+        self.hidesTabBar = hidesTabBar
     }
 
     @State private var inputText: String = ""
@@ -199,7 +207,7 @@ private struct ChatDetailContent: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             // The chat takes the screen: no tab bar under the composer.
-            .toolbar(.hidden, for: .tabBar)
+            .toolbar(hidesTabBar ? .hidden : .automatic, for: .tabBar)
             .toolbar { toolbar }
             .connectionBanner()
             .overlay(alignment: .top) {
@@ -231,8 +239,8 @@ private struct ChatDetailContent: View {
                     jumpHandled = true
                     if found, let row = store.messages.first(where: { $0.id == target }) {
                         scrollRequest = ScrollRequest(rowID: row.rowID, pulses: true)
-                    } else if let last = store.messages.last {
-                        scrollRequest = ScrollRequest(rowID: last.rowID, pulses: false)
+                    } else if let last = rows.last {
+                        scrollRequest = ScrollRequest(rowID: last.id, pulses: false)
                     }
                 }
                 await store.markAsRead()
@@ -350,15 +358,16 @@ private struct ChatDetailContent: View {
             .onAppear {
                 // Opens at the newest message (the list keeps no anchor of its own: a bottom
                 // anchor over a lazy, pinned stack could loop its layout).
-                if isFollowingBottom, let last = store.messages.last {
-                    proxy.scrollTo(last.rowID, anchor: .bottom)
+                if isFollowingBottom, let last = rows.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
                     settled = true
                 }
             }
-            .onChange(of: store.messages.last?.rowID) { old, last in
+            // Follows what the list shows: messages of blocked people are not rows.
+            .onChange(of: rows.last?.id) { old, last in
                 // Opening at a search hit: the list waits for the history around it.
                 guard isFollowingBottom, let last else { return }
-                let isOwn = store.messages.last?.senderId == session.currentUser?.id
+                let isOwn = rows.last?.message.senderId == session.currentUser?.id
                 if old == nil {
                     // The first page: straight to the end, then once more after the lazy rows
                     // measured themselves.
@@ -387,9 +396,9 @@ private struct ChatDetailContent: View {
             }
             .onChange(of: composerFocused) { _, focused in
                 // The keyboard rises: the conversation follows only if the reader was at the end.
-                guard focused, isAtBottom, let last = store.messages.last else { return }
+                guard focused, isAtBottom, let last = rows.last else { return }
                 withAnimation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion)) {
-                    proxy.scrollTo(last.rowID, anchor: .bottom)
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -1002,12 +1011,31 @@ private struct BottomTracking: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
+                ChatScrollEnd.isAtEnd(
+                    visibleMaxY: geometry.visibleRect.maxY,
+                    offsetY: geometry.contentOffset.y,
+                    containerHeight: geometry.containerSize.height,
+                    topInset: geometry.contentInsets.top,
+                    contentHeight: geometry.contentSize.height
+                )
             } action: { _, atBottom in
                 changed(atBottom)
             }
         } else {
             content
         }
+    }
+}
+
+/// Whether the chat shows its last row, from the scroll geometry. The bars above the list (status
+/// bar, navigation bar, connection banner) are a top content inset larger than the tolerance, so the
+/// visible bottom is taken inset-aware: the visible rect, or the offset plus the container plus the
+/// top inset — whichever reaches further.
+enum ChatScrollEnd {
+    static let tolerance: CGFloat = 48
+
+    static func isAtEnd(visibleMaxY: CGFloat, offsetY: CGFloat, containerHeight: CGFloat, topInset: CGFloat, contentHeight: CGFloat) -> Bool {
+        let bottom = max(visibleMaxY, offsetY + containerHeight + topInset)
+        return bottom >= contentHeight - tolerance
     }
 }

@@ -75,6 +75,16 @@ final class ConnectionStatus {
         UIAccessibility.post(notification: .announcement, argument: text)
     }
 
+    /// What VoiceOver hears for a shown phase (the banner's own words).
+    static func spoken(_ phase: BannerPhase) -> String? {
+        switch phase {
+        case .hidden: nil
+        case .problem(.offline): String(localized: "Нет сети")
+        case .problem(.reconnecting): String(localized: "Переподключение…")
+        case .backOnline: String(localized: "Снова в сети")
+        }
+    }
+
     func connectionChanged(_ state: RealtimeConnectionState, isRunning: Bool) {
         connection = state
         self.isRunning = isRunning
@@ -108,7 +118,11 @@ final class ConnectionStatus {
     }
 
     private func apply() {
+        let previous = phase
         phase = ConnectionBannerMachine.onLink(phase, problem)
+        if phase != previous, let text = Self.spoken(phase) {
+            announce(text)
+        }
         guard phase == .backOnline else { return }
         let wait = backOnline
         timer = Task { [weak self] in

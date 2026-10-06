@@ -8,15 +8,8 @@ extension View {
         navigationDestination(for: AppRoute.self) { route in
             switch route {
             case .chat(let chat):
-                ChatDetailView(
-                    conversationType: chat.type,
-                    targetId: chat.targetId,
-                    title: chat.title,
-                    avatarUrl: chat.avatarUrl,
-                    status: chat.status,
-                    highlightMessageId: chat.highlightMessageId
-                )
-                .modifier(ZoomFromRow(key: ZoomKey.chat(chat.type, chat.targetId), namespace: zoom, enabled: chat.zoomsFromRow))
+                RoutedChat(route: chat)
+                    .modifier(ZoomFromRow(key: ZoomKey.chat(chat.type, chat.targetId), namespace: zoom, enabled: chat.zoomsFromRow))
             case .person(let person):
                 PersonCardView(route: person)
                     .modifier(ZoomFromRow(key: ZoomKey.person(person.id), namespace: zoom, enabled: person.zoomsFromRow))
@@ -32,6 +25,25 @@ extension View {
     /// Marks this view (an inbox row's avatar) as the source the chat zooms out of.
     func chatZoomSource(type: ConversationType, id: Int64, namespace: Namespace.ID) -> some View {
         modifier(ZoomSource(key: ZoomKey.chat(type, id), namespace: namespace))
+    }
+}
+
+/// A pushed chat: full screen without the tab bar on iPhone; in a regular-width layout (iPad split
+/// view) the tab bar stays, as nothing else would bring it back.
+private struct RoutedChat: View {
+    let route: ChatRoute
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    var body: some View {
+        ChatDetailView(
+            conversationType: route.type,
+            targetId: route.targetId,
+            title: route.title,
+            avatarUrl: route.avatarUrl,
+            status: route.status,
+            highlightMessageId: route.highlightMessageId,
+            hidesTabBar: sizeClass != .regular
+        )
     }
 }
 

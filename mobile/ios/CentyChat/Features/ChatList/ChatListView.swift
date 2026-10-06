@@ -73,7 +73,9 @@ public struct ChatListView: View {
                                     title: selectedChat.title,
                                     avatarUrl: selectedChat.avatarUrl,
                                     status: selectedChat.status,
-                                    highlightMessageId: selectedChat.highlightMessageId
+                                    highlightMessageId: selectedChat.highlightMessageId,
+                                    // The detail column sits next to the inbox: the tab bar stays.
+                                    hidesTabBar: false
                                 )
                                 .id(selectedChat)
                             } else {

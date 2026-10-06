@@ -201,6 +201,39 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: mobile/ios/build/motion/ios-motion-*.mp4
+      # iPad (regular width): the split view with a chat selected keeps the tab bar. The same
+      # build runs on an iPad simulator (the app targets iPhone and iPad); screenshots join the set.
+      - name: Run the iPad split-view check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
+        run: |
+          set -o pipefail
+          xcrun simctl shutdown "$SIMULATOR_UDID" || true
+          ipad=""
+          for name in "iPad Pro 11-inch (M4)" "iPad Air 11-inch (M2)" "iPad Air 11-inch (M3)" "iPad (10th generation)" "iPad Pro 13-inch (M4)"; do
+            ipad="$(xcrun simctl list devices available --json | python3 mobile/ios/scripts/pick-simulator.py "$name" 2>/dev/null || true)"
+            [ -n "$ipad" ] && break
+          done
+          if [ -z "$ipad" ]; then
+            echo "No iPad simulator available"
+            xcrun simctl list devices available | grep -i ipad || true
+            exit 1
+          fi
+          echo "iPad simulator: $name ($ipad)"
+          xcrun simctl boot "$ipad" || true
+          xcrun simctl bootstatus "$ipad" -b
+          xcrun simctl keychain "$ipad" add-root-cert mobile/dev/certs/dev-ca.crt
+          xcodebuild \
+           -project mobile/ios/CentyChat.xcodeproj \
+           -scheme CentyChat \
+           -configuration Debug \
+           -destination "id=$ipad" \
+           -derivedDataPath mobile/ios/build/derived \
+           -resultBundlePath mobile/ios/build/CentyChat-ipad.xcresult \
+           -only-testing:CentyChatUITests/ScreenshotTourTests/testIPadSplitViewKeepsTheTabBar \
+           test-without-building \
+           2>&1 | tee "$RUNNER_TEMP/xcodebuild-ipad.log"
       # Compiler errors and failing tests as annotations and in the job summary.
       - name: Report build and test failures
         if: always()
@@ -208,6 +241,9 @@ jobs:
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-build.log" "" "iOS build-for-testing"
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-unit.log" mobile/ios/build/CentyChat-unit.xcresult "iOS unit tests"
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-test.log" mobile/ios/build/CentyChat.xcresult "iOS UI tests (user path)"
+          if [ -f "$RUNNER_TEMP/xcodebuild-ipad.log" ]; then
+            python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-ipad.log" mobile/ios/build/CentyChat-ipad.xcresult "iPad split view"
+          fi
       - name: Dev stand log
         if: always()
         # The seed passwords are dev-only, but the CI log never echoes them.
@@ -225,6 +261,9 @@ jobs:
         if: always() && github.event_name == 'push'
         run: |
           python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+          if [ -d mobile/ios/build/CentyChat-ipad.xcresult ]; then
+            python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat-ipad.xcresult mobile/ios/build/screenshots || true
+          fi
           # The motion recordings travel with the screenshots (they are small after avconvert).
           mkdir -p mobile/ios/build/screenshots
           cp mobile/ios/build/motion/ios-motion-*.mp4 mobile/ios/build/screenshots/ 2>/dev/null || true
