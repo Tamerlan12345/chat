@@ -43,8 +43,8 @@ done
 ls -l "$out" || true
 # Artifacts cannot always be downloaded: name each failing test and its first lines in the log.
 if [ "$status" -ne 0 ]; then
-  for xml in mobile/android/app/build/outputs/androidTest-results/connected/debug/*.xml; do
-    [ -f "$xml" ] || continue
+  # Per-device result files may sit in subfolders: find them all.
+  find mobile/android/app/build/outputs/androidTest-results -name '*.xml' 2>/dev/null | while read -r xml; do
     python3 - "$xml" <<'PY' || true
 import sys, xml.etree.ElementTree as ET
 for case in ET.parse(sys.argv[1]).getroot().iter('testcase'):
