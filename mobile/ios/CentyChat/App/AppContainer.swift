@@ -267,12 +267,9 @@ public final class AppContainer: SessionLifecycleDelegate {
     }
 
     func sessionDidDiscardAccount() async {
-        do {
-            try await delivery.discardForSignOut()
-        } catch {
-            // Retried by the engine; the next account to sign in wipes it in any case.
-            Log.delivery.error("Unsent messages of a discarded account could not be deleted: \(error.localizedDescription, privacy: .public)")
-        }
+        // Each part is deleted on its own; what fails is retried (the engine blocks and retries its
+        // store, the upload queue retries its rows), so nothing of the gone account is kept.
+        await delivery.discardAccount()
         LocalSendTimes.removeAll()
     }
 

@@ -341,6 +341,37 @@ final class AttachmentUploads {
         try await store.clearUploads()
     }
 
+    /// The account is gone: its waiting files are forgotten in memory and their copies deleted at
+    /// once; the rows are deleted, and retried (with a growing pause) until they are. Only the rows of
+    /// that account (or, when it is not known, of no signed-in account) are touched by the retries.
+    func discardAccount(owner: Int64?) {
+        forgetInMemory()
+        files.prune(keeping: [])
+        deleteRows(of: owner, attempt: 1)
+    }
+
+    private func deleteRows(of owner: Int64?, attempt: Int64) {
+        let store = self.store
+        let clock = self.clock
+        let log = self.log
+        Task { [weak self] in
+            do {
+                let rows = try await store.uploads()
+                let signedIn = self?.owner()
+                let doomed = rows.filter { row in owner.map { row.owner == $0 } ?? (row.owner != signedIn) }
+                if doomed.count == rows.count {
+                    try await store.clearUploads()
+                } else {
+                    for row in doomed { try await store.removeUpload(row.clientMsgId) }
+                }
+            } catch {
+                log("a discarded account's waiting files could not be deleted (retried): \(error)")
+                try? await clock.sleep(milliseconds: DeliveryReducer.backoff(min(attempt, 6)))
+                self?.deleteRows(of: owner, attempt: attempt + 1)
+            }
+        }
+    }
+
     /// The sign-out did not go through after the rows were deleted: they are written back.
     func restoreStoredRows() async {
         for item in items {
@@ -354,16 +385,7 @@ final class AttachmentUploads {
 
     /// The queue was wiped (sign-out, another account): stop and forget the files.
     private func forget() {
-        epoch += 1
-        running.values.forEach { $0.cancel() }
-        running.removeAll()
-        retries.values.forEach { $0.cancel() }
-        retries.removeAll()
-        items.removeAll()
-        handedOver.removeAll()
-        uploaded.removeAll()
-        forced.removeAll()
-        attempts.removeAll()
+        forgetInMemory()
         let store = self.store
         let files = self.files
         let log = self.log
@@ -375,6 +397,19 @@ final class AttachmentUploads {
             }
             files.prune(keeping: [])
         }
+    }
+
+    private func forgetInMemory() {
+        epoch += 1
+        running.values.forEach { $0.cancel() }
+        running.removeAll()
+        retries.values.forEach { $0.cancel() }
+        retries.removeAll()
+        items.removeAll()
+        handedOver.removeAll()
+        uploaded.removeAll()
+        forced.removeAll()
+        attempts.removeAll()
     }
 
     /// Once the outbox no longer holds a handed-over file (confirmed or dropped), its copy goes.

@@ -311,9 +311,15 @@ public actor APIClient {
     /// token. Throws `unauthorized` when the server refused the refresh.
     private func renewedToken(after staleToken: String) async throws -> String? {
         try await refreshAccessToken(after: staleToken)
-        guard let current = keychain.authToken,
-              refreshedTokens.contains(where: { $0.stale == staleToken && $0.fresh == current }) else { return nil }
-        return current
+        guard let current = keychain.authToken else { return nil }
+        // Follow this session's rotations (a refresh, then a password change, …) to the current token.
+        var token = staleToken
+        for _ in 0..<refreshedTokens.count {
+            guard let next = refreshedTokens.last(where: { $0.stale == token })?.fresh else { return nil }
+            if next == current { return current }
+            token = next
+        }
+        return nil
     }
 
     private func remember(_ fresh: String, replacing stale: String) {
@@ -559,7 +565,10 @@ public actor APIClient {
     /// Смена пароля сотрудником
     public func changePassword(request changeReq: ChangePasswordRequest) async throws -> ChangePasswordResponse {
         let body = try jsonEncoder.encode(changeReq)
+        let replaced = keychain.authToken
         let res: ChangePasswordResponse = try await request(endpoint: "/users/password", method: "POST", body: body)
+        // The same account's new token: a request still answered 401 for the old one goes on with it.
+        if let replaced { remember(res.token, replacing: replaced) }
         try keychain.saveAuthToken(res.token)
         return res
     }

@@ -71,6 +71,43 @@ final class UploadTokenTests: XCTestCase {
         XCTAssertEqual(uploads.map { $0.value(forHTTPHeaderField: "Authorization") }, ["Bearer token-A", "Bearer token-A2"])
     }
 
+    func testARequestThatGotItsAnswerAfterAPasswordChangeIsRepeatedWithTheNewToken() async throws {
+        let fixtures = try XCTUnwrap(Bundle(for: UploadTokenTests.self).url(forResource: "fixtures", withExtension: nil))
+        let me = try String(contentsOf: fixtures.appendingPathComponent("http/auth.me.json"), encoding: .utf8)
+        let user = try XCTUnwrap(JSONValue.parse(me)?["user"])
+        let changed = JSONValue.object(["success": true, "message": "Пароль изменён", "token": "token-T2", "user": user]).jsonText
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        ScriptedHTTP.handler = { request, index in
+            switch request.url?.path {
+            case "/api/auth/me":
+                if index == 0 {
+                    // Sent with T1; its 401 arrives only after the password change stored T2.
+                    entered.signal()
+                    release.wait()
+                    return (401, #"{"error":"Токен отозван"}"#)
+                }
+                return (200, me)
+            case "/api/users/password":
+                return (200, changed)
+            default:
+                return (500, "{}")
+            }
+        }
+        let client = client()
+
+        async let current = client.getCurrentUser()
+        await Task.detached { entered.wait() }.value
+        _ = try await client.changePassword(request: ChangePasswordRequest(oldPassword: "старый", newPassword: "Новый-пароль-1"))
+        release.signal()
+        let user2 = try await current
+
+        XCTAssertEqual(user2.id, 2, "the session survives: no unauthorized for a token this session itself replaced")
+        XCTAssertEqual(keychain.authToken, "token-T2", "the valid new token is never wiped")
+        let retried = ScriptedHTTP.requests.filter { $0.url?.path == "/api/auth/me" }.map { $0.value(forHTTPHeaderField: "Authorization") }
+        XCTAssertEqual(retried, ["Bearer token-A", "Bearer token-T2"])
+    }
+
     func testADeliveryPostOfTheOldSessionIsNotRepeatedUnderTheNextAccount() async throws {
         let keychain = self.keychain!
         ScriptedHTTP.handler = { request, _ in

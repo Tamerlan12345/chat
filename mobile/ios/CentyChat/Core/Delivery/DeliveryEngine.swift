@@ -88,6 +88,7 @@ public final class DeliveryEngine {
         case flushCache
         /// `conversation_closed`, only if `conversation` is still the visible one when it is processed.
         case closeIfVisible(String)
+        case discard(CheckedContinuation<Void, Never>)
     }
 
     @ObservationIgnored private var queue: [Command] = []
@@ -322,6 +323,15 @@ public final class DeliveryEngine {
         }
     }
 
+    /// The account is gone (deleted, or another server's): its model is emptied in memory at once and
+    /// deleted from the store; a store that cannot be emptied stays blocked and the wipe is retried.
+    /// Nothing is ever kept for it, unlike an explicit sign-out.
+    public func discardAccount() async {
+        await withCheckedContinuation { continuation in
+            submit(.discard(continuation))
+        }
+    }
+
     /// Waits until `predicate` holds for the model (checked now and after every step), at most
     /// `timeoutMs` on the engine's clock. False on timeout.
     public func wait(timeoutMs: Int64, until predicate: @escaping (DeliveryState) -> Bool) async -> Bool {
@@ -424,6 +434,12 @@ public final class DeliveryEngine {
                let id = await link.authenticatedUserId(), id == userId {
                 _ = await process(authSuccess(id))
             }
+            continuation.resume()
+        case .discard(let continuation):
+            signedIn = nil
+            signedOut = true
+            // Memory first; a failed delete blocks the engine and is retried (`.retryWipe`).
+            _ = await wipe()
             continuation.resume()
         case .closeIfVisible(let conversation):
             guard blocked == nil, state.visible == conversation else { return }

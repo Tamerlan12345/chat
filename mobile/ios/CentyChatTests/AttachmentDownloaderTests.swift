@@ -301,7 +301,7 @@ final class AttachmentDownloaderGenerationTests: XCTestCase {
         await freshBody.open()
         let file = try await new
         XCTAssertEqual(try Data(contentsOf: file), Data("новое".utf8), "the next session's download is intact")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path).filter { !$0.hasPrefix(".") }, ["c.txt"])
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path)), ["c.txt", ".etag"], "the file and its tag only: no stale partial")
     }
 }
 

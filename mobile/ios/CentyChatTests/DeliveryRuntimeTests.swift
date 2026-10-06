@@ -265,3 +265,77 @@ final class SignOutDiscardTests: XCTestCase {
         XCTAssertEqual(left.map(\.name), ["Акт.pdf"], "the file's row is still on disk")
     }
 }
+
+/// A deleted account (or another server's credentials): its data goes even when one part cannot be
+/// deleted at once; what failed is retried.
+@MainActor
+final class DiscardedAccountTests: XCTestCase {
+    private var store: InMemoryDeliveryStore!
+    private var rows: InMemoryPendingUploadStore!
+    private var engine: DeliveryEngine!
+    private var uploads: AttachmentUploads!
+    private var runtime: DeliveryRuntime!
+    private var clock: ManualDeliveryClock!
+    private var folder: URL!
+
+    override func setUp() async throws {
+        store = InMemoryDeliveryStore()
+        rows = InMemoryPendingUploadStore()
+        clock = ManualDeliveryClock()
+        engine = DeliveryEngine(store: store, link: FakeDeliveryLink(), backend: FakeDeliveryBackend(), clock: clock)
+        engine.start()
+        folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("discarded-\(UUID().uuidString)")
+        uploads = AttachmentUploads(store: rows, files: AttachmentFiles(root: folder), uploader: FakeUploader(), engine: engine, clock: clock, owner: { 2 })
+        uploads.start()
+        runtime = DeliveryRuntime(engine: engine, uploads: uploads, currentUser: { 2 }, reconnect: {}, clock: clock)
+        try await engine.adopt(2)
+        _ = await engine.enqueue(conversation: "direct:3", text: "Удалённый аккаунт", owner: 2)
+        _ = await uploads.add(conversation: "direct:3", picked: PickedAttachment(source: .data(Data([1])), name: "Акт.pdf", mimeType: "application/pdf"), replyToId: nil, owner: 2)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    private func settle() async {
+        for _ in 0..<10 {
+            await engine.idle()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
+
+    func testFilesThatCannotBeDeletedDoNotKeepTheMessagesAndAreRetried() async throws {
+        await rows.failNextClears(1)
+
+        await runtime.discardAccount()
+        await settle()
+
+        XCTAssertTrue(engine.state.outbox.isEmpty, "the messages go even though the files' rows could not")
+        let stored = await store.contents
+        XCTAssertTrue(stored.outbox.isEmpty)
+        XCTAssertTrue(uploads.items.isEmpty)
+        let copies = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        XCTAssertTrue(copies.isEmpty, "the copies are deleted")
+
+        clock.advance(by: 1_000)
+        await settle()
+        let left = try await rows.uploads()
+        XCTAssertTrue(left.isEmpty, "the rows are deleted on the retry")
+    }
+
+    func testMessagesThatCannotBeDeletedAreRetriedAndTheFilesGoAnyway() async throws {
+        await store.fail(.clear, times: 1)
+
+        await runtime.discardAccount()
+        await settle()
+
+        XCTAssertTrue(engine.state.outbox.isEmpty, "emptied in memory at once")
+        let rowsLeft = try await rows.uploads()
+        XCTAssertTrue(rowsLeft.isEmpty, "the files' rows are not written back for a discarded account")
+
+        clock.advance(by: 1_000)
+        await settle()
+        let stored = await store.contents
+        XCTAssertTrue(stored.outbox.isEmpty, "the store is wiped on the retry")
+    }
+}

@@ -91,6 +91,16 @@ final class DeliveryRuntime {
         }
     }
 
+    /// The account's data must not outlive it (it was deleted, or the stored credentials were
+    /// another server's). Unlike an explicit sign-out nothing is kept on failure: each part — the
+    /// waiting files (memory, copies, rows) and the messages (memory, store) — is deleted on its own,
+    /// and whatever could not be deleted at once is retried until it is.
+    func discardAccount() async {
+        let owner = currentUser()
+        uploads.discardAccount(owner: owner)
+        await engine.discardAccount()
+    }
+
     /// The device has a network again: a reconnect waiting for its backoff goes now, and what waits
     /// goes over HTTP until the socket is up.
     func networkBecameAvailable() async {
