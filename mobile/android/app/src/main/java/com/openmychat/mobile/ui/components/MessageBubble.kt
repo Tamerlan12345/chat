@@ -84,33 +84,49 @@ class BubbleContour(val aboveWidth: () -> Int?, val belowWidth: () -> Int?)
 /**
  * One contour per group (polish pass, rule 7): the bubbles of a group touch (overlapping by the
  * hairline) and the edge they share is painted over with the fill, so no line runs between them.
- * Where one is wider, its edge stays visible beyond the other: the contour steps. The corner arcs at
- * both ends of the shared edge are kept (the free corner [free] and the sender-side corner [joined]).
+ * Where one is wider, its edge stays visible beyond the other: the contour steps. Where the edges
+ * line up (the sender side always; the free side when both bubbles are equally wide, e.g. two
+ * wrapped messages) the corners at the join are squared, so the side runs as one straight line
+ * instead of pinching in. Drawn outside the bubble's clip, so it must come before `clip` in the chain.
  */
 private fun Modifier.groupContour(
     contour: BubbleContour?,
     own: Boolean,
     position: BubblePosition,
     fill: Color,
+    outline: Color,
     free: Dp,
     joined: Dp
 ): Modifier = if (contour == null) this else drawWithContent {
     drawContent()
     val stroke = 1.dp.toPx()
     val w = size.width
+    val h = size.height
+    // Squares the corner of side [atStart] at the join ([top] or bottom edge): fill over the arc,
+    // then the straight outline it replaces.
+    fun square(radius: Float, atStart: Boolean, top: Boolean) {
+        val x = if (atStart) 0f else w - radius
+        val y = if (top) 0f else h - radius
+        drawRect(fill, topLeft = Offset(x, y), size = Size(radius, radius))
+        drawRect(outline, topLeft = Offset(if (atStart) 0f else w - stroke, y), size = Size(stroke, radius))
+    }
     fun erase(neighbor: Int?, top: Boolean) {
         if (neighbor == null || neighbor <= 0) return
         val overlap = minOf(w, neighbor.toFloat())
+        val freeEdgeAligned = kotlin.math.abs(neighbor - w) < 1.5f
         // Own bubbles hang from the end, incoming ones from the start.
         val (from, to) = if (own) {
-            (w - overlap + free.toPx()) to (w - joined.toPx() - stroke)
+            (if (freeEdgeAligned) stroke else w - overlap + free.toPx()) to (w - stroke)
         } else {
-            (joined.toPx() + stroke) to (overlap - free.toPx())
+            stroke to (if (freeEdgeAligned) w - stroke else overlap - free.toPx())
         }
         if (to <= from) return
         // Whole pixels and one more: the antialiased edge of the stroke must not leave a faint seam.
         val band = ceil(stroke) + 1f
-        drawRect(fill, topLeft = Offset(from, if (top) 0f else size.height - band), size = Size(to - from, band))
+        drawRect(fill, topLeft = Offset(from, if (top) 0f else h - band), size = Size(to - from, band))
+        // The sender side always lines up; the free side only when both bubbles are as wide.
+        square(joined.toPx(), atStart = !own, top = top)
+        if (freeEdgeAligned) square(free.toPx(), atStart = own, top = top)
     }
     if (!position.startsGroup) erase(contour.aboveWidth(), top = true)
     if (!position.endsGroup) erase(contour.belowWidth(), top = false)
@@ -172,9 +188,9 @@ fun MessageBubble(
     Column(modifier, horizontalAlignment = if (own) Alignment.End else Alignment.Start) {
         Column(
             bubbleModifier
+                .groupContour(contour, own, position, container, outline, free = CentyRadius.control, joined = CentyRadius.joined)
                 .clip(shape)
                 .background(container, shape)
-                .groupContour(contour, own, position, container, free = CentyRadius.control, joined = CentyRadius.joined)
                 .border(1.dp, outline, shape)
                 .padding(horizontal = 12.dp, vertical = 7.dp)
         ) {
