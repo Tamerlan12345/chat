@@ -8,6 +8,10 @@ final class PushRouter {
     static let shared = PushRouter()
     weak var notifications: MessageNotificationsStore?
     weak var pushTokens: PushTokenRegistrar?
+    /// Where a tapped message notification's chat waits for the chat list.
+    weak var routes: NotificationRoutes?
+    /// The outbox flush a background refresh runs (`DeliveryBackgroundTask`).
+    var flushInBackground: (@MainActor () async -> DeliveryRuntime.FlushResult)?
 }
 
 /// Silent pushes (`read`, `content-available`) — `multi-device.md` §10: dismiss the
@@ -23,8 +27,11 @@ final class CentyAppDelegate: NSObject, UIApplicationDelegate {
 #if DEBUG
         if LaunchTestFixture.isUnitTestHost { return true }
 #endif
-        // Inert until the app is signed with an Apple developer account: without the
-        // `aps-environment` entitlement APNs answers with the failure callback below.
+        // The background flush of the outbox: registered before launch ends, as iOS requires.
+        DeliveryBackgroundTask.register()
+        // Inert until the app is signed with an Apple developer account (decision P): without the
+        // `aps-environment` entitlement APNs answers with the failure callback below and push stays
+        // off. With it, a token arrives here even before the user answers the permission question.
         application.registerForRemoteNotifications()
         return true
     }
@@ -68,5 +75,18 @@ final class NotificationPresentationDelegate: NSObject, UNUserNotificationCenter
             PushRouter.shared.notifications?.shouldPresentInForeground(payload, isLocal: isLocal) ?? isLocal
         }
         return show ? [.banner, .list, .sound] : []
+    }
+
+    /// A tap on a notification (decision P): a message notification opens its chat. The payload
+    /// carries ids only; the chat list opens the chat and loads its content from the server.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let conversation = NotificationTap.conversation(from: response.notification.request.content.userInfo) else { return }
+        await MainActor.run {
+            PushRouter.shared.routes?.open(conversation)
+        }
     }
 }

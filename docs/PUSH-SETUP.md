@@ -80,7 +80,31 @@
 
 ## 3. iOS
 
-*(Раздел пишет команда iOS: возможность Push Notifications, файл entitlements и `aps-environment` при подписи, фоновый режим `remote-notification`, PushKit для звонков, как проверить на устройстве.)*
+Код push в приложении уже есть (решение P). **Без аккаунта Apple Developer push просто выключен**: сборки для симулятора и CI подписываются без возможностей (capabilities), APNs не выдаёт токен, сервер ничего не получает — всё остальное работает как раньше.
+
+Что уже сделано в коде (`mobile/ios`):
+
+- **Фоновые режимы** в `Info.plist`: `remote-notification` (тихий push `read` снимает уведомление и счётчик, когда переписку прочитали на другом устройстве), `fetch` (фоновая отправка неотправленных сообщений, `BGAppRefreshTask` с идентификатором `kz.centras.centychat.delivery-flush`) и `audio` (звонки).
+- **Разрешение на уведомления** спрашивается один раз — после первого входа, не при запуске. Отказ больше не спрашивается: его можно изменить в «Настройки → CentyChat → Уведомления».
+- **Токен устройства** регистрируется на сервере (`POST /api/devices/push-token`) после каждого входа и запуска с живой сессией и при каждой смене токена; при выходе сервер снимает его сам (`/auth/logout` с `device_id`).
+- **Среда APNs** (`sandbox` или `production`) берётся из того, как подписано приложение (профиль `embedded.mobileprovision`, поле `aps-environment`); у сборок App Store и TestFlight профиля нет — это `production`. От конфигурации сборки (Debug/Release) среда не зависит.
+- **Нажатие на уведомление** открывает его переписку. В push приходят только идентификаторы (тип, переписка, id сообщения); текст и имена приложение загружает с сервера.
+- **Шаблон entitlements**: `mobile/ios/Signing/CentyChat.entitlements` (только `aps-environment`). Проект на него **не ссылается** — поэтому CI и симулятор собираются без аккаунта.
+
+Шаги владельца (нужен аккаунт Apple Developer Program, роль Admin или App Manager):
+
+1. **Ключ APNs на сервере** — раздел 1.2 (один `.p8` на обе среды и на VoIP).
+2. **App ID.** В [Certificates, Identifiers & Profiles → Identifiers](https://developer.apple.com/account/resources/identifiers/list) откройте App ID с Bundle ID приложения (сейчас `kz.centras.centychat`; если меняете — поменяйте `PRODUCT_BUNDLE_IDENTIFIER` в проекте и `PUSH_APNS_BUNDLE_ID` на сервере одинаково) и включите **Push Notifications**. Сертификаты push для ключа `.p8` не нужны.
+3. **Подпись в Xcode.** Откройте `mobile/ios/CentyChat.xcodeproj`, цель **CentyChat → Signing & Capabilities**: выберите команду (Team), оставьте «Automatically manage signing».
+4. **Включите entitlements** одним из двух способов (результат одинаковый):
+   - нажмите «+ Capability» → **Push Notifications** (Xcode сам создаст файл entitlements и пропишет `CODE_SIGN_ENTITLEMENTS`), **или**
+   - в Build Settings цели CentyChat задайте `CODE_SIGN_ENTITLEMENTS = Signing/CentyChat.entitlements` для Debug и Release.
+   «Background Modes» включать не нужно — они уже в `Info.plist`.
+5. **Среда.** В файле стоит `aps-environment = development`: сборки из Xcode на устройство получают токены песочницы. При экспорте архива для App Store, TestFlight или Apple Business Manager Xcode сам заменяет значение на `production` — руками менять не нужно. Приложение сообщает серверу среду из подписи, поэтому сборка Release, подписанная профилем разработчика, тоже честно скажет `sandbox`.
+6. **Номер сборки** берётся из `CURRENT_PROJECT_VERSION` (Build Settings), версия — из `MARKETING_VERSION`; перед каждой загрузкой в App Store Connect увеличивайте номер сборки.
+7. **Проверка на устройстве** — раздел 4. На симулаторе удалённые push не проверить надёжно; локальные уведомления (от сокета, когда приложение открыто) работают и там.
+
+Чего пока нет (осознанно): **PushKit/VoIP и CallKit** для звонков при закрытом приложении (входящий звонок сейчас приходит, только пока приложение открыто или работает в фоне со звонком); это отдельная задача вместе с CallKit — Apple требует показывать каждый VoIP-push через CallKit.
 
 ---
 

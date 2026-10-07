@@ -47,6 +47,9 @@ enum LaunchTestFixture {
     /// content type that never offers or saves credentials.
     static var suppressesPasswordAutofill: Bool { isUITestProcess }
 
+    /// UI tests never meet the system notification question (decision P asks it after sign-in).
+    static var suppressesNotificationPrompt: Bool { isUITestProcess }
+
     /// The app is hosting XCTest unit tests (not a UI test launch).
     static var isUnitTestHost: Bool {
         let environment = ProcessInfo.processInfo.environment
@@ -76,5 +79,6 @@ enum LaunchTestFixture {
     static let shouldResetSecureState = false
     static let allowsInsecureLoopback = false
     static let suppressesPasswordAutofill = false
+    static let suppressesNotificationPrompt = false
 #endif
 }

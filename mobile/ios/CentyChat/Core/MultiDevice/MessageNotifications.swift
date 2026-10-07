@@ -126,3 +126,19 @@ public struct UserNotificationCenterBridge: LocalNotificationCenter {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 }
+
+/// The system's notification permission (decision P: asked once, after sign-in).
+struct UserNotificationAuthorization: NotificationAuthorizing {
+    func status() async -> NotificationAuthorization {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .notDetermined: return .notDetermined
+        case .authorized, .provisional, .ephemeral: return .allowed
+        case .denied: return .denied
+        @unknown default: return .denied
+        }
+    }
+
+    func request() async -> Bool {
+        await UserNotificationCenterBridge.requestAuthorization()
+    }
+}

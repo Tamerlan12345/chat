@@ -58,9 +58,17 @@ private struct SessionRootView: View {
                 Task { await container.appBecameActive() }
             case .background:
                 container.presence.sceneDidEnterBackground()
+                // What still waits goes out in a background refresh (`delivery-state.md` §4.2).
+                if session.isAuthenticated {
+                    DeliveryBackgroundTask.schedule(whenUnsent: container.delivery.unsentCount)
+                }
             default:
                 break
             }
+        }
+        // The first unlock since the device started: the stored session can be read now.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            Task { await container.protectedDataBecameAvailable() }
         }
         .fullScreenCover(isPresented: Binding(
             get: { calls.activeCall != nil },

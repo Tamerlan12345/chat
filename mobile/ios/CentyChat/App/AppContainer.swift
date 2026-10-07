@@ -23,6 +23,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     public let searchRecents: SearchRecentsStore
     /// This device's APNs token on the server (`push.md` §2).
     let pushTokens: PushTokenRegistrar
+    /// A tapped message notification's chat, for the chat list (decision P).
+    let notificationRoutes = NotificationRoutes()
+    /// The notification permission, asked once after sign-in (decision P).
+    let notificationPermission: NotificationPermission
     /// Colleagues' photos, cached on disk; wiped when the session ends.
     let avatars: AvatarImageLoader
     let accountRepository: any AccountRepository
@@ -55,6 +59,8 @@ public final class AppContainer: SessionLifecycleDelegate {
         peopleCache: (any PeopleCache)? = nil,
         recentsDefaults: UserDefaults? = nil,
         pushTokenService: (any PushTokenService)? = nil,
+        notificationAuthorization: (any NotificationAuthorizing)? = nil,
+        registerForRemoteNotifications: @escaping @MainActor () -> Void = {},
         deviceId: @escaping @MainActor () -> String? = { nil },
         avatarLoader: AvatarImageLoader? = nil,
         deliveryStore: any DeliveryStore = InMemoryDeliveryStore(),
@@ -154,6 +160,10 @@ public final class AppContainer: SessionLifecycleDelegate {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             environment: .current
         )
+        self.notificationPermission = NotificationPermission(
+            authorization: notificationAuthorization ?? NoNotificationAuthorization(),
+            registerForRemote: registerForRemoteNotifications
+        )
         self.avatars = avatarLoader ?? AvatarImageLoader.inMemory(serverURL: environment.serverURL)
         self.accountRepository = accountRepository
         self.delivery = delivery
@@ -222,6 +232,8 @@ public final class AppContainer: SessionLifecycleDelegate {
             peopleCache: PeopleDiskCache(),
             recentsDefaults: .standard,
             pushTokenService: LivePushTokenService(client: client),
+            notificationAuthorization: LaunchTestFixture.suppressesNotificationPrompt ? nil : UserNotificationAuthorization(),
+            registerForRemoteNotifications: { UIApplication.shared.registerForRemoteNotifications() },
             deviceId: { try? keychain.deviceID() },
             avatarLoader: .live(keychain: keychain),
             deliveryStore: LiveDelivery.store,
@@ -253,6 +265,9 @@ public final class AppContainer: SessionLifecycleDelegate {
     func sessionDidAuthenticate() async {
         // The queue is this account's: another account's leftovers are wiped before anything shows.
         if let user = session.currentUser?.id { await delivery.adopt(user) }
+        // Decision P: the notification question once, after sign-in; then APNs hands out the token.
+        let permission = notificationPermission
+        Task { await permission.signedIn() }
         // After every sign-in and every launch with a live session (`push.md` §2).
         async let push: Void = pushTokens.sessionDidAuthenticate()
         await loadAllData()
@@ -294,6 +309,8 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     /// The app came to the foreground: what waits goes out (over HTTP until the socket is up).
     func appBecameActive() async {
+        // A launch that could not finish (no server, a locked Keychain) tries again.
+        await session.retryRestoreIfNeeded()
         // Without a network an HTTP attempt only spends the message's retry budget (§7.3).
         guard session.isAuthenticated, networkPath.isAvailable != false else { return }
         await delivery.appBecameActive()
@@ -301,8 +318,20 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     /// The device has a network again.
     func networkBecameAvailable() async {
+        await session.retryRestoreIfNeeded()
         guard session.isAuthenticated else { return }
         await delivery.networkBecameAvailable()
+    }
+
+    /// The device was unlocked for the first time since it started: the Keychain is readable now.
+    func protectedDataBecameAvailable() async {
+        await session.retryRestoreIfNeeded()
+    }
+
+    /// A background refresh (`DeliveryBackgroundTask`): the queue goes out over HTTP.
+    func flushForBackgroundRefresh() async -> DeliveryRuntime.FlushResult {
+        guard session.isAuthenticated else { return .nothingToDo }
+        return await delivery.flushInBackground()
     }
 
     func sessionDidEnd() async {
