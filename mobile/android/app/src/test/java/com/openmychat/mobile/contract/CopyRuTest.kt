@@ -17,8 +17,7 @@ import java.io.File
 
 /**
  * The shared Russian copy (mobile/contracts/copy/ru.json, keys of copy-ru.md): every state Android
- * shows that the table names uses the canonical text. The contract file is read when it is there;
- * until the contracts branch is merged, a snapshot of it in test resources stands in.
+ * shows that the table names uses the canonical text.
  */
 class CopyRuTest {
 
@@ -27,9 +26,7 @@ class CopyRuTest {
         .first { File(it, "build.gradle.kts").isFile && File(it, "src/main").isDirectory }
 
     private val canonical: JsonObject = run {
-        val contract = File(appDir, "../../contracts/copy/ru.json")
-        val source = if (contract.isFile) contract else File(appDir, "src/test/resources/copy-ru.snapshot.json")
-        Json.parseToJsonElement(source.readText()).jsonObject
+        Json.parseToJsonElement(File(appDir, "../../contracts/copy/ru.json").readText()).jsonObject
     }
 
     private fun text(key: String): String = (canonical[key] as? JsonPrimitive)?.content ?: error("no key $key")

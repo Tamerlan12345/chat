@@ -239,10 +239,7 @@ class ApiClient(
     /** `GET /api/blocks`: `{ blocks: [...] }`; a bare array is accepted too. */
     suspend fun blockedUsers(): List<BlockedUser> = withContext(Dispatchers.IO) {
         val answer: JsonElement = executeRequest(Request.Builder().url("${getBaseUrl()}/blocks").get().build())
-        val entries = (answer as? JsonArray)
-            ?: (answer as? JsonObject)?.let { it["blocks"] ?: it["users"] ?: it["blocked"] } as? JsonArray
-            ?: JsonArray(emptyList())
-        entries.mapNotNull { (it as? JsonObject)?.let(BlockedUser::from) }
+        BlockedUser.list(answer)
     }
 
     suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
