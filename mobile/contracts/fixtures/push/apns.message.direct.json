@@ -1,6 +1,6 @@
 {
   "headers": {
-    "apns-topic": "kz.centras.centychat",
+    "apns-topic": "com.example.centychat",
     "apns-push-type": "alert",
     "apns-priority": "10",
     "apns-expiration": "1791018000",

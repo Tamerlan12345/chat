@@ -19,8 +19,8 @@ info:
 servers:
   - url: http://localhost:2004/api
     description: Локальный сервер разработки / корпоративная сеть
-  - url: https://chat.centras.kz/api
-    description: Рабочий сервер АО СК «Сентрас Иншуранс»
+  - url: https://chat.example.com/api
+    description: Рабочий сервер компании (пример адреса)
 paths:
   /health:
     get:
@@ -323,9 +323,10 @@ paths:
     post:
       summary: Подача заявки на самостоятельную регистрацию
       description: |
-        Доступно только при включенной настройке `allow_registration: 'true'`.
-        Создает заявку в статусе `pending`. Вход становится возможен только после
-        одобрения администратором.
+        Прежний путь регистрации (настольный клиент). Доступно только при включенной настройке
+        `allow_registration: 'true'`. Создает заявку в статусе `pending`. Вход становится возможен
+        только после одобрения администратором. Мобильные клиенты используют регистрацию по коду из
+        письма: `/auth/register/request` и `/auth/register/verify` (тот же выключатель).
       operationId: register
       tags:
         - Auth
@@ -2896,6 +2897,488 @@ paths:
               schema:
                 $ref: '#/components/schemas/LicenseInfo'
 
+  /auth/register/request:
+    post:
+      summary: Самостоятельная регистрация — заявка и письмо с кодом
+      description: |
+        Шаг 1 регистрации по коду из письма (`registration.md` §1.1). Проверки по порядку:
+        выключатель `allow_registration` → поля → почта настроена → пределы (IP 10/ч, e-mail 3/ч,
+        общий предел сервера, по умолчанию 60/ч) → занятость логина/e-mail → ёмкость.
+        Ответ не раскрывает, входит ли адрес в список разрешённых. Код — 6 цифр, 10 минут, 5 попыток, одноразовый.
+      operationId: registerRequest
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelfRegistrationRequest'
+      responses:
+        '202':
+          description: Письмо с кодом отправлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationCodeSent'
+        '400':
+          description: Поле не прошло проверку (без `code`; текст описывает поле)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: '`allow_registration` выключена — `REGISTRATION_DISABLED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '409':
+          description: Логин или e-mail заняты — `USERNAME_TAKEN` / `EMAIL_TAKEN`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '429':
+          description: Предел по IP, по e-mail, общий предел сервера или слишком много незавершённых заявок — `RATE_LIMITED`
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '500':
+          description: Внутренняя ошибка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            `EMAIL_NOT_CONFIGURED` — почта на сервере не настроена (серверы до этой версии отвечали без `code`);
+            `EMAIL_SEND_FAILED` — письмо не ушло; `BUSY` / `PASSWORD_HASH_BUSY` (с `Retry-After`) — заняты слоты расчёта хэша пароля.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+
+  /auth/register/verify:
+    post:
+      summary: Самостоятельная регистрация — подтверждение кода
+      description: |
+        Шаг 2 (`registration.md` §1.2). Адрес из списка разрешённых — 200, ровно как успешный вход;
+        иначе — 202 `pending`, учётная запись ждёт решения администратора. Отказы 403, 409, 429 и 500 код не сжигают.
+      operationId: registerVerify
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationVerifyRequest'
+      responses:
+        '200':
+          description: Учётная запись активна сразу (как `POST /auth/login`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '202':
+          description: Учётная запись создана и ждёт решения администратора, токена нет
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum: [pending]
+        '400':
+          description: '`CODE_INVALID`: с `attemptsLeft` — код не подошёл; без `attemptsLeft` — код не из 6 цифр (попытка не засчитана)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '403':
+          description: '`allow_registration` выключена — `REGISTRATION_DISABLED`; код не тратится'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '409':
+          description: Логин или e-mail заняли, пока шло подтверждение — `USERNAME_TAKEN` / `EMAIL_TAKEN`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '410':
+          description: '`CODE_EXPIRED` — код истёк, использован, попытки исчерпаны или `registrationId` неизвестен (неразличимо)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '429':
+          description: Предел проверок по IP, общий бюджет неудачных проверок сервера (попытка не засчитана) или слишком много заявок ждут решения — `RATE_LIMITED`
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationErrorResponse'
+        '500':
+          description: Внутренняя ошибка; код не сгорает
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me:
+    delete:
+      summary: Удаление своей учётной записи
+      description: |
+        `registration.md` §3. Нужен пароль. Токены отзываются, сокеты закрываются, персональные данные
+        стираются; отправленные сообщения остаются под «Удалённый сотрудник». Необратимо.
+      operationId: deleteOwnAccount
+      tags:
+        - Users
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Нет пароля, или `LAST_ADMIN` — единственного администратора удалить нельзя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          description: '`INVALID_PASSWORD` — неверный пароль'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Слишком много попыток
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: '`BUSY` / `PASSWORD_HASH_BUSY` — заняты слоты расчёта хэша пароля'
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /blocks:
+    get:
+      summary: Мои блокировки
+      operationId: listBlocks
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - blocks
+                properties:
+                  blocks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BlockEntry'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      summary: Заблокировать пользователя
+      description: |
+        `registration.md` §4: только личные переписки, в обе стороны — отправка, правка, звонки и «Побудка»
+        закрыты (`DM_NOT_ALLOWED`, `call_unavailable`, `wake_error invalid_target`); сообщения заблокированного
+        скрыты у блокировщика. Повтор — тоже 201.
+      operationId: blockUser
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: integer
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - userId
+                properties:
+                  userId:
+                    type: integer
+        '400':
+          description: Нет `userId`, себя или предел блокировок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /blocks/{userId}:
+    delete:
+      summary: Снять блокировку (идемпотентно)
+      operationId: unblockUser
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /reports:
+    post:
+      summary: Пожаловаться на сообщение или пользователя
+      description: Дубликат от того же пользователя на ту же цель — 201 с прежним `id`.
+      operationId: createReport
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportCreateRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                  - status
+                properties:
+                  id:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [open]
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Цель не существует или недоступна жалобщику
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: 30 жалоб в час (с `Retry-After`) или слишком много открытых жалоб
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/registration-allowlist:
+    get:
+      summary: Список разрешённых адресов самостоятельной регистрации
+      operationId: adminListRegistrationAllowlist
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AllowlistEntry'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+    post:
+      summary: Добавить адрес или @домен в список разрешённых
+      description: Запись `@домен` разрешает любой адрес домена; точные адреса надёжнее (`registration.md` §2).
+      operationId: adminAddRegistrationAllowlist
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pattern
+              properties:
+                pattern:
+                  type: string
+                  example: '@example.com'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllowlistEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+        '409':
+          description: Такая запись уже есть
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/registration-allowlist/{id}:
+    delete:
+      summary: Удалить запись списка разрешённых
+      operationId: adminRemoveRegistrationAllowlist
+      tags:
+        - AdminRegistrations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/reports:
+    get:
+      summary: Жалобы пользователей
+      description: Новые первыми, до 200. Только главный администратор.
+      operationId: adminListReports
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, closed]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminReport'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+
+  /admin/reports/{id}/close:
+    post:
+      summary: Закрыть жалобу
+      operationId: adminCloseReport
+      tags:
+        - Safety
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenAdminError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2949,6 +3432,187 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    SelfRegistrationRequest:
+      type: object
+      required:
+        - email
+        - username
+        - displayName
+        - password
+      properties:
+        email:
+          type: string
+          description: Один адрес ASCII, до 254 символов; сервер приводит к нижнему регистру
+          example: ivan@example.com
+        username:
+          type: string
+          description: 3–64 символа `[A-Za-z0-9._-]`; занятость проверяется без учёта регистра
+          example: ivanov
+        displayName:
+          type: string
+          description: Непустое, до 100 символов
+          example: Иван Иванов
+        password:
+          type: string
+          description: Политика паролей сервера
+
+    RegistrationCodeSent:
+      type: object
+      required:
+        - status
+        - registrationId
+        - expiresInSec
+      properties:
+        status:
+          type: string
+          enum: [code_sent]
+        registrationId:
+          type: string
+          description: Непрозрачная строка
+        expiresInSec:
+          type: integer
+          example: 600
+
+    RegistrationVerifyRequest:
+      type: object
+      required:
+        - registrationId
+        - code
+      properties:
+        registrationId:
+          type: string
+        code:
+          type: string
+          example: '123456'
+
+    RegistrationErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Русский текст для показа
+          example: Регистрация сейчас закрыта. Обратитесь к администратору.
+        code:
+          type: string
+          enum: [REGISTRATION_DISABLED, USERNAME_TAKEN, EMAIL_TAKEN, RATE_LIMITED, EMAIL_NOT_CONFIGURED, EMAIL_SEND_FAILED, BUSY, PASSWORD_HASH_BUSY, CODE_INVALID, CODE_EXPIRED]
+        attemptsLeft:
+          type: integer
+          description: Только у `CODE_INVALID` после засчитанной попытки
+
+    BlockEntry:
+      type: object
+      required:
+        - userId
+        - displayName
+        - createdAt
+      properties:
+        userId:
+          type: integer
+        displayName:
+          type: string
+          description: Имя или «Удалённый пользователь»
+        createdAt:
+          type: string
+          format: date-time
+
+    ReportCreateRequest:
+      type: object
+      required:
+        - targetType
+        - targetId
+        - reason
+      properties:
+        targetType:
+          type: string
+          enum: [message, user]
+        targetId:
+          type: integer
+        reason:
+          type: string
+          maxLength: 100
+          description: 'Код причины от мобильных клиентов: spam, abuse, inappropriate, threat, other (сервер хранит строку как есть)'
+          example: spam
+        details:
+          type: string
+          maxLength: 2000
+
+    AdminReport:
+      type: object
+      required:
+        - id
+        - status
+        - targetType
+        - targetId
+        - reason
+        - details
+        - createdAt
+        - reporter
+        - reportedUser
+        - messageText
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [open, closed]
+        targetType:
+          type: string
+          enum: [message, user]
+        targetId:
+          type: integer
+        reason:
+          type: string
+        details:
+          type: ['string', 'null']
+        createdAt:
+          type: string
+          format: date-time
+        reporter:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        reportedUser:
+          type: ['object', 'null']
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        messageText:
+          type: ['string', 'null']
+          description: Текст сообщения-цели, если оно не удалено
+
+    AllowlistEntry:
+      type: object
+      required:
+        - id
+        - pattern
+        - created_at
+      properties:
+        id:
+          type: integer
+        pattern:
+          type: string
+          description: Точный адрес или `@домен`, в нижнем регистре
+          example: '@example.com'
+        created_at:
+          type: string
+          format: date-time
+
     ImageErrorResponse:
       type: object
       required:
@@ -3173,14 +3837,14 @@ components:
         full_name:
           type: string
           maxLength: 120
-          example: 'Оразбаев Нурлан'
+          example: 'Иванов Иван'
         email:
           type: string
           format: email
-          example: 'n.orazbayev@cic.kz'
+          example: 'i.ivanov@example.com'
         phone:
           type: string
-          example: '+7 (777) 123-45-67'
+          example: '+7 700 000 00 02'
         job_title:
           type: string
           maxLength: 120
@@ -3230,12 +3894,12 @@ components:
           format: email
           maxLength: 254
           nullable: true
-          example: 'worker@cic.kz'
+          example: 'worker@example.com'
         phone:
           type: string
           maxLength: 32
           nullable: true
-          example: '+7 (701) 999-88-77'
+          example: '+7 700 000 00 03'
         avatar_url:
           type: string
           nullable: true
@@ -3269,15 +3933,15 @@ components:
           example: 'k.akhmetov'
         full_name:
           type: string
-          example: 'Ахметов Канат'
+          example: 'Петров Пётр'
         email:
           type: string
           nullable: true
-          example: 'k.akhmetov@cic.kz'
+          example: 'p.petrov@example.com'
         phone:
           type: string
           nullable: true
-          example: '+7 (727) 250-00-11'
+          example: '+7 700 000 00 04'
         job_title:
           type: string
           nullable: true
@@ -3395,15 +4059,15 @@ components:
           example: 'k.akhmetov'
         full_name:
           type: string
-          example: 'Ахметов Канат'
+          example: 'Петров Пётр'
         email:
           type: string
           nullable: true
-          example: 'k.akhmetov@cic.kz'
+          example: 'p.petrov@example.com'
         phone:
           type: string
           nullable: true
-          example: '+7 (727) 250-00-11'
+          example: '+7 700 000 00 04'
         job_title:
           type: string
           nullable: true
@@ -3891,7 +4555,7 @@ components:
           example: 'k.akhmetov'
         sender_name:
           type: string
-          example: 'Ахметов Канат'
+          example: 'Петров Пётр'
         sender_avatar:
           type: string
           nullable: true
@@ -4416,14 +5080,14 @@ components:
         full_name:
           type: string
           maxLength: 120
-          example: 'Хасенов Ержан'
+          example: 'Сидоров Сергей'
         email:
           type: string
           format: email
-          example: 'e.khasenov@cic.kz'
+          example: 's.sidorov@example.com'
         phone:
           type: string
-          example: '+7 (702) 111-22-33'
+          example: '+7 700 000 00 05'
         job_title:
           type: string
           maxLength: 120
