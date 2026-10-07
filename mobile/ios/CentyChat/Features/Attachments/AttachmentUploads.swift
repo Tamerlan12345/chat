@@ -330,8 +330,10 @@ final class AttachmentUploads {
     func cancel(_ clientMsgId: String) async {
         guard let item = items.first(where: { $0.id == clientMsgId }) else { return }
         if handingOver.contains(clientMsgId) {
-            // Its enqueue is being written: withdrawn as soon as it is (never sent).
+            // Its enqueue is being written: the engine sends nothing of it and cancels it right
+            // after the write, socket up or not (final review M1).
             cancelledDuringHandOver.insert(clientMsgId)
+            engine.withdraw(clientMsgId: clientMsgId)
         }
         running.removeValue(forKey: clientMsgId)?.cancel()
         retries.removeValue(forKey: clientMsgId)?.cancel()
@@ -614,7 +616,10 @@ final class AttachmentUploads {
             if cancelledDuringHandOver.remove(key) != nil || !items.contains(where: { $0.id == key }) {
                 // «Удалить» came while the outbox was being written (final review M1): the entry is
                 // withdrawn before it can go out — a cancelled message is never sent.
-                if outcome.persisted { _ = await engine.cancel(clientMsgId: key) }
+                // The engine withdrew it; if the cancel came too late for that, cancel it now.
+                if outcome.persisted, engine.state.outbox.contains(where: { $0.clientMsgId == key && !$0.pendingDelete }) {
+                    _ = await engine.cancel(clientMsgId: key)
+                }
                 files.discard(pending.localPath)
                 items.removeAll { $0.id == key }
                 do {

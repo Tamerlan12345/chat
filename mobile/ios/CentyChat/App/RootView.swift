@@ -32,10 +32,22 @@ private struct SessionRootView: View {
         Group {
             switch session.phase {
             case .launching:
-                // A blank canvas for the moment the stored session is checked (no spinner).
-                CentyColors.canvas
-                    .ignoresSafeArea()
-                    .accessibilityLabel("Загрузка")
+                if let problem = session.launchProblem {
+                    // The launch waits for the server (nobody remembered yet): say why, offer
+                    // «Повторить»; it also tries again by itself (review fix round 1).
+                    EmptyStateView(illustration: .offline, title: LocalizedStringKey(problem)) {
+                        EmptyStateAction(title: LocalizedStringKey(AppCopy.deliveryRetry), systemImage: "arrow.clockwise") {
+                            Task { await session.retryRestoreIfNeeded() }
+                        }
+                        .accessibilityIdentifier("launch-retry")
+                    }
+                    .background(CentyColors.canvas.ignoresSafeArea())
+                } else {
+                    // A blank canvas for the moment the stored session is checked (no spinner).
+                    CentyColors.canvas
+                        .ignoresSafeArea()
+                        .accessibilityLabel("Загрузка")
+                }
             case .signedOut:
                 LoginView()
             case .passwordChangeRequired:

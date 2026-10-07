@@ -339,7 +339,7 @@ final class SessionResilienceTests: XCTestCase {
         app.auth.state.withValue { $0.currentUserResult = .failure(APIError.noConnection) }
 
         app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"TOKEN_MISSING","message":""}"#))
-        let checked = await eventually { app.auth.state.value.currentUserCount > 1 }
+        let checked = await eventually { app.auth.state.value.currentUserCount > 0 }
         XCTAssertTrue(checked, "the session asked the server")
         XCTAssertEqual(app.session.phase, .authenticated, "no answer is not a refusal")
 

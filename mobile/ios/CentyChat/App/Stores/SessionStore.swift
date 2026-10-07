@@ -36,6 +36,8 @@ protocol SessionLifecycleDelegate: AnyObject {
     /// An explicit sign-out the user confirmed: the account's unsent messages are deleted first. Throws
     /// when they could not be deleted — the sign-out is then cancelled (nothing is left half-done).
     func sessionWillSignOut() async throws
+    /// The explicit sign-out went through on the server (the session ends next).
+    func sessionDidSignOut()
     /// The account's data must not outlive it (the account was deleted, or the stored credentials
     /// were another server's): its unsent messages are deleted, best effort.
     func sessionDidDiscardAccount() async
@@ -77,9 +79,13 @@ public final class SessionStore: RealtimeEventHandling {
     /// Why the launch waits (no server answer, nobody remembered), shown with «Повторить».
     public private(set) var launchProblem: String?
 
-    /// The pause before the next automatic try of a launch that waits.
+    /// Automatic tries of a launch that waits for the server, so far.
+    @ObservationIgnored private var restoreAttempts = 0
+    @ObservationIgnored private var restoreRetry: Task<Void, Never>?
+
+    /// The pause (seconds) before automatic try `attempt` of a launch that waits: 2, 4, 8 … 60.
     nonisolated static func restoreRetryDelay(attempt: Int) -> Int {
-        2
+        min(60, 1 << min(max(attempt, 1), 6))
     }
 
     init(
@@ -112,7 +118,31 @@ public final class SessionStore: RealtimeEventHandling {
     func retryRestoreIfNeeded() async {
         guard restorePending, !isSigningIn, phase == .launching else { return }
         restorePending = false
+        restoreRetry?.cancel()
+        restoreRetry = nil
         await bootstrap()
+        if !restorePending {
+            launchProblem = nil
+            restoreAttempts = 0
+        }
+    }
+
+    /// What the launch screen says while it waits: no network, or the server failing.
+    private static func launchProblemText(for error: any Error) -> String {
+        if case APIError.noConnection? = error as? APIError { return AppCopy.loginOffline }
+        if error is URLError { return AppCopy.loginOffline }
+        return AppCopy.regUnavailable
+    }
+
+    private func scheduleRestoreRetry() {
+        restoreAttempts += 1
+        let delay = Self.restoreRetryDelay(attempt: restoreAttempts)
+        restoreRetry?.cancel()
+        restoreRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.retryRestoreIfNeeded()
+        }
     }
     public var savedUsername: String? { auth.savedUsername }
 
@@ -203,10 +233,12 @@ public final class SessionStore: RealtimeEventHandling {
                 enteredOffline = true
                 await enter(remembered)
             } else {
-                // Nobody remembered (the first launch of this version): wait and try again.
+                // Nobody remembered (the first launch of this version): the launch screen says why,
+                // with «Повторить», and tries again by itself after a growing pause (review fix round 1).
                 restorePending = true
                 phase = .launching
-                errorMessage = error.userMessage
+                launchProblem = Self.launchProblemText(for: error)
+                scheduleRestoreRetry()
             }
         }
     }
@@ -344,6 +376,7 @@ public final class SessionStore: RealtimeEventHandling {
             await resumeAfterAbortedSignOut()
             return
         }
+        delegate?.sessionDidSignOut()
         await endSession()
     }
 
@@ -429,7 +462,9 @@ public final class SessionStore: RealtimeEventHandling {
             switch code {
             case "MUST_CHANGE_PASSWORD":
                 Task { await requirePasswordChange() }
-            case "INVALID_TOKEN":
+            case "INVALID_TOKEN", "TOKEN_MISSING":
+                // TOKEN_MISSING: the socket found no token while the session is authenticated (a
+                // refused refresh cleared it). Checked with the server; ends only on its refusal.
                 Task { await revalidate(reason: message) }
             default:
                 errorMessage = message

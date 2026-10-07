@@ -22,6 +22,7 @@ struct CentyChatMobileApp: App {
         PushRouter.shared.notifications = container.notifications
         PushRouter.shared.pushTokens = container.pushTokens
         PushRouter.shared.routes = container.notificationRoutes
+        PushRouter.shared.session = container.session
         PushRouter.shared.flushInBackground = { [weak container] in
             await container?.flushForBackgroundRefresh() ?? .nothingToDo
         }

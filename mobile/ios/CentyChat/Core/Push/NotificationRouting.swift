@@ -49,11 +49,14 @@ enum NotificationTap {
 }
 
 /// A tapped notification's chat, waiting for the chat list to open it (it may be tapped before the
-/// session is restored; the chat list appears only for a signed-in user).
+/// session is restored; the chat list appears only for a signed-in user). The tap belongs to the
+/// account signed in when it came (nil — the stored session being restored): another account never
+/// opens it, and the end of the session drops it.
 @Observable
 @MainActor
 final class NotificationRoutes {
     private(set) var pending: ConversationKey?
+    @ObservationIgnored private var account: Int64?
     /// Bumped by every tap, so the same chat tapped twice opens twice.
     private(set) var serial = 0
 
@@ -67,17 +70,23 @@ final class NotificationRoutes {
 
     func open(_ conversation: ConversationKey, account: Int64?) {
         pending = conversation
+        self.account = account
         serial += 1
     }
 
-    /// The chat to open for `signedIn`, once.
+    /// The chat to open for `signedIn`, once; nil when it belongs to another account.
     func take(signedIn: Int64?) -> ConversationKey? {
-        defer { pending = nil }
-        return pending
+        defer { clear() }
+        guard let route = pending, signedIn != nil else { return nil }
+        if let owner = account, owner != signedIn { return nil }
+        return route
     }
 
-    /// The session ended.
-    func clear() {}
+    /// The session ended: a tap of it opens nothing for the next one.
+    func clear() {
+        pending = nil
+        account = nil
+    }
 }
 
 /// Whether the user lets the app show notifications.

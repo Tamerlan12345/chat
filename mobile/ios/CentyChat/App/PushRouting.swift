@@ -10,6 +10,8 @@ final class PushRouter {
     weak var pushTokens: PushTokenRegistrar?
     /// Where a tapped message notification's chat waits for the chat list.
     weak var routes: NotificationRoutes?
+    /// Who is signed in, for a tapped notification (nil while the stored session is restored).
+    weak var session: SessionStore?
     /// The outbox flush a background refresh runs (`DeliveryBackgroundTask`).
     var flushInBackground: (@MainActor () async -> DeliveryRuntime.FlushResult)?
 }
@@ -86,7 +88,11 @@ final class NotificationPresentationDelegate: NSObject, UNUserNotificationCenter
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let conversation = NotificationTap.conversation(from: response.notification.request.content.userInfo) else { return }
         await MainActor.run {
-            PushRouter.shared.routes?.open(conversation, account: nil)
+            let router = PushRouter.shared
+            // Signed out: a tap opens nothing (nobody's chat to show). While the stored session is
+            // restored, the tap belongs to that session.
+            guard let session = router.session, session.phase != .signedOut else { return }
+            router.routes?.open(conversation, account: session.currentUser?.id)
         }
     }
 }

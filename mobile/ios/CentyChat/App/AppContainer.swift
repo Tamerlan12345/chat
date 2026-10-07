@@ -27,6 +27,8 @@ public final class AppContainer: SessionLifecycleDelegate {
     let notificationRoutes = NotificationRoutes()
     /// The notification permission, asked once after sign-in (decision P).
     let notificationPermission: NotificationPermission
+    /// Stops APNs for this device after an explicit sign-out (registered again at sign-in).
+    private let unregisterForRemoteNotifications: @MainActor () -> Void
     /// Colleagues' photos, cached on disk; wiped when the session ends.
     let avatars: AvatarImageLoader
     let accountRepository: any AccountRepository
@@ -161,6 +163,7 @@ public final class AppContainer: SessionLifecycleDelegate {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             environment: .current
         )
+        self.unregisterForRemoteNotifications = unregisterForRemoteNotifications
         self.notificationPermission = NotificationPermission(
             authorization: notificationAuthorization ?? NoNotificationAuthorization(),
             registerForRemote: registerForRemoteNotifications
@@ -235,6 +238,7 @@ public final class AppContainer: SessionLifecycleDelegate {
             pushTokenService: LivePushTokenService(client: client),
             notificationAuthorization: LaunchTestFixture.suppressesNotificationPrompt ? nil : UserNotificationAuthorization(),
             registerForRemoteNotifications: { UIApplication.shared.registerForRemoteNotifications() },
+            unregisterForRemoteNotifications: { UIApplication.shared.unregisterForRemoteNotifications() },
             deviceId: { try? keychain.deviceID() },
             avatarLoader: .live(keychain: keychain),
             deliveryStore: LiveDelivery.store,
@@ -284,6 +288,12 @@ public final class AppContainer: SessionLifecycleDelegate {
     func sessionWillSignOut() async throws {
         try await delivery.discardForSignOut()
         LocalSendTimes.removeAll()
+    }
+
+    /// An explicit sign-out: this device stops receiving pushes (as Android, Ruling U m2); the next
+    /// sign-in registers again. A session that ends by itself keeps the registration.
+    func sessionDidSignOut() {
+        unregisterForRemoteNotifications()
     }
 
     func sessionSignOutAborted() async {
@@ -337,6 +347,8 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     func sessionDidEnd() async {
         pushTokens.sessionDidEnd()
+        // A tapped notification of this session opens nothing for the next one.
+        notificationRoutes.clear()
         conversations.reset()
         announcements.reset()
         chats.reset()
