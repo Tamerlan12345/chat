@@ -19,6 +19,7 @@ let UserService;
 let AuthService;
 let MessageService;
 let rateLimiter;
+let SettingsService;
 const outbox = [];
 const people = {};
 const PASSWORD = 'Надёжный-пароль-77';
@@ -38,6 +39,10 @@ test.before(async () => {
   AuthService = require('../src/services/auth.service');
   MessageService = require('../src/services/message.service');
   rateLimiter = require('../src/services/rate-limiter');
+  SettingsService = require('../src/services/settings.service');
+  // Самостоятельная регистрация — только при включённом allow_registration
+  // (решение Q). Тесты ниже проверяют включённый режим; выключенный — отдельно.
+  await SettingsService.setSetting('allow_registration', 'true');
   const app = require('../src/app');
   const wsServer = require('../src/ws/server');
   server = http.createServer(app);
@@ -68,6 +73,10 @@ test.after(async () => {
 test.beforeEach(() => {
   // Пределы по адресу не должны мешать соседним тестам (кроме теста пределов).
   rateLimiter.resetLimit(`reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
+  rateLimiter.resetLimit(`reg-verify-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
+  rateLimiter.resetLimit('reg-req-global');
+  rateLimiter.resetLimit('reg-verify-fail-global');
+  Registration.configureLimits?.(null);
   Registration.setMailer(testMailer);
 });
 
@@ -115,6 +124,8 @@ test('почта не настроена — 503 и честный текст, �
   const res = await requestCode({ email: 'nomail@test.kz', username: 'nomail' });
   assert.strictEqual(res.status, 503);
   assert.strictEqual(res.json.error, 'Отправка почты не настроена');
+  // Клиенты ветвятся по code (registration.md §1.1), а не по «503 без кода».
+  assert.strictEqual(res.json.code, 'EMAIL_NOT_CONFIGURED');
   assert.strictEqual(Number((await identity.get('SELECT COUNT(*) AS n FROM registration_requests')).n), before);
 });
 
@@ -290,6 +301,153 @@ test('REGISTRATION_ALLOWED_EMAILS пополняет список, ничего 
   assert.strictEqual(await Registration.isAllowed('seed1@env.kz'), true);
   assert.strictEqual(await Registration.isAllowed('anyone@envdomain.kz'), true);
   assert.strictEqual(await Registration.seedAllowlistFromEnv('seed1@env.kz'), 0);
+});
+
+// ── Решение Q: allow_registration — главный выключатель ──
+
+const DISABLED = { error: 'Регистрация сейчас закрыта. Обратитесь к администратору.', code: 'REGISTRATION_DISABLED' };
+const verifyCode = (registrationId, code) => api('POST', '/api/auth/register/verify', { body: { registrationId, code } });
+const requestsFor = async (email) => Number((await identity.get('SELECT COUNT(*) AS n FROM registration_requests WHERE email = $1', [email])).n);
+
+test('allow_registration выключена: request и verify — 403 REGISTRATION_DISABLED, письма и учётной записи нет', async () => {
+  const live = await requestCode({ email: 'switch@test.kz', username: 'switch.user' });
+  assert.strictEqual(live.status, 202);
+  const code = lastCode();
+  const sent = outbox.length;
+  await SettingsService.setSetting('allow_registration', 'false');
+  try {
+    const req = await requestCode({ email: 'closed@test.kz', username: 'closed.user' });
+    assert.strictEqual(req.status, 403);
+    assert.deepStrictEqual(req.json, DISABLED);
+    assert.strictEqual(outbox.length, sent, 'письмо не отправляется');
+    assert.strictEqual(await requestsFor('closed@test.kz'), 0);
+    // Выключатель важнее всего прочего: почты нет, тело пустое — всё равно 403.
+    assert.deepStrictEqual((await api('POST', '/api/auth/register/request', { body: {} })).json, DISABLED);
+    Registration.setMailer(null);
+    assert.strictEqual((await requestCode({ email: 'closed2@test.kz', username: 'closed.two' })).status, 403);
+    Registration.setMailer(testMailer);
+
+    // Код, выданный до выключения, учётную запись не создаёт.
+    const verified = await verifyCode(live.json.registrationId, code);
+    assert.strictEqual(verified.status, 403);
+    assert.deepStrictEqual(verified.json, DISABLED);
+    assert.strictEqual(await UserService.getUserByUsername('switch.user'), null);
+  } finally {
+    await SettingsService.setSetting('allow_registration', 'true');
+  }
+  // Отказ по выключателю не тратит попытку и не гасит код.
+  const again = await verifyCode(live.json.registrationId, code);
+  assert.strictEqual(again.status, 200);
+  assert.strictEqual(again.json.user.username, 'switch.user');
+});
+
+test('allow_registration включена: прежнее поведение (разрешённый — сразу, остальные — на рассмотрение)', async () => {
+  assert.strictEqual(await SettingsService.getSetting('allow_registration'), 'true');
+  const res = await requestCode({ email: 'open@elsewhere.org', username: 'open.user' });
+  assert.strictEqual(res.status, 202);
+  assert.strictEqual((await verifyCode(res.json.registrationId, lastCode())).status, 202);
+});
+
+// ── Решение R: общие (на весь сервер) пределы ──
+
+test('общий предел заявок на коды: с любых адресов и почт не больше заданного в час', async () => {
+  Registration.configureLimits({ globalRequestsPerHour: 3 });
+  const ipKey = `reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`;
+  for (let i = 0; i < 3; i++) {
+    rateLimiter.resetLimit(ipKey); // как будто каждая заявка — с нового адреса
+    assert.strictEqual((await requestCode({ email: `glob${i}@spray.org`, username: `glob.user${i}` })).status, 202);
+  }
+  rateLimiter.resetLimit(ipKey);
+  const sent = outbox.length;
+  const over = await requestCode({ email: 'glob3@spray.org', username: 'glob.user3' });
+  assert.strictEqual(over.status, 429);
+  assert.strictEqual(over.json.code, 'RATE_LIMITED');
+  assert.ok(Number(over.headers.get('retry-after')) > 0);
+  assert.strictEqual(outbox.length, sent, 'письмо не отправляется');
+  assert.strictEqual(await requestsFor('glob3@spray.org'), 0);
+});
+
+test('общий бюджет неудачных проверок кода: после него — 429 для всех и оповещение безопасности', async () => {
+  const a = await requestCode({ email: 'gfail.a@spray.org', username: 'gfail.a' });
+  const codeA = lastCode();
+  const b = await requestCode({ email: 'gfail.b@spray.org', username: 'gfail.b' });
+  const codeB = lastCode();
+  Registration.configureLimits({ globalFailedVerifiesPerHour: 3 });
+  assert.strictEqual((await verifyCode(a.json.registrationId, wrongCode(codeA))).status, 400);
+  assert.strictEqual((await verifyCode(a.json.registrationId, wrongCode(codeA))).status, 400);
+  assert.strictEqual((await verifyCode(b.json.registrationId, wrongCode(codeB))).status, 400);
+  // Бюджет исчерпан: даже верный код ждёт, попытка не тратится.
+  const blocked = await verifyCode(b.json.registrationId, codeB);
+  assert.strictEqual(blocked.status, 429);
+  assert.strictEqual(blocked.json.code, 'RATE_LIMITED');
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+  await new Promise((r) => setTimeout(r, 200));
+  const alert = await identity.get(`SELECT rule, severity FROM security_alerts WHERE rule = 'registration_code_bruteforce'`);
+  assert.ok(alert, 'оповещение безопасности записано');
+
+  rateLimiter.resetLimit('reg-verify-fail-global');
+  Registration.configureLimits(null);
+  const ok = await verifyCode(b.json.registrationId, codeB);
+  assert.strictEqual(ok.status, 202);
+  const row = await identity.get('SELECT attempts FROM registration_requests WHERE id = $1', [b.json.registrationId]);
+  assert.strictEqual(Number(row.attempts), 2, 'отказ по общему бюджету попытку не тратит');
+});
+
+test('verify: отказ по пределу ожидающих заявок не гасит верный код', async () => {
+  const res = await requestCode({ email: 'cap@spray.org', username: 'cap.user' });
+  const code = lastCode();
+  const pending = Number((await identity.get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`)).n);
+  Registration.configureLimits({ maxPendingAccounts: pending });
+  const capped = await verifyCode(res.json.registrationId, code);
+  assert.strictEqual(capped.status, 429);
+  assert.strictEqual(capped.json.code, 'RATE_LIMITED');
+  Registration.configureLimits(null);
+  const ok = await verifyCode(res.json.registrationId, code);
+  assert.strictEqual(ok.status, 202);
+});
+
+test('verify: ошибка базы при создании учётной записи — 500, а не «логин занят»; код не сгорает', async () => {
+  const res = await requestCode({ email: 'dberr@spray.org', username: 'dberr.user' });
+  const code = lastCode();
+  const db = require('../src/db/identity').identity();
+  const original = db.run;
+  const failWith = (err) => {
+    db.run = async function (sql, params) {
+      if (/INSERT INTO users/.test(sql)) throw err;
+      return original.call(this, sql, params);
+    };
+  };
+  try {
+    failWith(Object.assign(new Error('disk I/O error'), { code: 'ERR_SQLITE_ERROR', errcode: 10 }));
+    const broken = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(broken.status, 500);
+    assert.notStrictEqual(broken.json.code, 'USERNAME_TAKEN');
+
+    failWith(Object.assign(new Error('duplicate key value violates unique constraint "users_email_key"'), { code: '23505', constraint: 'users_email_key' }));
+    const raced = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(raced.status, 409);
+    assert.strictEqual(raced.json.code, 'EMAIL_TAKEN');
+
+    failWith(Object.assign(new Error('UNIQUE constraint failed: users.username'), { code: 'ERR_SQLITE_ERROR', errcode: 2067 }));
+    const racedName = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(racedName.status, 409);
+    assert.strictEqual(racedName.json.code, 'USERNAME_TAKEN');
+  } finally {
+    db.run = original;
+  }
+  assert.strictEqual((await verifyCode(res.json.registrationId, code)).status, 202);
+});
+
+test('просроченные заявки чистятся по ходу работы, а не только при запуске', async () => {
+  const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+  await identity.run(
+    `INSERT INTO registration_requests (id, email, username, display_name, password_hash, code_hash, attempts, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)`,
+    ['stale-request-id-0001', 'stale@spray.org', 'stale.user', 'Старый', 'x', 'y', old]
+  );
+  Registration.resetPurgeClock();
+  assert.strictEqual((await requestCode({ email: 'trigger@spray.org', username: 'trigger.user' })).status, 202);
+  assert.strictEqual(await requestsFor('stale@spray.org'), 0);
 });
 
 // ── Блокировки и жалобы ──
