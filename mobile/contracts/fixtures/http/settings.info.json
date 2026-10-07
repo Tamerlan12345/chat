@@ -1,0 +1,8 @@
+{
+  "server_name": "CentyChat Server",
+  "company_name": "АО \"Страховая компания \"Сентрас Иншуранс\"",
+  "allow_registration": true,
+  "message_edit_window_minutes": "60",
+  "message_delete_window_minutes": "60",
+  "version": "2026.1.0-pro"
+}
