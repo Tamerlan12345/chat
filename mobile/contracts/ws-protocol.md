@@ -57,6 +57,7 @@
 | `send_message`, `direct_message`, `channel_message` | 10 | 1 000 | Кадр не обрабатывается; ответ `error` `RATE_LIMITED` (ниже) |
 | `edit_message`, `delete_message`, `cancel_message` | 10 | 1 000 (у каждого типа своё окно) | Кадр не обрабатывается; ответ `error` `RATE_LIMITED` (ниже) |
 | `mark_read` | 20 | 1 000 | Игнорирование сообщения |
+| `viewing` | 20 | 1 000 | Игнорирование сообщения (слать только при смене, §3.5.1) |
 | `call_offer` | 3 | 10 000 | Игнорирование вызова |
 | `wake_send` | 20 | 10 000 | Ответ `wake_error: cooldown` (действует также персональный кулдаун 60 с) |
 | `ice_candidate` | 60 | 1 000 | Игнорирование сообщения |
@@ -195,10 +196,12 @@
   - Сообщение не должно быть удалено (`is_deleted = 0`).
   - Тип сообщения должен быть строго `"text"`.
   - Время с момента создания должно укладываться в настройку `message_edit_window_minutes` (-1 = запрещено, 0 = без ограничений, по умолчанию 60 минут).
+  - Личное сообщение нельзя править, пока между собеседниками действует блокировка в любую сторону (`registration.md` §4) — `DM_NOT_ALLOWED`.
 - **Результат**:
   - Исходная версия архивируется в `message_history`.
   - Всем участникам переписки рассылается событие `message_updated`.
-- **Ошибки** (`ws/error.edit_message.json`): `{ "type": "error", "context": "edit_message", "message": "...", "text": "...", "code": "...", "retryable": false, "messageId": 1054 }` — `messageId` из запроса (если это целое > 0), `text` — присланный текст. Коды: `NOT_FOUND`, `NOT_OWNER`, `MESSAGE_DELETED`, `NOT_TEXT_MESSAGE`, `EDIT_WINDOW_EXPIRED` (окно истекло или правка выключена), `EMPTY_TEXT`, `TEXT_TOO_LONG`; временные — `RATE_LIMITED`, `INTERNAL_ERROR`.
+  - Если сообщение удалили параллельно (другим сокетом), пока правка сохранялась, удаление побеждает: `message_updated` после надгробия **не** рассылается, автору правки — `error` `MESSAGE_DELETED` (как при правке уже удалённого). Клиент получает `message_deleted` по обычным правилам.
+- **Ошибки** (`ws/error.edit_message.json`): `{ "type": "error", "context": "edit_message", "message": "...", "text": "...", "code": "...", "retryable": false, "messageId": 1054 }` — `messageId` из запроса (если это целое > 0), `text` — присланный текст. Коды: `NOT_FOUND`, `NOT_OWNER`, `MESSAGE_DELETED`, `NOT_TEXT_MESSAGE`, `EDIT_WINDOW_EXPIRED` (окно истекло или правка выключена), `EMPTY_TEXT`, `TEXT_TOO_LONG`, `DM_NOT_ALLOWED` (личная переписка закрыта блокировкой); временные — `RATE_LIMITED`, `INTERNAL_ERROR`.
 
 ---
 
@@ -347,6 +350,7 @@
 - **Правила и ограничения**:
   - Кулдаун: не чаще **1 раза в 60 секунд** от одного отправителя (таймаут общий на все цели, чтобы нельзя было будить весь отдел подряд).
   - Нельзя будить самого себя, неактивного пользователя, пользователя не в сети или пользователя с включенным режимом «Не беспокоить» (`dnd`).
+  - Нельзя будить, пока между собеседниками действует блокировка в любую сторону (`registration.md` §4): ответ `wake_error` `invalid_target` — тот же, что для несуществующего адресата, блокировку он не выдаёт.
 - **Ответы сервера**:
   - Инициатору: `{ "type": "wake_sent", "targetUserId": 12, "at": 1759230000000, "retryAt": 1759230060000 }`
   - Целевому сотруднику: `{ "type": "wake_ring", "fromUserId": 7, "fromName": "Алия Серикова", "at": 1759230000000 }`
@@ -365,7 +369,7 @@
   "targetUserId": 12
 }
 ```
-*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с живым устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`. Не удалось разбудить ни одно устройство — вызывающему `call_unavailable` «Сотрудник сейчас не в сети». Вызов закончился до подключения — вызываемому при входе `call_end` (`reason`: `cancelled`, `connection_lost`, `timeout`, `unavailable`; один раз, `push.md` §3 п. 5). Если вызывающий сбросил вызов (`call_end`/`call_rejected` тому же собеседнику) или отключился, пока сервер проверял вызов, вызов не встаёт: ни `call_offer` вызываемому, ни push-уведомления.*
+*Требует право роли `can_call`. Если у вызываемого включен DND или он офлайн — возвращается `call_unavailable`. Исключение (задача 18, `push.md` §3): вызываемый без сокета, но с живым устройством для звонков (FCM на Android, PushKit VoIP на iOS) получает push-уведомление о звонке, а вызов ждёт без `call_unavailable`; когда устройство подключится, сразу после `auth_success` ему приходит этот же `call_offer`. Не удалось разбудить ни одно устройство — вызывающему `call_unavailable` «Сотрудник сейчас не в сети». Вызов закончился до подключения — вызываемому при входе `call_end` (`reason`: `cancelled`, `connection_lost`, `timeout`, `unavailable`; один раз, `push.md` §3 п. 5). Блокировка в любую сторону (`registration.md` §4): вызов не встаёт — вызывающему `call_unavailable` с той же причиной «Сотрудник сейчас не в сети» (блокировку и «Не беспокоить» ответ не выдаёт), вызываемому ни `call_offer`, ни push о звонке. Если вызывающий сбросил вызов (`call_end`/`call_rejected` тому же собеседнику) или отключился, пока сервер проверял вызов, вызов не встаёт: ни `call_offer` вызываемому, ни push-уведомления.*
 
 #### `call_answer` — Принятие вызова
 ```json
@@ -863,6 +867,7 @@
 | `CLIENT_MSG_ID_CONFLICT` | `false` | send | ключ уже занят другой перепиской этого автора |
 | `CANCELLED` | `false` | send | ключ отозван автором (`cancel_message`), сохранено ничего не было |
 | `INVALID_CONVERSATION`, `INVALID_MESSAGE_TYPE`, `INVALID_TARGET`, `RECIPIENT_NOT_FOUND`, `NOT_CHANNEL_MEMBER`, `EMPTY_TEXT`, `TEXT_TOO_LONG`, `INVALID_METADATA`, `ATTACHMENT_NOT_ACCESSIBLE` | `false` | send | отказ проверки; `EMPTY_TEXT`/`TEXT_TOO_LONG` — и у edit |
+| `DM_NOT_ALLOWED` | `false` | send, edit | личная переписка закрыта: между собеседниками действует блокировка в любую сторону (`registration.md` §4). `message` — «Сообщение не может быть доставлено», кто кого заблокировал, не говорится (`ws/error.dm_not_allowed.json`). Клиент блокирует поле ввода этой переписки (`copy-ru.md` §4), повтор бессмыслен, пока блокировку не снимут |
 | `NOT_FOUND`, `NOT_OWNER` | `false` | edit, delete | нет сообщения / чужое |
 | `MESSAGE_DELETED`, `NOT_TEXT_MESSAGE`, `EDIT_WINDOW_EXPIRED` | `false` | edit | правка невозможна |
 | `DELETE_WINDOW_EXPIRED` | `false` | delete, cancel | окно удаления истекло или удаление выключено |
@@ -904,7 +909,7 @@
 ```
 
 #### `user_created` и `user_updated` — изменения справочника
-Рассылаются всем; `user` — публичный профиль (как в `GET /api/users`).
+Рассылаются всем; `user` — публичный профиль (как в `GET /api/users`). При удалении учётной записи (`registration.md` §3) `user_updated` несёт уже обезличенную запись: `username` вида `deleted~<id>`, `full_name` «Удалённый сотрудник», без e-mail, телефона и должности, `is_active: 0`.
 ```json
 {
   "type": "user_created",
@@ -1047,7 +1052,7 @@
 }
 ```
 #### `wake_error` — отказ
-`code`: `cooldown` (есть `retryAt`) | `invalid_target` | `dnd` | `offline`. `message` — русский текст для показа.
+`code`: `cooldown` (есть `retryAt`) | `invalid_target` (нет такого коллеги, неактивен или между вами блокировка) | `dnd` | `offline`. `message` — русский текст для показа.
 ```json
 {
   "type": "wake_error",

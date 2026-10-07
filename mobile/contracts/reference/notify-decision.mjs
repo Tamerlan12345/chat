@@ -83,7 +83,7 @@ function decideReadDismissal({ sockets = [], pushDevices = [] }) {
   const online = onlineDeviceIds(sockets);
   return { push: pushDevices.filter((d) => !online.has(d.id)).map((d) => d.id) };
 }
-// Входящий звонок (multi-device.md §7): звонит всегда — открытый чат его не
+// Входящий звонок (multi-device.md §5): звонит всегда — открытый чат его не
 // глушит. Кадр call_offer получают все сокеты вызываемого; ring — сокеты,
 // которые звонят по нему сами (на переднем плане или в фоне на устройстве без
 // push), quiet — сокеты в фоне на устройстве с push: их будит push, кадр —

@@ -421,7 +421,7 @@ class WsServer {
     }).push;
   }
 
-  // Решение о звонке (multi-device.md §7) с сокетами вызываемого сейчас.
+  // Решение о звонке (multi-device.md §5, push.md §3) с сокетами вызываемого сейчас.
   // devices — устройства, которые будит звонок; без них — по таблице токенов.
   callDecision(userId, callerId, devices = PushService.callDevicesSync(userId)) {
     return NotifyDecision.decideCallNotification({
@@ -1266,7 +1266,7 @@ class WsServer {
             return;
           }
           // Кому звонить — по тому же правилу, что уведомления о сообщениях
-          // (multi-device.md §7): кадр call_offer — всем сокетам вызываемого,
+          // (multi-device.md §5): кадр call_offer — всем сокетам вызываемого,
           // push — его устройствам без сокета на переднем плане, даже если
           // другие устройства на связи (компьютер простаивает, телефон в
           // кармане). Не звонит ни один сокет и будить нечего — call_unavailable.
