@@ -30,7 +30,7 @@ import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
 import { conversationSnippet, registrationToast } from './lib/live-events.mjs';
 import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
-import { viewingKey, viewingFrame, applyConversationRead, shouldNotify, authFrame, toastIsForConversation } from './lib/multi-device.mjs';
+import { viewingKey, viewingFrame, applyConversationRead, authFrame, toastIsForConversation, isViewingHere, incomingMessagePlan } from './lib/multi-device.mjs';
 
 // Токен живёт 12 часов; продлеваем с большим запасом, чтобы работающий
 // человек не упирался в истечение посреди дня.
@@ -510,8 +510,10 @@ export default function App() {
   // Прочитанным считается только то, что человек реально мог увидеть: окно в
   // фокусе и открыт именно этот диалог. Иначе «прочитано» означало бы лишь
   // «приложение запущено».
+  // Простаивающий компьютер («отошёл») переписку не читает: ни viewing, ни
+  // mark_read — вернулся «в сети», тогда и прочитано (updateMyPresence).
   const markConversationRead = (chat = activeChatRef.current) => {
-    if (!chat || !windowFocusedRef.current || !isChatVisibleRef.current) return;
+    if (!chat || !isViewingHere({ ...currentView(), chat }, chat.type, chat.id)) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({
       type: 'mark_read',
@@ -1407,21 +1409,23 @@ export default function App() {
         refreshConversations();
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive =
-            isChatVisibleRef.current &&
-            activeChatRef.current?.type === 'direct' &&
-            activeChatRef.current.id === msg.sender_id &&
-            windowFocusedRef.current;
-
-          if (!isCurrentActive) {
+          // Смотрят здесь (в фокусе, «в сети») — прочитано сразу, даже если
+          // лента прокручена вверх (multi-device.md §4 п. 4). Иначе счётчик и
+          // уведомление — только если сервер не сказал «чат читают на другом
+          // устройстве» (notify: false, §5).
+          const plan = incomingMessagePlan({
+            own: false,
+            viewingHere: isViewingHere(currentView(), 'direct', msg.sender_id),
+            notify: event.notify
+          });
+          if (plan.markRead) markConversationRead();
+          if (plan.countUnread) {
             setUnreadMap((prev) => ({
               ...prev,
               [msg.sender_id]: (prev[msg.sender_id] || 0) + 1
             }));
           }
-          // Уведомление — только если сервер не сказал «чат читают на другом
-          // устройстве» (notify: false, multi-device.md §5); счётчик — как раньше.
-          if (shouldNotify({ own: false, activeHere: isCurrentActive, notify: event.notify })) {
+          if (plan.notify) {
             const sender = usersRef.current.find((u) => u.id === msg.sender_id);
             const senderName = sender ? (sender.full_name || sender.username) : 'Коллега';
 
@@ -1454,15 +1458,16 @@ export default function App() {
         });
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive =
-            isChatVisibleRef.current &&
-            activeChatRef.current?.type === 'channel' &&
-            activeChatRef.current.id === msg.target_id &&
-            windowFocusedRef.current;
-          if (!isCurrentActive) {
+          const plan = incomingMessagePlan({
+            own: false,
+            viewingHere: isViewingHere(currentView(), 'channel', msg.target_id),
+            notify: event.notify
+          });
+          if (plan.markRead) markConversationRead();
+          if (plan.countUnread) {
             setChannelUnread((prev) => ({ ...prev, [msg.target_id]: (prev[msg.target_id] || 0) + 1 }));
           }
-          if (shouldNotify({ own: false, activeHere: isCurrentActive, notify: event.notify })) {
+          if (plan.notify) {
             const ch = channelsRef.current.find((c) => c.id === msg.target_id);
             addToast({
               title: ch ? channelLabel(ch.name) : 'Канал',
@@ -1890,14 +1895,27 @@ export default function App() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'presence', state }));
     }
-    // away сервер снимает viewing сам; вернулись — открытый чат снова «смотрят».
+    // away сервер снимает viewing сам; вернулись — открытый чат снова «смотрят»
+    // и прочитан: пришедшее за время простоя человек видит сейчас (§4 п. 4).
     syncViewing();
+    if (state === 'online') markConversationRead();
   };
 
   // Какой чат этот компьютер сейчас показывает человеку (кадр viewing,
   // multi-device.md §4): пока он открыт в фокусе, о новых сообщениях в нём
   // не уведомляется ни одно устройство сотрудника, включая телефон.
   // Шлётся только при смене.
+  // Что окно показывает человеку сейчас: открытая переписка, виден ли раздел
+  // переписок, фокус, присутствие (для isViewingHere).
+  function currentView() {
+    return {
+      chat: activeChatRef.current,
+      chatVisible: isChatVisibleRef.current,
+      focused: windowFocusedRef.current,
+      presence: presenceRef.current
+    };
+  }
+
   function syncViewing() {
     const ws = wsRef.current;
     const connected = Boolean(ws && ws.readyState === WebSocket.OPEN);
