@@ -97,7 +97,7 @@ public actor APIClient {
             guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
                 throw APIError.insecureTransport
             }
-            guard let token = retryToken ?? keychain.authToken else {
+            guard let token = try retryToken ?? storedToken() else {
                 throw APIError.unauthorized
             }
             requestToken = token
@@ -199,6 +199,17 @@ public actor APIClient {
         }
     }
 
+    /// The stored session token. A Keychain that cannot be read now (the device was not unlocked
+    /// since it started) is a wait, like no network (`noConnection`) — never a rejected session
+    /// (final review I1): nothing is cleared and nobody is signed out.
+    private func storedToken() throws -> String? {
+        do {
+            return try keychain.storedAuthToken()
+        } catch {
+            throw APIError.noConnection
+        }
+    }
+
     // MARK: - Raw requests (the delivery engine reads statuses itself)
 
     /// An answer read as is: any HTTP status with its body; status 0 when the server could not be
@@ -228,7 +239,14 @@ public actor APIClient {
         guard let url = components.url, ServerEndpointPolicy.allowsAuthorization(to: url) else {
             return .unreachable
         }
-        guard let token = retryToken ?? keychain.authToken else {
+        let stored: String?
+        do {
+            stored = try retryToken ?? storedToken()
+        } catch {
+            // The Keychain cannot be read now (locked before the first unlock): wait, like no network.
+            return .unreachable
+        }
+        guard let token = stored else {
             return RawResponse(status: 401, body: Data(), retryAfterSeconds: nil)
         }
         var request = URLRequest(url: url)
@@ -311,7 +329,7 @@ public actor APIClient {
     /// token. Throws `unauthorized` when the server refused the refresh.
     private func renewedToken(after staleToken: String) async throws -> String? {
         try await refreshAccessToken(after: staleToken)
-        guard let current = keychain.authToken else { return nil }
+        guard let current = try storedToken() else { return nil }
         // Follow this session's rotations (a refresh, then a password change, …) to the current token.
         var token = staleToken
         for _ in 0..<refreshedTokens.count {
@@ -329,7 +347,7 @@ public actor APIClient {
     }
 
     private func refreshAccessToken(after staleToken: String) async throws {
-        guard keychain.authToken == staleToken else { return }
+        guard try storedToken() == staleToken else { return }
         let serverURL = environment.serverURL
         guard ServerEndpointPolicy.allowsAuthorization(to: serverURL) else {
             throw APIError.insecureTransport
@@ -429,7 +447,13 @@ public actor APIClient {
         let _: IgnoredBody = try await request(
             endpoint: "/users/me", method: "DELETE", body: data, unauthorizedMeansRejected: true
         )
-        try keychain.clearAllUserData()
+        // The account is gone on the server: a Keychain item that cannot be deleted here must not
+        // turn that into «deletion failed» (final review M4). The session's own wipe repeats it.
+        do {
+            try keychain.clearAllUserData()
+        } catch {
+            Log.session.error("Local credentials could not be wiped after the account deletion: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     public func report(_ body: ReportBody) async throws {
@@ -609,7 +633,7 @@ public actor APIClient {
         let isRetry = retryToken != nil
         let url = try apiURL(serverURL: environment.serverURL, endpoint: "/files/upload")
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else { throw APIError.insecureTransport }
-        guard let token = retryToken ?? keychain.authToken else { throw APIError.unauthorized }
+        guard let token = try retryToken ?? storedToken() else { throw APIError.unauthorized }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -675,7 +699,7 @@ public actor APIClient {
         guard ServerEndpointPolicy.allowsAuthorization(to: url) else {
             throw APIError.insecureTransport
         }
-        guard let token = retryToken ?? keychain.authToken else {
+        guard let token = try retryToken ?? storedToken() else {
             throw APIError.unauthorized
         }
         

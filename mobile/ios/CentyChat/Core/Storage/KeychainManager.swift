@@ -39,7 +39,7 @@ public enum KeychainManagerError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .unavailable:
-            return String(localized: "Не удалось надёжно сохранить данные сессии на этом устройстве.")
+            return AppCopy.regStorage
         case .invalidValue:
             return String(localized: "Защищённое хранилище получило недопустимое значение.")
         case .updateFailed, .addFailed:
@@ -79,7 +79,16 @@ public final class KeychainManager: @unchecked Sendable {
         /// Origin of the server the stored token and device secret were issued for.
         static let credentialOrigin = "credential_origin"
         static let savedUsername = "saved_username"
+        /// The signed-in user (JSON), so a launch without the server keeps the session.
+        static let userSnapshot = "user_snapshot"
+
+        static let all = [authToken, deviceId, deviceSecret, legacyServerURL, credentialOrigin, savedUsername, userSnapshot]
     }
+
+    /// The protection class of every item: readable after the first unlock since boot, so a call
+    /// running behind the lock screen (or a background flush) still has its session; never synced or
+    /// restored to another device (final review I1).
+    static var protection: String { kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String }
 
     private init(itemStore: KeychainItemStore, serviceName: String) {
         self.itemStore = itemStore
@@ -92,25 +101,56 @@ public final class KeychainManager: @unchecked Sendable {
 
     // MARK: - Auth Token
 
+    /// The stored token, or nil both when there is none and when it cannot be read now. Callers that
+    /// must tell the two apart (a missing token ends nothing; an unreadable one must not either) use
+    /// `storedAuthToken()`.
     public var authToken: String? {
         value(forKey: Keys.authToken)
     }
 
-    /// The stored token; throws `unavailable` when it exists but cannot be read now.
+    /// The stored token; nil — none. Throws `unavailable` when it exists but cannot be read now
+    /// (the device has not been unlocked since it started): a wait, never a signed-out session.
     public func storedAuthToken() throws -> String? {
-        authToken
+        try read(forKey: Keys.authToken)
     }
 
     /// Whether stored items can be read now.
-    public var canReadStoredItems: Bool { true }
+    public var canReadStoredItems: Bool {
+        do {
+            _ = try read(forKey: Keys.authToken)
+            return true
+        } catch {
+            return false
+        }
+    }
 
-    /// Moves items written by older versions to the protection class of new ones.
-    public func upgradeItemProtection() {}
+    /// Items written by older versions (`WhenUnlockedThisDeviceOnly`) move to `protection`; values
+    /// stay as they are. Called once per launch; items already moved are not touched.
+    public func upgradeItemProtection() {
+        lock.lock()
+        defer { lock.unlock() }
+        for key in Keys.all {
+            var query = baseQuery(for: key)
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            let status = itemStore.update(query: query, attributes: [kSecAttrAccessible as String: Self.protection])
+            if status != errSecSuccess && status != errSecItemNotFound {
+                Log.session.notice("Keychain item protection not upgraded (status \(status, privacy: .public))")
+            }
+        }
+    }
 
-    /// The signed-in user, kept for a launch without the server.
-    public func saveUserSnapshot(_ user: User) throws {}
+    /// The signed-in user, kept for a launch without the server (final review I2).
+    public func saveUserSnapshot(_ user: User) throws {
+        let data = try JSONEncoder().encode(user)
+        guard let json = String(data: data, encoding: .utf8) else { throw KeychainManagerError.invalidValue }
+        try save(value: json, key: Keys.userSnapshot)
+    }
 
-    public func storedUserSnapshot() throws -> User? { nil }
+    /// The kept user; nil — none (or one this version cannot read). Throws `unavailable` like the token.
+    public func storedUserSnapshot() throws -> User? {
+        guard let json = try read(forKey: Keys.userSnapshot) else { return nil }
+        return try? JSONDecoder().decode(User.self, from: Data(json.utf8))
+    }
 
     public func saveAuthToken(_ token: String) throws {
         try save(value: token, key: Keys.authToken)
@@ -118,8 +158,10 @@ public final class KeychainManager: @unchecked Sendable {
 
     // MARK: - Device ID
 
+    /// This device's identifier. An identifier that exists but cannot be read now is never replaced
+    /// by a new one (that would make the server see another device): it throws `unavailable`.
     public func deviceID() throws -> String {
-        if let existing = value(forKey: Keys.deviceId) {
+        if let existing = try read(forKey: Keys.deviceId) {
             return existing
         }
 
@@ -145,11 +187,12 @@ public final class KeychainManager: @unchecked Sendable {
     /// wiped; the legacy user-entered server URL is removed. Throws when a wipe fails, in
     /// which case the stored credentials must not be used.
     public func bindCredentials(toOrigin origin: String) throws -> StoredCredentialDecision {
-        let legacyServerURL = value(forKey: Keys.legacyServerURL)
-        let boundOrigin = value(forKey: Keys.credentialOrigin)
+        // Unreadable items (a locked device) throw `unavailable`: nothing is decided or wiped then.
+        let legacyServerURL = try read(forKey: Keys.legacyServerURL)
+        let boundOrigin = try read(forKey: Keys.credentialOrigin)
         // Older installs recorded the issuer only as the user-entered server URL.
         let issuer = boundOrigin ?? legacyServerURL.flatMap(ServerEnvironment.origin(of:))
-        let hasCredentials = authToken != nil || deviceSecret != nil
+        let hasCredentials = try read(forKey: Keys.authToken) != nil || read(forKey: Keys.deviceSecret) != nil
 
         let decision: StoredCredentialDecision
         if !hasCredentials {
@@ -188,6 +231,12 @@ public final class KeychainManager: @unchecked Sendable {
         // Callers must not report a successful logout until both deletes succeed.
         try delete(key: Keys.deviceSecret)
         try delete(key: Keys.authToken)
+        // Who was signed in goes with the session; a leftover is harmless (it is used only with a token).
+        do {
+            try delete(key: Keys.userSnapshot)
+        } catch {
+            Log.session.notice("The signed-in user snapshot could not be deleted")
+        }
     }
 
     /// Account deletion: the session, the device secret and the remembered login name.
@@ -204,6 +253,7 @@ public final class KeychainManager: @unchecked Sendable {
         try delete(key: Keys.legacyServerURL)
         try delete(key: Keys.credentialOrigin)
         try delete(key: Keys.savedUsername)
+        try delete(key: Keys.userSnapshot)
     }
 #endif
 
@@ -220,7 +270,7 @@ public final class KeychainManager: @unchecked Sendable {
         let query = baseQuery(for: key)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible as String: Self.protection
         ]
 
         let updateStatus = itemStore.update(query: query, attributes: attributes)
@@ -239,7 +289,14 @@ public final class KeychainManager: @unchecked Sendable {
         }
     }
 
+    /// nil both for a missing and for an unreadable item (callers that may not mix them up use `read`).
     private func value(forKey key: String) -> String? {
+        (try? read(forKey: key)) ?? nil
+    }
+
+    /// The item's value; nil — no such item. Any other failure (`errSecInteractionNotAllowed` while
+    /// the device is locked before its first unlock, …) throws `unavailable`: the item may well exist.
+    private func read(forKey key: String) throws -> String? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -248,10 +305,14 @@ public final class KeychainManager: @unchecked Sendable {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         let result = itemStore.read(query: query)
-        guard result.status == errSecSuccess, let data = result.data else {
+        switch result.status {
+        case errSecSuccess:
+            return result.data.flatMap { String(data: $0, encoding: .utf8) }
+        case errSecItemNotFound:
             return nil
+        default:
+            throw KeychainManagerError.unavailable(status: result.status)
         }
-        return String(data: data, encoding: .utf8)
     }
 
     private func delete(key: String) throws {

@@ -155,6 +155,14 @@ public actor WebSocketClient {
         reconnectTask = nil
         isIntentionalDisconnect = false
 
+        // Before the first unlock the stored session cannot be read: a socket without its token
+        // would be refused and end the session. Wait with the usual backoff instead (final review I1).
+        guard tokenReadable() else {
+            Log.realtime.notice("WebSocket connect deferred: the stored session cannot be read yet")
+            scheduleReconnect()
+            return
+        }
+
         let current = credentials()
         guard let serverURL = ServerEndpointPolicy.configuredURL(from: current.serverURL),
               let wsUrl = ServerEndpointPolicy.webSocketURL(for: serverURL) else {
@@ -404,7 +412,11 @@ public actor WebSocketClient {
         self.generation += 1
         reportClosed()
         tearDownTransport()
+        scheduleReconnect()
+    }
 
+    /// The next attempt after the backoff's delay.
+    private func scheduleReconnect() {
         let delay = backoff.nextDelay(jitter: jitter())
         let attempt = backoff.attempt
         connectionState = .reconnecting(attempt: attempt, delay: delay)
