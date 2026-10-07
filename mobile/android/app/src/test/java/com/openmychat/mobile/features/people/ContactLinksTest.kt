@@ -8,7 +8,7 @@ class ContactLinksTest {
 
     @Test
     fun phonesKeepOnlyDigitsAndTheLeadingPlus() {
-        assertEquals("+77272447714", ContactLinks.phoneNumber("+7 (727) 244-77-14"))
+        assertEquals("+77000000014", ContactLinks.phoneNumber("+7 (700) 000-00-14"))
         assertEquals("87012223344", ContactLinks.phoneNumber("8 701 222 33 44"))
     }
 
@@ -21,8 +21,8 @@ class ContactLinksTest {
 
     @Test
     fun emailsMustLookLikeAnAddressWithoutExtraParameters() {
-        assertEquals("p.ivanov@cic.kz", ContactLinks.email(" p.ivanov@cic.kz "))
-        assertNull(ContactLinks.email("a@b.kz?subject=x&body=y"))
+        assertEquals("p.ivanov@example.test", ContactLinks.email(" p.ivanov@example.test "))
+        assertNull(ContactLinks.email("a@b.example?subject=x&body=y"))
         assertNull(ContactLinks.email("не адрес"))
         assertNull(ContactLinks.email("a@b"))
     }

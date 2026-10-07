@@ -58,7 +58,7 @@ class ApiClientAccountTest {
         body = """{"status":"code_sent","registrationId":"r-1","expiresInSec":600}"""
 
         val challenge = client().requestRegistration(
-            RegisterRequestBody(email = "ivan@company.kz", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12")
+            RegisterRequestBody(email = "ivan@company.example", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12")
         )
 
         assertEquals("r-1", challenge.registrationId)
@@ -67,7 +67,7 @@ class ApiClientAccountTest {
         assertEquals("POST", sent.method)
         assertEquals("/api/auth/register/request", sent.url.encodedPath)
         val json = sent.json()
-        assertEquals("ivan@company.kz", json["email"]!!.jsonPrimitive.content)
+        assertEquals("ivan@company.example", json["email"]!!.jsonPrimitive.content)
         assertEquals("ivanov", json["username"]!!.jsonPrimitive.content)
         assertEquals("Иван Иванов", json["displayName"]!!.jsonPrimitive.content)
         assertEquals("Secret-12", json["password"]!!.jsonPrimitive.content)

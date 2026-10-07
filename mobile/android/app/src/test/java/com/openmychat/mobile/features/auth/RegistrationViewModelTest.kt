@@ -27,7 +27,7 @@ class RegistrationViewModelTest {
     private fun viewModel() = RegistrationViewModel(account) { now }
 
     private fun RegistrationViewModel.fillValidForm() {
-        onEmailChange(" Ivan@Company.kz ")
+        onEmailChange(" Ivan@Company.example ")
         onDisplayNameChange("Иван   Иванов")
         onUsernameChange("Ivanov")
         onPasswordChange("Secret-12")
@@ -59,7 +59,7 @@ class RegistrationViewModelTest {
         vm.submitForm()
 
         assertEquals(
-            RegisterRequestBody(email = "ivan@company.kz", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12"),
+            RegisterRequestBody(email = "ivan@company.example", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12"),
             account.registrationRequests.single()
         )
         assertEquals(Step.CODE, state.step)

@@ -19,8 +19,8 @@ class SerializationTest {
             {
                 "id": 7,
                 "username": "k.akhmetov",
-                "full_name": "Канат Ахметов",
-                "email": "k.akhmetov@centras.kz",
+                "full_name": "Тест Тестов",
+                "email": "t.testov@example.test",
                 "job_title": "Android Lead",
                 "department_name": "Отдел мобильной разработки",
                 "status": "online",
@@ -35,7 +35,7 @@ class SerializationTest {
 
         assertEquals(7L, user.id)
         assertEquals("k.akhmetov", user.username)
-        assertEquals("Канат Ахметов", user.fullName)
+        assertEquals("Тест Тестов", user.fullName)
         assertEquals(UserStatus.ONLINE, user.status)
         assertTrue(user.isActive)
         assertFalse(user.mustChangePassword)
@@ -77,7 +77,7 @@ class SerializationTest {
                 "is_deleted": 0,
                 "created_at": "2026-09-30T09:40:00.000Z",
                 "sender_username": "k.akhmetov",
-                "sender_name": "Канат Ахметов",
+                "sender_name": "Тест Тестов",
                 "delivery_status": "delivered",
                 "metadata": {
                     "file_id": 42,
