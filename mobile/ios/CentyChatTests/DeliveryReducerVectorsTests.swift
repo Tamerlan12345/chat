@@ -38,9 +38,9 @@ final class DeliveryReducerVectorsTests: XCTestCase {
 
     // MARK: - The runner itself (parity: as strict as Android's `DeliveryReducerVectorsTest`)
 
-    /// The empty online state of account 2, with one queued `cancel` op of an unsent message.
+    /// Account 2 offline (nothing is pumped), with one queued `cancel` op of an unsent message.
     private static let stateWithACancelOp = #"""
-    {"me":2,"connection":"online","visible":null,"sync":{"cursor":"c.1","running":false,"bootstrap":false,"chain":0},
+    {"me":2,"connection":"offline","visible":null,"sync":{"cursor":"c.1","running":false,"bootstrap":false,"chain":0},
      "seq":0,"outbox":[],"ops":[{"op":"cancel","message_id":null,"client_msg_id":"a0000300-0000-4000-8000-000000000300",
      "text":null,"state":"queued","attempts":0,"failures":0,"ack_deadline":null,"next_attempt_at":null}],
      "messages":{},"unread":{},"sendLog":[],"opsLog":[],"wake_at":null,"cancelled":["a0000300-0000-4000-8000-000000000300"]}
@@ -95,6 +95,14 @@ enum DeliveryVectorRunner {
               let expectedEffects = vector["expectedEffects"]?.array else {
             return ["missing initialState, events or expectedEffects"]
         }
+        // As strict as Android's runner: the vector names its file, and every event has its own
+        // effect list (a missing list is not "no effects").
+        if vector["name"]?.string != name {
+            failures.append("name \(vector["name"]?.string ?? "nil") does not match the file \(name)")
+        }
+        if events.count != expectedEffects.count {
+            failures.append("\(events.count) events but \(expectedEffects.count) effect lists")
+        }
         var state = DeliveryState(json: initial)
         for (index, event) in events.enumerated() {
             guard let object = event.object else {
@@ -115,7 +123,11 @@ enum DeliveryVectorRunner {
         }
         let actual = state.json
         for (key, expected) in vector["expectedState"]?.object ?? [:] {
-            let value = actual[key] ?? .null
+            // A key the state does not have is a failure, not `null`.
+            guard let value = actual[key] else {
+                failures.append("state.\(key) is missing")
+                continue
+            }
             if value != expected {
                 failures.append("state.\(key)\n  expected \(expected.jsonText)\n  actual   \(value.jsonText)")
             }
