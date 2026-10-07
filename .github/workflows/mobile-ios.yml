@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - 'mobile/ios/**'
-      - 'mobile/contracts/fixtures/**'
+      - 'mobile/contracts/**'
       - 'mobile/dev/**'
       - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'
   push:
     paths:
       - 'mobile/ios/**'
-      - 'mobile/contracts/fixtures/**'
+      - 'mobile/contracts/**'
       - 'mobile/dev/**'
       - 'mobile/qa/verify-ios-privacy-manifest.ps1'
       - '.github/workflows/mobile-ios.yml'

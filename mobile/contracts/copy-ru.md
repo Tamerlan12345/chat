@@ -116,7 +116,7 @@ The server refuses with 403 / WS `DM_NOT_ALLOWED`, «Сообщение не м�
 
 Server: `S/api/index.js` (`/auth/register/request`, `/auth/register/verify`) and `S/services/registration.service.js`. Before the fix wave:
 - `/auth/register/request` does not check `allow_registration` today.
-- The legacy `/auth/register` answers 403 «Самостоятельная регистрация отключена администратором» with no code (`S/api/index.js:622`).
+- The legacy `/auth/register` answered 403 «Самостоятельная регистрация отключена администратором» with no code (`S/api/index.js:622`). Fixed in the final polish: it now answers the same canonical `reg.disabled` text with `code: REGISTRATION_DISABLED`.
 
 Now (fix wave, lane S): `/auth/register/request` and `/auth/register/verify` → 403 `{ "error": "Регистрация сейчас закрыта. Обратитесь к администратору.", "code": "REGISTRATION_DISABLED" }`, documented in registration.md §1.1.
 

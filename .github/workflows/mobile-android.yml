@@ -4,10 +4,12 @@ on:
   pull_request:
     paths:
       - 'mobile/android/**'
+      - 'mobile/contracts/**'
       - '.github/workflows/mobile-android.yml'
   push:
     paths:
       - 'mobile/android/**'
+      - 'mobile/contracts/**'
       - '.github/workflows/mobile-android.yml'
 
 permissions:

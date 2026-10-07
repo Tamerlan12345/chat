@@ -619,7 +619,9 @@ router.post('/auth/register', route(async (req, res) => {
   try {
     const allowRegistration = (await SettingsService.getSetting('allow_registration', 'false')) === 'true';
     if (!allowRegistration) {
-      return res.status(403).json({ error: 'Самостоятельная регистрация отключена администратором' });
+      // Тот же ответ, что у /auth/register/request и /verify (registration.md
+      // §1.1): канонический текст reg.disabled и код для клиентов.
+      return res.status(403).json({ error: Registration.REGISTRATION_DISABLED_MESSAGE, code: 'REGISTRATION_DISABLED' });
     }
     const remoteIp = getClientIp(req) || '127.0.0.1';
     if (!checkRateLimit(`register:${rateLimitIpKey(remoteIp)}`, { maxAttempts: 10, windowMs: 600000 })) {

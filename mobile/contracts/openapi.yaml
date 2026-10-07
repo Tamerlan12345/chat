@@ -360,11 +360,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Самостоятельная регистрация отключена администратором
+          description: '`allow_registration` выключена — `REGISTRATION_DISABLED` (тот же ответ, что у `/auth/register/request`)'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/RegistrationErrorResponse'
         '429':
           description: Превышен лимит заявок на регистрацию
           content:
