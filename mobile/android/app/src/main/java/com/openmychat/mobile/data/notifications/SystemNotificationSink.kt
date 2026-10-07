@@ -68,6 +68,37 @@ class SystemNotificationSink @Inject constructor(
         manager.cancel(tagOf(conversation), NOTIFICATION_ID)
     }
 
+    /**
+     * An incoming call while the app has no socket (push `call`, push.md §5): tapping it opens the
+     * app, whose socket then receives the same `call_offer`. It lapses with the call window (30 s).
+     */
+    override fun showIncomingCall(callerId: Long, callerName: String?) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            android.os.Build.VERSION.SDK_INT >= 33
+        ) return
+        if (session.currentUserId == null) return
+        if (manager.getNotificationChannel(CALLS_CHANNEL_ID) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(CALLS_CHANNEL_ID, context.getString(R.string.notification_channel_calls), NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        // No chat extras: it only brings the app forward (through the same non-exported activity).
+        val open = Intent(context, NotificationOpenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pending = PendingIntent.getActivity(context, CALL_NOTIFICATION_ID, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val title = context.getString(R.string.notification_incoming_call)
+        val notification = NotificationCompat.Builder(context, CALLS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_brand_mark)
+            .setContentTitle(title)
+            .setContentText(callerName?.takeIf { it.isNotBlank() } ?: context.getString(R.string.notification_incoming_call_unknown))
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setTimeoutAfter(CALL_WINDOW_MS)
+            .setContentIntent(pending)
+            .build()
+        manager.notify("call-$callerId", CALL_NOTIFICATION_ID, notification)
+    }
+
     /** Every notification of the app: the account they were for signed out, or another signed in. */
     override fun cancelAll() {
         manager.cancelAll()
@@ -82,6 +113,9 @@ class SystemNotificationSink @Inject constructor(
 
     companion object {
         const val CHANNEL_ID = "messages"
+        const val CALLS_CHANNEL_ID = "calls"
+        const val CALL_NOTIFICATION_ID = 2
+        const val CALL_WINDOW_MS = 30_000L
         const val NOTIFICATION_ID = 1
         const val EXTRA_CONVERSATION_TYPE = "com.openmychat.mobile.conversationType"
         const val EXTRA_TARGET_ID = "com.openmychat.mobile.targetId"

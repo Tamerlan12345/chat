@@ -59,8 +59,8 @@ private const val KEY_FOCUS_DONE = "chat.focus_done"
 private const val REPORT_EXCERPT = 160
 private const val ATTACHMENT_SUBJECT = "Вложение"
 private const val CANNOT_READ_FILE = "Не удалось прочитать файл"
-private const val CANNOT_KEEP_FILE = "Не удалось сохранить файл для отправки"
-private const val NOT_SAVED = "Сообщение не сохранено — попробуйте ещё раз"
+private const val CANNOT_KEEP_FILE = ChatTexts.CANNOT_PREPARE_FILE
+private const val NOT_SAVED = DeliveryNotices.NOT_SAVED
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -624,17 +624,27 @@ class ChatViewModel @AssistedInject constructor(
     }
 }
 
+/** Chat texts outside the delivery codes (copy-ru.md). */
+object ChatTexts {
+    const val CANNOT_PREPARE_FILE = "Не удалось подготовить файл к отправке"
+    const val REASON_NO_ANSWER = "сервер не ответил"
+    const val REASON_REJECTED = "сервер не принял сообщение"
+}
+
 /** `user_error` codes of the delivery model (delivery-state.md §5) in Russian. */
 object DeliveryNotices {
+    const val NOT_SAVED = "Сообщение не сохранено — попробуйте ещё раз"
+    const val DM_NOT_ALLOWED = "Сообщение не может быть доставлено"
+
     fun text(code: String): String? = when (code) {
-        "DELETE_NOT_CONFIRMED" -> "Удаление не подтвердилось — сообщение снова показано"
-        "DELETE_REJECTED" -> "Сообщение нельзя удалить"
-        "EDIT_REJECTED" -> "Изменение не сохранено"
+        "DELETE_NOT_CONFIRMED" -> "Сервер не подтвердил удаление — сообщение снова показано"
+        "DELETE_REJECTED" -> "Сообщение не удалено: время на удаление истекло"
+        "EDIT_REJECTED" -> "Изменение не сохранено: сообщение больше нельзя изменить"
         "NOT_EDITABLE" -> "Это сообщение нельзя изменить"
         "NOT_DELETABLE" -> "Это сообщение нельзя удалить"
-        "EMPTY_TEXT" -> "Пустое сообщение не отправляется"
-        "TEXT_TOO_LONG" -> "Сообщение слишком длинное"
-        "INVALID_CLIENT_MSG_ID", "INVALID_CONVERSATION", "INVALID_MESSAGE_TYPE" -> "Сообщение не удалось поставить в очередь"
+        "EMPTY_TEXT" -> "Нельзя отправить пустое сообщение"
+        "TEXT_TOO_LONG" -> "Сообщение длиннее 16 000 символов"
+        "INVALID_CLIENT_MSG_ID", "INVALID_CONVERSATION", "INVALID_MESSAGE_TYPE" -> "Не удалось подготовить сообщение к отправке"
         else -> null
     }
 }

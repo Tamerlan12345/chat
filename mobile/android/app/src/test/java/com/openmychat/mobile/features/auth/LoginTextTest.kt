@@ -25,8 +25,9 @@ class LoginTextTest {
     fun countdownReadsNaturally() {
         assertEquals("5 с", formatCountdown(5))
         assertEquals("59 с", formatCountdown(59))
-        assertEquals("1:00", formatCountdown(60))
-        assertEquals("12:05", formatCountdown(725))
+        // copy-ru.md {wait}: never a clock-like «12:05», which screen readers mangle.
+        assertEquals("1 мин", formatCountdown(60))
+        assertEquals("12 мин 5 с", formatCountdown(725))
     }
 
     @Test

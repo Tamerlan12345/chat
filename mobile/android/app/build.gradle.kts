@@ -9,6 +9,14 @@ plugins {
     alias(libs.plugins.room)
 }
 
+// Push (decision P): Firebase Messaging is always compiled in, but the Google Services plugin (which
+// turns app/google-services.json into the FirebaseApp configuration) is applied only when the owner
+// has put that file in place. Without it the app builds, runs and passes CI with push simply off.
+// The file is git-ignored: it is configuration of the owner's Firebase project, never committed.
+if (file("google-services.json").isFile) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+}
+
 // The JVM test worker cannot load classes from a build directory whose path
 // contains non-ASCII characters on Windows (sun.jnu.encoding is not UTF-8),
 // so redirect build output to an ASCII-only location in that case. The folder
@@ -135,6 +143,10 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.work.runtime.ktx)
+
+    // Push (decision P): FCM data messages with ids only (mobile/contracts/push.md).
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

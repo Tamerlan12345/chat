@@ -57,6 +57,18 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.NoDisplay" />
 
+        <!--
+          Push (decision P, push.md): FCM data messages with ids only. Receives anything only in a
+          build with a Firebase configuration (app/google-services.json); otherwise push is off.
+        -->
+        <service
+            android:name=".data.push.CentyMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Opens a downloaded attachment in another app: content:// URIs with a one-off read grant. -->
         <provider
             android:name="androidx.core.content.FileProvider"

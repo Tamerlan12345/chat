@@ -774,4 +774,36 @@ class DeliveryEngineTest {
         realtime.emitFrame(echo(81, "k2"))
         assertEquals("after a success the next failure restarts at once again", 4, realtime.restarts)
     }
+    /** copy-ru.md signout.unsent_unknown: until the stored queue is read, its size is not known. */
+    @Test
+    fun theUnsentCountIsKnownOnlyOnceTheStoreIsRead() = runBlocking {
+        var failures = 1
+        val store = object : InMemoryDeliveryStore() {
+            override suspend fun load(): StoredDelivery {
+                if (failures-- > 0) throw java.io.IOException("locked")
+                return super.load()
+            }
+        }
+        val h = harness(store)
+        assertFalse(h.runtime.unsentKnown.value)
+        elapse(10_000)
+        assertTrue(h.runtime.unsentKnown.value)
+    }
+
+    /** copy-ru.md delivery.failed_with_reason: a failed message says whether «Повторить» can help. */
+    @Test
+    fun aFailedMessageCarriesItsReason() {
+        val projection = com.openmychat.mobile.features.chat.ChatProjection(com.openmychat.mobile.data.model.ConversationType.DIRECT, alice)
+        fun failed(key: String, failure: Failure) = OutboxEntry(clientMsgId = key, conversation = conv, seq = 1, text = "x", state = OutboxEntry.FAILED, failure = failure)
+        val state = DeliveryState(me = 1).apply {
+            outbox.add(failed("a", Failure(Failure.MAX_ATTEMPTS, null, null)))
+            outbox.add(failed("b", Failure(Failure.REJECTED, "DM_NOT_ALLOWED", "Сообщение не может быть доставлено")))
+            outbox.add(failed("c", Failure(Failure.REJECTED, "X", null)))
+        }
+        val shown = projection.build(state, conv, 1, "Я", emptyList(), emptyMap())
+        assertEquals(
+            listOf("сервер не ответил", "Сообщение не может быть доставлено", "сервер не принял сообщение"),
+            shown.map { it.failureReason }
+        )
+    }
 }

@@ -86,12 +86,12 @@ class AccountFailureTest {
     fun aBusyPasswordHasherIsAShortWaitNotMissingMail() {
         listOf("PASSWORD_HASH_BUSY", "LOGIN_BUSY", "BUSY").forEach { code ->
             assertEquals(
-                AccountFailure.Throttled(untilMillis = now + 5_000),
+                AccountFailure.Throttled(untilMillis = now + 5_000, busy = true),
                 map(ApiException(503, code, "Сервер занят"), Context.REGISTRATION_REQUEST)
             )
         }
         assertEquals(
-            AccountFailure.Throttled(untilMillis = now + 3_000),
+            AccountFailure.Throttled(untilMillis = now + 3_000, busy = true),
             map(ApiException(503, "BUSY", "Сервер занят", retryAfterSeconds = 3), Context.REGISTRATION_REQUEST)
         )
     }
@@ -180,5 +180,20 @@ class AccountFailureTest {
         val refusal = ApiException(403, "REGISTRATION_DISABLED", "Регистрация сейчас закрыта. Обратитесь к администратору.")
         assertEquals(AccountFailure.RegistrationDisabled, map(refusal, Context.REGISTRATION_REQUEST))
         assertEquals("not a wrong code", AccountFailure.RegistrationDisabled, map(refusal, Context.REGISTRATION_VERIFY))
+    }
+    /** copy-ru.md reg.busy: a busy server is not «too many attempts» — the person did nothing wrong. */
+    @Test
+    fun aBusyServerIsAWaitThatIsNotBlamedOnThePerson() {
+        val busy = map(ApiException(503, "BUSY", "x", retryAfterSeconds = 3), Context.REGISTRATION_REQUEST) as AccountFailure.Throttled
+        assertEquals(true, busy.busy)
+        val limited = map(ApiException(429, null, "x", retryAfterSeconds = 60), Context.REGISTRATION_REQUEST) as AccountFailure.Throttled
+        assertEquals(false, limited.busy)
+        assertEquals("the same wait for the buttons", now + 3_000, busy.retryDeadline)
+    }
+
+    @Test
+    fun mailNotConfiguredIsReadFromItsCodeAndFromOlderServersWithout() {
+        assertEquals(AccountFailure.MailNotConfigured, map(ApiException(503, "EMAIL_NOT_CONFIGURED", "x"), Context.REGISTRATION_REQUEST))
+        assertEquals(AccountFailure.MailNotConfigured, map(ApiException(503, null, "x"), Context.REGISTRATION_REQUEST))
     }
 }

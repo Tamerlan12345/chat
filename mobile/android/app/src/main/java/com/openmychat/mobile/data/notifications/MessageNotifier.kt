@@ -34,6 +34,9 @@ interface NotificationSink {
 
     /** Снять все уведомления приложения (учётная запись вышла или сменилась). */
     fun cancelAll()
+
+    /** Входящий звонок из push (приложение не на связи): нажатие открывает приложение. */
+    fun showIncomingCall(callerId: Long, callerName: String?) = Unit
 }
 
 /** Переписку прочитали на другом устройстве (кадр conversation_read или тихий push read). */
@@ -148,6 +151,10 @@ class MessageNotifier @Inject constructor(
         val conversation = conversationOf(message, me)
         val show = notify ?: (message.senderId != me && !dnd && !isOpenHere(conversation))
         if (!show) return
+        showMessage(conversation, message)
+    }
+
+    private fun showMessage(conversation: ConversationRef, message: Message) {
         val title = when (message.conversationType) {
             ConversationType.CHANNEL -> listOfNotNull(message.channelName?.let { "#$it" }, message.senderName.ifBlank { null })
                 .joinToString(" · ").ifBlank { DEFAULT_TEXT }
@@ -158,6 +165,34 @@ class MessageNotifier @Inject constructor(
             ConversationType.DIRECT -> message.senderName.ifBlank { DEFAULT_TITLE }
         }
         sink.show(conversation, title, preview(message), chatTitle)
+    }
+
+    /**
+     * Push о сообщении: показывать ли его вообще — не пришло ли оно уже по сокету, не «Не беспокоить»,
+     * не открыта ли переписка здесь (push.md §5).
+     */
+    fun wantsPush(payload: PushPayload.NewMessage): Boolean {
+        val already = synchronized(known) { payload.messageId in known }
+        return !already && !dnd && !isOpenHere(payload.conversation)
+    }
+
+    /**
+     * Push о сообщении, когда приложение забрало его с нашего сервера ([message]) — с именем и текстом;
+     * null — забрать не удалось: только «Новое сообщение». Переписка — из push (с точки зрения получателя).
+     */
+    fun showPushed(payload: PushPayload.NewMessage, message: Message?) {
+        if (!wantsPush(payload)) return
+        synchronized(known) { known[payload.messageId] = Unit }
+        if (message == null) {
+            sink.show(payload.conversation, DEFAULT_TITLE, DEFAULT_TEXT, DEFAULT_TITLE)
+        } else {
+            showMessage(payload.conversation, message)
+        }
+    }
+
+    /** Push о звонке: [callerName] — с нашего сервера, если удалось. */
+    fun showIncomingCall(callerId: Long, callerName: String?) {
+        sink.showIncomingCall(callerId, callerName)
     }
 
     /** Data-push FCM (обработчик сервиса передаёт сюда `remoteMessage.data`). */

@@ -74,7 +74,7 @@ class AttachmentDownloaderTest {
             downloader.fetch(42, "big.zip")
             fail("a dropped connection must fail")
         } catch (e: AttachmentException) {
-            assertEquals("Связь прервалась — нажмите ещё раз, загрузка продолжится", e.message)
+            assertEquals("Связь прервалась. Нажмите ещё раз — загрузка продолжится.", e.message)
         }
 
         transport.answers += { call ->
@@ -211,7 +211,7 @@ class AttachmentDownloaderTest {
             downloader.fetch(42, "big.zip")
             fail()
         } catch (e: AttachmentException) {
-            assertEquals("Связь прервалась — нажмите ещё раз, загрузка продолжится", e.message)
+            assertEquals("Связь прервалась. Нажмите ещё раз — загрузка продолжится.", e.message)
         }
         assertNull("nothing under the final name", File(tmp.root, "42").listFiles()?.firstOrNull { it.name == "big.zip" })
     }

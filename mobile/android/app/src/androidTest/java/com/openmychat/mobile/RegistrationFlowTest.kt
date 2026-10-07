@@ -154,7 +154,7 @@ class RegistrationFlowTest {
 
         fillForm()
 
-        waitForText("Отправка почты не настроена", substring = true)
+        waitForText("Сервер не может отправить письмо с кодом: почта не настроена.", substring = true)
         tag("register-email").assertExists()
     }
 

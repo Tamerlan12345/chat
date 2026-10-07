@@ -288,6 +288,25 @@ class ApiClient(
         executeRequestNoContent(httpRequest)
     }
 
+    /**
+     * `POST /api/devices/push-token` (push.md §2): this device's FCM token for the signed-in account.
+     * Only the token and ids go to the server; the answer says whether the server sends push at all.
+     */
+    suspend fun registerPushToken(token: String, deviceId: String?, appVersion: String): Unit = withContext(Dispatchers.IO) {
+        val body = buildJsonObject {
+            put("platform", JsonPrimitive("android"))
+            put("token", JsonPrimitive(token))
+            put("app_version", JsonPrimitive(appVersion))
+            if (deviceId != null) put("device_id", JsonPrimitive(deviceId))
+        }
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/devices/push-token")
+            .post(body.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
     suspend fun getMe(): User = withContext(Dispatchers.IO) {
         checkProactiveRefresh()
         val httpRequest = Request.Builder()

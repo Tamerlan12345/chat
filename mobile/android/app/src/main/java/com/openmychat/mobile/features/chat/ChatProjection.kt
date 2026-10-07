@@ -1,6 +1,7 @@
 package com.openmychat.mobile.features.chat
 
 import com.openmychat.mobile.data.delivery.DeliveryState
+import com.openmychat.mobile.data.delivery.Failure
 import com.openmychat.mobile.data.delivery.Msg
 import com.openmychat.mobile.data.delivery.Op
 import com.openmychat.mobile.data.delivery.OutboxEntry
@@ -137,8 +138,16 @@ class ChatProjection(
             OutboxEntry.FAILED -> SendState.FAILED
             else -> SendState.QUEUED
         },
-        upload = upload
+        upload = upload,
+        failureReason = if (entry.state == OutboxEntry.FAILED) failureReason(entry.failure) else null
     )
+
+    /** Why it failed, so the person knows whether «Повторить» can help (copy-ru.md delivery.reason.*). */
+    private fun failureReason(failure: Failure?): String = when {
+        failure?.reason == Failure.MAX_ATTEMPTS -> ChatTexts.REASON_NO_ANSWER
+        !failure?.message.isNullOrBlank() -> failure!!.message!!.trim()
+        else -> ChatTexts.REASON_REJECTED
+    }
 
     /** A reply shows its quote (desktop ChatView: the original found among the loaded messages). */
     private fun withReplies(messages: List<Message>): List<Message> {

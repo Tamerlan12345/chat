@@ -146,6 +146,7 @@ internal fun ChatBubbleRow(
             reply = reply,
             meta = meta,
             failed = failed,
+            failureReason = message.failureReason,
             onRetry = { actions.onRetrySend(message) },
             onDiscard = { onRequestDelete(message) },
             contour = groupContour,
