@@ -1063,16 +1063,29 @@ private struct EndPinning: ViewModifier {
     let atEndChanged: (Bool) -> Void
 
     @State private var position = ScrollPosition(edge: .bottom)
+    /// UI tests only: the scroll geometry, readable as an accessibility label.
+    @State private var probe = ""
 
     func body(content: Content) -> some View {
         content
             .scrollPosition($position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentSize.height
+            // While pinned, any change of what decides where the end is — the content height (lazy
+            // rows measuring themselves, a new message) and the container's height and insets (a
+            // split-view column, bars and the composer settling after the first scroll) — scrolls
+            // to the edge again. Content height alone misses a container that settles later.
+            .onScrollGeometryChange(for: EndMetrics.self) { geometry in
+                EndMetrics(geometry)
             } action: { _, _ in
                 guard pinned else { return }
                 position.scrollTo(edge: .bottom)
+            }
+            .onScrollGeometryChange(for: String.self) { geometry in
+                LaunchTestFixture.exposesScrollProbe ? EndMetrics(geometry).description : ""
+            } action: { _, text in
+                if LaunchTestFixture.exposesScrollProbe {
+                    probe = text + " pinned=\(pinned)"
+                }
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 ChatScrollEnd.isAtEnd(visibleMaxY: geometry.visibleRect.maxY, contentHeight: geometry.contentSize.height)
@@ -1092,6 +1105,51 @@ private struct EndPinning: ViewModifier {
                     position.scrollTo(edge: .bottom)
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if LaunchTestFixture.exposesScrollProbe {
+                    Text(verbatim: probe)
+                        .font(.system(size: 1))
+                        .frame(width: 1, height: 1)
+                        .opacity(0.02)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("chat-scroll-probe")
+                }
+            }
+    }
+}
+
+/// What decides where the end of the chat is on screen.
+@available(iOS 18.0, *)
+private struct EndMetrics: Equatable, CustomStringConvertible {
+    var contentHeight: CGFloat
+    var containerHeight: CGFloat
+    var containerWidth: CGFloat
+    var topInset: CGFloat
+    var bottomInset: CGFloat
+    var visibleMaxY: CGFloat
+    var offsetY: CGFloat
+
+    init(_ geometry: ScrollGeometry) {
+        contentHeight = geometry.contentSize.height
+        containerHeight = geometry.containerSize.height
+        containerWidth = geometry.containerSize.width
+        topInset = geometry.contentInsets.top
+        bottomInset = geometry.contentInsets.bottom
+        visibleMaxY = geometry.visibleRect.maxY
+        offsetY = geometry.contentOffset.y
+    }
+
+    /// Re-scroll only when the end itself may have moved — not on every scrolled point.
+    static func == (lhs: EndMetrics, rhs: EndMetrics) -> Bool {
+        lhs.contentHeight == rhs.contentHeight
+            && lhs.containerHeight == rhs.containerHeight
+            && lhs.containerWidth == rhs.containerWidth
+            && lhs.topInset == rhs.topInset
+            && lhs.bottomInset == rhs.bottomInset
+    }
+
+    var description: String {
+        "content=\(Int(contentHeight)) container=\(Int(containerWidth))x\(Int(containerHeight)) insets=\(Int(topInset))/\(Int(bottomInset)) offset=\(Int(offsetY)) visibleMaxY=\(Int(visibleMaxY))"
     }
 }
 

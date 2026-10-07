@@ -34,6 +34,10 @@ enum LaunchTestFixture {
         isUITestProcess && ProcessInfo.processInfo.arguments.contains("-centychat-ui-gallery")
     }
 
+    /// UI tests read the chat's scroll geometry from a tiny accessibility label (diagnostics of
+    /// «opens at the newest message»).
+    static var exposesScrollProbe: Bool { isUITestProcess }
+
     /// Where the socket connects instead of the server while `deliveryOffline` (nothing listens).
     static var realtimeServerOverride: String? {
         deliveryOffline ? "https://127.0.0.1:9" : nil
@@ -67,6 +71,7 @@ enum LaunchTestFixture {
     }
 #else
     static let deliveryOffline = false
+    static let exposesScrollProbe = false
     static let realtimeServerOverride: String? = nil
     static let shouldResetSecureState = false
     static let allowsInsecureLoopback = false
