@@ -68,7 +68,7 @@ enum PreviewData {
             Message(id: -7, conversationType: .direct, targetId: 2, senderId: 1, text: "А это прямо сейчас отправляется", createdAt: at(1), senderName: "Алиса Тестова", sendState: .sending),
             Message(id: -8, conversationType: .direct, targetId: 2, senderId: 1, text: "Сервер не принял это сообщение", createdAt: at(0.5), senderName: "Алиса Тестова", sendState: .failed),
         ]
-        list[7].failureReason = String(localized: "Сервер не ответил")
+        list[7].failureReason = String(localized: "сервер не ответил")
         let file = Message(
             id: 9,
             conversationType: .direct,

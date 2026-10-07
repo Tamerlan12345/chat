@@ -168,12 +168,12 @@ final class DeliveryRuntimeTests: XCTestCase {
 final class UnsentNoticeTests: XCTestCase {
     func testTheCountIsSaidInProperRussian() {
         XCTAssertNil(UnsentNotice.text(0))
-        XCTAssertEqual(UnsentNotice.text(1), "1 неотправленное сообщение будет удалено")
-        XCTAssertEqual(UnsentNotice.text(3), "3 неотправленных сообщения будут удалены")
-        XCTAssertEqual(UnsentNotice.text(5), "5 неотправленных сообщений будут удалены")
-        XCTAssertEqual(UnsentNotice.text(11), "11 неотправленных сообщений будут удалены")
-        XCTAssertEqual(UnsentNotice.text(21), "21 неотправленное сообщение будет удалено")
-        XCTAssertEqual(UnsentNotice.text(112), "112 неотправленных сообщений будут удалены")
+        XCTAssertEqual(UnsentNotice.text(1), "1 неотправленное сообщение будет удалено.")
+        XCTAssertEqual(UnsentNotice.text(3), "3 неотправленных сообщения будут удалены.")
+        XCTAssertEqual(UnsentNotice.text(5), "5 неотправленных сообщений будут удалены.")
+        XCTAssertEqual(UnsentNotice.text(11), "11 неотправленных сообщений будут удалены.")
+        XCTAssertEqual(UnsentNotice.text(21), "21 неотправленное сообщение будет удалено.")
+        XCTAssertEqual(UnsentNotice.text(112), "112 неотправленных сообщений будут удалены.")
     }
 }
 
@@ -195,7 +195,7 @@ final class UnsentUnknownTests: XCTestCase {
         }
 
         XCTAssertNil(runtime.unsentCount)
-        XCTAssertEqual(UnsentNotice.text(nil), "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены")
+        XCTAssertEqual(UnsentNotice.text(nil), "Не удалось проверить неотправленные сообщения. Если они есть, они будут удалены.")
     }
 }
 
