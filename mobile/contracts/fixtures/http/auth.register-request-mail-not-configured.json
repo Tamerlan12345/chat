@@ -1,0 +1,4 @@
+{
+  "error": "Отправка почты не настроена",
+  "code": "EMAIL_NOT_CONFIGURED"
+}

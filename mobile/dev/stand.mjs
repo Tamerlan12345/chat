@@ -15,6 +15,39 @@ import { seed, CREDENTIALS } from './seed.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../..');
 
+// Port 2004 belongs to the owner's own local CentyChat server: the stand never
+// starts on it, never proxies it and never seeds it.
+export const RESERVED_PORTS = Object.freeze([2004]);
+export const DEFAULT_SERVER_PORT = 2014;
+
+export function assertNotReservedPort(port) {
+  if (RESERVED_PORTS.includes(Number(port))) {
+    throw new Error(`Port ${port} is reserved for the owner's local server; the dev stand does not use it. Pick another SERVER_PORT (default ${DEFAULT_SERVER_PORT}).`);
+  }
+}
+
+// Settings that point a server at real infrastructure or real secrets. The
+// stand's server must never inherit them from the developer's shell (for
+// example under `railway run`): it would open the production database, send
+// real mail or push, and seed.mjs would create dev users there.
+const STRIPPED_PREFIXES = ['DATABASE_', 'POSTGRES', 'PG', 'SMTP_', 'PUSH_', 'FCM_', 'APNS_', 'RAILWAY_', 'BACKUP_', 'REGISTRATION_', 'ADMIN_PASSWORD_RESET', 'TELEGRAM_'];
+const STRIPPED_NAMES = new Set([
+  'JWT_SECRET', 'AUDIT_HMAC_KEY', 'NODE_ENV', 'DATA_DIR', 'UPDATES_DIR', 'INITIAL_ADMIN_NAME', 'INITIAL_ADMIN_PASSWORD',
+  'ALLOWED_CLIENT_IPS', 'CORS_ALLOWED_ORIGINS', 'IDENTITY_AUTO_IMPORT', 'IDENTITY_ALLOW_EMPTY_BOOTSTRAP', 'HTTPS_TERMINATED',
+  'TRUSTED_PROXY_IPS', 'GOOGLE_APPLICATION_CREDENTIALS'
+]);
+
+/** The inherited environment minus production-relevant settings. */
+export function standServerEnv(base = process.env) {
+  const out = {};
+  for (const [name, value] of Object.entries(base)) {
+    const upper = name.toUpperCase();
+    if (STRIPPED_NAMES.has(upper) || STRIPPED_PREFIXES.some((p) => upper.startsWith(p))) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -66,6 +99,7 @@ async function waitForHealth(port, child, getLog) {
  * port 0 = pick a random free port.
  */
 export async function startServerProcess({ dataDir, port = 0, quiet = false, env = {} } = {}) {
+  assertNotReservedPort(port);
   fs.mkdirSync(dataDir, { recursive: true });
   const listenPort = port || await freePort();
   if (port) await assertPortFree(listenPort);
@@ -74,7 +108,8 @@ export async function startServerProcess({ dataDir, port = 0, quiet = false, env
   const child = spawn(process.execPath, [path.join(REPO, 'server/src/index.js')], {
     cwd: path.join(REPO, 'server'),
     env: {
-      ...process.env,
+      ...standServerEnv(process.env),
+      // Explicit settings from the caller (tests, fixture capture) still apply.
       ...env,
       PORT: String(listenPort),
       HOST: '127.0.0.1',
@@ -112,10 +147,12 @@ export async function startStand({
   dataDir = path.join(HERE, 'data'),
   certDir = path.join(HERE, 'certs'),
   tlsPort = 8443,
-  serverPort = 2004,
+  serverPort = DEFAULT_SERVER_PORT,
   quiet = false,
-  env = {}
+  env = {},
+  tlsHost = '127.0.0.1'
 } = {}) {
+  assertNotReservedPort(serverPort);
   ensureCerts(certDir);
   const server = await startServerProcess({ dataDir, port: serverPort, quiet, env });
 
@@ -131,6 +168,7 @@ export async function startStand({
       key: fs.readFileSync(path.join(certDir, 'dev-leaf.key')),
       cert: fs.readFileSync(path.join(certDir, 'dev-chain.crt')),
       listenPort: tlsPort,
+      listenHost: tlsHost,
       targetPort: server.port
     });
     return { serverPort: server.port, tlsPort: proxy.port, seed: seeded, caCert: path.join(certDir, 'dev-ca.crt'), close };
@@ -145,11 +183,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const stand = await startStand({
     dataDir: cfg.DEV_DATA_DIR ? path.resolve(cfg.DEV_DATA_DIR) : path.join(HERE, 'data'),
     tlsPort: Number(cfg.TLS_PORT || 8443),
-    serverPort: Number(cfg.SERVER_PORT || 2004)
+    tlsHost: cfg.TLS_LISTEN_HOST || '127.0.0.1',
+    serverPort: Number(cfg.SERVER_PORT || DEFAULT_SERVER_PORT)
   });
   console.log(`
 CentyChat dev stand is up
-  HTTPS/WSS : https://localhost:${stand.tlsPort}   (emulator: https://10.0.2.2:${stand.tlsPort})
+  HTTPS/WSS : https://localhost:${stand.tlsPort}   (emulator: https://10.0.2.2:${stand.tlsPort}; loopback only, TLS_LISTEN_HOST=0.0.0.0 for devices on the LAN)
   HTTP (loopback only): http://127.0.0.1:${stand.serverPort}
   Dev CA    : ${stand.caCert}
   Users     : alice / ${CREDENTIALS.alice.password}

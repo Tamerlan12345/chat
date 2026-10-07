@@ -67,7 +67,8 @@ const BASE = Date.parse('2026-10-02T09:00:00.000Z');
 // Заглушки токенов устройств и bundle id для фикстур push (не настоящие).
 const PUSH_APNS_TOKEN = '0f'.repeat(32);
 const PUSH_FCM_TOKEN = 'fcm-registration-token-EXAMPLE_0123456789:abcdefghijklmnop';
-const PUSH_BUNDLE_ID = 'kz.centras.centychat';
+// Нейтральный пример: настоящий bundle id задаётся PUSH_APNS_BUNDLE_ID на сервере.
+const PUSH_BUNDLE_ID = 'com.example.centychat';
 const FAKE_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwianRpIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIn0.c2lnbmF0dXJlLXBsYWNlaG9sZGVy';
 const ISO_RE = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?Z?$/;
 
@@ -140,6 +141,11 @@ async function call(baseUrl, method, urlPath, { body, token, form } = {}) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function must(res, what) {
+  if (res.status < 200 || res.status >= 300) throw new Error(`${what} failed: ${res.status} ${res.text}`);
+  return res.json;
+}
 
 class Sock {
   constructor(url) {
@@ -230,6 +236,9 @@ export async function captureFixtures({ dataDir } = {}) {
     await seed({ baseUrl: base });
     const admin = (await call(base, 'POST', '/api/auth/login', { body: CREDENTIALS.admin })).json;
     const adminToken = admin.token;
+    // Нейтральные данные в контракте: встроенный admin получает при установке
+    // контакт компании из начальных данных сервера; в фикстурах — пример.
+    must(await call(base, 'PUT', `/api/admin/users/${admin.user.id}`, { token: adminToken, body: { email: 'admin@example.test', phone: '+7 700 000 00 01' } }), 'neutral admin contact');
 
     // ── HTTP: auth ───────────────────────────────────────────────────────
     const aliceLogin = await http('http/auth.login.json', 'Успешный вход по паролю: токен и профиль пользователя (user как в /auth/me).',
@@ -611,6 +620,60 @@ export async function captureFixtures({ dataDir } = {}) {
     notImage.append('file', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"/>'], { type: 'image/svg+xml' }), 'me.svg');
     await http('http/users.avatar-not-image.json', 'Фото не картинка JPEG/PNG/GIF/WebP по сигнатуре: 415 { error, code: NOT_AN_IMAGE }.',
       'PUT', '/users/avatar', { token: tCarolMedia, form: notImage }, 415);
+
+    // ── Самостоятельная регистрация, жалобы, блокировки, удаление аккаунта (registration.md)
+    // Почты у сервера сценария нет (SMTP_* стенд не наследует), поэтому 202
+    // code_sent снять нельзя; снимаются все ответы, которые не требуют письма.
+    await http('http/settings.info.json', 'Публичные настройки сервера (без токена): allow_registration — включена ли самостоятельная регистрация; при false клиент скрывает вход в регистрацию (registration.md §1).',
+      'GET', '/settings/info', {}, 200);
+    const regBody = { email: 'new.employee@example.com', username: 'new.employee', displayName: 'Новый Сотрудник', password: 'Registration-Dev-7731' };
+    const unknownRegistration = { registrationId: 'AAAAAAAAAAAAAAAAAAAAAAAA', code: '123456' };
+    await call(base, 'PUT', '/api/admin/settings', { token: adminToken, body: { allow_registration: 'false' } });
+    await http('http/auth.register-request-disabled.json', 'allow_registration выключена: 403 { error, code: REGISTRATION_DISABLED } — проверяется первой, письма нет.',
+      'POST', '/auth/register/request', { body: regBody }, 403);
+    await http('http/auth.register-verify-disabled.json', 'allow_registration выключена: подтверждение кода тоже 403 REGISTRATION_DISABLED; код не тратится.',
+      'POST', '/auth/register/verify', { body: unknownRegistration }, 403);
+    await call(base, 'PUT', '/api/admin/settings', { token: adminToken, body: { allow_registration: 'true' } });
+    await http('http/auth.register-request-invalid.json', 'Поле не прошло проверку: 400 { error } без code (текст описывает поле).',
+      'POST', '/auth/register/request', { body: { ...regBody, email: 'не-почта' } }, 400);
+    await http('http/auth.register-request-mail-not-configured.json', 'На сервере не настроена почта: 503 { error, code: EMAIL_NOT_CONFIGURED }.',
+      'POST', '/auth/register/request', { body: regBody }, 503);
+    await http('http/auth.register-verify-invalid.json', 'Код не из 6 цифр: 400 { error, code: CODE_INVALID } БЕЗ attemptsLeft — попытка не засчитана.',
+      'POST', '/auth/register/verify', { body: { ...unknownRegistration, code: '12ab' } }, 400);
+    await http('http/auth.register-verify-expired.json', 'Код истёк, использован, попытки исчерпаны или registrationId неизвестен: 410 { error, code: CODE_EXPIRED } (случаи неразличимы).',
+      'POST', '/auth/register/verify', { body: unknownRegistration }, 410);
+
+    // Маршруты консоли администратора (список разрешённых, жалобы) описаны в
+    // openapi.yaml, но в мобильные фикстуры не снимаются: мобильные клиенты их
+    // не декодируют, а каждая фикстура требует декодера на обеих платформах.
+
+    // блокировки и DM_NOT_ALLOWED
+    const tBobSafety = (await login(CREDENTIALS.bob)).token;
+    await http('http/blocks.add.json', 'Заблокировать пользователя: 201 { userId } (повтор — тоже 201).',
+      'POST', '/blocks', { token: tAliceMedia, body: { userId: bob.id } }, 201);
+    await http('http/blocks.list.json', 'Мои блокировки: { blocks: [ { userId, displayName, createdAt } ] }, новые первыми.',
+      'GET', '/blocks', { token: tAliceMedia }, 200);
+    const S = await open();
+    auth(S, tAliceMedia);
+    await S.takeType('auth_success');
+    S.send({ type: 'send_message', conversationType: 'direct', targetId: bob.id, text: 'Через блокировку не дойдёт.', client_msg_id: '3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f' });
+    ws('ws/error.dm_not_allowed.json', 'error', 'Личная переписка закрыта блокировкой (в любую сторону): code DM_NOT_ALLOWED, retryable false; текст не говорит, кто кого заблокировал. Тот же код у edit_message.',
+      await S.takeType('error', 'DM_NOT_ALLOWED', (f) => f.code === 'DM_NOT_ALLOWED'), 'send_message собеседнику, с которым действует блокировка');
+    await http('http/blocks.remove.json', 'Снять блокировку: { success: true } (идемпотентно).',
+      'DELETE', `/blocks/${bob.id}`, { token: tAliceMedia }, 200);
+
+    // жалобы
+    await http('http/reports.create.json', 'Жалоба на сообщение или пользователя: 201 { id, status: "open" }; reason — код (spam, abuse, inappropriate, threat, other). Дубликат — 201 с прежним id.',
+      'POST', '/reports', { token: tAliceMedia, body: { targetType: 'user', targetId: bob.id, reason: 'spam', details: 'Рассылает рекламу в личные сообщения.' } }, 201);
+
+    // удаление своей учётной записи
+    const erin = (await call(base, 'POST', '/api/admin/users', { token: adminToken, body: { username: 'erin', full_name: 'Эрик Тестов', password: 'Erin-Dev-Stand-6619', email: 'erin@example.test' } })).json;
+    await call(base, 'PUT', `/api/admin/users/${erin.id}`, { token: adminToken, body: { must_change_password: false } });
+    const tErin = (await login({ username: 'erin', password: 'Erin-Dev-Stand-6619' })).token;
+    await http('http/users.delete-me-wrong-password.json', 'Удаление аккаунта с неверным паролем: 403 { error, code: INVALID_PASSWORD }.',
+      'DELETE', '/users/me', { token: tErin, body: { password: 'не-тот-пароль-1' } }, 403);
+    await http('http/users.delete-me.json', 'Удаление своей учётной записи (нужен пароль): { success: true }; после ответа любой токен недействителен (401).',
+      'DELETE', '/users/me', { token: tErin, body: { password: 'Erin-Dev-Stand-6619' } }, 200);
 
     // rate limit on socket auth (last: blocks this IP for a minute)
     let limited = null;

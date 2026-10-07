@@ -1056,3 +1056,47 @@ test('Звонок: компьютер закрыли, пока телефон �
   await waitFor(alice, (m) => m.type === 'call_answer');
   await hangUp(alice, 'bob');
 });
+
+// Final review (server Minor 18): на PostgreSQL правка, которую обогнало
+// удаление, уходила message_updated ПОСЛЕ надгробия — клиент вернул бы текст
+// удалённому сообщению. Медленная база здесь воспроизводится задержкой
+// чтения сообщения после записи правки.
+test('Правку обогнало удаление (медленная база): message_updated после надгробия не уходит, автору правки — MESSAGE_DELETED', async () => {
+  const phone = await device('alice');
+  const desk = await device('alice');
+  const bob = await device('bob');
+  send(phone, { type: 'send_message', conversationType: 'direct', targetId: people.bob.id, text: 'Черновик', client_msg_id: 'md-edit-vs-delete-1' });
+  const sent = await waitFor(desk, (m) => m.type === 'direct_message' && m.message.client_msg_id === 'md-edit-vs-delete-1');
+  const id = sent.message.id;
+  clear(phone, desk, bob);
+
+  const original = MessageService.getMessageById;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let held = false;
+  MessageService.getMessageById = async function (messageId) {
+    if (!held && Number(messageId) === id) {
+      held = true;
+      await gate;
+    }
+    return original.call(this, messageId);
+  };
+  try {
+    send(desk, { type: 'edit_message', messageId: id, text: 'Правка, которая опоздала' });
+    for (let i = 0; i < 100 && !held; i += 1) await sleep(10);
+    assert.ok(held, 'правка записана и ждёт чтения');
+    send(phone, { type: 'delete_message', messageId: id });
+    for (const c of [phone, desk, bob]) await waitFor(c, (m) => m.type === 'message_deleted' && m.messageId === id);
+    release();
+    const err = await waitFor(desk, (m) => m.type === 'error' && m.context === 'edit_message' && m.messageId === id);
+    assert.strictEqual(err.code, 'MESSAGE_DELETED');
+    assert.strictEqual(err.retryable, false);
+    await sleep(100);
+    for (const c of [phone, desk, bob]) {
+      assert.ok(!c.inbox.some((m) => m.type === 'message_updated' && m.message.id === id), `${c.name}: правки после надгробия нет`);
+    }
+  } finally {
+    MessageService.getMessageById = original;
+    release();
+  }
+});

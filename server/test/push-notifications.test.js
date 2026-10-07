@@ -500,6 +500,9 @@ test('Звонок отменён до входа вызываемого — п�
   await android('bob', 120);
   const a = await connect('alice');
   a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  // Вызов встаёт после обращений к базе (на PostgreSQL — не сразу): ждать
+  // само событие, а не пустую ещё очередь push.
+  await waitCalls(fcm, 1);
   await push.idle();
   assert.strictEqual(fcm.calls.length, 1);
   a.sock.send(JSON.stringify({ type: 'call_end', targetUserId: people.bob.id }));
@@ -595,6 +598,7 @@ test('Звонок: срок у поставщика — от времени в�
   fcm.reply = () => (++n === 1 ? { status: 'retry', reason: 'HTTP_503' } : { status: 'ok' });
   const a = await connect('alice');
   a.sock.send(JSON.stringify({ type: 'call_offer', targetUserId: people.bob.id }));
+  await waitCalls(fcm, 2);
   await push.idle();
   assert.strictEqual(fcm.calls.length, 2);
   const [first, second] = fcm.calls.map((c) => c.notification);
@@ -803,6 +807,7 @@ test('Т19-5: call_end о закончившемся вызове приходи
   await android('bob', 163);
   const a = await connect('alice');
   offerTo(a, 'bob');
+  await waitCalls(fcm, 1);
   await push.idle();
   endTo(a, 'bob');
   await sleep(50);
@@ -843,6 +848,7 @@ test('Т19-7а: вызывающий отключился до входа выз
   await android('bob', 166);
   const a = await connect('alice');
   offerTo(a, 'bob');
+  await waitCalls(fcm, 1);
   await push.idle();
   assert.strictEqual(fcm.calls.length, 1);
   await disconnect('alice');
@@ -858,6 +864,7 @@ test('Т19-7б: вызов истёк до входа вызываемого —
   await android('bob', 167);
   const a = await connect('alice');
   offerTo(a, 'bob');
+  await waitCalls(fcm, 1);
   await push.idle();
   wsServer.pendingOffers.get(people.alice.id).at -= 3 * 60 * 1000; // старше 2 минут
   const b = await connect('bob');

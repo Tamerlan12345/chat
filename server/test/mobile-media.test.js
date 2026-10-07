@@ -745,3 +745,42 @@ test('WebSocket с ?avatars=url: старая ссылка (не data URL) в к
     for (const c of [mobileCarol, mobileAdmin, plainAdmin]) c.sock.close();
   }
 });
+
+// Третья одновременная загрузка — 429 «дождитесь» с Retry-After: клиенты
+// (Android, iOS) ждут по заголовку, а не гадают (final-review-parity, Minor).
+test('предел одновременных загрузок: 429 с Retry-After', async () => {
+  const { port } = server.address();
+  const boundary = 'parallel-limit-boundary';
+  const held = [];
+  const openUpload = () => new Promise((resolve) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'POST', path: '/api/files/upload',
+      headers: {
+        Authorization: `Bearer ${people['media-carol'].token}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': 4096
+      }
+    });
+    req.on('error', () => {});
+    req.on('response', (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+    });
+    // Начало формы — и тишина: загрузка «идёт».
+    req.write(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="slow.txt"\r\nContent-Type: text/plain\r\n\r\nпервые байты`);
+    held.push(req);
+  });
+  try {
+    openUpload();
+    openUpload();
+    await new Promise((r) => setTimeout(r, 300));
+    const third = await openUpload();
+    assert.strictEqual(third.status, 429);
+    assert.match(third.body, /Дождитесь окончания текущих загрузок/);
+    const retryAfter = Number(third.headers['retry-after']);
+    assert.ok(Number.isInteger(retryAfter) && retryAfter >= 1 && retryAfter <= 30, `Retry-After: ${third.headers['retry-after']}`);
+  } finally {
+    for (const req of held) req.destroy();
+  }
+});

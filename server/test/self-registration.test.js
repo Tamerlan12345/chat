@@ -19,6 +19,7 @@ let UserService;
 let AuthService;
 let MessageService;
 let rateLimiter;
+let SettingsService;
 const outbox = [];
 const people = {};
 const PASSWORD = 'Надёжный-пароль-77';
@@ -38,6 +39,10 @@ test.before(async () => {
   AuthService = require('../src/services/auth.service');
   MessageService = require('../src/services/message.service');
   rateLimiter = require('../src/services/rate-limiter');
+  SettingsService = require('../src/services/settings.service');
+  // Самостоятельная регистрация — только при включённом allow_registration
+  // (решение Q). Тесты ниже проверяют включённый режим; выключенный — отдельно.
+  await SettingsService.setSetting('allow_registration', 'true');
   const app = require('../src/app');
   const wsServer = require('../src/ws/server');
   server = http.createServer(app);
@@ -68,6 +73,10 @@ test.after(async () => {
 test.beforeEach(() => {
   // Пределы по адресу не должны мешать соседним тестам (кроме теста пределов).
   rateLimiter.resetLimit(`reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
+  rateLimiter.resetLimit(`reg-verify-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
+  rateLimiter.resetLimit('reg-req-global');
+  rateLimiter.resetLimit('reg-verify-fail-global');
+  Registration.configureLimits?.(null);
   Registration.setMailer(testMailer);
 });
 
@@ -115,6 +124,8 @@ test('почта не настроена — 503 и честный текст, �
   const res = await requestCode({ email: 'nomail@test.kz', username: 'nomail' });
   assert.strictEqual(res.status, 503);
   assert.strictEqual(res.json.error, 'Отправка почты не настроена');
+  // Клиенты ветвятся по code (registration.md §1.1), а не по «503 без кода».
+  assert.strictEqual(res.json.code, 'EMAIL_NOT_CONFIGURED');
   assert.strictEqual(Number((await identity.get('SELECT COUNT(*) AS n FROM registration_requests')).n), before);
 });
 
@@ -290,6 +301,153 @@ test('REGISTRATION_ALLOWED_EMAILS пополняет список, ничего 
   assert.strictEqual(await Registration.isAllowed('seed1@env.kz'), true);
   assert.strictEqual(await Registration.isAllowed('anyone@envdomain.kz'), true);
   assert.strictEqual(await Registration.seedAllowlistFromEnv('seed1@env.kz'), 0);
+});
+
+// ── Решение Q: allow_registration — главный выключатель ──
+
+const DISABLED = { error: 'Регистрация сейчас закрыта. Обратитесь к администратору.', code: 'REGISTRATION_DISABLED' };
+const verifyCode = (registrationId, code) => api('POST', '/api/auth/register/verify', { body: { registrationId, code } });
+const requestsFor = async (email) => Number((await identity.get('SELECT COUNT(*) AS n FROM registration_requests WHERE email = $1', [email])).n);
+
+test('allow_registration выключена: request и verify — 403 REGISTRATION_DISABLED, письма и учётной записи нет', async () => {
+  const live = await requestCode({ email: 'switch@test.kz', username: 'switch.user' });
+  assert.strictEqual(live.status, 202);
+  const code = lastCode();
+  const sent = outbox.length;
+  await SettingsService.setSetting('allow_registration', 'false');
+  try {
+    const req = await requestCode({ email: 'closed@test.kz', username: 'closed.user' });
+    assert.strictEqual(req.status, 403);
+    assert.deepStrictEqual(req.json, DISABLED);
+    assert.strictEqual(outbox.length, sent, 'письмо не отправляется');
+    assert.strictEqual(await requestsFor('closed@test.kz'), 0);
+    // Выключатель важнее всего прочего: почты нет, тело пустое — всё равно 403.
+    assert.deepStrictEqual((await api('POST', '/api/auth/register/request', { body: {} })).json, DISABLED);
+    Registration.setMailer(null);
+    assert.strictEqual((await requestCode({ email: 'closed2@test.kz', username: 'closed.two' })).status, 403);
+    Registration.setMailer(testMailer);
+
+    // Код, выданный до выключения, учётную запись не создаёт.
+    const verified = await verifyCode(live.json.registrationId, code);
+    assert.strictEqual(verified.status, 403);
+    assert.deepStrictEqual(verified.json, DISABLED);
+    assert.strictEqual(await UserService.getUserByUsername('switch.user'), null);
+  } finally {
+    await SettingsService.setSetting('allow_registration', 'true');
+  }
+  // Отказ по выключателю не тратит попытку и не гасит код.
+  const again = await verifyCode(live.json.registrationId, code);
+  assert.strictEqual(again.status, 200);
+  assert.strictEqual(again.json.user.username, 'switch.user');
+});
+
+test('allow_registration включена: прежнее поведение (разрешённый — сразу, остальные — на рассмотрение)', async () => {
+  assert.strictEqual(await SettingsService.getSetting('allow_registration'), 'true');
+  const res = await requestCode({ email: 'open@elsewhere.org', username: 'open.user' });
+  assert.strictEqual(res.status, 202);
+  assert.strictEqual((await verifyCode(res.json.registrationId, lastCode())).status, 202);
+});
+
+// ── Решение R: общие (на весь сервер) пределы ──
+
+test('общий предел заявок на коды: с любых адресов и почт не больше заданного в час', async () => {
+  Registration.configureLimits({ globalRequestsPerHour: 3 });
+  const ipKey = `reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`;
+  for (let i = 0; i < 3; i++) {
+    rateLimiter.resetLimit(ipKey); // как будто каждая заявка — с нового адреса
+    assert.strictEqual((await requestCode({ email: `glob${i}@spray.org`, username: `glob.user${i}` })).status, 202);
+  }
+  rateLimiter.resetLimit(ipKey);
+  const sent = outbox.length;
+  const over = await requestCode({ email: 'glob3@spray.org', username: 'glob.user3' });
+  assert.strictEqual(over.status, 429);
+  assert.strictEqual(over.json.code, 'RATE_LIMITED');
+  assert.ok(Number(over.headers.get('retry-after')) > 0);
+  assert.strictEqual(outbox.length, sent, 'письмо не отправляется');
+  assert.strictEqual(await requestsFor('glob3@spray.org'), 0);
+});
+
+test('общий бюджет неудачных проверок кода: после него — 429 для всех и оповещение безопасности', async () => {
+  const a = await requestCode({ email: 'gfail.a@spray.org', username: 'gfail.a' });
+  const codeA = lastCode();
+  const b = await requestCode({ email: 'gfail.b@spray.org', username: 'gfail.b' });
+  const codeB = lastCode();
+  Registration.configureLimits({ globalFailedVerifiesPerHour: 3 });
+  assert.strictEqual((await verifyCode(a.json.registrationId, wrongCode(codeA))).status, 400);
+  assert.strictEqual((await verifyCode(a.json.registrationId, wrongCode(codeA))).status, 400);
+  assert.strictEqual((await verifyCode(b.json.registrationId, wrongCode(codeB))).status, 400);
+  // Бюджет исчерпан: даже верный код ждёт, попытка не тратится.
+  const blocked = await verifyCode(b.json.registrationId, codeB);
+  assert.strictEqual(blocked.status, 429);
+  assert.strictEqual(blocked.json.code, 'RATE_LIMITED');
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+  await new Promise((r) => setTimeout(r, 200));
+  const alert = await identity.get(`SELECT rule, severity FROM security_alerts WHERE rule = 'registration_code_bruteforce'`);
+  assert.ok(alert, 'оповещение безопасности записано');
+
+  rateLimiter.resetLimit('reg-verify-fail-global');
+  Registration.configureLimits(null);
+  const ok = await verifyCode(b.json.registrationId, codeB);
+  assert.strictEqual(ok.status, 202);
+  const row = await identity.get('SELECT attempts FROM registration_requests WHERE id = $1', [b.json.registrationId]);
+  assert.strictEqual(Number(row.attempts), 2, 'отказ по общему бюджету попытку не тратит');
+});
+
+test('verify: отказ по пределу ожидающих заявок не гасит верный код', async () => {
+  const res = await requestCode({ email: 'cap@spray.org', username: 'cap.user' });
+  const code = lastCode();
+  const pending = Number((await identity.get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`)).n);
+  Registration.configureLimits({ maxPendingAccounts: pending });
+  const capped = await verifyCode(res.json.registrationId, code);
+  assert.strictEqual(capped.status, 429);
+  assert.strictEqual(capped.json.code, 'RATE_LIMITED');
+  Registration.configureLimits(null);
+  const ok = await verifyCode(res.json.registrationId, code);
+  assert.strictEqual(ok.status, 202);
+});
+
+test('verify: ошибка базы при создании учётной записи — 500, а не «логин занят»; код не сгорает', async () => {
+  const res = await requestCode({ email: 'dberr@spray.org', username: 'dberr.user' });
+  const code = lastCode();
+  const db = require('../src/db/identity').identity();
+  const original = db.run;
+  const failWith = (err) => {
+    db.run = async function (sql, params) {
+      if (/INSERT INTO users/.test(sql)) throw err;
+      return original.call(this, sql, params);
+    };
+  };
+  try {
+    failWith(Object.assign(new Error('disk I/O error'), { code: 'ERR_SQLITE_ERROR', errcode: 10 }));
+    const broken = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(broken.status, 500);
+    assert.notStrictEqual(broken.json.code, 'USERNAME_TAKEN');
+
+    failWith(Object.assign(new Error('duplicate key value violates unique constraint "users_email_key"'), { code: '23505', constraint: 'users_email_key' }));
+    const raced = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(raced.status, 409);
+    assert.strictEqual(raced.json.code, 'EMAIL_TAKEN');
+
+    failWith(Object.assign(new Error('UNIQUE constraint failed: users.username'), { code: 'ERR_SQLITE_ERROR', errcode: 2067 }));
+    const racedName = await verifyCode(res.json.registrationId, code);
+    assert.strictEqual(racedName.status, 409);
+    assert.strictEqual(racedName.json.code, 'USERNAME_TAKEN');
+  } finally {
+    db.run = original;
+  }
+  assert.strictEqual((await verifyCode(res.json.registrationId, code)).status, 202);
+});
+
+test('просроченные заявки чистятся по ходу работы, а не только при запуске', async () => {
+  const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+  await identity.run(
+    `INSERT INTO registration_requests (id, email, username, display_name, password_hash, code_hash, attempts, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)`,
+    ['stale-request-id-0001', 'stale@spray.org', 'stale.user', 'Старый', 'x', 'y', old]
+  );
+  Registration.resetPurgeClock();
+  assert.strictEqual((await requestCode({ email: 'trigger@spray.org', username: 'trigger.user' })).status, 202);
+  assert.strictEqual(await requestsFor('stale@spray.org'), 0);
 });
 
 // ── Блокировки и жалобы ──
@@ -516,4 +674,155 @@ test('«печатает…» не доходит через блокировк�
     await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
     a.terminate(); b.terminate();
   }
+});
+
+// ── I-2: блокировка закрывает звонки, «Побудку» и правку личных сообщений ──
+
+async function blockSock(name) {
+  const sock = new WebSocket(wsUrl);
+  sock.frames = [];
+  sock.on('message', (raw) => { try { sock.frames.push(JSON.parse(raw.toString('utf8'))); } catch {} });
+  sock.on('error', () => {});
+  await new Promise((resolve) => sock.on('open', resolve));
+  sock.send(JSON.stringify({ type: 'auth', token: people[name].token }));
+  const started = Date.now();
+  while (!sock.frames.some((f) => f.type === 'auth_success')) {
+    if (Date.now() - started > 3000) throw new Error(`${name}: нет auth_success`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return sock;
+}
+
+async function frameOf(sock, predicate, timeoutMs = 3000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const hit = sock.frames.find(predicate);
+    if (hit) return hit;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('кадр не пришёл за отведённое время');
+}
+
+test('блокировка: звонок в обе стороны не встаёт — call_unavailable «не в сети», вызываемому ничего, push нет', async () => {
+  const wsServer = require('../src/ws/server');
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  try {
+    // Без блокировки звонок доходит.
+    b.send(JSON.stringify({ type: 'call_offer', targetUserId: people.alice.id, sdp: 'x' }));
+    await frameOf(a, (f) => f.type === 'call_offer' && f.senderId === people.bob.id);
+    b.send(JSON.stringify({ type: 'call_end', targetUserId: people.alice.id }));
+    await new Promise((r) => setTimeout(r, 150));
+    a.frames.length = 0; b.frames.length = 0;
+    wsServer.pendingOffers.clear();
+
+    await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+    for (const [caller, callee, calleeId, callerId] of [[b, a, people.alice.id, people.bob.id], [a, b, people.bob.id, people.alice.id]]) {
+      caller.send(JSON.stringify({ type: 'call_offer', targetUserId: calleeId, sdp: 'x' }));
+      const reply = await frameOf(caller, (f) => f.type === 'call_unavailable' && f.targetUserId === calleeId);
+      assert.strictEqual(reply.reason, 'Сотрудник сейчас не в сети', 'ответ не выдаёт блокировку');
+      await new Promise((r) => setTimeout(r, 150));
+      assert.ok(!callee.frames.some((f) => f.type === 'call_offer'), 'вызываемый не получает звонок');
+      assert.ok(!wsServer.pendingOffers.has(callerId), 'вызов не встаёт — и push о звонке не уходит');
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    wsServer.pendingOffers.clear();
+    a.terminate(); b.terminate();
+  }
+});
+
+test('блокировка: «Побудка» в обе стороны — wake_error invalid_target, сигнала нет', async () => {
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+  try {
+    for (const [sender, target, targetId] of [[b, a, people.alice.id], [a, b, people.bob.id]]) {
+      sender.send(JSON.stringify({ type: 'wake_send', targetUserId: targetId }));
+      const err = await frameOf(sender, (f) => f.type === 'wake_error' || f.type === 'wake_sent');
+      assert.strictEqual(err.type, 'wake_error');
+      assert.strictEqual(err.code, 'invalid_target');
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(!target.frames.some((f) => f.type === 'wake_ring'), 'сигнал не доходит');
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    a.terminate(); b.terminate();
+  }
+});
+
+test('блокировка: правка личного сообщения в обе стороны — DM_NOT_ALLOWED, текст прежний, message_updated не уходит', async () => {
+  const fromBob = await sendDirect('bob', 'alice', 'исходный текст Бориса');
+  const fromAlice = await sendDirect('alice', 'bob', 'исходный текст Алисы');
+  assert.strictEqual(fromBob.status, 201);
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+  try {
+    for (const [editor, other, msgId, original] of [[b, a, fromBob.json.id, 'исходный текст Бориса'], [a, b, fromAlice.json.id, 'исходный текст Алисы']]) {
+      editor.send(JSON.stringify({ type: 'edit_message', messageId: msgId, text: 'грубая правка' }));
+      const err = await frameOf(editor, (f) => f.type === 'error' && f.context === 'edit_message');
+      assert.strictEqual(err.code, 'DM_NOT_ALLOWED');
+      assert.strictEqual(err.retryable, false);
+      assert.ok(!/блок/i.test(err.message));
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(!other.frames.some((f) => f.type === 'message_updated'), 'правка не доходит до собеседника');
+      assert.strictEqual(chat.prepare('SELECT text FROM messages WHERE id = ?').get(msgId).text, original);
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+  }
+  // После разблокировки правка снова работает.
+  b.send(JSON.stringify({ type: 'edit_message', messageId: fromBob.json.id, text: 'вежливая правка' }));
+  const updated = await frameOf(a, (f) => f.type === 'message_updated' && f.message.id === fromBob.json.id);
+  assert.strictEqual(updated.message.text, 'вежливая правка');
+  a.terminate(); b.terminate();
+});
+
+// ── Удаление аккаунта: рассылка без стёртых данных, кэш аватара (Minor 1, 2) ──
+
+test('удаление аккаунта: user_updated не несёт стёртых личных данных, копии аватара удалены', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const config = require('../src/config');
+  const Images = require('../src/media/images');
+  const leaky = await UserService.createUser({
+    username: 'leaky.person', full_name: 'Утечкин Пётр', email: 'leaky@test.kz', phone: '+7 700 000 00 11',
+    job_title: 'Бухгалтер', password: PASSWORD
+  });
+  await UserService.setMustChangePassword(leaky.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(leaky.id));
+
+  const avatarsDir = path.join(config.UPLOADS_DIR, '.avatars');
+  fs.mkdirSync(avatarsDir, { recursive: true });
+  const cached = Object.keys(Images.AVATAR_SIZES).map((size) => path.join(avatarsDir, `${leaky.id}-0123456789abcdef-${size}.jpg`));
+  for (const file of cached) fs.writeFileSync(file, 'jpeg');
+
+  const observer = await blockSock('alice');
+  try {
+    const res = await api('DELETE', '/api/users/me', { token, body: { password: PASSWORD } });
+    assert.strictEqual(res.status, 200);
+    const frame = await frameOf(observer, (f) => f.type === 'user_updated' && f.user?.id === leaky.id);
+    const text = JSON.stringify(frame);
+    for (const secret of ['leaky', 'Утечкин', '+7 700 000 00 11', 'Бухгалтер']) {
+      assert.ok(!text.includes(secret), `рассылка не содержит «${secret}»: ${text}`);
+    }
+    assert.strictEqual(frame.user.full_name, 'Удалённый сотрудник');
+    assert.ok(!frame.user.email && !frame.user.phone && !frame.user.job_title);
+    assert.strictEqual(frame.user.is_active, 0);
+  } finally {
+    observer.terminate();
+  }
+  for (const file of cached) assert.ok(!fs.existsSync(file), `копия аватара удалена: ${path.basename(file)}`);
+});
+
+// Minor 6: заявка, отклонённая прежней версией сервера, лежит с is_active = 0.
+test('одобрение отклонённой прежде заявки включает учётную запись', async () => {
+  const legacy = await UserService.createUser({ username: 'legacy.rejected', full_name: 'Отклонённый Прежде', password: PASSWORD });
+  await UserService.setMustChangePassword(legacy.id, false);
+  await identity.run(`UPDATE users SET approval_status = 'rejected', is_active = 0 WHERE id = $1`, [legacy.id]);
+  const approved = await api('POST', `/api/admin/registrations/${legacy.id}/approve`, { token: people.admin.token });
+  assert.strictEqual(approved.status, 200);
+  const login = await api('POST', '/api/auth/login', { body: { username: 'legacy.rejected', password: PASSWORD } });
+  assert.strictEqual(login.status, 200);
 });

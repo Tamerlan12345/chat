@@ -631,7 +631,9 @@ class AuthService {
   static async approveUser(userId) {
     const db = identity();
     const res = await db.run(
-      `UPDATE users SET approval_status = 'approved' WHERE id = $1 AND approval_status IN ('pending', 'rejected')`,
+      // is_active = 1: заявки, отклонённые прежней версией сервера, лежат
+      // отключёнными — одобрение должно их включать.
+      `UPDATE users SET approval_status = 'approved', is_active = 1 WHERE id = $1 AND approval_status IN ('pending', 'rejected')`,
       [Number(userId)]
     );
     if (!res.changes) throw new Error('Заявка не найдена');

@@ -69,12 +69,75 @@
     "path": "/api/auth/refresh",
     "status": 200
   },
+  "http/auth.register-request-disabled.json": {
+    "kind": "http",
+    "description": "allow_registration выключена: 403 { error, code: REGISTRATION_DISABLED } — проверяется первой, письма нет.",
+    "method": "POST",
+    "path": "/api/auth/register/request",
+    "status": 403
+  },
+  "http/auth.register-request-invalid.json": {
+    "kind": "http",
+    "description": "Поле не прошло проверку: 400 { error } без code (текст описывает поле).",
+    "method": "POST",
+    "path": "/api/auth/register/request",
+    "status": 400
+  },
+  "http/auth.register-request-mail-not-configured.json": {
+    "kind": "http",
+    "description": "На сервере не настроена почта: 503 { error, code: EMAIL_NOT_CONFIGURED }.",
+    "method": "POST",
+    "path": "/api/auth/register/request",
+    "status": 503
+  },
+  "http/auth.register-verify-disabled.json": {
+    "kind": "http",
+    "description": "allow_registration выключена: подтверждение кода тоже 403 REGISTRATION_DISABLED; код не тратится.",
+    "method": "POST",
+    "path": "/api/auth/register/verify",
+    "status": 403
+  },
+  "http/auth.register-verify-expired.json": {
+    "kind": "http",
+    "description": "Код истёк, использован, попытки исчерпаны или registrationId неизвестен: 410 { error, code: CODE_EXPIRED } (случаи неразличимы).",
+    "method": "POST",
+    "path": "/api/auth/register/verify",
+    "status": 410
+  },
+  "http/auth.register-verify-invalid.json": {
+    "kind": "http",
+    "description": "Код не из 6 цифр: 400 { error, code: CODE_INVALID } БЕЗ attemptsLeft — попытка не засчитана.",
+    "method": "POST",
+    "path": "/api/auth/register/verify",
+    "status": 400
+  },
   "http/auth.unauthorized.json": {
     "kind": "http",
     "description": "Любой защищённый маршрут с неверным/истёкшим токеном: HTTP 401 и { error }.",
     "method": "GET",
     "path": "/api/auth/me",
     "status": 401
+  },
+  "http/blocks.add.json": {
+    "kind": "http",
+    "description": "Заблокировать пользователя: 201 { userId } (повтор — тоже 201).",
+    "method": "POST",
+    "path": "/api/blocks",
+    "status": 201
+  },
+  "http/blocks.list.json": {
+    "kind": "http",
+    "description": "Мои блокировки: { blocks: [ { userId, displayName, createdAt } ] }, новые первыми.",
+    "method": "GET",
+    "path": "/api/blocks",
+    "status": 200
+  },
+  "http/blocks.remove.json": {
+    "kind": "http",
+    "description": "Снять блокировку: { success: true } (идемпотентно).",
+    "method": "DELETE",
+    "path": "/api/blocks/{id}",
+    "status": 200
   },
   "http/channels.list.json": {
     "kind": "http",
@@ -195,6 +258,20 @@
     "path": "/api/messages/direct/{id}",
     "status": 201
   },
+  "http/reports.create.json": {
+    "kind": "http",
+    "description": "Жалоба на сообщение или пользователя: 201 { id, status: \"open\" }; reason — код (spam, abuse, inappropriate, threat, other). Дубликат — 201 с прежним id.",
+    "method": "POST",
+    "path": "/api/reports",
+    "status": 201
+  },
+  "http/settings.info.json": {
+    "kind": "http",
+    "description": "Публичные настройки сервера (без токена): allow_registration — включена ли самостоятельная регистрация; при false клиент скрывает вход в регистрацию (registration.md §1).",
+    "method": "GET",
+    "path": "/api/settings/info",
+    "status": 200
+  },
   "http/sync.bootstrap.json": {
     "kind": "http",
     "description": "Синхронизация без since: пустой messages, has_more=false и next_cursor — текущая голова (непрозрачная строка «<эпоха>.<номер>»). С него клиент начинает, загрузив страницы переписок.",
@@ -228,6 +305,20 @@
     "description": "PUT /users/avatar (multipart, поле file): профиль, avatar_url — адрес /api/users/{id}/avatar?v=<версия>, а не data URL.",
     "method": "PUT",
     "path": "/api/users/avatar",
+    "status": 200
+  },
+  "http/users.delete-me-wrong-password.json": {
+    "kind": "http",
+    "description": "Удаление аккаунта с неверным паролем: 403 { error, code: INVALID_PASSWORD }.",
+    "method": "DELETE",
+    "path": "/api/users/me",
+    "status": 403
+  },
+  "http/users.delete-me.json": {
+    "kind": "http",
+    "description": "Удаление своей учётной записи (нужен пароль): { success: true }; после ответа любой токен недействителен (401).",
+    "method": "DELETE",
+    "path": "/api/users/me",
     "status": 200
   },
   "http/users.get-with-avatar.json": {
@@ -480,6 +571,13 @@
     "event": "error",
     "direction": "server->client",
     "trigger": "delete_message чужого сообщения"
+  },
+  "ws/error.dm_not_allowed.json": {
+    "kind": "ws",
+    "description": "Личная переписка закрыта блокировкой (в любую сторону): code DM_NOT_ALLOWED, retryable false; текст не говорит, кто кого заблокировал. Тот же код у edit_message.",
+    "event": "error",
+    "direction": "server->client",
+    "trigger": "send_message собеседнику, с которым действует блокировка"
   },
   "ws/error.edit_message.json": {
     "kind": "ws",

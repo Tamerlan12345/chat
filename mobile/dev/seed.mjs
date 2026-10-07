@@ -2,7 +2,11 @@
 // users alice/bob, one channel, direct + channel messages, one announcement,
 // one attachment. Idempotent: if alice can already log in it does nothing.
 //
-//   node mobile/dev/seed.mjs [baseUrl]     (default http://127.0.0.1:2004)
+//   node mobile/dev/seed.mjs <baseUrl>     (or SEED_BASE_URL; required, e.g. http://127.0.0.1:2014)
+//
+// The base URL has no default on the command line: seeding the wrong server
+// creates dev users and changes its admin password. Port 2004 (the owner's own
+// local server) is refused.
 //
 // DEV ONLY credentials, documented in mobile/dev/README.md.
 import { fileURLToPath } from 'node:url';
@@ -48,13 +52,26 @@ async function adminLogin(baseUrl) {
   return must(await call(baseUrl, 'POST', '/api/auth/login', { body: CREDENTIALS.admin }), 'admin login').token;
 }
 
-export async function seed({ baseUrl = 'http://127.0.0.1:2004' } = {}) {
+// Dev stand: self-registration is on, so the registration screens can be
+// reached in development (mail is not configured, so request answers 503
+// EMAIL_NOT_CONFIGURED unless SMTP is set up for the stand).
+async function enableRegistration(baseUrl, admin) {
+  must(await call(baseUrl, 'PUT', '/api/admin/settings', { token: admin, body: { allow_registration: 'true' } }), 'enable registration');
+}
+
+export async function seed({ baseUrl } = {}) {
+  if (!baseUrl) throw new Error('seed: base URL is required');
+  if (new URL(baseUrl).port === '2004') throw new Error('seed: port 2004 is the owner\'s local server; refusing to seed it');
   const result = { alice: CREDENTIALS.alice, bob: CREDENTIALS.bob, alreadySeeded: false };
 
   const probe = await call(baseUrl, 'POST', '/api/auth/login', { body: CREDENTIALS.alice });
-  if (probe.status === 200) return { ...result, alreadySeeded: true };
+  if (probe.status === 200) {
+    await enableRegistration(baseUrl, await adminLogin(baseUrl));
+    return { ...result, alreadySeeded: true };
+  }
 
   const admin = await adminLogin(baseUrl);
+  await enableRegistration(baseUrl, admin);
   const ids = {};
   for (const u of [CREDENTIALS.alice, CREDENTIALS.bob]) {
     const created = must(await call(baseUrl, 'POST', '/api/admin/users', {
@@ -102,7 +119,15 @@ export async function seed({ baseUrl = 'http://127.0.0.1:2004' } = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const baseUrl = process.argv[2] || process.env.SEED_BASE_URL || 'http://127.0.0.1:2004';
+  const baseUrl = process.argv[2] || process.env.SEED_BASE_URL;
+  if (!baseUrl) {
+    console.error('seed: base URL is required: node mobile/dev/seed.mjs http://127.0.0.1:2014 (or SEED_BASE_URL)');
+    process.exit(2);
+  }
+  if (new URL(baseUrl).port === '2004') {
+    console.error('seed: port 2004 is the owner\'s local server; refusing to seed it');
+    process.exit(2);
+  }
   const r = await seed({ baseUrl });
   console.log(r.alreadySeeded
     ? '[seed] already seeded'

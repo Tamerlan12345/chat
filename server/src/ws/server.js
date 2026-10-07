@@ -421,7 +421,7 @@ class WsServer {
     }).push;
   }
 
-  // Решение о звонке (multi-device.md §7) с сокетами вызываемого сейчас.
+  // Решение о звонке (multi-device.md §5, push.md §3) с сокетами вызываемого сейчас.
   // devices — устройства, которые будит звонок; без них — по таблице токенов.
   callDecision(userId, callerId, devices = PushService.callDevicesSync(userId)) {
     return NotifyDecision.decideCallNotification({
@@ -509,7 +509,10 @@ class WsServer {
     } finally {
       this.wakeInFlight.delete(sender.id);
     }
-    if (!target || target.is_active === 0 || target.is_active === false) {
+    // Блокировка в любую сторону закрывает и «Побудку» (registration.md §4).
+    // Ответ тот же, что для несуществующего адреса, — блокировку он не выдаёт.
+    if (!target || target.is_active === 0 || target.is_active === false ||
+        require('../services/safety.service').isBlockedEitherWay(sender.id, targetId)) {
       return reply({ type: 'wake_error', code: 'invalid_target', targetUserId: targetId, message: 'Разбудить можно только коллегу' });
     }
     if (this.wakeRetryAt(sender.id) > Date.now()) {
@@ -1049,6 +1052,17 @@ class WsServer {
           actorId: currentUser.id,
           text: msg.text
         });
+        // Пока правка дочитывала сообщение (медленная база), его могло удалить
+        // параллельное удаление и уже разослать надгробие. message_updated
+        // после надгробия вернул бы клиентам текст удалённого сообщения:
+        // удаление побеждает, автору правки — тот же отказ, что и при правке
+        // уже удалённого.
+        if (MessageService.isGoneOrDeleted(updated?.id)) {
+          safeSend(ws, errorFrame('edit_message', msg, MessageService.describeError(
+            Object.assign(new Error('Сообщение удалено'), { code: 'MESSAGE_DELETED' })
+          )));
+          return;
+        }
         for (const userId of conversationRecipients(updated)) {
           this.sendToUser(userId, { type: 'message_updated', message: updated });
         }
@@ -1234,6 +1248,13 @@ class WsServer {
             }));
             return;
           }
+          // Блокировка в любую сторону закрывает звонки (registration.md §4):
+          // ни кадра call_offer, ни push о звонке. Ответ — как для сотрудника
+          // не в сети, блокировку он не выдаёт (и «Не беспокоить» тоже).
+          if (require('../services/safety.service').isBlockedEitherWay(currentUser.id, targetUserId)) {
+            safeSend(ws, { type: 'call_unavailable', targetUserId, reason: NOT_ONLINE_REASON });
+            return;
+          }
           // «Не беспокоить» — значит не звонить: раньше вызов проходил, и один
           // сотрудник мог звонить коллеге без остановки.
           if (this.dndUsers.has(targetUserId)) {
@@ -1245,7 +1266,7 @@ class WsServer {
             return;
           }
           // Кому звонить — по тому же правилу, что уведомления о сообщениях
-          // (multi-device.md §7): кадр call_offer — всем сокетам вызываемого,
+          // (multi-device.md §5): кадр call_offer — всем сокетам вызываемого,
           // push — его устройствам без сокета на переднем плане, даже если
           // другие устройства на связи (компьютер простаивает, телефон в
           // кармане). Не звонит ни один сокет и будить нечего — call_unavailable.

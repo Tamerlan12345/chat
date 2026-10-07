@@ -632,6 +632,18 @@ class MessageService {
    * Старый текст уходит в message_history до того, как строка в messages
    * перезаписывается, — иначе первая же правка стирала бы след безвозвратно.
    */
+  // Сообщения нет или оно удалено (надгробие) — для проверки после ожидания.
+  static isGoneOrDeleted(messageId) {
+    const row = getDatabase().prepare('SELECT is_deleted FROM messages WHERE id = ?').get(Number(messageId));
+    return !row || Boolean(row.is_deleted);
+  }
+
+  static isDirectBlocked(db, a, b) {
+    return Boolean(db.prepare(
+      'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+    ).get(Number(a), Number(b), Number(b), Number(a)));
+  }
+
   static async editMessage({ messageId, actorId, text }) {
     const db = getDatabase();
     const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(messageId));
@@ -641,6 +653,12 @@ class MessageService {
     }
     if (message.is_deleted) throw codedError('MESSAGE_DELETED', 'Сообщение удалено');
     if (message.type !== 'text') throw codedError('NOT_TEXT_MESSAGE', 'Редактировать можно только текстовые сообщения');
+    // Блокировка в любую сторону закрывает личную переписку и для правок:
+    // иначе заблокированный переписал бы старое сообщение, и новый текст
+    // дошёл бы до блокировщика (registration.md §4). Текст — как при отправке.
+    if (message.conversation_type === 'direct' && this.isDirectBlocked(db, message.sender_id, message.target_id)) {
+      throw codedError('DM_NOT_ALLOWED', 'Сообщение не может быть доставлено');
+    }
 
     const windowMinutes = await SettingsService.getSetting('message_edit_window_minutes', DEFAULT_EDIT_WINDOW_MINUTES);
     if (!isWithinWindow(message.created_at, windowMinutes)) {
@@ -660,6 +678,10 @@ class MessageService {
     const current = db.prepare('SELECT * FROM messages WHERE id = ?').get(message.id);
     if (!current) throw codedError('NOT_FOUND', 'Сообщение не найдено');
     if (current.is_deleted) throw codedError('MESSAGE_DELETED', 'Сообщение удалено');
+    // Блокировку могли поставить, пока ждали настройку.
+    if (current.conversation_type === 'direct' && this.isDirectBlocked(db, current.sender_id, current.target_id)) {
+      throw codedError('DM_NOT_ALLOWED', 'Сообщение не может быть доставлено');
+    }
 
     const now = new Date().toISOString();
     db.prepare(`

@@ -5,7 +5,7 @@ HTTP only. This stand puts a zero-dependency TLS proxy in front of a real server
 and fills it with data, so the apps can log in during development and CI.
 
 ```
-app --https/wss--> tls-proxy.mjs (0.0.0.0:8443) --http/ws + X-Forwarded-Proto: https--> server (127.0.0.1:2004)
+app --https/wss--> tls-proxy.mjs (127.0.0.1:8443) --http/ws + X-Forwarded-Proto: https--> server (127.0.0.1:2014)
 ```
 
 ## Start (one command)
@@ -29,7 +29,16 @@ until curl -fsS --cacert mobile/dev/certs/dev-ca.crt https://localhost:8443/api/
 
 First run creates `mobile/dev/certs/` (via `make-dev-ca.sh`) and `mobile/dev/data/`
 (server data, seeded once); both are git-ignored. Delete `mobile/dev/data/` to reset.
-On Windows, plain `curl` (schannel) needs `--ssl-no-revoke` with a custom CA. Ports come from `mobile/dev/dev.env` (`TLS_PORT=8443`, `SERVER_PORT=2004`) or the environment.
+On Windows, plain `curl` (schannel) needs `--ssl-no-revoke` with a custom CA. Ports come from `mobile/dev/dev.env` (`TLS_PORT=8443`, `SERVER_PORT=2014`) or the environment.
+
+## Safety rails
+
+- **Port 2004 is never used.** It belongs to the owner's own local CentyChat server. `stand.mjs`, `tls-proxy.mjs` and `seed.mjs` refuse it; the default server port is 2014.
+- **No production settings leak in.** The stand's server does not inherit `DATABASE_URL`/`POSTGRES_URL`/`PG*`, `SMTP_*`, `PUSH_*`/`FCM_*`/`APNS_*`, `JWT_SECRET`, `AUDIT_HMAC_KEY`, `BACKUP_*`, `REGISTRATION_*`, `RAILWAY_*`, `NODE_ENV` and similar from your shell (see `standServerEnv` in `stand.mjs`), so running it under `railway run` cannot touch real data.
+- **Loopback only.** The TLS proxy listens on `127.0.0.1`. The Android emulator reaches it as `10.0.2.2` (the host loopback) and the iOS simulator as `localhost`. To test from a physical device on the LAN, opt in with `TLS_LISTEN_HOST=0.0.0.0` and remember that the seed passwords below are public.
+- **`seed.mjs` needs an explicit address** on the command line: `node mobile/dev/seed.mjs http://127.0.0.1:2014` (or `SEED_BASE_URL`).
+- **Name-constrained dev CA.** New dev CAs may only sign `localhost`, `127.0.0.1` and `10.0.2.2`. A CA created before this change has no constraint; regenerate it with `FORCE=1 bash mobile/dev/make-dev-ca.sh` and re-install it on your emulator/simulator.
+- **Self-registration is on** for the stand (`allow_registration=true`, set by the seed), so the registration screens are reachable. Mail is not configured, so `/auth/register/request` answers 503 `EMAIL_NOT_CONFIGURED`.
 
 ## Addresses
 
