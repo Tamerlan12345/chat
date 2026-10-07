@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTrayStatusChange: subscribe('tray-status-change'),
   onPowerMonitorEvent: subscribe('power-monitor-event'),
   getSystemIdleTime: () => ipcRenderer.invoke('get-system-idle-time'),
+  // Текущий итог окна и системы (свёрнуто/в трее/простой — away): страница
+  // спрашивает после подписки на power-monitor-event.
+  getWindowPresence: () => ipcRenderer.invoke('get-window-presence'),
   syncTrayStatus: (status) => ipcRenderer.send('sync-tray-status', status),
   onRdViewerClosed: subscribe('rd-viewer-closed'),
   onToastAction: subscribe('toast-action'),

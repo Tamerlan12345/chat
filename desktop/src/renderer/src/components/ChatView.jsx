@@ -10,6 +10,7 @@ import { canEdit, canDelete } from '../lib/message-actions.mjs';
 import { loadImage } from '../lib/image-cache';
 import { acceptAttr, checkFileAgainstPolicy } from '../lib/file-policy.mjs';
 import { COPY } from '../lib/copy-ru.mjs';
+import { latestMessageId } from '../lib/multi-device.mjs';
 
 // Действующий список разрешённых расширений — на время сеанса приложения, не
 // на чат: спрашивать сервер заново при каждом открытии окна незачем. Сброс —
@@ -142,7 +143,8 @@ export default function ChatView({
     prevMessageCountRef.current = messages.length;
 
     if (activeChat && (isChatSwitch || wasNearBottomRef.current)) {
-      onMarkRead(activeChat.type, activeChat.id);
+      // При смене чата лента ещё прежняя — номер не передаётся, отметка уходит всегда.
+      onMarkRead(activeChat.type, activeChat.id, isChatSwitch ? undefined : latestMessageId(messages));
     }
   }, [messages, activeChat]);
 

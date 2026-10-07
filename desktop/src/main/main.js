@@ -1610,6 +1610,13 @@ ipcMain.handle('show-notification', (event, data) => {
   return true;
 });
 
+// Итог окна и системы для страницы, которая подписалась позже кадра
+// did-finish-load (окно, запущенное в трее).
+ipcMain.handle('get-window-presence', (event) => {
+  if (!isFromServerPage(event, { quiet: true })) return 'online';
+  return currentPresence();
+});
+
 ipcMain.handle('get-system-idle-time', (event) => {
   if (!isFromServerPage(event, { quiet: true })) return 0;
   try {

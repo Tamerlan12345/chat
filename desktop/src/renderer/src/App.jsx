@@ -31,7 +31,7 @@ import { conversationSnippet, registrationToast, toastTarget } from './lib/live-
 import { isSuperAdmin as userIsSuperAdmin, canOpenAdminConsole } from './lib/admin-access.mjs';
 import { COPY, connectionLabel } from './lib/copy-ru.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
-import { viewingKey, viewingFrame, applyConversationRead, authFrame, toastIsForConversation, isViewingHere, incomingMessagePlan } from './lib/multi-device.mjs';
+import { viewingKey, viewingFrame, applyConversationRead, authFrame, toastIsForConversation, isViewingHere, incomingMessagePlan, createReadMarks } from './lib/multi-device.mjs';
 
 // Токен живёт 12 часов; продлеваем с большим запасом, чтобы работающий
 // человек не упирался в истечение посреди дня.
@@ -100,6 +100,9 @@ export default function App() {
     return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://centychat-production.up.railway.app';
   });
   const [wsConnected, setWsConnected] = useState(false);
+  // До какого сообщения каждая переписка уже отмечена прочитанной на этом сокете.
+  const readMarksRef = useRef(null);
+  if (readMarksRef.current === null) readMarksRef.current = createReadMarks();
   // Есть ли сеть у самого компьютера: без неё строка состояния говорит «Нет
   // сети», с ней и без сокета — «Переподключение…».
   const [networkOnline, setNetworkOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
@@ -530,14 +533,18 @@ export default function App() {
   // «приложение запущено».
   // Простаивающий компьютер («отошёл») переписку не читает: ни viewing, ни
   // mark_read — вернулся «в сети», тогда и прочитано (updateMyPresence).
-  const markConversationRead = (chat = activeChatRef.current) => {
+  // upToId — до какого сообщения прочитано: одно сообщение даёт один кадр,
+  // даже если его отмечают и обработчик кадра, и лента (readMarksRef).
+  const markConversationRead = (chat = activeChatRef.current, upToId) => {
     if (!chat || !isViewingHere({ ...currentView(), chat }, chat.type, chat.id)) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({
-      type: 'mark_read',
-      conversationType: chat.type,
-      targetId: chat.id
-    }));
+    if (readMarksRef.current.shouldSend(`${chat.type}:${chat.id}`, upToId)) {
+      wsRef.current.send(JSON.stringify({
+        type: 'mark_read',
+        conversationType: chat.type,
+        targetId: chat.id
+      }));
+    }
     if (chat.type === 'channel') {
       setChannelUnread((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
     } else {
@@ -1130,6 +1137,8 @@ export default function App() {
 
       // ── Состояние сеанса ────────────────────────────────────────────────
       case 'auth_success':
+        // Новый сокет: сервер не знает прежних отметок этого окна.
+        readMarksRef.current.reset();
         // Присутствие ушло в auth. Сервер прежней версии поле не знает и
         // считает вход «в сети» — свёрнутое окно повторяет away кадром.
         if (presenceRef.current === 'away') {
@@ -1436,7 +1445,7 @@ export default function App() {
             viewingHere: isViewingHere(currentView(), 'direct', msg.sender_id),
             notify: event.notify
           });
-          if (plan.markRead) markConversationRead();
+          if (plan.markRead) markConversationRead(undefined, msg.id);
           if (plan.countUnread) {
             setUnreadMap((prev) => ({
               ...prev,
@@ -1481,7 +1490,7 @@ export default function App() {
             viewingHere: isViewingHere(currentView(), 'channel', msg.target_id),
             notify: event.notify
           });
-          if (plan.markRead) markConversationRead();
+          if (plan.markRead) markConversationRead(undefined, msg.id);
           if (plan.countUnread) {
             setChannelUnread((prev) => ({ ...prev, [msg.target_id]: (prev[msg.target_id] || 0) + 1 }));
           }
@@ -1986,6 +1995,11 @@ export default function App() {
     const offPower = window.electronAPI?.onPowerMonitorEvent?.(({ status }) => {
       updateMyPresence(status);
     });
+    // Окно, запущенное в трее, сообщает away при загрузке страницы — до этой
+    // подписки кадр мог потеряться. Спрашиваем состояние сами (новые оболочки).
+    window.electronAPI?.getWindowPresence?.()
+      .then((status) => { if (status === 'away') updateMyPresence('away'); })
+      .catch(() => {});
 
     // Меню значка в трее. Новое меню присылает «dnd-on» / «dnd-off»; старые
     // установленные версии — прежние пункты статуса, из которых осмысленны
@@ -2646,8 +2660,8 @@ export default function App() {
                 deleteWindowMinutes={Number(serverInfo?.message_delete_window_minutes ?? 60)}
                 onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
-                onMarkRead={(conversationType, targetId) =>
-                  markConversationRead({ type: conversationType, id: targetId })
+                onMarkRead={(conversationType, targetId, upToId) =>
+                  markConversationRead({ type: conversationType, id: targetId }, upToId)
                 }
                 onTyping={(conversationType, targetId, isTyping) => {
                   if (wsRef.current?.readyState === WebSocket.OPEN) {

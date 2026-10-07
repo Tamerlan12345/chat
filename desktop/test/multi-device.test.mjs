@@ -154,3 +154,40 @@ test('App.jsx: уведомление, счётчик и mark_read нового 
   const presence = app.slice(app.indexOf('const updateMyPresence'), app.indexOf('const updateMyPresence') + 700);
   assert.match(presence, /markConversationRead\(\)/, 'вернулись «в сети» — открытая переписка прочитана (§4 п. 4)');
 });
+
+// ── Fix round 1 (Ruling S): один mark_read на сообщение ────────────────────
+// Новое сообщение в открытом чате отмечал и обработчик кадра (plan.markRead),
+// и ChatView (прокрутка внизу) — два кадра на одно сообщение.
+
+test('createReadMarks: та же переписка до того же сообщения — второй раз не отправляется', async () => {
+  const { createReadMarks } = await import('../src/renderer/src/lib/multi-device.mjs');
+  const marks = createReadMarks();
+  assert.strictEqual(marks.shouldSend('direct:5', 41), true);
+  assert.strictEqual(marks.shouldSend('direct:5', 41), false, 'то же сообщение — дубль');
+  assert.strictEqual(marks.shouldSend('direct:5', 40), false, 'более старое — уже прочитано');
+  assert.strictEqual(marks.shouldSend('direct:5', 42), true, 'новое сообщение');
+  assert.strictEqual(marks.shouldSend('channel:5', 42), true, 'канал №5 — другая переписка');
+  assert.strictEqual(marks.shouldSend('direct:5', undefined), true, 'без номера (фокус окна) — отправить');
+  assert.strictEqual(marks.shouldSend('direct:5', 'tmp-1'), true, 'неотправленное своё — отправить');
+  marks.reset();
+  assert.strictEqual(marks.shouldSend('direct:5', 42), true, 'новый сокет (auth_success) — заново');
+});
+
+test('latestMessageId: наибольший целый id в ленте', async () => {
+  const { latestMessageId } = await import('../src/renderer/src/lib/multi-device.mjs');
+  assert.strictEqual(latestMessageId([{ id: 3 }, { id: 9 }, { id: 'tmp-1' }, { id: 7 }]), 9);
+  assert.strictEqual(latestMessageId([]), null);
+  assert.strictEqual(latestMessageId(null), null);
+});
+
+test('App.jsx и ChatView: обе отметки идут через одну защиту от дублей с номером сообщения', () => {
+  const app = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'App.jsx'), 'utf8');
+  assert.strictEqual((app.match(/if \(plan\.markRead\) markConversationRead\(undefined, msg\.id\);/g) || []).length, 2);
+  const mark = app.slice(app.indexOf('const markConversationRead'), app.indexOf('const markConversationRead') + 600);
+  assert.match(mark, /readMarksRef\.current\.shouldSend\(/);
+  assert.match(app, /case 'auth_success':[\s\S]{0,400}readMarksRef\.current\.reset\(\)/, 'новый сокет — отметки заново');
+  assert.match(app, /onMarkRead=\{\(conversationType, targetId, upToId\) =>\s*markConversationRead\(\{ type: conversationType, id: targetId \}, upToId\)/);
+  const chat = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'ChatView.jsx'), 'utf8');
+  // При смене чата лента ещё прежняя: номер не передаётся, отметка уходит всегда.
+  assert.match(chat, /onMarkRead\(activeChat\.type, activeChat\.id, isChatSwitch \? undefined : latestMessageId\(messages\)\)/);
+});

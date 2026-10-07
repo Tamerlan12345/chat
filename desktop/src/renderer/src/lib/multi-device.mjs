@@ -57,6 +57,39 @@ export function incomingMessagePlan({ own, viewingHere, notify }) {
   };
 }
 
+// Одна отметка прочтения на сообщение. Новое сообщение открытого чата
+// отмечают и обработчик кадра, и лента (прокрутка внизу); помнится, до какого
+// сообщения переписка уже отмечена на этом сокете. Без номера (возврат фокуса,
+// смена чата, неотправленное своё) — отправлять: лишний кадр безопаснее
+// пропущенного прочтения. reset() — новый сокет (auth_success).
+export function createReadMarks() {
+  const last = new Map();
+  return {
+    shouldSend(key, upToId) {
+      const id = Number(upToId);
+      if (upToId === undefined || upToId === null || !Number.isInteger(id) || id <= 0) return true;
+      const prev = last.get(key);
+      if (prev !== undefined && id <= prev) return false;
+      last.set(key, id);
+      return true;
+    },
+    reset() {
+      last.clear();
+    }
+  };
+}
+
+// Наибольший целый id в ленте (неотправленные свои — со строковым id — не в счёт).
+export function latestMessageId(messages) {
+  if (!Array.isArray(messages)) return null;
+  let max = null;
+  for (const m of messages) {
+    const id = Number(m?.id);
+    if (Number.isInteger(id) && id > 0 && (max === null || id > max)) max = id;
+  }
+  return max;
+}
+
 // Уведомление о новом сообщении (§5): своё и открытое здесь в фокусе — нет;
 // иначе решает сервер полем notify (чат могут читать на телефоне); старый
 // сервер поля не шлёт — тогда уведомлять, как раньше.
