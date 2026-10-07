@@ -100,7 +100,7 @@ private struct PersonCardContent: View {
         .accessibilityIdentifier("person-card")
         .overlay(alignment: .bottom) {
             if copied.isOn {
-                HUDCapsule(text: hudText)
+                HUDCapsule(text: LocalizedStringKey(hudText))
                     .padding(.bottom, 24)
                     .transition(.opacity)
                     .accessibilityIdentifier("person-copied")
