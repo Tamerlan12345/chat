@@ -17,29 +17,39 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>$(MARKETING_VERSION)</string>
+    <!-- The build number comes from the build settings (CURRENT_PROJECT_VERSION), raised per upload. -->
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <!-- Read only by DEBUG builds (ServerEnvironment); Release compiles the production URL in. -->
     <key>CentyChatServerURL</key>
     <string>$(CENTYCHAT_SERVER_URL)</string>
     
-    <!-- Privacy Descriptions for App Store Review -->
+    <!-- Export compliance: only the system's HTTPS/TLS, no own encryption (answered in the build). -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+    <!-- Privacy Descriptions for App Store Review: only for what the app uses. PhotosPicker needs no
+         permission; the app has no camera. Saving to Photos happens from the share sheet. -->
     <key>NSMicrophoneUsageDescription</key>
     <string>CentyChat требует доступ к микрофону для проведения корпоративных защищённых голосовых звонков между сотрудниками.</string>
-    <key>NSCameraUsageDescription</key>
-    <string>CentyChat требует доступ к камере для отправки фотографий в корпоративный чат и обновления аватара профиля.</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>CentyChat требует доступ к медиатеке для отправки изображений, документов и вложений в чаты.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Для сохранения вложений и изображений из переписки в медиатеку.</string>
-    
-    <!-- Background Modes (Guideline 2.5.4 compliant: voip removed until CallKit integration) -->
+    <string>Чтобы сохранить фото или видео из переписки в медиатеку, когда вы выбираете «Сохранить».</string>
+
+    <!-- Background Modes (Guideline 2.5.4 compliant: voip removed until CallKit integration):
+         audio — calls; remote-notification — silent pushes (read on another device, decision P);
+         fetch — the background flush of unsent messages (BGAppRefreshTask). -->
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>
+        <string>fetch</string>
+        <string>remote-notification</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>kz.centras.centychat.delivery-flush</string>
     </array>
     
     <key>UILaunchScreen</key>
