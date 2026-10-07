@@ -1,39 +1,4 @@
 {
-  "http/admin.registration-allowlist-add.json": {
-    "kind": "http",
-    "description": "Добавить адрес или @домен в список разрешённых: 201 { id, pattern, created_at } (pattern в нижнем регистре).",
-    "method": "POST",
-    "path": "/api/admin/registration-allowlist",
-    "status": 201
-  },
-  "http/admin.registration-allowlist-remove.json": {
-    "kind": "http",
-    "description": "Удалить запись списка: { success: true } (нет такой — 404).",
-    "method": "DELETE",
-    "path": "/api/admin/registration-allowlist/{id}",
-    "status": 200
-  },
-  "http/admin.registration-allowlist.json": {
-    "kind": "http",
-    "description": "Список разрешённых адресов: [ { id, pattern, created_at } ] по алфавиту.",
-    "method": "GET",
-    "path": "/api/admin/registration-allowlist",
-    "status": 200
-  },
-  "http/admin.reports-close.json": {
-    "kind": "http",
-    "description": "Закрыть жалобу: { success: true } (нет такой — 404).",
-    "method": "POST",
-    "path": "/api/admin/reports/{id}/close",
-    "status": 200
-  },
-  "http/admin.reports.json": {
-    "kind": "http",
-    "description": "Жалобы для главного администратора: [ { id, status, targetType, targetId, reason, details, createdAt, reporter { id, name }, reportedUser { id, name } | null, messageText } ].",
-    "method": "GET",
-    "path": "/api/admin/reports",
-    "status": 200
-  },
   "http/announcements.list.json": {
     "kind": "http",
     "description": "Оповещения, видимые пользователю.",

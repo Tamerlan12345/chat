@@ -60,9 +60,7 @@ const REQUIRED_HTTP = [
   'http/auth.register-verify-disabled.json', 'http/auth.register-verify-invalid.json', 'http/auth.register-verify-expired.json',
   'http/blocks.add.json', 'http/blocks.list.json', 'http/blocks.remove.json',
   'http/reports.create.json',
-  'http/users.delete-me.json', 'http/users.delete-me-wrong-password.json',
-  'http/admin.registration-allowlist.json', 'http/admin.registration-allowlist-add.json', 'http/admin.registration-allowlist-remove.json',
-  'http/admin.reports.json', 'http/admin.reports-close.json'
+  'http/users.delete-me.json', 'http/users.delete-me-wrong-password.json'
 ];
 
 // Варианты кадров, которые клиенты обязаны различать по code.

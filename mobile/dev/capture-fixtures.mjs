@@ -643,13 +643,9 @@ export async function captureFixtures({ dataDir } = {}) {
     await http('http/auth.register-verify-expired.json', 'Код истёк, использован, попытки исчерпаны или registrationId неизвестен: 410 { error, code: CODE_EXPIRED } (случаи неразличимы).',
       'POST', '/auth/register/verify', { body: unknownRegistration }, 410);
 
-    // список разрешённых адресов (главный администратор)
-    const allowed = await http('http/admin.registration-allowlist-add.json', 'Добавить адрес или @домен в список разрешённых: 201 { id, pattern, created_at } (pattern в нижнем регистре).',
-      'POST', '/admin/registration-allowlist', { token: adminToken, body: { pattern: '@example.com' } }, 201);
-    await http('http/admin.registration-allowlist.json', 'Список разрешённых адресов: [ { id, pattern, created_at } ] по алфавиту.',
-      'GET', '/admin/registration-allowlist', { token: adminToken }, 200);
-    await http('http/admin.registration-allowlist-remove.json', 'Удалить запись списка: { success: true } (нет такой — 404).',
-      'DELETE', `/admin/registration-allowlist/${allowed.id}`, { token: adminToken }, 200);
+    // Маршруты консоли администратора (список разрешённых, жалобы) описаны в
+    // openapi.yaml, но в мобильные фикстуры не снимаются: мобильные клиенты их
+    // не декодируют, а каждая фикстура требует декодера на обеих платформах.
 
     // блокировки и DM_NOT_ALLOWED
     const tBobSafety = (await login(CREDENTIALS.bob)).token;
@@ -667,12 +663,8 @@ export async function captureFixtures({ dataDir } = {}) {
       'DELETE', `/blocks/${bob.id}`, { token: tAliceMedia }, 200);
 
     // жалобы
-    const report = await http('http/reports.create.json', 'Жалоба на сообщение или пользователя: 201 { id, status: "open" }; reason — код (spam, abuse, inappropriate, threat, other). Дубликат — 201 с прежним id.',
+    await http('http/reports.create.json', 'Жалоба на сообщение или пользователя: 201 { id, status: "open" }; reason — код (spam, abuse, inappropriate, threat, other). Дубликат — 201 с прежним id.',
       'POST', '/reports', { token: tAliceMedia, body: { targetType: 'user', targetId: bob.id, reason: 'spam', details: 'Рассылает рекламу в личные сообщения.' } }, 201);
-    await http('http/admin.reports.json', 'Жалобы для главного администратора: [ { id, status, targetType, targetId, reason, details, createdAt, reporter { id, name }, reportedUser { id, name } | null, messageText } ].',
-      'GET', '/admin/reports?status=open', { token: adminToken }, 200);
-    await http('http/admin.reports-close.json', 'Закрыть жалобу: { success: true } (нет такой — 404).',
-      'POST', `/admin/reports/${report.id}/close`, { token: adminToken }, 200);
 
     // удаление своей учётной записи
     const erin = (await call(base, 'POST', '/api/admin/users', { token: adminToken, body: { username: 'erin', full_name: 'Эрик Тестов', password: 'Erin-Dev-Stand-6619', email: 'erin@example.test' } })).json;
