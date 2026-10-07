@@ -162,15 +162,20 @@ class AttachmentDownloader(private val root: File, private val transport: Downlo
         } else null
         val text = fromJson ?: raw.takeIf { it.isNotEmpty() && !it.startsWith("{") && !it.startsWith("<") && it.length <= 300 }
         return text ?: when (response.code) {
-            403 -> "Нет доступа к файлу"
-            404 -> "Файл не найден"
-            else -> "Не удалось скачать файл (код ${response.code})"
+            403 -> FORBIDDEN
+            404 -> NOT_FOUND
+            else -> FAILED
         }
     }
 
     companion object {
         const val NO_NETWORK = "Нет связи с сервером — файл не скачан"
-        const val INTERRUPTED = "Связь прервалась — нажмите ещё раз, загрузка продолжится"
+        const val INTERRUPTED = "Связь прервалась. Нажмите ещё раз — загрузка продолжится."
+        const val FORBIDDEN = "Нет доступа к файлу"
+        const val NOT_FOUND = "Файл не найден"
+
+        /** Any other refusal: an HTTP code means nothing to the person (copy-ru.md download.failed). */
+        const val FAILED = "Не удалось скачать файл"
         private const val PART = ".part"
         private const val ETAG = ".etag"
         private const val BUFFER = 64 * 1024

@@ -32,6 +32,7 @@ object UploadRules {
         else -> error.message!!
     }
 
-    const val NO_NETWORK = "Нет связи с сервером"
+    /** Nothing is lost: the file waits and goes when the connection is back (copy-ru.md upload.no_network). */
+    const val NO_NETWORK = "Нет связи с сервером — файл отправится, когда связь вернётся"
     const val REFUSED = "Сервер не принял файл"
 }

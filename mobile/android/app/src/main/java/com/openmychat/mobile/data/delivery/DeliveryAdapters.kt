@@ -2,6 +2,7 @@ package com.openmychat.mobile.data.delivery
 
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.network.ConnectionState
+import com.openmychat.mobile.core.network.RetryAfter
 import com.openmychat.mobile.data.repository.RealtimeRepository
 import com.openmychat.mobile.data.repository.SessionRepository
 import kotlinx.coroutines.flow.Flow
@@ -38,7 +39,8 @@ class HttpDeliveryBackend(private val api: ApiClient) : DeliveryBackend {
             response.status == 200 && body != null -> SyncOutcome.Page(body)
             response.status == 410 -> SyncOutcome.CursorInvalid(body ?: JsonObject(emptyMap()))
             response.status == 200 -> SyncOutcome.Failed(0) // unreadable page: retried like a network error
-            else -> SyncOutcome.Failed(response.status, response.retryAfterSeconds?.times(1000))
+            // The server's wait, but an automatic retry never waits more than 30 s.
+            else -> SyncOutcome.Failed(response.status, RetryAfter.automaticWaitMs(response.retryAfterSeconds))
         }
     }
 

@@ -66,7 +66,7 @@ class UploadRulesTest {
     @Test
     fun aRefusalWithoutABodyOrANetworkFailureGetsARussianReason() {
         assertEquals("Сервер не принял файл", UploadRules.failureText(ApiException(502, null, "HTTP error 502")))
-        assertEquals("Нет связи с сервером", UploadRules.failureText(ApiException(0, "NETWORK_ERROR", "timeout")))
+        assertEquals("Нет связи с сервером — файл отправится, когда связь вернётся", UploadRules.failureText(ApiException(0, "NETWORK_ERROR", "timeout")))
         assertEquals("Сервер не принял файл", UploadRules.failureText(IllegalStateException("boom")))
     }
 }

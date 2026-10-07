@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,6 +31,12 @@ interface NotificationSink {
 
     /** Снять показанное уведомление переписки. */
     fun cancel(conversation: ConversationRef)
+
+    /** Снять все уведомления приложения (учётная запись вышла или сменилась). */
+    fun cancelAll()
+
+    /** Входящий звонок из push (приложение не на связи): нажатие открывает приложение. */
+    fun showIncomingCall(callerId: Long, callerName: String?) = Unit
 }
 
 /** Переписку прочитали на другом устройстве (кадр conversation_read или тихий push read). */
@@ -82,6 +90,9 @@ sealed interface PushPayload {
  * - Push ([onPush]): `read` — то же снятие, ничего не показывать; `message` — не показывать, если
  *   сообщение уже пришло по сокету или переписка открыта; звонки — без изменений, не здесь.
  *
+ * - Учётная запись вышла или сменилась: все её уведомления снимаются (final review M3, parity P10) —
+ *   текст чужой переписки не остаётся в шторке, а нажатие не открывает её в другом сеансе.
+ *
  * Решение «кому» принимает сервер; клиент его не повторяет.
  */
 @Singleton
@@ -91,6 +102,7 @@ class MessageNotifier @Inject constructor(
     private val readBus: ConversationReadBus,
     private val activeConversations: ActiveConversationRegistry,
     private val presence: PresenceController,
+    private val session: com.openmychat.mobile.data.repository.SessionRepository,
     @ApplicationScope scope: CoroutineScope
 ) {
     @Volatile private var myId: Long? = null
@@ -105,6 +117,19 @@ class MessageNotifier @Inject constructor(
         scope.launch { realtime.events.collect(::onEvent) }
         // Переписку открыли здесь — её уведомление больше не нужно.
         scope.launch { activeConversations.active.collect { open -> if (open != null) sink.cancel(open) } }
+        scope.launch {
+            var seen = false
+            var last: Long? = null
+            session.currentUser.map { it?.id }.distinctUntilChanged().collect { account ->
+                if (seen && account != last) {
+                    sink.cancelAll()
+                    synchronized(known) { known.clear() }
+                    myId = null
+                }
+                seen = true
+                last = account
+            }
+        }
     }
 
     private fun onEvent(event: WsEvent) {
@@ -126,6 +151,10 @@ class MessageNotifier @Inject constructor(
         val conversation = conversationOf(message, me)
         val show = notify ?: (message.senderId != me && !dnd && !isOpenHere(conversation))
         if (!show) return
+        showMessage(conversation, message)
+    }
+
+    private fun showMessage(conversation: ConversationRef, message: Message) {
         val title = when (message.conversationType) {
             ConversationType.CHANNEL -> listOfNotNull(message.channelName?.let { "#$it" }, message.senderName.ifBlank { null })
                 .joinToString(" · ").ifBlank { DEFAULT_TEXT }
@@ -136,6 +165,34 @@ class MessageNotifier @Inject constructor(
             ConversationType.DIRECT -> message.senderName.ifBlank { DEFAULT_TITLE }
         }
         sink.show(conversation, title, preview(message), chatTitle)
+    }
+
+    /**
+     * Push о сообщении: показывать ли его вообще — не пришло ли оно уже по сокету, не «Не беспокоить»,
+     * не открыта ли переписка здесь (push.md §5).
+     */
+    fun wantsPush(payload: PushPayload.NewMessage): Boolean {
+        val already = synchronized(known) { payload.messageId in known }
+        return !already && !dnd && !isOpenHere(payload.conversation)
+    }
+
+    /**
+     * Push о сообщении, когда приложение забрало его с нашего сервера ([message]) — с именем и текстом;
+     * null — забрать не удалось: только «Новое сообщение». Переписка — из push (с точки зрения получателя).
+     */
+    fun showPushed(payload: PushPayload.NewMessage, message: Message?) {
+        if (!wantsPush(payload)) return
+        synchronized(known) { known[payload.messageId] = Unit }
+        if (message == null) {
+            sink.show(payload.conversation, DEFAULT_TITLE, DEFAULT_TEXT, DEFAULT_TITLE)
+        } else {
+            showMessage(payload.conversation, message)
+        }
+    }
+
+    /** Push о звонке: [callerName] — с нашего сервера, если удалось. */
+    fun showIncomingCall(callerId: Long, callerName: String?) {
+        sink.showIncomingCall(callerId, callerName)
     }
 
     /** Data-push FCM (обработчик сервиса передаёт сюда `remoteMessage.data`). */

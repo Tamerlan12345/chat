@@ -1,6 +1,9 @@
 package com.openmychat.mobile.features.chat
 
 import com.openmychat.mobile.core.network.ApiException
+import com.openmychat.mobile.core.network.RequestOwner
+import com.openmychat.mobile.core.network.RetryAfter
+import com.openmychat.mobile.data.model.FileUploadResponse
 import com.openmychat.mobile.data.delivery.DeliveryEngine
 import com.openmychat.mobile.data.delivery.PendingUpload
 import com.openmychat.mobile.data.delivery.UploadStore
@@ -25,7 +28,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -36,8 +42,16 @@ import kotlinx.serialization.json.put
  * when there is a connection (the foreground socket, or a background flush), and only then enters the
  * delivery outbox as a `file`/`image` message with the same `client_msg_id` (delivery-state.md §3.1).
  *
- * A network failure leaves the file queued (it goes again by itself); the server's refusal fails it
- * with the server's reason («Повторить» / «Удалить»). Cancelling stops the upload and forgets the file.
+ * At most [MAX_PARALLEL] files go up at once (the server's limit per person), in the order they were
+ * picked, and they enter the outbox in that order per conversation: a later file that finished first
+ * waits for the earlier ones still going up; a refused one does not hold the rest (final review I2,
+ * parity P1/P3).
+ *
+ * A network failure, an expired session, and the server's temporary refusals (408, 429, 5xx, 507)
+ * leave the file queued — it goes again by itself, after the server's `Retry-After` (at most 30 s)
+ * or [retryDelayMs]; after [MAX_ATTEMPTS] temporary refusals in a row it is failed. The server's
+ * refusal of the file itself fails it with the server's reason («Повторить» / «Удалить»). Cancelling
+ * stops the upload and forgets the file; a file cancelled once it is up is never sent (M1).
  */
 class AttachmentSends(
     private val scope: CoroutineScope,
@@ -71,6 +85,22 @@ class AttachmentSends(
 
     private val jobs = HashMap<String, Job>()
     private val retries = HashMap<String, Job>()
+
+    /** Upload slots: the server takes two uploads per person at a time. Fair (FIFO). */
+    private val slots = Semaphore(MAX_PARALLEL)
+
+    /** Files that are up (the server has them) and wait for their turn into the outbox. */
+    private class Uploaded(val response: FileUploadResponse, val account: Long)
+    private val uploaded = java.util.concurrent.ConcurrentHashMap<String, Uploaded>()
+
+    /** Files cancelled by the person: never handed to the outbox, whatever is in flight. */
+    private val cancelled: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Temporary refusals in a row per file. */
+    private val temporaryFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** One hand-over pass at a time, so the outbox gets the files in order. */
+    private val handingOver = Mutex()
     private val loaded = Mutex()
     @Volatile private var restored = false
     @Volatile private var online = false
@@ -124,7 +154,8 @@ class AttachmentSends(
         // Only after the engine checked the store's owner (another account's rows are wiped by then).
         engine.awaitReady()
         restored = true
-        val stored = runCatching { store.all() }.getOrDefault(emptyList())
+        // In the order they were picked: that is the order they go up and enter the outbox.
+        val stored = runCatching { store.all() }.getOrDefault(emptyList()).sortedBy { it.createdAt }
         // Rows are read once the engine checked the owner: they belong to the owner on disk (rows
         // of no named account are never sent; the next claim wipes them).
         owners.clear()
@@ -136,11 +167,13 @@ class AttachmentSends(
 
     /**
      * Keeps [picked] for [conversation] (a private copy and a stored row) and starts it when online.
-     * False when the file could not be kept: nothing was queued.
+     * [screenAccount] — the account of the screen the file was picked on: refused when another one is
+     * signed in by now (final review M4). False when the file could not be kept: nothing was queued.
      */
-    suspend fun add(conversation: String, picked: PickedFile, replyToId: Long?): Boolean {
+    suspend fun add(conversation: String, picked: PickedFile, replyToId: Long?, screenAccount: Long? = null): Boolean {
         // A row is written only under its account's name on disk.
         val account = owner() ?: return false
+        if (screenAccount != null && screenAccount != account) return false
         if (!engine.ready.value || engine.ownerOnDisk != account) return false
         restore()
         val key = DeliveryEngine.newClientMsgId()
@@ -182,6 +215,7 @@ class AttachmentSends(
     fun retry(clientMsgId: String) {
         val upload = find(clientMsgId) ?: return
         if (!upload.pending.failed) return
+        temporaryFailures.remove(clientMsgId)
         val again = upload.pending.copy(failed = false, error = null)
         replace(again)
         scope.launch { runCatching { store.put(again) } }
@@ -191,6 +225,10 @@ class AttachmentSends(
     /** «Отменить» / «Удалить»: the upload stops and the file is forgotten. */
     fun cancel(clientMsgId: String) {
         val upload = find(clientMsgId) ?: return
+        // First: an upload that has returned must not be handed to the outbox any more (M1).
+        cancelled += clientMsgId
+        uploaded.remove(clientMsgId)
+        temporaryFailures.remove(clientMsgId)
         synchronized(jobs) {
             jobs.remove(clientMsgId)?.cancel()
             retries.remove(clientMsgId)?.cancel()
@@ -201,6 +239,8 @@ class AttachmentSends(
             runCatching { store.remove(clientMsgId) }
             runCatching { files.discard(upload.pending.toPicked()) }
         }
+        // A later file of the conversation may have waited for this one.
+        handOverLater()
     }
 
     /** The background flush: every queued file goes now, whatever the socket; returns when they settled. */
@@ -208,6 +248,8 @@ class AttachmentSends(
         restore()
         pendingKeys().forEach { launchUpload(it, ignoreConnection = true) }
         synchronized(jobs) { jobs.values.toList() }.joinAll()
+        // Everything that is up enters the outbox before the worker sends the outbox.
+        handOver()
     }
 
     /** The engine's store was wiped (rows included): stop and forget the files in memory and on disk. */
@@ -218,6 +260,8 @@ class AttachmentSends(
             retries.values.forEach { it.cancel() }
             retries.clear()
         }
+        uploaded.clear()
+        temporaryFailures.clear()
         _uploads.value = emptyList()
         _handedOver.value = emptyMap()
         owners.clear()
@@ -247,6 +291,8 @@ class AttachmentSends(
             retries.values.forEach { it.cancel() }
             retries.clear()
         }
+        uploaded.clear()
+        temporaryFailures.clear()
         _uploads.value = emptyList()
         _handedOver.value = emptyMap()
         owners.clear()
@@ -254,9 +300,11 @@ class AttachmentSends(
         runCatching { files.pruneKept(emptySet()) }
     }
 
-    /** Waiting (not refused, not going up) files. */
+    /** Waiting (not refused, not going up, not up already) files, in the order they were picked. */
     private fun pendingKeys(): List<String> =
-        _uploads.value.filter { !it.pending.failed && it.progress == null }.map { it.pending.clientMsgId }
+        _uploads.value.filter { !it.pending.failed && it.progress == null && !uploaded.containsKey(it.pending.clientMsgId) }
+            .sortedBy { it.pending.createdAt }
+            .map { it.pending.clientMsgId }
 
     private fun find(key: String) = _uploads.value.firstOrNull { it.pending.clientMsgId == key }
 
@@ -284,70 +332,162 @@ class AttachmentSends(
     }
 
     private suspend fun upload(key: String, account: Long) {
-        val pending = find(key)?.pending ?: return
-        if (pending.failed) return
+        if (find(key)?.pending?.failed != false) return
         // The job may start after the account switched (before the old files were forgotten).
         if (!ownedBy(account)) return
-        setProgress(key, 0f)
-        try {
-            val done = files.upload(pending.toPicked()) { progress ->
-                val current = find(key)?.progress
-                if (current == null || (current * 100).toInt() != (progress * 100).toInt()) setProgress(key, progress)
-            }
-            val fileId = done.id.toLongOrNull() ?: throw IllegalStateException(UploadRules.REFUSED)
-            val metadata = attachmentMetadata(
-                LocalUpload(pending.uri, pending.name, done.fileSize, done.mimeType, pending.width, pending.height),
-                fileId
-            )
-            val outcome = engine.enqueue(
-                conversation = pending.conversation,
-                text = pending.name,
-                msgType = if (Attachments.isImage(pending.name, pending.mimeType)) "image" else "file",
-                replyToId = pending.replyToId,
-                metadata = metadata,
-                clientMsgId = key,
-                // Taken only into this account's queue (checked in the engine's command loop).
-                owner = account
-            )
-            if (!outcome.persisted) {
-                // The outbox could not be written: the file waits and goes again.
-                setProgress(key, null)
-                scheduleRetry(key)
+        slots.withPermit {
+            // Checked again once a slot is free: the file may be gone, refused or another account's now.
+            val pending = find(key)?.pending ?: return
+            if (pending.failed || !ownedBy(account)) return
+            setProgress(key, 0f)
+            try {
+                // Made for this account: never sent under another one's token (final review I4).
+                val done = withContext(RequestOwner(account)) {
+                    files.upload(pending.toPicked()) { progress ->
+                        val current = find(key)?.progress
+                        if (current == null || (current * 100).toInt() != (progress * 100).toInt()) setProgress(key, progress)
+                    }
+                }
+                done.id.toLongOrNull() ?: throw IllegalStateException(UploadRules.REFUSED)
+                temporaryFailures.remove(key)
+                if (key !in cancelled) uploaded[key] = Uploaded(done, account)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onUploadFailed(pending, e)
                 return
             }
-            owners.remove(key)
-            // In the outbox now (or already there after an earlier attempt): the row is not needed.
-            if (engine.state.value.outbox.any { it.clientMsgId == key }) {
-                _handedOver.update { it + (key to LocalUpload(pending.uri, pending.name, done.fileSize, done.mimeType, pending.width, pending.height, fileId = fileId)) }
-            } else {
-                runCatching { files.discard(pending.toPicked()) }
-            }
-            _uploads.update { list -> list.filter { it.pending.clientMsgId != key } }
-            runCatching { store.remove(key) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e is ApiException && e.statusCode == 0) {
-                // No answer from the server: the file is not refused, it waits for the connection.
+        }
+        handOver()
+    }
+
+    private fun onUploadFailed(pending: PendingUpload, e: Exception) {
+        val key = pending.clientMsgId
+        val status = (e as? ApiException)?.statusCode
+        when {
+            // No answer, or the session ended meanwhile: not refused, it waits (and goes again for its account).
+            status == 0 || status == 401 -> {
                 setProgress(key, null)
-                scheduleRetry(key)
-                return
+                scheduleRetry(key, retryDelayMs)
             }
-            val reason = UploadRules.failureText(e)
-            val failed = pending.copy(failed = true, error = reason)
-            replace(failed)
-            runCatching { store.put(failed) }
-            _notices.tryEmit(pending.conversation to reason)
+            status != null && isTemporary(status) -> {
+                val failures = temporaryFailures.merge(key, 1, Int::plus) ?: 1
+                if (failures >= MAX_ATTEMPTS) {
+                    temporaryFailures.remove(key)
+                    fail(pending, e)
+                } else {
+                    setProgress(key, null)
+                    val wait = RetryAfter.automaticWaitMs((e as ApiException).retryAfterSeconds) ?: 0L
+                    scheduleRetry(key, maxOf(wait, retryDelayMs))
+                }
+            }
+            else -> fail(pending, e)
         }
     }
 
-    private fun scheduleRetry(key: String) = synchronized(jobs) {
+    /** The server refused the file: it waits for «Повторить» / «Удалить», with the server's reason. */
+    private fun fail(pending: PendingUpload, e: Exception) {
+        val reason = UploadRules.failureText(e)
+        val failed = pending.copy(failed = true, error = reason)
+        replace(failed)
+        scope.launch { runCatching { store.put(failed) } }
+        _notices.tryEmit(pending.conversation to reason)
+        // A refused file does not hold up the ones picked after it.
+        handOverLater()
+    }
+
+    private fun handOverLater() {
+        scope.launch { handOver() }
+    }
+
+    /**
+     * Files that are up enter the outbox in the order they were picked, per conversation: a file waits
+     * while an earlier one of its conversation is still going up (or waiting to); refused ones do not
+     * count.
+     */
+    private suspend fun handOver() = handingOver.withLock {
+        var progressed = true
+        while (progressed) {
+            progressed = false
+            val waitingFor = HashSet<String>()
+            for (item in _uploads.value.sortedBy { it.pending.createdAt }) {
+                if (item.pending.failed) continue
+                val conversation = item.pending.conversation
+                val done = uploaded[item.pending.clientMsgId]
+                if (done == null) {
+                    waitingFor += conversation
+                    continue
+                }
+                if (conversation in waitingFor) continue
+                handOver(item.pending, done)
+                progressed = true
+                break
+            }
+        }
+    }
+
+    private suspend fun handOver(pending: PendingUpload, up: Uploaded) {
+        val key = pending.clientMsgId
+        uploaded.remove(key)
+        if (key in cancelled) return
+        val done = up.response
+        val fileId = done.id.toLong()
+        val metadata = attachmentMetadata(
+            LocalUpload(pending.uri, pending.name, done.fileSize, done.mimeType, pending.width, pending.height),
+            fileId
+        )
+        val outcome = engine.enqueue(
+            conversation = pending.conversation,
+            text = pending.name,
+            msgType = if (Attachments.isImage(pending.name, pending.mimeType)) "image" else "file",
+            replyToId = pending.replyToId,
+            metadata = metadata,
+            clientMsgId = key,
+            // Taken only into this account's queue (checked in the engine's command loop)…
+            owner = up.account,
+            // …and not at all once «Отменить» was pressed, even while this waited for the engine.
+            stillWanted = { key !in cancelled }
+        )
+        if (key in cancelled) {
+            // Cancelled after the engine took it: the outbox entry is cancelled too (§7.10).
+            if (outcome.persisted) engine.cancel(key)
+            return
+        }
+        if (!outcome.persisted) {
+            // The outbox could not be written: the file waits and goes again.
+            setProgress(key, null)
+            scheduleRetry(key, retryDelayMs)
+            return
+        }
+        owners.remove(key)
+        // In the outbox now (or already there after an earlier attempt): the row is not needed.
+        if (engine.state.value.outbox.any { it.clientMsgId == key }) {
+            _handedOver.update { it + (key to LocalUpload(pending.uri, pending.name, done.fileSize, done.mimeType, pending.width, pending.height, fileId = fileId)) }
+        } else {
+            runCatching { files.discard(pending.toPicked()) }
+        }
+        _uploads.update { list -> list.filter { it.pending.clientMsgId != key } }
+        runCatching { store.remove(key) }
+    }
+
+    private fun scheduleRetry(key: String, delayMs: Long) = synchronized(jobs) {
         retries.remove(key)?.cancel()
         retries[key] = scope.launch {
-            delay(retryDelayMs)
+            delay(delayMs)
             synchronized(jobs) { retries.remove(key) }
             if (online) launchUpload(key)
         }
+    }
+
+    companion object {
+        /** The server's `MAX_PARALLEL_UPLOADS` per person. */
+        const val MAX_PARALLEL = 2
+
+        /** Temporary refusals in a row before a file is failed (as delivery's `MAX_ATTEMPTS`). */
+        const val MAX_ATTEMPTS = 5
+
+        /** Statuses that say "not now", not "not this file". */
+        fun isTemporary(status: Int): Boolean = status == 408 || status == 429 || status in 500..599
     }
 }
 

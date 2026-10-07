@@ -36,12 +36,22 @@ interface AuthRepository {
 
     /** Clears the local session (remote logout is best effort). Throws when it cannot be cleared. */
     suspend fun logout()
+
+    /**
+     * Whether the server takes self-registrations (`allow_registration` of the public /settings/info,
+     * decision Q); null when that could not be read.
+     */
+    suspend fun registrationOpen(): Boolean? = null
+
+    /** False once the device's secure store refused a write (the session cannot be kept on it). */
+    val secureStorageAvailable: Boolean get() = true
 }
 
 @Singleton
 class DefaultAuthRepository @Inject constructor(
     private val apiClient: ApiClient,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val push: com.openmychat.mobile.data.push.PushTokenSource = NoPushTokens
 ) : AuthRepository {
 
     override val mustChangePassword: StateFlow<Boolean> get() = sessionManager.mustChangePasswordFlow
@@ -65,28 +75,7 @@ class DefaultAuthRepository @Inject constructor(
     override suspend fun login(username: String, password: String): LoginResult {
         try {
             val resp = apiClient.login(LoginRequest(username = username.trim(), password = password))
-
-            // Attempt device claim with a random 256-bit secret (base64url)
-            try {
-                val secretBytes = ByteArray(32)
-                SecureRandom().nextBytes(secretBytes)
-                val secretString = java.util.Base64.getUrlEncoder()
-                    .withoutPadding()
-                    .encodeToString(secretBytes)
-                val claimResp = apiClient.claimDevice(
-                    DeviceClaimRequest(
-                        deviceId = sessionManager.deviceId,
-                        deviceSecret = secretString
-                    )
-                )
-                if (claimResp.claimed) {
-                    sessionManager.deviceSecret = secretString
-                }
-            } catch (error: SecureStorageUnavailableException) {
-                throw error
-            } catch (_: Exception) {
-                // Device claim is optional; password sign-in already succeeded.
-            }
+            claimThisDevice(apiClient, sessionManager)
 
             return if (resp.user.mustChangePassword) {
                 sessionManager.mustChangePassword = true
@@ -103,6 +92,17 @@ class DefaultAuthRepository @Inject constructor(
     override suspend fun changePassword(oldPassword: String, newPassword: String): ChangePasswordResponse =
         apiClient.changePassword(ChangePasswordRequest(oldPassword = oldPassword, newPassword = newPassword))
 
+    override suspend fun registrationOpen(): Boolean? = try {
+        apiClient.fetchServerInfo().allowRegistration
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    override val secureStorageAvailable: Boolean
+        get() = sessionManager.storageState.value == com.openmychat.mobile.core.session.SessionStorageState.AVAILABLE
+
     override suspend fun logout() {
         try {
             apiClient.logout()
@@ -112,5 +112,49 @@ class DefaultAuthRepository @Inject constructor(
             // The remote call failed after (or before) the local clear; make sure local state is gone.
             if (!sessionManager.clearSession()) throw SecureStorageUnavailableException()
         }
+        // Signed out here: this device's push token goes too, even when the server was not reached.
+        try {
+            push.delete()
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Best effort: /auth/logout (when it arrives) drops the token on the server as well.
+        }
     }
+}
+
+/**
+ * Claims this device for the account just signed in (password sign-in, or a registration that
+ * signed in — parity P8): a random 256-bit secret (base64url) the login screen's knock uses later.
+ * Optional — a failure leaves the sign-in as it is — except that a secure store that cannot keep the
+ * secret is reported, never swallowed.
+ */
+internal suspend fun claimThisDevice(apiClient: ApiClient, sessionManager: SessionManager) {
+    try {
+        val secretBytes = ByteArray(32)
+        SecureRandom().nextBytes(secretBytes)
+        val secretString = java.util.Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(secretBytes)
+        val claimResp = apiClient.claimDevice(
+            DeviceClaimRequest(
+                deviceId = sessionManager.deviceId,
+                deviceSecret = secretString
+            )
+        )
+        if (claimResp.claimed) {
+            sessionManager.deviceSecret = secretString
+        }
+    } catch (error: SecureStorageUnavailableException) {
+        throw error
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        // Device claim is optional; the sign-in already succeeded.
+    }
+}
+
+/** No push provider (tests, previews). */
+object NoPushTokens : com.openmychat.mobile.data.push.PushTokenSource {
+    override suspend fun currentToken(): String? = null
 }

@@ -15,11 +15,15 @@ open class InMemoryDeliveryStore(private val uploads: InMemoryUploadStore? = nul
     var stored = StoredDelivery()
         private set
     var failNextPersist: Exception? = null
+
+    /** When set, every persist fails with it (a disk that stays full). */
+    var failAllPersists: Exception? = null
     val persisted = mutableListOf<List<String>>()
 
     override suspend fun load(): StoredDelivery = stored
 
     override suspend fun persist(slices: List<String>, state: DeliveryState, cache: Map<String, List<Msg>>) {
+        failAllPersists?.let { throw it }
         failNextPersist?.let {
             failNextPersist = null
             throw it

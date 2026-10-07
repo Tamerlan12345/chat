@@ -187,8 +187,11 @@ fun LoginScreen(
                     onSubmit = submit
                 )
 
+                // A text button: registering must not compete with «Войти». Hidden while the server
+                // has self-registration off (decision Q).
+                val registrationAvailable by viewModel.registrationAvailable.collectAsState()
+                if (registrationAvailable) {
                 Spacer(Modifier.height(12.dp))
-                // A text button: registering must not compete with «Войти».
                 CentyTextButton(
                     onClick = onRegister,
                     enabled = !isSigningIn,
@@ -198,6 +201,7 @@ fun LoginScreen(
                         .testTag("login-register")
                 ) {
                     Text(stringResource(R.string.login_register), style = MaterialTheme.typography.labelLarge)
+                }
                 }
             }
         }

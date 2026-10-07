@@ -1,6 +1,5 @@
 package com.openmychat.mobile.features.auth
 
-import java.util.Locale
 
 /**
  * `АО "Ромашка"` → `АО «Ромашка»`. A quote at the start or after a space or bracket opens, any other
@@ -29,6 +28,14 @@ fun typographicQuotes(text: String): String {
     return out.toString()
 }
 
-/** "45 с" under a minute, "12:05" from a minute up (the server may ask for up to an hour). */
-fun formatCountdown(seconds: Long): String =
-    if (seconds < 60) "$seconds с" else String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60)
+/**
+ * A wait as copy-ru.md writes `{wait}` on every client: «45 с» under a minute, otherwise
+ * «2 мин 30 с», or «10 мин» when the seconds are 0 — never a clock-like «2:30», which screen
+ * readers mangle (the server may ask for up to an hour).
+ */
+fun formatCountdown(seconds: Long): String {
+    if (seconds < 60) return "$seconds с"
+    val minutes = seconds / 60
+    val rest = seconds % 60
+    return if (rest == 0L) "$minutes мин" else "$minutes мин $rest с"
+}

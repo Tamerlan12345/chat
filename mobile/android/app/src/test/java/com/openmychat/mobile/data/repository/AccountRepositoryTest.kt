@@ -213,4 +213,29 @@ class AccountRepositoryTest {
 
         assertNull("the deleted account's colleagues are gone from this device", cache.stored)
     }
+    /** Parity P8: a registration that signs in claims the device, as a password sign-in does (iOS too). */
+    @Test
+    fun aRegistrationThatSignsInClaimsThisDevice() = runTest(UnconfinedTestDispatcher()) {
+        val repository = repository()
+        answers += 200 to """{"user":{"id":3,"username":"dana","full_name":"Dana"},"token":"new-token"}"""
+        answers += 200 to """{"claimed":true}"""
+
+        val outcome = repository.verifyRegistration("r-1", "123456")
+
+        assertEquals(com.openmychat.mobile.data.model.RegistrationOutcome.SignedIn::class, outcome::class)
+        assertEquals(listOf("POST /api/auth/register/verify", "POST /api/auth/device/claim"), paths.filter { !it.endsWith("/blocks") })
+        assertNotNull(session.deviceSecret)
+        org.junit.Assert.assertNotEquals("a fresh secret for the new account", "device-secret", session.deviceSecret)
+    }
+
+    @Test
+    fun aRegistrationWhoseClaimFailsIsStillSignedIn() = runTest(UnconfinedTestDispatcher()) {
+        val repository = repository()
+        answers += 200 to """{"user":{"id":3,"username":"dana","full_name":"Dana"},"token":"new-token"}"""
+        answers += 500 to """{"error":"x"}"""
+
+        repository.verifyRegistration("r-1", "123456")
+
+        assertEquals("new-token", session.token)
+    }
 }

@@ -30,9 +30,13 @@ class MessageNotifierTest {
         override fun cancel(conversation: ConversationRef) {
             log += "cancel ${conversation.type.value}-${conversation.targetId}"
         }
+        override fun cancelAll() {
+            log += "cancel all"
+        }
     }
 
     private val realtime = FakeRealtimeRepository()
+    private val session = com.openmychat.mobile.testing.FakeSessionRepository(1)
     private val sink = RecordingSink()
     private val bus = ConversationReadBus()
     private val registry = ActiveConversationRegistry()
@@ -43,7 +47,7 @@ class MessageNotifierTest {
 
     private fun TestScope.notifier(): MessageNotifier {
         presence = PresenceController(realtime, backgroundScope, registry, AuthContext())
-        return MessageNotifier(realtime, sink, bus, registry, presence, backgroundScope).also {
+        return MessageNotifier(realtime, sink, bus, registry, presence, session, backgroundScope).also {
             runCurrent()
             realtime.emit(WsEvent.AuthSuccess(me))
             runCurrent()
@@ -145,5 +149,30 @@ class MessageNotifierTest {
         assertEquals(null, PushPayload.parse(mapOf("type" to "read", "conversationType" to "group", "targetId" to "5")))
         assertEquals(null, PushPayload.parse(mapOf("type" to "message", "conversationType" to "direct", "targetId" to "5")))
         assertEquals(null, PushPayload.parse(mapOf("type" to "unknown")))
+    }
+    // ── Final review M3 / parity P10: notifications never outlive their account ─────────────────
+
+    @Test
+    fun signingOutClearsTheAccountsNotifications() = runTest {
+        notifier()
+        session.currentUser.value = null
+        runCurrent()
+        assertEquals(listOf("cancel all"), sink.log)
+    }
+
+    @Test
+    fun anotherAccountSigningInClearsThePreviousAccountsNotifications() = runTest {
+        notifier()
+        session.currentUser.value = User(id = 99, username = "carol", fullName = "Кэрол")
+        runCurrent()
+        assertEquals(listOf("cancel all"), sink.log)
+    }
+
+    @Test
+    fun theSameAccountRenewedKeepsItsNotifications() = runTest {
+        notifier()
+        session.currentUser.value = me.copy(fullName = "Я (новое имя)")
+        runCurrent()
+        assertEquals(emptyList<String>(), sink.log)
     }
 }

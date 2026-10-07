@@ -130,7 +130,8 @@ class LoginScreenTest {
 
         signIn()
 
-        waitForText("Слишком много попыток входа. Повторите через 1:", substring = true)
+        // copy-ru.md {wait}: «1 мин 30 с», never a clock-like «1:30».
+        waitForText("Слишком много попыток входа. Повторите через 1 мин ", substring = true)
         submit.assertIsNotEnabled()
         assertEquals(1, scripted.attempts.size)
     }

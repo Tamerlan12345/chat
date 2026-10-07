@@ -3,6 +3,7 @@ package com.openmychat.mobile.core.network
 import com.openmychat.mobile.data.model.FileUploadResponse
 import com.openmychat.mobile.features.attachments.DownloadResponse
 import com.openmychat.mobile.features.attachments.DownloadTransport
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import okhttp3.Call
@@ -35,7 +36,13 @@ import kotlin.coroutines.resumeWithException
 class FileTransferClient(
     private val client: OkHttpClient,
     private val apiBaseUrl: () -> String,
-    private val fail: (code: Int, body: String, retryAfterSeconds: Long?) -> Nothing
+    private val fail: (code: Int, body: String, retryAfterSeconds: Long?, refusedToken: String?) -> Nothing,
+    /**
+     * Binds an upload to the account it is for ([RequestOwner], final review I4): the credentials to
+     * send it with, or null when that account is not signed in (the upload is not sent). Null here —
+     * no binding (tests).
+     */
+    private val credentials: ((owner: Long?) -> BoundCredentials?)? = null
 ) : DownloadTransport {
 
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
@@ -57,12 +64,30 @@ class FileTransferClient(
         size: Long?,
         open: () -> InputStream,
         onProgress: (sent: Long, total: Long?) -> Unit
+    ): FileUploadResponse {
+        val owner = currentCoroutineContext()[RequestOwner]?.userId
+        val bound = credentials?.let { bind ->
+            bind(owner) ?: throw ApiException(0, "ACCOUNT_CHANGED", "Учётная запись сменилась — файл не отправлен")
+        }
+        return send(name, mimeType, size, open, onProgress, bound)
+    }
+
+    private suspend fun send(
+        name: String,
+        mimeType: String?,
+        size: Long?,
+        open: () -> InputStream,
+        onProgress: (sent: Long, total: Long?) -> Unit,
+        bound: BoundCredentials?
     ): FileUploadResponse = suspendCancellableCoroutine { continuation ->
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("file", name, StreamBody((mimeType ?: "application/octet-stream").toMediaTypeOrNull(), size, open, onProgress))
             .build()
-        val call = uploadClient.newCall(Request.Builder().url("${apiBaseUrl()}/files/upload").post(body).build())
+        val request = Request.Builder().url("${apiBaseUrl()}/files/upload").post(body)
+            .apply { if (bound != null) tag(BoundCredentials::class.java, bound) }
+            .build()
+        val call = uploadClient.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -73,7 +98,7 @@ class FileTransferClient(
                 val outcome = runCatching {
                     response.use {
                         val text = it.body?.string().orEmpty()
-                        if (!it.isSuccessful) fail(it.code, text, it.header("Retry-After")?.trim()?.toLongOrNull())
+                        if (!it.isSuccessful) fail(it.code, text, RetryAfter.seconds(it.header("Retry-After"), System.currentTimeMillis()), refusedToken(it))
                         try {
                             json.decodeFromString<FileUploadResponse>(text)
                         } catch (e: Exception) {
@@ -103,7 +128,7 @@ class FileTransferClient(
         val code = response.code
         if (code == 401) {
             val text = response.use { it.body?.string().orEmpty() }
-            fail(code, text, null)
+            fail(code, text, null, refusedToken(response))
         }
         val streaming = code == 200 || code == 206
         val body = response.body
@@ -145,6 +170,10 @@ class FileTransferClient(
             throw (e.cause as? IOException) ?: IOException(e.cause)
         }
     }
+
+    private fun refusedToken(response: Response): String? =
+        response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: response.request.tag(BoundCredentials::class.java)?.token
 
     /** The picked document, streamed (never loaded whole), reporting how much has gone. */
     private class StreamBody(

@@ -321,4 +321,17 @@ class ChatViewModelAttachmentTest {
         assertEquals("server: NOT_TEXT_MESSAGE", false, vm.canEditMessage(file))
         assertEquals(false, vm.canEditMessage(image))
     }
+    /** Final review M4 (parked item 2): a stale screen of the previous account never adds a file for the next one. */
+    @Test
+    fun aScreenOfThePreviousAccountAddsNoFileForTheNextOne() {
+        files.picked[pdf.uri] = pdf
+        val vm = directChat() // opened by account 1
+        delivery.session.currentUser.value = com.openmychat.mobile.data.model.User(id = 99, username = "carol", fullName = "Кэрол")
+        realtime.me = 99
+
+        vm.sendAttachment(pdf.uri)
+
+        assertTrue("nothing kept under the next account: ${files.kept}", files.kept.isEmpty())
+        assertTrue(files.uploads.isEmpty())
+    }
 }

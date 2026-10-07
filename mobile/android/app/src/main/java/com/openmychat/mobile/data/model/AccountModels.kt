@@ -74,6 +74,14 @@ data class BlockedUser(val id: Long, val name: String?) {
         private val NAME_KEYS = listOf("displayName", "display_name", "fullName", "full_name", "username")
 
         /** Tolerant of the entry's shape, like iOS: an id under any known key, a name if there is one. */
+        /** `GET /api/blocks`: `{ blocks: [...] }`; a bare array is accepted too. */
+        fun list(answer: kotlinx.serialization.json.JsonElement): List<BlockedUser> {
+            val entries = (answer as? kotlinx.serialization.json.JsonArray)
+                ?: (answer as? JsonObject)?.let { it["blocks"] ?: it["users"] ?: it["blocked"] } as? kotlinx.serialization.json.JsonArray
+                ?: kotlinx.serialization.json.JsonArray(emptyList())
+            return entries.mapNotNull { (it as? JsonObject)?.let(::from) }
+        }
+
         fun from(entry: JsonObject): BlockedUser? {
             val id = ID_KEYS.firstNotNullOfOrNull { (entry[it] as? JsonPrimitive)?.longOrNull } ?: return null
             val name = NAME_KEYS.firstNotNullOfOrNull { key ->

@@ -16,11 +16,14 @@ sealed interface AccountFailure {
 
     data object Offline : AccountFailure
 
+    /** `403 REGISTRATION_DISABLED`: the administrator turned self-registration off (decision Q). */
+    data object RegistrationDisabled : AccountFailure
+
     /** `503`: the server cannot send the confirmation e-mail (mail is not configured). */
     data object MailNotConfigured : AccountFailure
 
-    /** `429` (or a busy server): wait until [untilMillis]. */
-    data class Throttled(val untilMillis: Long) : AccountFailure
+    /** `429`, or a busy server ([busy], 503 `BUSY`): wait until [untilMillis]. */
+    data class Throttled(val untilMillis: Long, val busy: Boolean = false) : AccountFailure
 
     /** `400` while requesting a code: the server explains what to fix. */
     data class InvalidInput(val text: String) : AccountFailure
@@ -66,15 +69,19 @@ sealed interface AccountFailure {
             val status = error.statusCode
             val code = error.errorCode
             if (status == 0) return Offline
-            fun throttled(defaultSeconds: Long = DEFAULT_THROTTLE_SECONDS) =
-                Throttled(nowMillis + (error.retryAfterSeconds ?: defaultSeconds) * 1_000)
+            // Decision Q: self-registration is off — at either step, whatever the status.
+            if (code == "REGISTRATION_DISABLED" &&
+                (context == Context.REGISTRATION_REQUEST || context == Context.REGISTRATION_VERIFY)
+            ) return RegistrationDisabled
+            fun throttled(defaultSeconds: Long = DEFAULT_THROTTLE_SECONDS, busy: Boolean = false) =
+                Throttled(nowMillis + (error.retryAfterSeconds ?: defaultSeconds) * 1_000, busy)
             return when (context) {
                 Context.REGISTRATION_REQUEST -> when (status) {
                     400, 422 -> InvalidInput(clean(error.message))
                     409 -> conflict(code, error.message)
                     429 -> throttled()
                     503 -> when (code) {
-                        in BUSY_CODES -> throttled(DEFAULT_BUSY_SECONDS)
+                        in BUSY_CODES -> throttled(DEFAULT_BUSY_SECONDS, busy = true)
                         "EMAIL_SEND_FAILED" -> MailSendFailed
                         else -> MailNotConfigured
                     }

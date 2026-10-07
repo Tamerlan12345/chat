@@ -59,8 +59,8 @@ private const val KEY_FOCUS_DONE = "chat.focus_done"
 private const val REPORT_EXCERPT = 160
 private const val ATTACHMENT_SUBJECT = "Вложение"
 private const val CANNOT_READ_FILE = "Не удалось прочитать файл"
-private const val CANNOT_KEEP_FILE = "Не удалось сохранить файл для отправки"
-private const val NOT_SAVED = "Сообщение не сохранено — попробуйте ещё раз"
+private const val CANNOT_KEEP_FILE = ChatTexts.CANNOT_PREPARE_FILE
+private const val NOT_SAVED = DeliveryNotices.NOT_SAVED
 
 /** Message history state of a conversation; composer chrome (typing, editing, wake) is separate. */
 sealed interface ChatUiState {
@@ -419,7 +419,9 @@ class ChatViewModel @AssistedInject constructor(
      * `reply_to_id`. While a message is being edited, this saves the edit instead.
      */
     fun send(text: String, replyTo: Message?, onAccepted: () -> Unit) {
-        if (text.isBlank()) return
+        // The text goes exactly as typed (delivery-state §6.1, parity P4): the model decides what is
+        // empty with the contract's fixed whitespace set and says so (EMPTY_TEXT).
+        if (text.isEmpty()) return
         val editing = _editingMessage.value
         if (editing == null && composerLock.value != ComposerLock.NONE) return
         // One press, one message: a second tap before the first is stored (the composer still shows
@@ -429,11 +431,11 @@ class ChatViewModel @AssistedInject constructor(
         viewModelScope.launch {
             val outcome = try {
                 if (editing != null) {
-                    delivery.editSent(editing.id, text.trim())
+                    delivery.editSent(editing.id, text)
                 } else {
                     // Written by this screen's account: never taken into another account's queue.
                     delivery.enqueue(
-                        conversationKey, text.trim(),
+                        conversationKey, text,
                         replyToId = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT },
                         owner = screenAccount, ownerStated = true
                     )
@@ -466,7 +468,9 @@ class ChatViewModel @AssistedInject constructor(
             UploadRules.problem(picked.name, picked.size, attachments.policy())?.let { return@launch notice(it) }
             if (composerLock.value != ComposerLock.NONE) return@launch
             val reply = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT }
-            if (!sends.add(conversationKey, picked, reply)) notice(CANNOT_KEEP_FILE)
+            // Kept only for this screen's account (a stale screen after an account switch adds nothing).
+            val account = screenAccount ?: return@launch
+            if (!sends.add(conversationKey, picked, reply, screenAccount = account)) notice(CANNOT_KEEP_FILE)
         }
     }
 
@@ -620,17 +624,27 @@ class ChatViewModel @AssistedInject constructor(
     }
 }
 
+/** Chat texts outside the delivery codes (copy-ru.md). */
+object ChatTexts {
+    const val CANNOT_PREPARE_FILE = "Не удалось подготовить файл к отправке"
+    const val REASON_NO_ANSWER = "сервер не ответил"
+    const val REASON_REJECTED = "сервер не принял сообщение"
+}
+
 /** `user_error` codes of the delivery model (delivery-state.md §5) in Russian. */
 object DeliveryNotices {
+    const val NOT_SAVED = "Сообщение не сохранено — попробуйте ещё раз"
+    const val DM_NOT_ALLOWED = "Сообщение не может быть доставлено"
+
     fun text(code: String): String? = when (code) {
-        "DELETE_NOT_CONFIRMED" -> "Удаление не подтвердилось — сообщение снова показано"
-        "DELETE_REJECTED" -> "Сообщение нельзя удалить"
-        "EDIT_REJECTED" -> "Изменение не сохранено"
+        "DELETE_NOT_CONFIRMED" -> "Сервер не подтвердил удаление — сообщение снова показано"
+        "DELETE_REJECTED" -> "Сообщение не удалено: время на удаление истекло"
+        "EDIT_REJECTED" -> "Изменение не сохранено: сообщение больше нельзя изменить"
         "NOT_EDITABLE" -> "Это сообщение нельзя изменить"
         "NOT_DELETABLE" -> "Это сообщение нельзя удалить"
-        "EMPTY_TEXT" -> "Пустое сообщение не отправляется"
-        "TEXT_TOO_LONG" -> "Сообщение слишком длинное"
-        "INVALID_CLIENT_MSG_ID", "INVALID_CONVERSATION", "INVALID_MESSAGE_TYPE" -> "Сообщение не удалось поставить в очередь"
+        "EMPTY_TEXT" -> "Нельзя отправить пустое сообщение"
+        "TEXT_TOO_LONG" -> "Сообщение длиннее 16 000 символов"
+        "INVALID_CLIENT_MSG_ID", "INVALID_CONVERSATION", "INVALID_MESSAGE_TYPE" -> "Не удалось подготовить сообщение к отправке"
         else -> null
     }
 }

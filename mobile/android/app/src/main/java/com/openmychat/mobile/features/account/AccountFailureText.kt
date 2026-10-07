@@ -10,8 +10,9 @@ import com.openmychat.mobile.features.auth.formatCountdown
 fun accountFailureText(failure: AccountFailure, nowMillis: Long): String? = when (failure) {
     AccountFailure.Offline -> stringResource(R.string.account_error_offline)
     AccountFailure.MailNotConfigured -> stringResource(R.string.account_error_mail_not_configured)
+    AccountFailure.RegistrationDisabled -> stringResource(R.string.account_error_registration_disabled)
     is AccountFailure.Throttled -> failure.secondsLeft(nowMillis).takeIf { it > 0 }
-        ?.let { stringResource(R.string.account_error_throttled, formatCountdown(it)) }
+        ?.let { stringResource(if (failure.busy) R.string.account_error_busy else R.string.account_error_throttled, formatCountdown(it)) }
     is AccountFailure.InvalidInput -> failure.text.ifEmpty { stringResource(R.string.account_error_invalid_input) }
     is AccountFailure.Conflict -> when (failure.kind) {
         AccountFailure.ConflictKind.USERNAME_TAKEN -> stringResource(R.string.account_error_username_taken)
@@ -19,8 +20,9 @@ fun accountFailureText(failure: AccountFailure, nowMillis: Long): String? = when
         AccountFailure.ConflictKind.OTHER -> failure.text.ifEmpty { stringResource(R.string.account_error_conflict) }
     }
     is AccountFailure.WrongCode -> {
-        val base = failure.text.ifEmpty { stringResource(R.string.account_error_wrong_code) }.trimEnd('.')
-        failure.attemptsLeft?.let { stringResource(R.string.account_error_attempts_left, base, it) } ?: "$base."
+        // One sentence with its period, then the attempts (copy-ru.md reg.attempts_left).
+        val base = failure.text.ifEmpty { stringResource(R.string.account_error_wrong_code) }.trimEnd('.') + "."
+        failure.attemptsLeft?.let { stringResource(R.string.account_error_attempts_left, base, it) } ?: base
     }
     AccountFailure.CodeExpired -> stringResource(R.string.account_error_code_expired)
     AccountFailure.MailSendFailed -> stringResource(R.string.account_error_mail_send_failed)

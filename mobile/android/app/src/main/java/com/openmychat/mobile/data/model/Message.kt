@@ -152,7 +152,11 @@ data class Message(
 
     /** Только локально: файл, выбранный на этом устройстве, пока эхо сервера не заменило запись. */
     @Transient
-    val upload: LocalUpload? = null
+    val upload: LocalUpload? = null,
+
+    /** Только локально: почему своё сообщение не отправлено (под пузырём «Не отправлено: …»). */
+    @Transient
+    val failureReason: String? = null
 )
 
 /** Состояние отправки своего сообщения на этом устройстве (delivery-state.md §3.4). */

@@ -34,9 +34,10 @@ class ProfileViewModelUnsentTest {
         }
     }
 
-    private class Queue(count: Int, val failing: Boolean = false) : OutgoingQueue {
+    private class Queue(count: Int, val failing: Boolean = false, known: Boolean = true) : OutgoingQueue {
         val calls = mutableListOf<String>()
         override val unsentCount: StateFlow<Int> = MutableStateFlow(count)
+        override val unsentKnown: StateFlow<Boolean> = MutableStateFlow(known)
         override suspend fun discardForSignOut() {
             calls += "discard"
             if (failing) throw java.io.IOException("disk")
@@ -167,6 +168,8 @@ class ProfileViewModelUnsentTest {
     @Test
     fun aSignOutTheSessionRefusedLeavesTheAccountWorking() = runTest(dispatcher) {
         val refusing = object : com.openmychat.mobile.data.repository.AuthRepository by FakeAuthRepository() {
+            // The session could not be cleared at all: it is still there.
+            override val hasSessionToken: Boolean = true
             override suspend fun logout() = throw com.openmychat.mobile.core.session.SecureStorageUnavailableException()
         }
         val h = com.openmychat.mobile.testing.DeliveryHarness(realtime, null, dispatcher)
@@ -181,5 +184,11 @@ class ProfileViewModelUnsentTest {
         assertTrue(vm.logoutError.value != null)
         assertTheAccountWorks(h)
         h.stop()
+    }
+    /** copy-ru.md signout.unsent_unknown: «0» before the queue is read would not be true. */
+    @Test
+    fun theConfirmationKnowsWhenTheUnsentCountIsNotKnownYet() = runTest(dispatcher) {
+        assertFalse(viewModel(Queue(0, known = false)).unsentKnown.value)
+        assertTrue(viewModel(Queue(0)).unsentKnown.value)
     }
 }

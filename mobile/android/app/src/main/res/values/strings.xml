@@ -24,8 +24,8 @@
     <string name="connection_offline">Нет сети</string>
     <string name="connection_reconnecting">Переподключение…</string>
     <string name="connection_back_online">Снова в сети</string>
-    <string name="connection_refused">Сервер временно не принимает подключение. Повторяем…</string>
-    <string name="connection_signed_out">Сессия завершена. Войдите снова.</string>
+    <string name="connection_refused">Сервер временно не принимает подключения. Повторяем…</string>
+    <string name="connection_signed_out">Сеанс завершён. Войдите снова.</string>
 
     <!-- Delivery state of an own message -->
     <string name="delivery_queued">Ожидает отправки</string>
@@ -34,6 +34,7 @@
     <string name="delivery_delivered">Доставлено</string>
     <string name="delivery_read">Прочитано</string>
     <string name="delivery_failed">Не отправлено</string>
+    <string name="delivery_failed_with_reason">Не отправлено: %1$s</string>
 
     <plurals name="unread_messages">
         <item quantity="one">%d непрочитанное сообщение</item>
@@ -301,7 +302,8 @@
     <string name="profile_version_value">Версия %1$s</string>
     <string name="profile_logout">Выйти</string>
     <string name="profile_logout_title">Выйти из учётной записи?</string>
-    <string name="profile_logout_message">Чтобы снова пользоваться CentyChat на этом устройстве, нужно будет ввести логин и пароль.</string>
+    <string name="profile_logout_message">Чтобы снова войти на этом устройстве, понадобятся логин и пароль.</string>
+    <string name="profile_logout_unsent_unknown">Не удалось проверить неотправленные сообщения. Если они есть, они будут удалены.</string>
     <plurals name="profile_logout_unsent">
         <item quantity="one">%d неотправленное сообщение будет удалено.</item>
         <item quantity="few">%d неотправленных сообщения будут удалены.</item>
@@ -332,6 +334,9 @@
     <string name="wake_received">Вас зовёт %1$s</string>
     <string name="wake_received_unknown">Вас зовёт коллега</string>
     <string name="notification_channel_messages">Сообщения</string>
+    <string name="notification_channel_calls">Звонки</string>
+    <string name="notification_incoming_call">Входящий звонок</string>
+    <string name="notification_incoming_call_unknown">Звонит сотрудник</string>
     <string name="notifications_explain_title">Уведомления о сообщениях</string>
     <string name="notifications_explain_message">Разрешите уведомления, чтобы не пропускать новые сообщения, звонки и побудки, когда CentyChat свёрнут.</string>
     <string name="notifications_allow">Разрешить уведомления</string>
@@ -373,7 +378,7 @@
     <string name="register_problem_password_short">Пароль: не короче 8 символов</string>
     <string name="register_problem_password_long">Пароль слишком длинный</string>
     <string name="account_pending_title">Заявка на рассмотрении</string>
-    <string name="account_pending_message">Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен — попробуйте войти позже.</string>
+    <string name="account_pending_message">Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен.</string>
     <string name="account_pending_login_message">Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения.</string>
     <string name="account_rejected_title">Заявка отклонена</string>
     <string name="account_rejected_message">Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании.</string>
@@ -381,18 +386,20 @@
 
     <!-- Account failures (AccountFailure) -->
     <string name="account_error_offline">Нет связи с сервером. Проверьте подключение к интернету.</string>
-    <string name="account_error_mail_not_configured">Отправка почты не настроена. Регистрация временно недоступна — обратитесь к администратору.</string>
+    <string name="account_error_registration_disabled">Регистрация сейчас закрыта. Обратитесь к администратору.</string>
+    <string name="account_error_mail_not_configured">Сервер не может отправить письмо с кодом: почта не настроена. Регистрация временно недоступна — обратитесь к администратору.</string>
     <string name="account_error_throttled">Слишком много попыток. Повторите через %1$s.</string>
+    <string name="account_error_busy">Сервер сейчас занят. Повторите через %1$s.</string>
     <string name="account_error_invalid_input">Проверьте введённые данные.</string>
     <string name="account_error_username_taken">Этот логин уже занят. Выберите другой.</string>
-    <string name="account_error_email_taken">На этот адрес почты уже подана заявка или есть аккаунт.</string>
+    <string name="account_error_email_taken">На этот адрес почты уже подана заявка или есть учётная запись.</string>
     <string name="account_error_conflict">Такой логин или адрес почты уже зарегистрирован.</string>
-    <string name="account_error_wrong_code">Неверный код. Проверьте письмо и попробуйте ещё раз</string>
-    <string name="account_error_attempts_left">%1$s. Осталось попыток: %2$d.</string>
-    <string name="account_error_code_expired">Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код.</string>
+    <string name="account_error_wrong_code">Неверный код. Проверьте письмо и попробуйте ещё раз.</string>
+    <string name="account_error_attempts_left">%1$s Осталось попыток: %2$d.</string>
+    <string name="account_error_code_expired">Код больше не действует: срок истёк, он уже использован или попытки закончились. Запросите новый код.</string>
     <string name="account_error_mail_send_failed">Не удалось отправить письмо с кодом. Повторите попытку позже.</string>
     <string name="account_error_wrong_password">Неверный пароль.</string>
-    <string name="account_error_last_admin">Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт.</string>
+    <string name="account_error_last_admin">Вы — единственный администратор. Назначьте другого администратора, затем удалите учётную запись.</string>
     <string name="account_error_storage">Защищённое хранилище устройства недоступно. Разблокируйте устройство и повторите попытку.</string>
     <string name="account_error_unavailable">Не удалось выполнить действие. Повторите попытку позже.</string>
 
@@ -408,12 +415,12 @@
     <string name="blocked_unblock_person">Разблокировать: %1$s</string>
     <string name="blocked_unknown_name">Пользователь</string>
     <string name="blocked_load_failed">Не удалось загрузить список заблокированных</string>
-    <string name="blocked_unblock_failed">Не удалось разблокировать</string>
+    <string name="blocked_unblock_failed">Не удалось разблокировать. Повторите попытку.</string>
     <string name="delete_title">Удаление аккаунта</string>
-    <string name="delete_warning">Аккаунт и личные данные (имя, почта, телефон, фото) будут удалены безвозвратно. Отправленные сообщения останутся у собеседников с подписью «Удалённый сотрудник». Восстановить аккаунт нельзя.</string>
+    <string name="delete_warning">Учётная запись и личные данные (имя, почта, телефон, фото) будут удалены безвозвратно. Отправленные сообщения останутся у собеседников с подписью «Удалённый сотрудник». Восстановить учётную запись нельзя.</string>
     <string name="delete_password_label">Пароль для подтверждения</string>
     <string name="delete_in_progress">Удаление аккаунта…</string>
-    <string name="delete_dialog_title">Удалить аккаунт навсегда?</string>
+    <string name="delete_dialog_title">Удалить учётную запись навсегда?</string>
     <string name="delete_dialog_message">Это действие нельзя отменить.</string>
 
     <!-- Reports and blocks -->
@@ -436,11 +443,11 @@
     <string name="safety_block">Заблокировать</string>
     <string name="safety_unblock">Разблокировать</string>
     <string name="safety_block_title">Заблокировать пользователя?</string>
-    <string name="safety_block_message">%1$s не сможет писать вам, а вы — ему. Его сообщения в личной переписке будут скрыты. Разблокировать можно здесь же или в профиле.</string>
+    <string name="safety_block_message">%1$s не сможет писать вам, а вы — ему. Его личные сообщения будут скрыты. В каналах ничего не изменится. Разблокировать можно в чате или в профиле.</string>
     <string name="safety_blocked">Пользователь заблокирован</string>
-    <string name="safety_unblocked">Пользователь разблокирован</string>
+    <string name="safety_unblocked">Пользователь разблокирован. Скрытые сообщения снова видны.</string>
     <string name="chat_more_actions">Ещё</string>
-    <string name="chat_blocked_banner">Вы заблокировали этого пользователя. Сообщения не доставляются.</string>
-    <string name="chat_dm_not_allowed">Сообщение не может быть доставлено. Писать в эту переписку нельзя.</string>
+    <string name="chat_blocked_banner">Вы заблокировали этого пользователя. Пока блокировка действует, писать друг другу нельзя.</string>
+    <string name="chat_dm_not_allowed">Сообщение не может быть доставлено. Писать в эту переписку сейчас нельзя.</string>
     <string name="chat_composer_unavailable">Отправка недоступна</string>
 </resources>

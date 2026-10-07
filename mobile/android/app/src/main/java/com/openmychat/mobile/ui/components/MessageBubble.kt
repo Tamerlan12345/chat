@@ -167,6 +167,8 @@ fun MessageBubble(
     reply: ReplyPreview? = null,
     meta: BubbleMeta? = null,
     failed: Boolean = false,
+    /** Why it failed (copy-ru.md delivery.failed_with_reason); null — just «Не отправлено». */
+    failureReason: String? = null,
     onRetry: (() -> Unit)? = null,
     onDiscard: (() -> Unit)? = null,
     attachment: (@Composable () -> Unit)? = null,
@@ -225,7 +227,7 @@ fun MessageBubble(
                 )
             }
         }
-        if (failed && (onRetry != null || onDiscard != null)) FailedRow(onRetry, onDiscard)
+        if (failed && (onRetry != null || onDiscard != null)) FailedRow(failureReason, onRetry, onDiscard)
     }
 }
 
@@ -311,15 +313,20 @@ fun ReplyQuote(reply: ReplyPreview, modifier: Modifier = Modifier) {
     }
 }
 
-/** Under a failed own message: «Не отправлено · Повторить · Удалить». */
+/** Under a failed own message: «Не отправлено: причина · Повторить · Удалить». */
 @Composable
-private fun FailedRow(onRetry: (() -> Unit)?, onDiscard: (() -> Unit)?) {
+private fun FailedRow(reason: String?, onRetry: (() -> Unit)?, onDiscard: (() -> Unit)?) {
     val tokens = CentyTheme.tokens
     Row(
         modifier = Modifier.padding(top = 2.dp).testTag("failed-row"),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(stringResource(R.string.delivery_failed), style = MaterialTheme.typography.labelMedium, color = tokens.dangerText)
+        Text(
+            if (reason.isNullOrBlank()) stringResource(R.string.delivery_failed) else stringResource(R.string.delivery_failed_with_reason, reason),
+            style = MaterialTheme.typography.labelMedium,
+            color = tokens.dangerText,
+            modifier = Modifier.weight(1f, fill = false)
+        )
         if (onRetry != null) {
             CentyTextButton(onClick = onRetry) { Text(stringResource(R.string.action_retry)) }
         }

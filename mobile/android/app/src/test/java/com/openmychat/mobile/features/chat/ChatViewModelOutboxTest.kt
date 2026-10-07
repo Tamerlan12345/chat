@@ -285,4 +285,15 @@ class ChatViewModelOutboxTest {
         assertTrue(delivery.store.stored.outbox.isEmpty())
         assertTrue(textFrames.isEmpty())
     }
+    /** Parity P4 (delivery-state §6.1): the text goes as typed; the reducer's fixed whitespace set decides "empty". */
+    @Test
+    fun theTextGoesExactlyAsTypedAndOnlyTheContractDecidesWhatIsEmpty() {
+        val vm = directChat()
+
+        vm.sendMessage("\n  привет  \n")
+        vm.sendMessage(" \u00A0 ")
+
+        assertEquals(listOf("\n  привет  \n"), delivery.engine.state.value.outbox.map { it.text })
+        assertEquals("a blank text is refused by the model, and said so", listOf(DeliveryNotices.text("EMPTY_TEXT")), notices)
+    }
 }

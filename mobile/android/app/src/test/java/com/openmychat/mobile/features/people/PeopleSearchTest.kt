@@ -66,18 +66,18 @@ class PeopleSearchTest {
     fun otherFieldsRankLast() {
         val person = person(
             1, "Иванов Пётр", job = "Бухгалтер", department = "Финансы", extension = "214",
-            phone = "+7 (727) 244-77-00", email = "p.ivanov@cic.kz", username = "pivanov"
+            phone = "+7 (700) 000-00-07", email = "p.ivanov@example.test", username = "pivanov"
         )
-        listOf("бухг", "финан", "214", "244-77", "7272447700", "cic.kz", "pivan").forEach { query ->
+        listOf("бухг", "финан", "214", "000-00", "7000000007", "example.test", "pivan").forEach { query ->
             assertEquals(query, MatchRank.OTHER_FIELD, PeopleSearch.match(person, query)?.rank)
         }
     }
 
     @Test
     fun phoneMatchIgnoresPunctuation() {
-        val person = person(1, "Иванов Пётр", phone = "+7 (727) 244-77-00")
-        assertTrue(PeopleSearch.match(person, "(727) 244") != null)
-        assertNull(PeopleSearch.match(person, "8-727"))
+        val person = person(1, "Иванов Пётр", phone = "+7 (700) 000-00-07")
+        assertTrue(PeopleSearch.match(person, "(700) 000") != null)
+        assertNull(PeopleSearch.match(person, "8-700"))
     }
 
     @Test

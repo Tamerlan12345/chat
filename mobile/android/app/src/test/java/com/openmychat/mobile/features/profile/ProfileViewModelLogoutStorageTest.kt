@@ -24,21 +24,30 @@ import com.openmychat.mobile.testing.TestSessions
 
 class ProfileViewModelLogoutStorageTest {
 
+    /**
+     * Review fix round 1 (Ruling U, minor 3): when the secure store refuses the wipe, the session is
+     * already gone from memory and marked unusable on disk — this device IS signed out. The screen must
+     * not claim «выход отменён»: it goes to the login screen, which says the storage is unavailable.
+     */
     @Test
-    fun logoutKeepsUserOnProfileWhenSecureSessionCannotBeCleared() = runBlocking {
+    fun aSignOutWhoseDiskWipeFailsIsStillASignOutNeverReportedAsCancelled() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
-            val sessionManager = SessionManager(prefs = null, serverEndpoint = TestSessions.CHAT_EXAMPLE)
+            val prefs = com.openmychat.mobile.testing.InMemorySharedPreferences()
+            val sessionManager = SessionManager(prefs = prefs, serverEndpoint = TestSessions.CHAT_EXAMPLE).apply {
+                saveAuthSuccess(User(id = 1, username = "alice", fullName = "Alice"), "token")
+            }
             val viewModel = profileViewModel(sessionManager)
+            prefs.failCommits = true
             var navigationRequested = false
 
             viewModel.logout { navigationRequested = true }
+            withTimeout(2_000) { while (!navigationRequested) kotlinx.coroutines.delay(10) }
 
-            val error = requireNotNull(withTimeout(2_000) {
-                viewModel.logoutError.first { it != null }
-            })
-            assertTrue(error.contains("storage", ignoreCase = true))
-            assertFalse(navigationRequested)
+            assertTrue("signed out on this device", navigationRequested)
+            assertEquals(null, sessionManager.token)
+            assertEquals(SessionStorageState.UNAVAILABLE, sessionManager.storageState.value)
+            assertEquals("no «выход отменён» for a sign-out that happened", null, viewModel.logoutError.value)
         } finally {
             Dispatchers.resetMain()
         }

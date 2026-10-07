@@ -50,7 +50,12 @@ sealed interface ProfileUiState {
 enum class ProfileEvent { StatusSaved, StatusSaveFailed }
 
 /** Sign-out could not delete the unsent messages: the session stays (contract: never silently dropped or kept for another account). */
-private const val UNSENT_NOT_DELETED = "Не удалось удалить неотправленные сообщения — выход отменён"
+private const val UNSENT_NOT_DELETED = ProfileTexts.UNSENT_NOT_DELETED
+
+/** Profile texts (copy-ru.md). */
+object ProfileTexts {
+    const val UNSENT_NOT_DELETED = "Не удалось удалить неотправленные сообщения. Выход отменён."
+}
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -64,6 +69,7 @@ class ProfileViewModel @Inject constructor(
 
     /** How many messages a sign-out now would delete («N неотправленных сообщений будут удалены»). */
     val unsentCount: StateFlow<Int> get() = outgoing.unsentCount
+    val unsentKnown: StateFlow<Boolean> get() = outgoing.unsentKnown
 
 
     /** Автоматическое присутствие: на экране — «В сети», свёрнуто — «Отошёл». Только для показа. */
@@ -235,6 +241,13 @@ class ProfileViewModel @Inject constructor(
             try {
                 authRepository.logout()
             } catch (error: SecureStorageUnavailableException) {
+                if (!authRepository.hasSessionToken) {
+                    // The store refused the wipe, but the session is gone from memory and the store is
+                    // marked unusable: this device IS signed out. Never say «выход отменён» then — the
+                    // login screen says the secure storage is unavailable (review fix round 1).
+                    onLoggedOut()
+                    return@launch
+                }
                 _logoutError.value = error.message ?: "Secure storage is unavailable"
                 // The session could not be cleared: whoever is still signed in goes on working.
                 outgoing.signOutAborted()

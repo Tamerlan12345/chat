@@ -1,5 +1,7 @@
 build-evidence/
 local.properties
+# The owner's Firebase project configuration (docs/PUSH-SETUP.md): never committed.
+app/google-services.json
 build/
 .kotlin/
 .gradle/

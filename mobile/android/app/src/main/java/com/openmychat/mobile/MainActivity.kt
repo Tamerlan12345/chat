@@ -38,6 +38,8 @@ import com.openmychat.mobile.ui.components.SnackbarAnchor
 import com.openmychat.mobile.ui.theme.AppLocale
 import com.openmychat.mobile.ui.theme.CentyChatTheme
 import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.data.notifications.NotificationTaps
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -58,25 +60,12 @@ class MainActivity : ComponentActivity() {
         super.attachBaseContext(AppLocale.wrap(newBase))
     }
 
-    /** Переписка из нажатого уведомления — открывается, когда навигация готова и вход выполнен. */
-    private val notificationOpen = kotlinx.coroutines.flow.MutableStateFlow<NavKey.Chat?>(null)
-
-    override fun onNewIntent(intent: android.content.Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        notificationOpen.value = chatFromNotification(intent)
-    }
-
-    private fun chatFromNotification(intent: android.content.Intent?): NavKey.Chat? {
-        val sink = com.openmychat.mobile.data.notifications.SystemNotificationSink
-        val type = intent?.getStringExtra(sink.EXTRA_CONVERSATION_TYPE) ?: return null
-        val targetId = intent.getLongExtra(sink.EXTRA_TARGET_ID, 0L).takeIf { it > 0 } ?: return null
-        if (type != "direct" && type != "channel") return null
-        return NavKey.Chat(type, targetId, intent.getStringExtra(sink.EXTRA_TITLE).orEmpty())
-    }
-
+    /**
+     * This activity is exported (the launcher): it never reads a chat from its intent, so another app
+     * cannot open a chat in CentyChat. A tap on the app's own notification arrives through the
+     * non-exported NotificationOpenActivity as [NotificationTaps] (final review I3).
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
-        if (savedInstanceState == null) notificationOpen.value = chatFromNotification(intent)
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -108,11 +97,12 @@ class MainActivity : ComponentActivity() {
                 )
 
                 LaunchedEffect(navigator) {
-                    notificationOpen.collect { chat ->
-                        if (chat != null && SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())) {
-                            notificationOpen.value = null
-                            navigator.navigate(chat)
-                        }
+                    // A notification tap opens its chat once signed in — and only for the account it was for.
+                    combine(NotificationTaps.pending, appViewModel.routeStates) { tap, _ -> tap }.collect { tap ->
+                        if (tap == null) return@collect
+                        val signedIn = SessionRouteGuard.hasAuthenticatedSession(appViewModel.routeState())
+                        val opened = NotificationTaps.take(if (signedIn) appViewModel.currentAccount() else null)
+                        if (opened != null) navigator.navigate(NavKey.Chat(opened.type.value, opened.targetId, opened.title))
                     }
                 }
 

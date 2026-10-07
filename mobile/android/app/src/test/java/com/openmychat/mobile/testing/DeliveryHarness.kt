@@ -42,12 +42,19 @@ class FakeDeliveryBackend(var chat: ChatRepository? = null) : DeliveryBackend {
     var postGate: CompletableDeferred<Unit>? = null
     var postAnswer: (String, JsonObject) -> HttpOutcome = { _, _ -> HttpOutcome(0, null) }
 
+    /** The account ([RequestOwner]) each request was made for (final review I4). */
+    val syncOwners = mutableListOf<Long?>()
+    val postOwners = mutableListOf<Long?>()
+    val historyOwners = mutableListOf<Long?>()
+
     override suspend fun sync(cursor: String?, limit: Int): SyncOutcome {
+        syncOwners += kotlinx.coroutines.currentCoroutineContext()[com.openmychat.mobile.core.network.RequestOwner]?.userId
         syncRequests += cursor
         return syncAnswers.removeFirstOrNull() ?: SyncOutcome.Page(page(emptyList(), "c${++cursors}"))
     }
 
     override suspend fun history(conversation: String): List<JsonObject> {
+        historyOwners += kotlinx.coroutines.currentCoroutineContext()[com.openmychat.mobile.core.network.RequestOwner]?.userId
         historyRequests += conversation
         val repository = chat ?: return emptyList()
         val (type, id) = conversation.split(':')
@@ -57,6 +64,7 @@ class FakeDeliveryBackend(var chat: ChatRepository? = null) : DeliveryBackend {
     override suspend fun unreadSnapshot(): UnreadSnapshot = unread
 
     override suspend fun post(path: String, body: JsonObject): HttpOutcome {
+        postOwners += kotlinx.coroutines.currentCoroutineContext()[com.openmychat.mobile.core.network.RequestOwner]?.userId
         posts += path to body
         postGate?.await()
         return postAnswer(path, body)

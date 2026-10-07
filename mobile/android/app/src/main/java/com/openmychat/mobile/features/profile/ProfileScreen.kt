@@ -295,8 +295,14 @@ fun ProfileScreen(
     if (showLogoutDialog) {
         // Unsent messages are deleted by a sign-out: the dialog says how many first.
         val unsent by viewModel.unsentCount.collectAsState()
+        val unsentKnown by viewModel.unsentKnown.collectAsState()
         val base = stringResource(R.string.profile_logout_message)
-        val unsentLine = if (unsent > 0) pluralStringResource(R.plurals.profile_logout_unsent, unsent, unsent) else null
+        val unsentLine = when {
+            // Not read yet: «nothing unsent» would not be true (copy-ru.md signout.unsent_unknown).
+            !unsentKnown -> stringResource(R.string.profile_logout_unsent_unknown)
+            unsent > 0 -> pluralStringResource(R.plurals.profile_logout_unsent, unsent, unsent)
+            else -> null
+        }
         CentyConfirmDialog(
             title = stringResource(R.string.profile_logout_title),
             message = if (unsentLine != null) "$unsentLine\n\n$base" else base,

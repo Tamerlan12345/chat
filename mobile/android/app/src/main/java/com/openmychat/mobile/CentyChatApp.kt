@@ -29,9 +29,13 @@ class CentyChatApp : Application(), SingletonImageLoader.Factory {
     /** The delivery core: the stored outbox is restored and sent from the first moment of the process. */
     @Inject lateinit var delivery: com.openmychat.mobile.data.delivery.DeliveryRuntime
 
+    /** Push (decision P): the FCM token goes to the server for every session; off without Firebase config. */
+    @Inject lateinit var push: com.openmychat.mobile.data.push.PushRegistrar
+
     override fun onCreate() {
         super.onCreate()
         delivery.start()
+        push.start()
         // Присутствие как на настольном клиенте: процесс на экране — «В сети», свёрнут — «Отошёл».
         // Сигнал — жизненный цикл всего процесса: системный диалог разрешения, окно «Поделиться»
         // или экран звонка внутри приложения его не останавливают, а поворот экрана сглажен.

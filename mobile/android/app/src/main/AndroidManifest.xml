@@ -29,6 +29,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.CentyChat">
 
         <activity
@@ -42,6 +43,31 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          A tap on a message notification lands here (the PendingIntent names it explicitly). Not
+          exported: no other app can start it, so no other app can open a chat. It hands the tap to
+          MainActivity in memory and finishes at once.
+        -->
+        <activity
+            android:name=".data.notifications.NotificationOpenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!--
+          Push (decision P, push.md): FCM data messages with ids only. Receives anything only in a
+          build with a Firebase configuration (app/google-services.json); otherwise push is off.
+        -->
+        <service
+            android:name=".data.push.CentyMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- Opens a downloaded attachment in another app: content:// URIs with a one-off read grant. -->
         <provider

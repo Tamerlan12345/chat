@@ -81,9 +81,23 @@ class ContractFixturesTest {
         "GET /api/users/{id}" to { body -> json.decodeFromString<User>(body) },
         // Ответ на загрузку и удаление аватара — полная запись пользователя.
         "PUT /api/users/avatar" to { body -> json.decodeFromString<User>(body) },
-        // Регистрация push-токена на Android не реализована (FCM-клиент — задача волны 3, контракт push.md):
-        // пока проверяем только, что ответ — объект JSON, а не мусор.
+        // Регистрация push-токена (PushRegistrar): тело ответа клиент не читает — достаточно, что это объект JSON.
         "POST /api/devices/push-token" to { body -> json.parseToJsonElement(body).jsonObject },
+        // Решение Q: вход в регистрацию следует allow_registration.
+        "GET /api/settings/info" to { body ->
+            json.decodeFromString<com.openmychat.mobile.data.model.ServerInfo>(body).also {
+                check(json.parseToJsonElement(body).jsonObject["allow_registration"]!!.jsonPrimitive.content.toBoolean() == it.allowRegistration)
+            }
+        },
+        // Блокировки (registration.md §4): список разбирается тем же кодом, что в ApiClient.blockedUsers.
+        "GET /api/blocks" to { body ->
+            com.openmychat.mobile.data.model.BlockedUser.list(json.parseToJsonElement(body)).also { check(it.isNotEmpty()) { "no blocked user decoded" } }
+        },
+        // Ответы, тело которых клиент не читает (executeRequestNoContent): объект JSON.
+        "POST /api/blocks" to { body -> json.parseToJsonElement(body).jsonObject },
+        "DELETE /api/blocks/{id}" to { body -> json.parseToJsonElement(body).jsonObject },
+        "POST /api/reports" to { body -> json.parseToJsonElement(body).jsonObject },
+        "DELETE /api/users/me" to { body -> json.parseToJsonElement(body).jsonObject },
         "DELETE /api/devices/push-token" to { body -> json.parseToJsonElement(body).jsonObject }
     )
 

@@ -104,7 +104,7 @@ class RegistrationFlowTest {
     }
 
     private fun fillForm() {
-        tag("register-email").performTextInput("Ivan@Company.kz")
+        tag("register-email").performTextInput("Ivan@Company.example")
         tag("register-name").performTextInput("Иван Иванов")
         tag("register-username").performTextInput("ivanov")
         tag("register-password").performTextInput("Secret-12")
@@ -118,9 +118,9 @@ class RegistrationFlowTest {
         fillForm()
 
         waitForTag("register-code-screen")
-        waitForText("Мы отправили 6-значный код на ivan@company.kz.")
+        waitForText("Мы отправили 6-значный код на ivan@company.example.")
         assertEquals(
-            RegisterRequestBody(email = "ivan@company.kz", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12"),
+            RegisterRequestBody(email = "ivan@company.example", username = "ivanov", displayName = "Иван Иванов", password = "Secret-12"),
             scripted.requests.single()
         )
         tag("register-verify").assertIsNotEnabled()
@@ -154,7 +154,7 @@ class RegistrationFlowTest {
 
         fillForm()
 
-        waitForText("Отправка почты не настроена", substring = true)
+        waitForText("Сервер не может отправить письмо с кодом: почта не настроена.", substring = true)
         tag("register-email").assertExists()
     }
 

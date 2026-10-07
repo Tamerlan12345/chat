@@ -62,4 +62,46 @@ class SessionAuthenticatorTest {
         assertEquals("no answer (network)", RefreshOutcome.Unreachable, RefreshFailurePolicy.classify(null, null))
         assertEquals("unreadable success", RefreshOutcome.Unreachable, RefreshFailurePolicy.classify(200, null))
     }
+    // ── Final review I4: a 401 is replayed only as the account the request was made for ──────────
+
+    private fun refusal(sentWith: String?): Response = Request.Builder().url("https://chat.example.com/api/messages/direct/7")
+        .apply { if (sentWith != null) header("Authorization", "Bearer $sentWith") }
+        .build().let {
+            Response.Builder().request(it).protocol(Protocol.HTTP_1_1).code(401).message("Unauthorized").body("{}".toResponseBody()).build()
+        }
+
+    @Test
+    fun aRequestSentWithoutATokenIsNeverReplayedWithTheCurrentSession() {
+        token = com.openmychat.mobile.testing.jwt(2)
+        var refreshed = 0
+        val retry = authenticator { refreshed++; RefreshOutcome.Renewed("x") }.authenticate(null, refusal(null))
+        assertEquals(null, retry)
+        assertEquals("no refresh on behalf of a request that had no token", 0, refreshed)
+    }
+
+    @Test
+    fun theOldAccountsRequestIsNeverReplayedWithTheNewAccountsToken() {
+        token = com.openmychat.mobile.testing.jwt(2) // Carol signed in after Bob's request left
+        var refreshed = 0
+        val retry = authenticator { refreshed++; RefreshOutcome.Renewed("x") }
+            .authenticate(null, refusal(com.openmychat.mobile.testing.jwt(1)))
+        assertEquals(null, retry)
+        assertEquals(0, refreshed)
+        assertEquals(com.openmychat.mobile.testing.jwt(2), token)
+    }
+
+    @Test
+    fun aRequestOfTheSameAccountIsReplayedWithItsRefreshedToken() {
+        val fresh = com.openmychat.mobile.testing.jwt(1, "fresh")
+        token = fresh // another request already refreshed Bob's session
+        val retry = authenticator { RefreshOutcome.Renewed("unused") }.authenticate(null, refusal(com.openmychat.mobile.testing.jwt(1, "old")))
+        assertEquals("Bearer $fresh", retry!!.header("Authorization"))
+    }
+    /** Ruling U minor 1: the session was replaced while its refresh ran — the old request is not replayed. */
+    @Test
+    fun aRefreshWhoseSessionWasReplacedMeanwhileReplaysNothing() {
+        val retry = authenticator { RefreshOutcome.Superseded }.authenticate(null, unauthorized)
+        assertEquals(null, retry)
+        assertEquals("old", token)
+    }
 }

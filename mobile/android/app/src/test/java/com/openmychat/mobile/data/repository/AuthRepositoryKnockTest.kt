@@ -58,4 +58,16 @@ class AuthRepositoryKnockTest {
         assertEquals(1, bodies.size)
         assertTrue(bodies.single(), bodies.single().contains(""""device_secret":"stored-secret""""))
     }
+    /** Decision Q: whether self-registration is on comes from the public /settings/info. */
+    @Test
+    fun registrationIsOpenExactlyWhenTheServerSaysSo() = runBlocking {
+        val session = SessionManager(prefs = InMemorySharedPreferences(), serverEndpoint = TestSessions.CHAT_EXAMPLE)
+        fun repo(body: String, code: Int = 200) = DefaultAuthRepository(ApiClient(session, OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(code).message("x").body(body.toResponseBody()).build()
+        }.build()), session)
+
+        assertEquals(true, repo("""{"allow_registration":true}""").registrationOpen())
+        assertEquals(false, repo("""{"allow_registration":false}""").registrationOpen())
+        assertEquals("unknown when it cannot be read", null, repo("{}", 503).registrationOpen())
+    }
 }

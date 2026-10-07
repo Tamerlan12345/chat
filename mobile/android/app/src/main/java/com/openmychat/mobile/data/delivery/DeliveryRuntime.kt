@@ -24,6 +24,13 @@ interface OutgoingQueue {
     /** Messages and files of this account not on the server yet (cancelled ones excluded). */
     val unsentCount: StateFlow<Int>
 
+    /** False while the stored queue has not been read: [unsentCount] is not known then. */
+    val unsentKnown: StateFlow<Boolean> get() = KNOWN
+
+    private companion object {
+        val KNOWN: StateFlow<Boolean> = MutableStateFlow(true)
+    }
+
     /** Explicit sign-out: they are deleted. Throws when that could not be done (nothing is signed out then). */
     suspend fun discardForSignOut()
 
@@ -65,6 +72,9 @@ class DeliveryRuntime(
     override val unsentCount: StateFlow<Int> = combine(engine.state, sends.uploads) { state, uploads ->
         state.outbox.count { !it.pendingDelete } + uploads.size
     }.stateIn(scope, SharingStarted.Eagerly, 0)
+
+    /** Until the stored queue is read, «0 unsent» would not be true (copy-ru.md signout.unsent_unknown). */
+    override val unsentKnown: StateFlow<Boolean> get() = engine.ready
 
     /** Throws when the store could not be emptied: the caller must not sign out as if it had been. */
     override suspend fun discardForSignOut() {

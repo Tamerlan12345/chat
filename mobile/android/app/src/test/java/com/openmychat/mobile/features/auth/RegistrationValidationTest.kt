@@ -10,12 +10,12 @@ class RegistrationValidationTest {
 
     @Test
     fun emailIsTrimmedLowercasedAndChecked() {
-        assertEquals("ivan@company.kz", RegistrationValidation.normalizedEmail("  Ivan@Company.KZ \n"))
+        assertEquals("ivan@company.example", RegistrationValidation.normalizedEmail("  Ivan@Company.EXAMPLE \n"))
         assertEquals(Problem.EMAIL_MISSING, RegistrationValidation.emailProblem("   "))
-        listOf("ivan", "@company.kz", "ivan@company", "ivan@.company.kz", "ivan@company.kz.", "iv an@company.kz", "a@b@c.kz")
+        listOf("ivan", "@company.example", "ivan@company", "ivan@.company.example", "ivan@company.example.", "iv an@company.example", "a@b@c.example")
             .forEach { assertEquals(it, Problem.EMAIL_INVALID, RegistrationValidation.emailProblem(it)) }
-        assertEquals(Problem.EMAIL_INVALID, RegistrationValidation.emailProblem("a".repeat(250) + "@b.kz"))
-        assertNull(RegistrationValidation.emailProblem("ivan@company.kz"))
+        assertEquals(Problem.EMAIL_INVALID, RegistrationValidation.emailProblem("a".repeat(250) + "@b.example"))
+        assertNull(RegistrationValidation.emailProblem("ivan@company.example"))
     }
 
     @Test
@@ -66,7 +66,7 @@ class RegistrationValidationTest {
         )
         assertEquals(
             emptyMap<RegistrationValidation.Field, Problem>(),
-            RegistrationValidation.problems("ivan@company.kz", "Иван Иванов", "ivanov", "Secret-12")
+            RegistrationValidation.problems("ivan@company.example", "Иван Иванов", "ivanov", "Secret-12")
         )
     }
 }
