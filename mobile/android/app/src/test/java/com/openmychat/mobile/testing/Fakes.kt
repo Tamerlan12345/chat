@@ -279,6 +279,18 @@ class FakeAttachmentRepository : AttachmentRepository {
         keptNow.retainAll(keys)
     }
 
+    /** While set, every upload fails with it. */
+    var failEvery: Exception? = null
+
+    /** Per file name: that file's upload waits for its own answer (several uploads at once). */
+    val gates = mutableMapOf<String, CompletableDeferred<FileUploadResponse>>()
+
+    /** Uploads going up right now, and the most that ever went up at once. */
+    var active = 0
+        private set
+    var maxActive = 0
+        private set
+
     override suspend fun upload(file: PickedFile, onProgress: (Float) -> Unit): FileUploadResponse {
         uploads += file
         uploadProgress = onProgress
@@ -286,11 +298,16 @@ class FakeAttachmentRepository : AttachmentRepository {
             uploadFailure = null
             throw it
         }
+        failEvery?.let { throw it }
+        active++
+        maxActive = maxOf(maxActive, active)
         try {
-            return uploadGate?.await() ?: uploaded(file)
+            return gates[file.name]?.await() ?: uploadGate?.await() ?: uploaded(file)
         } catch (e: CancellationException) {
             cancelledUploads++
             throw e
+        } finally {
+            active--
         }
     }
 

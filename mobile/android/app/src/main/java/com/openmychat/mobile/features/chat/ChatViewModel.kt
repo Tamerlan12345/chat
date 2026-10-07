@@ -466,7 +466,9 @@ class ChatViewModel @AssistedInject constructor(
             UploadRules.problem(picked.name, picked.size, attachments.policy())?.let { return@launch notice(it) }
             if (composerLock.value != ComposerLock.NONE) return@launch
             val reply = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT }
-            if (!sends.add(conversationKey, picked, reply)) notice(CANNOT_KEEP_FILE)
+            // Kept only for this screen's account (a stale screen after an account switch adds nothing).
+            val account = screenAccount ?: return@launch
+            if (!sends.add(conversationKey, picked, reply, screenAccount = account)) notice(CANNOT_KEEP_FILE)
         }
     }
 

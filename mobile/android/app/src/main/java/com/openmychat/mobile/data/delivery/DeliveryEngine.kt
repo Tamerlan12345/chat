@@ -77,7 +77,7 @@ class DeliveryEngine(
     }
 
     private sealed interface Command
-    private class Dispatch(val event: JsonObject, val done: CompletableDeferred<Outcome>?) : Command
+    private class Dispatch(val event: JsonObject, val done: CompletableDeferred<Outcome>?, val stillWanted: (() -> Boolean)? = null) : Command
     private class ReplaceHistory(val conversation: String, val records: List<JsonObject>, val stale: Set<Long>, val done: CompletableDeferred<Outcome>) : Command
     private class Reset(val done: CompletableDeferred<Unit>) : Command
     private class Adopt(val userId: Long, val done: CompletableDeferred<Unit>) : Command
@@ -182,9 +182,9 @@ class DeliveryEngine(
     }
 
     /** Processes [event] (its `now` is added) after everything queued before it; returns what it did. */
-    suspend fun dispatch(event: JsonObject): Outcome {
+    suspend fun dispatch(event: JsonObject, stillWanted: (() -> Boolean)? = null): Outcome {
         val done = CompletableDeferred<Outcome>()
-        inbox.trySend(Dispatch(event, done))
+        inbox.trySend(Dispatch(event, done, stillWanted))
         return done.await()
     }
 
@@ -210,7 +210,12 @@ class DeliveryEngine(
         metadata: JsonObject? = null,
         clientMsgId: String = newClientMsgId(),
         owner: Long? = null,
-        ownerStated: Boolean = owner != null
+        ownerStated: Boolean = owner != null,
+        /**
+         * Asked in the command loop right before the entry is taken: false, and it is not taken (a
+         * file cancelled while its message waited for the engine is never sent, final review M1).
+         */
+        stillWanted: (() -> Boolean)? = null
     ): Outcome = dispatch(event("enqueue") {
         if (ownerStated) put(OWNER, owner?.let(::JsonPrimitive) ?: JsonNull)
         put("client_msg_id", clientMsgId)
@@ -219,7 +224,7 @@ class DeliveryEngine(
         put("msgType", msgType)
         put("reply_to_id", replyToId?.let(::JsonPrimitive) ?: JsonNull)
         put("metadata", metadata ?: JsonNull)
-    })
+    }, stillWanted)
 
     suspend fun editSent(messageId: Long, text: String): Outcome = dispatch(event("edit") {
         put("message_id", messageId)
@@ -279,6 +284,10 @@ class DeliveryEngine(
                 (signedIn ?: signedInNow())?.let { user -> if (claimFor(user) == null) pickUpSocket(user) }
             }
             is Dispatch -> {
+                if (command.stillWanted?.invoke() == false) {
+                    command.done?.complete(Outcome(false, emptyList()))
+                    return
+                }
                 val enqueue = command.event["type"].string() == "enqueue"
                 if (enqueue && command.event.containsKey(OWNER)) {
                     // Written by a stated account: taken only into that account's queue — never into
