@@ -93,7 +93,7 @@ final class RegistrationFlowTests: XCTestCase {
     }
 
     private func fill(_ model: RegistrationFlowModel) {
-        model.email = "  Ivan@Company.KZ "
+        model.email = "  Ivan@Example.COM "
         model.displayName = "  Иван   Иванов "
         model.username = " Ivan.Petrov "
         model.password = "Str0ng-Passw0rd"
@@ -123,8 +123,8 @@ final class RegistrationFlowTests: XCTestCase {
     }
 
     func testFieldValidationRules() {
-        XCTAssertNil(RegistrationValidation.emailError("ivan@company.kz"))
-        for bad in ["", "ivan", "ivan@", "@company.kz", "ivan@company", "iv an@company.kz", "a@@b.kz", "a@.kz", "a@b."] {
+        XCTAssertNil(RegistrationValidation.emailError("ivan@example.com"))
+        for bad in ["", "ivan", "ivan@", "@example.com", "ivan@company", "iv an@example.com", "a@@b.example", "a@.example", "a@b."] {
             XCTAssertNotNil(RegistrationValidation.emailError(bad), bad)
         }
         XCTAssertNil(RegistrationValidation.usernameError("ivan.petrov-1_x"))
@@ -158,7 +158,7 @@ final class RegistrationFlowTests: XCTestCase {
         XCTAssertEqual(model.step, .code)
         XCTAssertNil(model.failure)
         let sent = try XCTUnwrap(account.state.value.requests.first)
-        XCTAssertEqual(sent.email, "ivan@company.kz")
+        XCTAssertEqual(sent.email, "ivan@example.com")
         XCTAssertEqual(sent.displayName, "Иван Иванов")
         XCTAssertEqual(sent.username, "ivan.petrov")
         XCTAssertEqual(sent.password, "Str0ng-Passw0rd", "The password is sent as typed")
@@ -394,7 +394,7 @@ final class RegistrationFlowTests: XCTestCase {
         XCTAssertEqual(model.step, .form)
         XCTAssertNil(model.challenge)
         XCTAssertEqual(model.code, "")
-        XCTAssertEqual(model.email, "  Ivan@Company.KZ ", "The typed values are kept for editing")
+        XCTAssertEqual(model.email, "  Ivan@Example.COM ", "The typed values are kept for editing")
     }
 
     // MARK: - Session

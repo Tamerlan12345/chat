@@ -101,7 +101,7 @@ final class ServerEnvironmentTests: XCTestCase {
 
     func testAPIClientUsesTheEnvironmentAndIgnoresALegacyStoredURL() async throws {
         let store = SeededKeychainItemStore()
-        store.seed("server_url", "https://chat.old-company.kz")
+        store.seed("server_url", "https://chat.old-company.example")
         let keychain = KeychainManager(testStore: store)
         RecordingURLProtocol.reset()
         let client = APIClient(session: RecordingURLProtocol.session(), keychain: keychain, environment: .test)

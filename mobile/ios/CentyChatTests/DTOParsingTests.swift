@@ -9,10 +9,10 @@ final class DTOParsingTests: XCTestCase {
         let json = """
         {
             "id": 7,
-            "username": "k.akhmetov",
-            "full_name": "Ахметов Канат",
-            "email": "k.akhmetov@cic.kz",
-            "phone": "+7 (727) 250-00-11",
+            "username": "k.testov",
+            "full_name": "Тестов Канат",
+            "email": "k.testov@example.com",
+            "phone": "+7 (700) 000-00-11",
             "job_title": "Ведущий разработчик",
             "department_id": 3,
             "department_name": "Отдел мобильной разработки",
@@ -40,8 +40,8 @@ final class DTOParsingTests: XCTestCase {
         let user = try JSONDecoder().decode(User.self, from: json)
 
         XCTAssertEqual(user.id, 7)
-        XCTAssertEqual(user.username, "k.akhmetov")
-        XCTAssertEqual(user.fullName, "Ахметов Канат")
+        XCTAssertEqual(user.username, "k.testov")
+        XCTAssertEqual(user.fullName, "Тестов Канат")
         XCTAssertEqual(user.status, .online)
         XCTAssertTrue(user.isActive)
         XCTAssertFalse(user.mustChangePassword)
@@ -91,8 +91,8 @@ final class DTOParsingTests: XCTestCase {
             "created_at": "2026-09-30T09:20:15.000Z",
             "updated_at": null,
             "is_deleted": 0,
-            "sender_username": "k.akhmetov",
-            "sender_name": "Ахметов Канат",
+            "sender_username": "k.testov",
+            "sender_name": "Тестов Канат",
             "file_original_name": "spec.pdf",
             "delivery_status": "read"
         }

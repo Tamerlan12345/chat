@@ -42,7 +42,7 @@ final class RegistrationAPITests: XCTestCase {
         ], token: "stale-token")
 
         let challenge = try await client.requestRegistration(RegisterRequestBody(
-            email: "ivan@company.kz", username: "ivan", displayName: "Иван Иванов", password: "Str0ng-Passw0rd"
+            email: "ivan@example.com", username: "ivan", displayName: "Иван Иванов", password: "Str0ng-Passw0rd"
         ))
 
         XCTAssertEqual(challenge, RegistrationChallenge(status: "code_sent", registrationId: "reg-1", expiresInSec: 600))
@@ -51,7 +51,7 @@ final class RegistrationAPITests: XCTestCase {
         XCTAssertEqual(request.url?.path, "/api/auth/register/request")
         XCTAssertNil(request.headers["Authorization"], "Registration happens before any session")
         let sent = try body(of: request)
-        XCTAssertEqual(sent["email"] as? String, "ivan@company.kz")
+        XCTAssertEqual(sent["email"] as? String, "ivan@example.com")
         XCTAssertEqual(sent["username"] as? String, "ivan")
         XCTAssertEqual(sent["displayName"] as? String, "Иван Иванов")
         XCTAssertEqual(sent["password"] as? String, "Str0ng-Passw0rd")
@@ -78,7 +78,7 @@ final class RegistrationAPITests: XCTestCase {
         for (response, expected) in cases {
             let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
             do {
-                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.kz", username: "abc", displayName: "Аб", password: "12345678"))
+                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
                 XCTFail("Status \(response.status) must fail")
             } catch {
                 XCTAssertEqual(failure(error, .registrationRequest), expected, "Status \(response.status)")
@@ -90,7 +90,7 @@ final class RegistrationAPITests: XCTestCase {
         // No route: the stub fails the connection.
         let (client, _, _) = makeClient(routes: [:])
         do {
-            _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.kz", username: "abc", displayName: "Аб", password: "12345678"))
+            _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
             XCTFail("An unreachable server must fail")
         } catch {
             XCTAssertEqual(failure(error, .registrationRequest), .offline)
@@ -111,7 +111,7 @@ final class RegistrationAPITests: XCTestCase {
         for (response, expected) in cases {
             let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
             do {
-                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.kz", username: "abc", displayName: "Аб", password: "12345678"))
+                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
                 XCTFail("BUSY must fail")
             } catch {
                 let failure = failure(error, .registrationRequest)
@@ -400,12 +400,12 @@ final class RegistrationAPITests: XCTestCase {
     }
 
     func testSupportContactBuildsOnlySafeLinks() {
-        XCTAssertEqual(SupportContact.url(from: "help@company.kz")?.absoluteString, "mailto:help@company.kz")
-        XCTAssertEqual(SupportContact.url(from: " https://company.kz/help ")?.absoluteString, "https://company.kz/help")
+        XCTAssertEqual(SupportContact.url(from: "help@example.com")?.absoluteString, "mailto:help@example.com")
+        XCTAssertEqual(SupportContact.url(from: " https://example.com/help ")?.absoluteString, "https://example.com/help")
         XCTAssertNil(SupportContact.url(from: nil))
         XCTAssertNil(SupportContact.url(from: ""))
         XCTAssertNil(SupportContact.url(from: "javascript:alert(1)"))
-        XCTAssertNil(SupportContact.url(from: "http://company.kz"))
+        XCTAssertNil(SupportContact.url(from: "http://example.com"))
         XCTAssertNil(SupportContact.url(from: "tel:+77001234567"))
         XCTAssertNil(SupportContact.url(from: "not an address"))
     }

@@ -7,11 +7,12 @@ import XCTest
 /// user-entered server URL; it is never used again, and a session or device secret issued by
 /// another host is wiped.
 final class CredentialBindingTests: XCTestCase {
-    private let production = ServerEnvironment.production.origin
+    /// The server this build is fixed to (a neutral host; the release pin is ServerEnvironmentTests).
+    private let production = ServerEnvironment.test.origin
 
     func testLegacyServerURLForAnotherHostWipesTheSession() throws {
         let store = SeededKeychainItemStore()
-        store.seed("server_url", "https://chat.old-company.kz")
+        store.seed("server_url", "https://chat.old-company.example")
         store.seed("auth_token", "foreign-token")
         store.seed("device_secret", "foreign-secret")
         store.seed("device_id", "device-1")
@@ -31,7 +32,7 @@ final class CredentialBindingTests: XCTestCase {
 
     func testLegacyServerURLForThisHostKeepsTheSession() throws {
         let store = SeededKeychainItemStore()
-        store.seed("server_url", "https://centychat-production.up.railway.app/")
+        store.seed("server_url", "https://chat.example.com/")
         store.seed("auth_token", "token")
         store.seed("device_secret", "secret")
         let keychain = KeychainManager(testStore: store)
@@ -47,7 +48,7 @@ final class CredentialBindingTests: XCTestCase {
 
     func testInsecureLegacyServerURLDoesNotVouchForTheSession() throws {
         let store = SeededKeychainItemStore()
-        store.seed("server_url", "http://centychat-production.up.railway.app")
+        store.seed("server_url", "http://chat.example.com")
         store.seed("auth_token", "token")
         let keychain = KeychainManager(testStore: store)
 
@@ -86,7 +87,7 @@ final class CredentialBindingTests: XCTestCase {
 
     func testFailedWipeIsReportedInsteadOfKeepingTheForeignSession() {
         let store = SeededKeychainItemStore(failingDeletes: ["auth_token": errSecInteractionNotAllowed])
-        store.seed("server_url", "https://chat.old-company.kz")
+        store.seed("server_url", "https://chat.old-company.example")
         store.seed("auth_token", "foreign-token")
         let keychain = KeychainManager(testStore: store)
 
@@ -101,7 +102,7 @@ final class CredentialBindingTests: XCTestCase {
 final class LegacyInstallMigrationTests: XCTestCase {
     func testForeignSessionIsWipedAndNeverSent() async throws {
         let store = SeededKeychainItemStore()
-        store.seed("server_url", "https://chat.old-company.kz")
+        store.seed("server_url", "https://chat.old-company.example")
         store.seed("auth_token", "foreign-token")
         store.seed("device_secret", "foreign-secret")
         let keychain = KeychainManager(testStore: store)

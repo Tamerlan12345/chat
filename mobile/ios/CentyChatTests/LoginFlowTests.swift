@@ -277,7 +277,7 @@ final class SessionLoginTests: XCTestCase {
         app.auth.state.withValue {
             $0.hasToken = true
             $0.hasDeviceSecret = true
-            $0.issuerOrigin = "https://chat.old-company.kz"
+            $0.issuerOrigin = "https://chat.old-company.example"
         }
 
         await app.session.bootstrap()
@@ -295,7 +295,7 @@ final class SessionLoginTests: XCTestCase {
         let app = TestApp()
         app.auth.state.withValue {
             $0.hasToken = true
-            $0.issuerOrigin = "https://chat.old-company.kz"
+            $0.issuerOrigin = "https://chat.old-company.example"
             $0.bindError = KeychainManagerError.deleteFailed(status: -25308)
         }
 

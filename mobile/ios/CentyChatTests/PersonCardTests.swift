@@ -49,9 +49,9 @@ final class PresenceLineTests: XCTestCase {
 
 final class ContactLinksTests: XCTestCase {
     func testPhonesKeepOnlyDigitsAndTheLeadingPlus() {
-        XCTAssertEqual(ContactLinks.phoneNumber("+7 (727) 244-77-14"), "+77272447714")
+        XCTAssertEqual(ContactLinks.phoneNumber("+7 (700) 123-45-14"), "+77001234514")
         XCTAssertEqual(ContactLinks.phoneNumber("8 701 222 33 44"), "87012223344")
-        XCTAssertEqual(ContactLinks.dial("+7 (727) 244-77-14")?.absoluteString, "tel:+77272447714")
+        XCTAssertEqual(ContactLinks.dial("+7 (700) 123-45-14")?.absoluteString, "tel:+77001234514")
     }
 
     func testAnythingThatIsNotAPhoneIsNotDialled() {
@@ -62,13 +62,13 @@ final class ContactLinksTests: XCTestCase {
     }
 
     func testEmailsMustLookLikeAnAddressWithoutExtraParameters() {
-        XCTAssertEqual(ContactLinks.email(" p.ivanov@cic.kz "), "p.ivanov@cic.kz")
-        XCTAssertEqual(ContactLinks.mail("p.ivanov@cic.kz")?.absoluteString, "mailto:p.ivanov@cic.kz")
-        XCTAssertNil(ContactLinks.email("a@b.kz?subject=x&body=y"))
-        XCTAssertNil(ContactLinks.mail("a@b.kz?subject=x&body=y"))
+        XCTAssertEqual(ContactLinks.email(" p.ivanov@example.com "), "p.ivanov@example.com")
+        XCTAssertEqual(ContactLinks.mail("p.ivanov@example.com")?.absoluteString, "mailto:p.ivanov@example.com")
+        XCTAssertNil(ContactLinks.email("a@example.com?subject=x&body=y"))
+        XCTAssertNil(ContactLinks.mail("a@example.com?subject=x&body=y"))
         XCTAssertNil(ContactLinks.email("не адрес"))
         XCTAssertNil(ContactLinks.email("a@b"))
-        XCTAssertNil(ContactLinks.email("a@b@c.kz"))
+        XCTAssertNil(ContactLinks.email("a@b@example.com"))
     }
 }
 
