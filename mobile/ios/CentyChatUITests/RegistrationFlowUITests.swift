@@ -67,7 +67,7 @@ final class RegistrationFlowUITests: XCTestCase {
         let pending = application.descendants(matching: .any)["register-pending"]
         XCTAssertTrue(pending.waitForExistence(timeout: 10), "The pending screen must open")
         XCTAssertTrue(
-            application.staticTexts["Заявка отправлена на рассмотрение администратору"].exists,
+            application.staticTexts["Заявка на рассмотрении"].exists,
             "The pending screen must say the application waits for the administrator"
         )
         XCTAssertFalse(application.tabBars.firstMatch.exists, "A pending account has no session")

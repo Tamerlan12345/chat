@@ -122,6 +122,10 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
         var loginGate: TestGate?
         var currentUserCount = 0
         var knockCount = 0
+        /// The signed-in user kept for an offline launch (`rememberUser`).
+        var storedUser: User?
+        /// The login name exactly as it was sent.
+        var loginUsernames: [String] = []
     }
 
     let state = Locked(State())
@@ -129,6 +133,11 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
     var hasStoredToken: Bool { state.value.hasToken }
     var hasDeviceSecret: Bool { state.value.hasDeviceSecret }
     var savedUsername: String? { nil }
+    var storedUser: User? { state.value.storedUser }
+
+    func rememberUser(_ user: User) {
+        state.withValue { $0.storedUser = user }
+    }
 
     func bindStoredCredentials(to origin: String) throws -> StoredCredentialDecision {
         try state.withValue { state in
@@ -151,6 +160,7 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
         }
         return try state.withValue { state in
             state.loginCount += 1
+            state.loginUsernames.append(username)
             if let error = state.loginError { throw error }
             state.hasToken = true
             return AuthSuccessResponse(user: state.loginUser, token: "token-\(state.loginCount)")
@@ -194,7 +204,10 @@ final class FakeAuthRepository: AuthRepository, @unchecked Sendable {
     }
 
     func clearSession() throws {
-        state.withValue { $0.hasToken = false }
+        state.withValue {
+            $0.hasToken = false
+            $0.storedUser = nil
+        }
     }
 }
 

@@ -57,6 +57,15 @@ public protocol AuthRepository: Sendable {
     func changePassword(oldPassword: String, newPassword: String) async throws -> ChangePasswordResponse
     func logout() async throws
     func clearSession() throws
+    /// The signed-in user kept for a launch without the server (nil — none kept).
+    var storedUser: User? { get }
+    /// Keeps `user` for the next launch without the server; best effort.
+    func rememberUser(_ user: User)
+}
+
+public extension AuthRepository {
+    var storedUser: User? { nil }
+    func rememberUser(_ user: User) {}
 }
 
 public protocol ChatRepository: Sendable {

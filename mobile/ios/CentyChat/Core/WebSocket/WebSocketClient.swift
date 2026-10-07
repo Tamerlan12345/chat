@@ -43,6 +43,8 @@ public actor WebSocketClient {
     // MARK: - Dependencies
 
     private let credentials: Credentials
+    /// False while the stored session cannot be read (before the first unlock).
+    private let tokenReadable: @Sendable () -> Bool
     private let handshake: HandshakeProvider
     private let makeTransport: TransportFactory
     private let sleep: Sleeper
@@ -89,8 +91,10 @@ public actor WebSocketClient {
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) },
         pingIntervalSeconds: TimeInterval = 30,
-        handshake: @escaping HandshakeProvider = { RealtimeHandshakeState.shared.handshake() }
+        handshake: @escaping HandshakeProvider = { RealtimeHandshakeState.shared.handshake() },
+        tokenReadable: @escaping @Sendable () -> Bool = { KeychainManager.shared.canReadStoredItems }
     ) {
+        self.tokenReadable = tokenReadable
         self.credentials = credentials
         self.handshake = handshake
         self.makeTransport = makeTransport

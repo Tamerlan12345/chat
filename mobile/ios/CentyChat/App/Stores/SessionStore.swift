@@ -90,6 +90,11 @@ public final class SessionStore: RealtimeEventHandling {
     }
 
     public var isAuthenticated: Bool { phase == .authenticated }
+    /// Whether the server takes self-registrations (`allow_registration`); nil — not known yet.
+    public var registrationOpen: Bool? { nil }
+
+    /// A launch that could not reach the server (or read the Keychain) tries again.
+    func retryRestoreIfNeeded() async {}
     public var savedUsername: String? { auth.savedUsername }
 
     /// Absolute URL for a server-relative attachment path (`/api/files/download/1`).

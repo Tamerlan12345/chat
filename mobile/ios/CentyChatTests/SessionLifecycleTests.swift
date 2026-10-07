@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import XCTest
 @testable import CentyChat
 
@@ -205,5 +206,125 @@ final class PartialLoadTests: XCTestCase {
         XCTAssertEqual(app.container.conversations.directState, .loaded)
         XCTAssertEqual(app.container.conversations.usersState, .loaded)
         XCTAssertEqual(app.container.announcements.loadState, .loaded)
+    }
+}
+
+/// A session ends only on a definitive refusal (final review I1/I2): a launch without network, with
+/// a busy server, or before the first unlock keeps it; the login name goes as typed (parity P9); the
+/// registration entry follows the server's switch (decision Q).
+@MainActor
+final class SessionResilienceTests: XCTestCase {
+    func testTheSignedInUserIsRememberedForAnOfflineLaunch() async throws {
+        let app = TestApp()
+        await app.session.bootstrap()
+
+        _ = try await app.session.login(username: "qa", password: "password")
+
+        XCTAssertEqual(app.auth.state.value.storedUser?.id, TestModels.me.id)
+    }
+
+    func testAnOfflineColdLaunchKeepsTheSessionWithTheRememberedUser() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.storedUser = TestModels.me
+            $0.currentUserResult = .failure(APIError.noConnection)
+        }
+
+        await app.session.bootstrap()
+
+        XCTAssertEqual(app.session.phase, .authenticated, "the queue and the cached chats stay reachable")
+        XCTAssertEqual(app.session.currentUser?.id, TestModels.me.id)
+        XCTAssertTrue(app.auth.state.value.hasToken, "nothing refused the session")
+        let connects = await app.realtime.connectCount
+        XCTAssertGreaterThan(connects, 0, "the socket keeps trying with its backoff")
+    }
+
+    func testAServerErrorAtLaunchKeepsTheSessionToo() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.storedUser = TestModels.me
+            $0.currentUserResult = .failure(APIError.httpError(statusCode: 502, message: "Bad Gateway", code: nil))
+        }
+
+        await app.session.bootstrap()
+
+        XCTAssertEqual(app.session.phase, .authenticated)
+    }
+
+    func testAnOfflineLaunchWithoutARememberedUserWaitsAndRetriesInsteadOfSigningOut() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.currentUserResult = .failure(APIError.noConnection)
+        }
+
+        await app.session.bootstrap()
+        XCTAssertNotEqual(app.session.phase, .signedOut, "no login screen while nothing refused the session")
+        XCTAssertTrue(app.auth.state.value.hasToken)
+
+        app.auth.state.withValue { $0.currentUserResult = .success(TestModels.me) }
+        await app.session.retryRestoreIfNeeded()
+
+        XCTAssertEqual(app.session.phase, .authenticated)
+    }
+
+    func testARevokedTokenAtAnOfflineStartStillEndsTheSessionOnceTheServerAnswers() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.storedUser = TestModels.me
+            $0.currentUserResult = .failure(APIError.noConnection)
+        }
+        await app.session.bootstrap()
+        XCTAssertEqual(app.session.phase, .authenticated)
+
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.unauthorized) }
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"INVALID_TOKEN","message":"Недействительный токен авторизации"}"#))
+
+        let signedOut = await eventually { app.session.phase == .signedOut }
+        XCTAssertTrue(signedOut, "a refusal the server gave still ends it")
+    }
+
+    func testALockedKeychainAtLaunchWaitsInsteadOfWipingTheSession() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.bindError = KeychainManagerError.unavailable(status: errSecInteractionNotAllowed)
+        }
+
+        await app.session.bootstrap()
+
+        XCTAssertEqual(app.session.phase, .launching)
+        XCTAssertTrue(app.auth.state.value.hasToken)
+        XCTAssertEqual(app.auth.state.value.currentUserCount, 0)
+
+        app.auth.state.withValue { $0.bindError = nil }
+        await app.session.retryRestoreIfNeeded()
+
+        XCTAssertEqual(app.session.phase, .authenticated)
+    }
+
+    func testTheLoginNameIsSentAsTypedOnlyTrimmed() async throws {
+        let app = TestApp()
+        await app.session.bootstrap()
+
+        _ = try await app.session.login(username: "  Ivanov ", password: "password")
+
+        XCTAssertEqual(app.auth.state.value.loginUsernames, ["Ivanov"], "the server compares logins case-sensitively")
+    }
+
+    func testRegistrationIsOfferedOnlyWhileTheServerTakesIt() async {
+        let closed = TestApp()
+        XCTAssertNil(closed.session.registrationOpen, "unknown before the server answered")
+        closed.server.info.withValue { $0.allowRegistration = false }
+        await closed.session.bootstrap()
+        XCTAssertEqual(closed.session.registrationOpen, false)
+
+        let open = TestApp()
+        open.server.info.withValue { $0.allowRegistration = true }
+        await open.session.bootstrap()
+        XCTAssertEqual(open.session.registrationOpen, true)
     }
 }

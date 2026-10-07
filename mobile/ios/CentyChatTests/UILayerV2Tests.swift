@@ -111,6 +111,23 @@ final class ChatScrollEndTests: XCTestCase {
         XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_940, contentHeight: 2_000), "60 pt up: the pill shows")
         XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 1_500, contentHeight: 2_000))
     }
+
+    /// The visible rect reaches under the composer (the bottom content inset): what is behind the
+    /// composer is not on screen (Task 10 review minor).
+    func testTheBottomInsetIsNotOnScreen() {
+        XCTAssertFalse(ChatScrollEnd.isAtEnd(visibleMaxY: 2_040, bottomInset: 100, contentHeight: 2_000), "60 pt hidden behind the composer")
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 2_100, bottomInset: 100, contentHeight: 2_000))
+        XCTAssertTrue(ChatScrollEnd.isAtEnd(visibleMaxY: 740, bottomInset: 100, contentHeight: 300))
+    }
+
+    /// Leaving the end by any means — a drag, a status-bar tap, a VoiceOver scroll — stops following;
+    /// the end moving away (a new message, a taller row) does not (Task 10 review minor).
+    func testLeavingTheEndStopsFollowingButANewMessageDoesNot() {
+        XCTAssertTrue(ChatScrollEnd.shouldUnpin(wasAtEnd: true, isAtEnd: false, endMoved: false))
+        XCTAssertFalse(ChatScrollEnd.shouldUnpin(wasAtEnd: true, isAtEnd: false, endMoved: true))
+        XCTAssertFalse(ChatScrollEnd.shouldUnpin(wasAtEnd: false, isAtEnd: false, endMoved: false))
+        XCTAssertFalse(ChatScrollEnd.shouldUnpin(wasAtEnd: false, isAtEnd: true, endMoved: false))
+    }
 }
 
 /// Section stagger in the search and in «Отделы»: capped, and none with Reduce Motion.

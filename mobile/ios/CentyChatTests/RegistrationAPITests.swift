@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import XCTest
 @testable import CentyChat
 
@@ -68,7 +69,10 @@ final class RegistrationAPITests: XCTestCase {
              .throttled(until: Date(timeIntervalSince1970: 1_030))),
             (.init(status: 503, body: #"{"error":"Отправка почты не настроена"}"#), .mailNotConfigured),
             (.init(status: 503, body: #"{"error":"busy","code":"PASSWORD_HASH_BUSY"}"#),
-             .throttled(until: Date(timeIntervalSince1970: 1_005))),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_005))),
+            (.init(status: 503, body: #"{"error":"Отправка почты не настроена","code":"EMAIL_NOT_CONFIGURED"}"#), .mailNotConfigured),
+            (.init(status: 403, body: #"{"error":"Регистрация сейчас закрыта. Обратитесь к администратору.","code":"REGISTRATION_DISABLED"}"#),
+             .registrationDisabled),
             (.init(status: 500, body: "{}"), .unavailable),
         ]
         for (response, expected) in cases {
@@ -94,14 +98,15 @@ final class RegistrationAPITests: XCTestCase {
     }
 
     /// `503 {code: "BUSY"}` with `Retry-After` (busy password hasher, server `api/index.js`): a
-    /// short wait that honours the header, as on Android — not «почта не настроена».
+    /// short wait that honours the header, as on Android — not «почта не настроена», and not
+    /// «Слишком много попыток» either: the user did nothing wrong (`reg.busy`, copy-ru.md §5).
     func testBusyServerIsAShortWaitThatHonoursRetryAfter() async {
         let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
             (.init(status: 503, headers: ["Retry-After": "7"],
                    body: #"{"error":"Сервер сейчас занят. Повторите через несколько секунд.","code":"BUSY"}"#),
-             .throttled(until: Date(timeIntervalSince1970: 1_007))),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_007))),
             (.init(status: 503, body: #"{"error":"Сервер сейчас занят.","code":"BUSY"}"#),
-             .throttled(until: Date(timeIntervalSince1970: 1_005))),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_005))),
         ]
         for (response, expected) in cases {
             let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
@@ -171,6 +176,10 @@ final class RegistrationAPITests: XCTestCase {
             (.init(status: 429, headers: ["Retry-After": "20"], body: #"{"error":"Слишком много запросов"}"#),
              .throttled(until: Date(timeIntervalSince1970: 1_020))),
             (.init(status: 409, body: #"{"error":"Логин уже занят"}"#), .conflict("Логин уже занят")),
+            (.init(status: 409, body: #"{"error":"x","code":"EMAIL_TAKEN"}"#),
+             .conflict("На этот адрес почты уже подана заявка или есть учётная запись.")),
+            (.init(status: 403, body: #"{"error":"Регистрация сейчас закрыта. Обратитесь к администратору.","code":"REGISTRATION_DISABLED"}"#),
+             .registrationDisabled),
         ]
         for (response, expected) in cases {
             let (client, _, _) = makeClient(routes: ["/api/auth/register/verify": response])
@@ -203,6 +212,21 @@ final class RegistrationAPITests: XCTestCase {
         XCTAssertNil(keychain.authToken)
         XCTAssertNil(keychain.deviceSecret)
         XCTAssertNil(keychain.savedUsername)
+    }
+
+    /// The server deleted the account; a Keychain item that cannot be deleted here must not turn
+    /// that into «deletion failed» (final review M4): the app still discards the gone account.
+    func testADeletedAccountIsReportedDeletedEvenWhenTheLocalWipeFails() async throws {
+        let store = SeededKeychainItemStore(failingDeletes: ["device_secret": errSecInteractionNotAllowed])
+        store.seed("auth_token", "session-token")
+        store.seed("device_secret", "device-secret")
+        let keychain = KeychainManager(testStore: store)
+        RecordingURLProtocol.reset(routes: ["/api/users/me": .init(status: 200, body: #"{"success":true}"#)])
+        let client = APIClient(session: RecordingURLProtocol.session(), keychain: keychain, environment: .test)
+
+        try await client.deleteAccount(password: "Str0ng-Passw0rd")
+
+        XCTAssertEqual(RecordingURLProtocol.requests.count, 1)
     }
 
     func testDeleteAccountAcceptsAJSONBody() async throws {

@@ -371,6 +371,8 @@ public struct ChatNotice: Equatable, Sendable {
 
 /// The Russian text of a delivery `user_error` code (`delivery-state.md` §5).
 enum DeliveryNotices {
+    static let notSaved = String(localized: "Сообщение не сохранено — попробуйте ещё раз")
+
     static func text(_ code: String?) -> String? {
         switch code {
         case nil: return nil

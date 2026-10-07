@@ -84,6 +84,27 @@ final class ReconnectBackoffTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(harness.transportCount, 3)
     }
 
+    /// While the device is locked before its first unlock the stored session cannot be read: the
+    /// socket waits (with the usual backoff) instead of connecting without a token, which the
+    /// server would answer with a rejection that ends the session.
+    func testNoSocketOpensWhileTheStoredSessionCannotBeRead() async throws {
+        let readable = Locked(false)
+        let harness = SocketHarness(script: [.deliverThenHang(SocketFrames.authSuccess)])
+        let client = harness.makeClient(tokenReadable: { readable.value })
+
+        await client.connect()
+        let delays = try await harness.clock.waitForDelays(count: 2)
+        XCTAssertEqual(harness.transportCount, 0, "no socket without a readable token")
+        XCTAssertEqual(delays, [1, 2])
+
+        readable.withValue { $0 = true }
+        for _ in 0..<200 where harness.transportCount == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await client.disconnect()
+        XCTAssertEqual(harness.transportCount, 1, "once readable, it connects")
+    }
+
     func testJitterNeverPushesTheDelayAboveTheCap() {
         var backoff = ReconnectBackoff()
         var delays: [TimeInterval] = []
@@ -302,7 +323,7 @@ private final class SocketHarness: @unchecked Sendable {
         sent.value.map(\.normalizedJSON)
     }
 
-    func makeClient() -> WebSocketClient {
+    func makeClient(tokenReadable: @escaping @Sendable () -> Bool = { true }) -> WebSocketClient {
         let script = self.script
         let sent = self.sent
         let clock = self.clock
@@ -318,7 +339,8 @@ private final class SocketHarness: @unchecked Sendable {
             },
             sleep: { seconds in try await clock.sleep(seconds) },
             jitter: { 0 },
-            pingIntervalSeconds: ManualClock.heartbeatInterval
+            pingIntervalSeconds: ManualClock.heartbeatInterval,
+            tokenReadable: tokenReadable
         )
     }
 }

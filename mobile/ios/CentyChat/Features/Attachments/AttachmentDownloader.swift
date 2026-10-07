@@ -215,17 +215,22 @@ actor AttachmentDownloader {
     }
 
     private static func refusalText(_ response: DownloadResponse) -> String {
-        let raw = (response.errorText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        refusalText(status: response.status, errorText: response.errorText)
+    }
+
+    /// The server's words when it gave some, otherwise ours for the status.
+    static func refusalText(status: Int, errorText: String?) -> String {
+        let raw = (errorText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.hasPrefix("{"), let message = JSONValue.parse(raw)?["error"]?.string, !message.isEmpty {
             return message
         }
         if !raw.isEmpty, !raw.hasPrefix("{"), !raw.hasPrefix("<"), raw.count <= 300 {
             return raw
         }
-        switch response.status {
+        switch status {
         case 403: return "Нет доступа к файлу"
         case 404: return "Файл не найден"
-        default: return "Не удалось скачать файл (код \(response.status))"
+        default: return "Не удалось скачать файл (код \(status))"
         }
     }
 

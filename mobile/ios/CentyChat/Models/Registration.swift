@@ -138,6 +138,12 @@ public struct ReportBody: Codable, Sendable, Equatable {
     }
 }
 
+/// `201 { id, status }` of POST /api/reports.
+public struct ReportCreatedResponse: Decodable, Sendable, Equatable {
+    public let id: Int64
+    public let status: String
+}
+
 /// POST /api/blocks
 public struct BlockBody: Codable, Sendable, Equatable {
     public let userId: Int64

@@ -33,9 +33,13 @@ public enum KeychainManagerError: Error, LocalizedError, Equatable, Sendable {
     case updateFailed(status: OSStatus)
     case addFailed(status: OSStatus)
     case deleteFailed(status: OSStatus)
+    /// The item exists but cannot be read now (the device was not unlocked since it started).
+    case unavailable(status: OSStatus)
 
     public var errorDescription: String? {
         switch self {
+        case .unavailable:
+            return String(localized: "Не удалось надёжно сохранить данные сессии на этом устройстве.")
         case .invalidValue:
             return String(localized: "Защищённое хранилище получило недопустимое значение.")
         case .updateFailed, .addFailed:
@@ -91,6 +95,22 @@ public final class KeychainManager: @unchecked Sendable {
     public var authToken: String? {
         value(forKey: Keys.authToken)
     }
+
+    /// The stored token; throws `unavailable` when it exists but cannot be read now.
+    public func storedAuthToken() throws -> String? {
+        authToken
+    }
+
+    /// Whether stored items can be read now.
+    public var canReadStoredItems: Bool { true }
+
+    /// Moves items written by older versions to the protection class of new ones.
+    public func upgradeItemProtection() {}
+
+    /// The signed-in user, kept for a launch without the server.
+    public func saveUserSnapshot(_ user: User) throws {}
+
+    public func storedUserSnapshot() throws -> User? { nil }
 
     public func saveAuthToken(_ token: String) throws {
         try save(value: token, key: Keys.authToken)

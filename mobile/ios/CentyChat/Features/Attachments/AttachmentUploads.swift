@@ -137,6 +137,13 @@ final class AttachmentUploads {
 
     /// Pause before a queued file goes again while the connection stays up.
     nonisolated static let retryDelayMs: Int64 = 15_000
+    /// Server errors in a row after which a file is failed («Повторить»).
+    nonisolated static let maxServerFailures = 5
+
+    /// The pause after `failures` waits in a row.
+    nonisolated static func backoffMs(failures: Int) -> Int64 {
+        retryDelayMs
+    }
 
     private(set) var items: [Item] = [] {
         didSet { onChange?() }

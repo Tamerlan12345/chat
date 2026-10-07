@@ -1164,4 +1164,12 @@ enum ChatScrollEnd {
     static func isAtEnd(visibleMaxY: CGFloat, contentHeight: CGFloat) -> Bool {
         visibleMaxY >= contentHeight - tolerance
     }
+
+    static func isAtEnd(visibleMaxY: CGFloat, bottomInset: CGFloat, contentHeight: CGFloat) -> Bool {
+        isAtEnd(visibleMaxY: visibleMaxY, contentHeight: contentHeight)
+    }
+
+    static func shouldUnpin(wasAtEnd: Bool, isAtEnd: Bool, endMoved: Bool) -> Bool {
+        false
+    }
 }

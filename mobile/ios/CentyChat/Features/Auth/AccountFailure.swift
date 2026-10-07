@@ -31,6 +31,14 @@ public enum AccountFailure: Equatable, Sendable {
     /// 400 LAST_ADMIN: the only administrator cannot delete the account.
     case lastAdmin
     case unavailable
+    /// `403 REGISTRATION_DISABLED`: the administrator closed self-registration (decision Q).
+    case registrationDisabled
+    /// `503 BUSY` / `PASSWORD_HASH_BUSY`: the server is busy, not the user's fault (`reg.busy`).
+    case serverBusy(until: Date)
+    /// The code's own timer ran out on this device (`reg.code_expired_local`).
+    case codeExpiredLocally
+    /// The device's secure storage could not be used (`reg.storage`).
+    case storage
 
     static let defaultThrottleWait: TimeInterval = 60
     /// `503` codes of a busy server (`BUSY` — no free password-hash slot): a short wait, as on Android.
@@ -148,7 +156,7 @@ public enum AccountFailure: Equatable, Sendable {
             return String(localized: "Неверный пароль.")
         case .lastAdmin:
             return String(localized: "Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт.")
-        case .unavailable:
+        case .unavailable, .registrationDisabled, .serverBusy, .codeExpiredLocally, .storage:
             return String(localized: "Не удалось выполнить действие. Повторите попытку позже.")
         }
     }
