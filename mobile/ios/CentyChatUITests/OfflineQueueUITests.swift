@@ -137,7 +137,7 @@ final class OfflineQueueUITests: XCTestCase {
     private func tapRow(containing label: String, in app: XCUIApplication) {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
         let target = row.exists ? row : app.staticTexts[label]
-        target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.tapVisiblePart(of: target)
     }
 
     /// Focuses the field and waits for the keyboard before typing.

@@ -137,7 +137,12 @@ final class UserPathQATests: XCTestCase {
         let profileTab = app.tabBars.buttons["Профиль"]
         XCTAssertTrue(profileTab.waitForExistence(timeout: 5))
         profileTab.tap()
-        XCTAssertTrue(app.staticTexts["Алиса Тестова"].waitForExistence(timeout: 20), "The profile must show the signed-in user.")
+        // The header is one combined element («Алиса Тестова, Сотрудник»): wait for the profile, then
+        // find the name inside any label, not as a separate static text.
+        XCTAssertTrue(app.descendants(matching: .any)["profile-list"].waitForExistence(timeout: 20), "The profile must open.")
+        let me = app.element(labelContaining: "Алиса Тестова")
+        if !me.waitForExistence(timeout: 30) { app.dumpForDiagnosis() }
+        XCTAssertTrue(me.exists, "The profile must show the signed-in user.")
 
         // 9. Logout.
         let logout = app.buttons["profile-sign-out"]
@@ -191,7 +196,7 @@ final class UserPathQATests: XCTestCase {
         if !label.isEmpty {
             let row = XCUIApplication().buttons.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
             if row.exists {
-                row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                XCUIApplication().tapVisiblePart(of: row)
                 return
             }
         }

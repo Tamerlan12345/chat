@@ -39,7 +39,7 @@ final class PeopleSearchUITests: XCTestCase {
         XCTAssertTrue(results.waitForExistence(timeout: 20), "The search must show its own results screen")
         let personRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "search-person-")).firstMatch
         XCTAssertTrue(personRow.waitForExistence(timeout: 30), "Bob must be found among the people")
-        tapCentre(personRow)
+        app.tapVisiblePart(of: personRow)
 
         // The card.
         let card = app.descendants(matching: .any)["person-card"]
@@ -79,8 +79,7 @@ final class PeopleSearchUITests: XCTestCase {
         )
         let bobRow = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "person-row-")).firstMatch
         XCTAssertTrue(bobRow.waitForExistence(timeout: 30), "The directory must list colleagues")
-        tapCentre(bobRow)
-        XCTAssertTrue(app.descendants(matching: .any)["person-card"].waitForExistence(timeout: 15))
+        openCard(from: bobRow, in: app, "directory")
         goBack(app)
         XCTAssertTrue(list.waitForExistence(timeout: 10))
         app.terminate()
@@ -113,8 +112,7 @@ final class PeopleSearchUITests: XCTestCase {
             let bob = app.buttons.matching(
                 NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "person-row-", "Боб Тестов")
             ).firstMatch
-            tapCentre(bob.waitForExistence(timeout: 5) ? bob : row)
-            XCTAssertTrue(app.descendants(matching: .any)["person-card"].waitForExistence(timeout: 15))
+            openCard(from: bob.waitForExistence(timeout: 5) ? bob : row, in: app, suffix)
             pause(1)
             capture(app, named: "11-person-card-\(suffix)")
             goBack(app)
@@ -200,6 +198,21 @@ final class PeopleSearchUITests: XCTestCase {
         if !app.keyboards.firstMatch.exists { printTree(app, "focus") }
         XCTAssertTrue(app.keyboards.firstMatch.exists, "The field must receive keyboard focus")
         field.typeText(text)
+    }
+
+    /// Opens a person's card from a row: the visible part of the row is tapped (at accessibility
+    /// sizes its centre can lie under the tab bar), once more if the card did not open (the list may
+    /// still be settling), and the tree is printed if it still did not.
+    private func openCard(from row: XCUIElement, in app: XCUIApplication, _ moment: String) {
+        let card = app.descendants(matching: .any)["person-card"]
+        app.tapVisiblePart(of: row)
+        if !card.waitForExistence(timeout: 8) {
+            app.dumpForDiagnosis()
+            if row.exists { app.tapVisiblePart(of: row) }
+        }
+        let opened = card.waitForExistence(timeout: 15)
+        if !opened { app.dumpForDiagnosis() }
+        XCTAssertTrue(opened, "The person card must open (\(moment))")
     }
 
     /// Rows inside SwiftUI lists may be reported as not hittable: tap the centre of the frame.
