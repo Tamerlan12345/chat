@@ -42,6 +42,9 @@ CN = CentyChat Dev Root CA (DEV ONLY)
 basicConstraints = critical, CA:TRUE, pathlen:0
 keyUsage = critical, keyCertSign, cRLSign
 subjectKeyIdentifier = hash
+# Whoever holds dev-ca.key can only mint certificates for the stand's own
+# names: a device that trusts the dev CA does not trust it for anything else.
+nameConstraints = critical, permitted;DNS:localhost, permitted;IP:127.0.0.1/255.255.255.255, permitted;IP:10.0.2.2/255.255.255.255
 EXT
 
 cat > dev-leaf.ext <<EXT
