@@ -252,7 +252,8 @@ final class ScreenshotTourTests: XCTestCase {
             _ = row.waitForExistence(timeout: 5)
             tapCentre(row.exists ? row : bob)
             XCTAssertTrue(composerField(app).waitForExistence(timeout: 15), "The chat must open in the detail column")
-            let newest = app.staticTexts[latest]
+            // The bubble, not the inbox preview in the sidebar that shows the same text.
+            let newest = app.scrollViews["chat-messages"].staticTexts[latest]
             XCTAssertTrue(newest.waitForExistence(timeout: 20), "The newest message must be loaded")
             pause(2)
             // Evidence first, so a failure still shows the screen and the geometry.
@@ -666,7 +667,7 @@ final class ScreenshotTourTests: XCTestCase {
     /// Prints where the newest bubble, the composer and the window are, and the chat's scroll
     /// geometry (`chat-scroll-probe`, UI tests only), so a failed «opens at the newest message» says why.
     private func logChatGeometry(_ application: XCUIApplication, newest: XCUIElement, moment: String) {
-        let probe = application.descendants(matching: .any)["chat-scroll-probe"]
+        let probe = application.descendants(matching: .any).matching(identifier: "chat-scroll-probe").firstMatch
         let composer = composerField(application)
         print("CHAT-GEOMETRY \(moment): newest=\(newest.exists ? "\(newest.frame)" : "absent") hittable=\(newest.exists && newest.isHittable) composer=\(composer.exists ? "\(composer.frame)" : "absent") window=\(application.windows.firstMatch.frame) probe=\(probe.exists ? probe.label : "absent")")
     }

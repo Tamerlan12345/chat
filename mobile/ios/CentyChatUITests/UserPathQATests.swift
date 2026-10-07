@@ -66,7 +66,8 @@ final class UserPathQATests: XCTestCase {
         if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:\n" + app.debugDescription) }
         XCTAssertTrue(composer.exists, "The message composer must be shown.")
         // The chat opens at its newest message: on screen, nothing to jump to.
-        let newest = app.staticTexts[latest]
+        // The bubble in the message list, not any other text with the same words.
+        let newest = app.scrollViews["chat-messages"].staticTexts[latest]
         XCTAssertTrue(newest.waitForExistence(timeout: 30), "The newest message must be loaded.")
         pause(2)
         XCTAssertTrue(newest.isHittable, "A long chat opens at its newest message, on screen")

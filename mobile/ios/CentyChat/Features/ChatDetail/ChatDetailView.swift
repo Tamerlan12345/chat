@@ -355,6 +355,9 @@ private struct ChatDetailContent: View {
                 .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText != nil)
             }
             .scrollDismissesKeyboard(.interactively)
+            // The message list as one container: its texts are told apart from the same words
+            // elsewhere (the inbox preview next to it on iPad).
+            .accessibilityIdentifier("chat-messages")
             // iOS 18: a scroll position pinned to the bottom edge, kept there while the lazy rows
             // measure themselves; «at the end» from the scroll geometry (never from a row's
             // appear/disappear, which can ping-pong with the state it sets).
