@@ -2,7 +2,12 @@
 // Terminates TLS and forwards plain HTTP/WebSocket to the CentyChat server,
 // adding X-Forwarded-Proto: https (the server treats that as "behind HTTPS").
 //
-//   node mobile/dev/tls-proxy.mjs     (env: TLS_PORT, SERVER_PORT, TLS_CERT_DIR)
+//   node mobile/dev/tls-proxy.mjs     (env: TLS_PORT, SERVER_PORT, TLS_CERT_DIR, TLS_LISTEN_HOST)
+//
+// Listens on 127.0.0.1 by default: the Android emulator reaches it as 10.0.2.2
+// (the host's loopback) and the iOS simulator as localhost. Anyone on the LAN
+// could otherwise use the stand with its documented seed passwords; set
+// TLS_LISTEN_HOST=0.0.0.0 only to test from a physical device.
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
@@ -23,7 +28,7 @@ function forwardedHeaders(req, listenHost) {
  *          targetHost?: string, targetPort: number}} opts
  * @returns {Promise<{server: https.Server, port: number, close: () => Promise<void>}>}
  */
-export function startTlsProxy({ key, cert, listenPort = 8443, listenHost = '0.0.0.0', targetHost = '127.0.0.1', targetPort }) {
+export function startTlsProxy({ key, cert, listenPort = 8443, listenHost = '127.0.0.1', targetHost = '127.0.0.1', targetPort }) {
   const sockets = new Set();
 
   const server = https.createServer({ key, cert }, (req, res) => {
@@ -87,12 +92,19 @@ export function startTlsProxy({ key, cert, listenPort = 8443, listenHost = '0.0.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const certDir = process.env.TLS_CERT_DIR || path.join(here, 'certs');
-  const targetPort = Number(process.env.SERVER_PORT || 2004);
+  const targetPort = Number(process.env.SERVER_PORT || 2014);
+  // 2004 is the owner's own local server: never publish it through the proxy.
+  if (targetPort === 2004) {
+    console.error('[tls-proxy] SERVER_PORT=2004 is reserved for the owner\'s local server; refusing to proxy it.');
+    process.exit(2);
+  }
+  const listenHost = process.env.TLS_LISTEN_HOST || '127.0.0.1';
   const proxy = await startTlsProxy({
     key: fs.readFileSync(path.join(certDir, 'dev-leaf.key')),
     cert: fs.readFileSync(path.join(certDir, 'dev-chain.crt')),
     listenPort: Number(process.env.TLS_PORT || 8443),
+    listenHost,
     targetPort
   });
-  console.log(`[tls-proxy] https/wss on 0.0.0.0:${proxy.port} -> http://127.0.0.1:${targetPort}`);
+  console.log(`[tls-proxy] https/wss on ${listenHost}:${proxy.port} -> http://127.0.0.1:${targetPort}`);
 }

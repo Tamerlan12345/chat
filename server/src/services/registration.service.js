@@ -15,6 +15,7 @@ const config = require('../config');
 const UserService = require('./user.service');
 const AuthService = require('./auth.service');
 const { checkRateLimit } = require('./rate-limiter');
+const SettingsService = require('./settings.service');
 const defaultMailer = require('./mailer.service');
 const { isValidAddress, buildVerificationEmail, EMAIL_NOT_CONFIGURED } = defaultMailer;
 
@@ -22,6 +23,65 @@ const CODE_TTL_SEC = 600;
 const MAX_ATTEMPTS = 5;
 const MAX_UNCONFIRMED = 2000; // незавершённых заявок одновременно
 const MAX_PENDING_ACCOUNTS = 200; // ожидающих решения администратора
+// Общие (на весь сервер) пределы — решение R. Пределы на IP и на адрес почты
+// не останавливают перебор кода с тысяч адресов, когда в списке разрешённых
+// целый @домен: каждая заявка — 5 попыток угадать код. Общий предел заявок
+// ограничивает и число писем с почты компании.
+const GLOBAL_WINDOW_MS = 3600000;
+const DEFAULT_LIMITS = Object.freeze({
+  globalRequestsPerHour: config.REGISTRATION_GLOBAL_REQUESTS_PER_HOUR,
+  globalFailedVerifiesPerHour: config.REGISTRATION_GLOBAL_FAILED_VERIFIES_PER_HOUR,
+  maxPendingAccounts: MAX_PENDING_ACCOUNTS
+});
+let limits = { ...DEFAULT_LIMITS };
+
+// Общие счётчики — свои, а не в общей карте rate-limiter: та при переполнении
+// вытесняет самые старые ключи, и поток запросов с тысяч адресов (IPv6 /64)
+// обнулял бы бюджет решения R. Здесь два числа, вытеснять нечего.
+// Фиксированное окно в час, как у остальных пределов регистрации.
+function newWindow() {
+  return { count: 0, windowStart: 0 };
+}
+const globalCounters = { requests: newWindow(), failedVerifies: newWindow() };
+
+function currentWindow(counter, now = Date.now()) {
+  if (now - counter.windowStart >= GLOBAL_WINDOW_MS) {
+    counter.count = 0;
+    counter.windowStart = now;
+  }
+  return counter;
+}
+
+// Взять единицу бюджета; null — бюджет исчерпан. Возвращённую отметку можно
+// вернуть (refundGlobal), если письмо так и не ушло.
+function takeGlobal(counter, max) {
+  const w = currentWindow(counter);
+  if (w.count >= max) return null;
+  w.count += 1;
+  return { counter, windowStart: w.windowStart };
+}
+
+function refundGlobal(ticket) {
+  if (ticket && ticket.counter.windowStart === ticket.windowStart && ticket.counter.count > 0) ticket.counter.count -= 1;
+}
+
+function bumpGlobal(counter) {
+  currentWindow(counter).count += 1;
+}
+
+function globalExhausted(counter, max) {
+  return currentWindow(counter).count >= max;
+}
+
+function resetGlobalCounters() {
+  globalCounters.requests = newWindow();
+  globalCounters.failedVerifies = newWindow();
+}
+// Чистка просроченных заявок по ходу работы — не чаще раза в 10 минут.
+const PURGE_INTERVAL_MS = 10 * 60000;
+let lastPurgeAt = 0;
+// Текст совпадает с mobile/contracts/copy-ru.md (reg.disabled).
+const REGISTRATION_DISABLED_MESSAGE = 'Регистрация сейчас закрыта. Обратитесь к администратору.';
 const DISPLAY_NAME_MAX = 100;
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,64}$/;
 const ALLOWLIST_PATTERN_RE = /^(?:[a-z0-9._%+-]{1,64})?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -40,6 +100,55 @@ let mailer = defaultMailer;
 // Подмена транспорта в тестах.
 function setMailer(next) {
   mailer = next || defaultMailer;
+}
+
+// Для тестов: подменить общие пределы; null — вернуть значения по умолчанию.
+function configureLimits(overrides) {
+  limits = { ...DEFAULT_LIMITS, ...(overrides || {}) };
+}
+
+function resetPurgeClock() {
+  lastPurgeAt = 0;
+}
+
+// allow_registration — главный выключатель самостоятельной регистрации
+// (решение Q). Выключен — ни заявок, ни подтверждений, в том числе для адресов
+// из списка разрешённых: список уточняет «сразу или на рассмотрение» только
+// внутри включённой регистрации.
+async function assertRegistrationOpen() {
+  if ((await SettingsService.getSetting('allow_registration', 'false')) !== 'true') {
+    throw new RegistrationError(403, REGISTRATION_DISABLED_MESSAGE, 'REGISTRATION_DISABLED');
+  }
+}
+
+// Нарушение уникальности: PostgreSQL 23505, node:sqlite SQLITE_CONSTRAINT_UNIQUE
+// (2067). Прочие ошибки базы — не «логин занят», а внутренняя ошибка (500).
+function isUniqueViolation(err) {
+  return Boolean(err) && (err.code === '23505' || err.errcode === 2067);
+}
+
+// Не больше одного оповещения на правило за окно общего предела.
+const lastAlertAt = new Map();
+function alertOncePerWindow(rule, title) {
+  const now = Date.now();
+  if (now - (lastAlertAt.get(rule) || 0) < GLOBAL_WINDOW_MS) return;
+  lastAlertAt.set(rule, now);
+  try {
+    require('./security-monitor.service').raise(rule, 'high', title, {});
+  } catch (err) {
+    console.warn('[Registration] оповещение безопасности не поднято:', err.message);
+  }
+}
+
+async function maybePurgeExpired() {
+  const now = Date.now();
+  if (now - lastPurgeAt < PURGE_INTERVAL_MS) return;
+  lastPurgeAt = now;
+  try {
+    await purgeExpired();
+  } catch (err) {
+    console.warn('[Registration] чистка заявок не удалась:', err.message);
+  }
 }
 
 function normalizeEmail(value) {
@@ -126,6 +235,7 @@ async function seedAllowlistFromEnv(raw = config.REGISTRATION_ALLOWED_EMAILS) {
 // ── Шаг 1: заявка и письмо ────────────────────────────────────────────────
 
 async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
+  await assertRegistrationOpen();
   const { email: emailRaw, username: usernameRaw, displayName: displayRaw, password } = body || {};
   if (typeof emailRaw !== 'string' || typeof usernameRaw !== 'string' || typeof password !== 'string' ||
       typeof displayRaw !== 'string') {
@@ -149,7 +259,7 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
   }
 
   // Почта не настроена — честный отказ, письмо не «отправлено понарошку».
-  if (!mailer.isConfigured()) throw new RegistrationError(503, 'Отправка почты не настроена');
+  if (!mailer.isConfigured()) throw new RegistrationError(503, 'Отправка почты не настроена', 'EMAIL_NOT_CONFIGURED');
 
   // Пределы — до тяжёлого хэширования и обращений к базе.
   const ipKey = require('./ip-access.service').rateLimitIpKey(ip);
@@ -157,7 +267,7 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
       !checkRateLimit(`reg-req-email:${emailKey(email)}`, { maxAttempts: 3, windowMs: 3600000, scope: 'name' })) {
     throw new RegistrationError(429, 'Слишком много запросов. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
   }
-
+  await maybePurgeExpired();
   const db = identity();
   const taken = await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
   if (taken) throw new RegistrationError(409, 'Этот логин уже занят', 'USERNAME_TAKEN');
@@ -169,6 +279,23 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
     throw new RegistrationError(429, 'Сервис временно перегружен. Повторите позже.', 'RATE_LIMITED');
   }
 
+  // Общий предел считает только письма с кодом: проверка — после полей,
+  // пределов на IP и почту, занятости и ёмкости; если письмо не ушло (сбой
+  // почты, занят расчёт хэша), единица бюджета возвращается.
+  const ticket = takeGlobal(globalCounters.requests, limits.globalRequestsPerHour);
+  if (!ticket) {
+    alertOncePerWindow('registration_request_flood', 'Исчерпан общий предел заявок на регистрацию');
+    throw new RegistrationError(429, 'Слишком много запросов. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
+  }
+  try {
+    return await createRequestAndSendCode(db, { email, username, displayName, password });
+  } catch (err) {
+    refundGlobal(ticket);
+    throw err;
+  }
+}
+
+async function createRequestAndSendCode(db, { email, username, displayName, password }) {
   const passwordHash = await hashPassword(password); // может бросить PASSWORD_HASH_BUSY
   const registrationId = crypto.randomBytes(18).toString('base64url');
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -189,7 +316,7 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
     await mailer.sendMail({ to: email, ...message });
   } catch (err) {
     await db.run('DELETE FROM registration_requests WHERE id = $1', [registrationId]);
-    if (err && err.code === EMAIL_NOT_CONFIGURED) throw new RegistrationError(503, 'Отправка почты не настроена');
+    if (err && err.code === EMAIL_NOT_CONFIGURED) throw new RegistrationError(503, 'Отправка почты не настроена', 'EMAIL_NOT_CONFIGURED');
     throw new RegistrationError(503, 'Не удалось отправить письмо', 'EMAIL_SEND_FAILED');
   }
 
@@ -201,6 +328,9 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
 const GONE = () => new RegistrationError(410, 'Код недействителен или истёк. Запросите новый.', 'CODE_EXPIRED');
 
 async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
+  // Выключатель проверяется и здесь: живые коды, выданные до выключения,
+  // учётных записей не создают.
+  await assertRegistrationOpen();
   const { registrationId, code } = body || {};
   if (typeof registrationId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(registrationId) ||
       typeof code !== 'string' || !/^\d{6}$/.test(code)) {
@@ -209,6 +339,12 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
   const ipKey = require('./ip-access.service').rateLimitIpKey(ip);
   if (!checkRateLimit(`reg-verify-ip:${ipKey}`, { maxAttempts: 60, windowMs: 600000 })) {
     throw new RegistrationError(429, 'Слишком много попыток. Повторите позже.', 'RATE_LIMITED', { retryAfter: 300 });
+  }
+  // Общий бюджет неудачных проверок исчерпан — перебор идёт с многих адресов.
+  // Ждут все, попытка не засчитывается.
+  if (globalExhausted(globalCounters.failedVerifies, limits.globalFailedVerifiesPerHour)) {
+    alertOncePerWindow('registration_code_bruteforce', 'Исчерпан общий бюджет неудачных проверок кода регистрации — возможен перебор');
+    throw new RegistrationError(429, 'Слишком много попыток. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
   }
 
   const db = identity();
@@ -225,24 +361,21 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
   if (!row) throw GONE();
 
   if (!safeEqualHex(row.code_hash, hashCode(registrationId, code))) {
+    bumpGlobal(globalCounters.failedVerifies);
     const left = Math.max(0, MAX_ATTEMPTS - Number(row.attempts));
     if (left === 0) throw GONE();
     throw new RegistrationError(400, 'Неверный код', 'CODE_INVALID', { attemptsLeft: left });
   }
 
-  // Одноразовость: потребить может только один запрос.
-  const consumed = await db.run(
-    'UPDATE registration_requests SET consumed_at = $1 WHERE id = $2 AND consumed_at IS NULL',
-    [nowIso, registrationId]
-  );
-  if (!consumed.changes) throw GONE();
-
+  // Проверки ёмкости и занятости — ДО потребления кода: отказ 429/409 не
+  // сжигает верный код, его можно предъявить снова, пока он жив.
   const req = await db.get('SELECT * FROM registration_requests WHERE id = $1', [registrationId]);
+  if (!req) throw GONE();
   const allowed = await isAllowed(req.email, db);
 
   if (!allowed) {
     const pending = await db.get(`SELECT COUNT(*) AS n FROM users WHERE approval_status = 'pending'`);
-    if (Number(pending?.n || 0) >= MAX_PENDING_ACCOUNTS) {
+    if (Number(pending?.n || 0) >= limits.maxPendingAccounts) {
       throw new RegistrationError(429, 'Слишком много заявок ожидают подтверждения. Обратитесь к администратору.', 'RATE_LIMITED');
     }
   }
@@ -251,6 +384,13 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
   if (taken) throw new RegistrationError(409, 'Этот логин уже занят', 'USERNAME_TAKEN');
   const emailTaken = await db.get('SELECT id FROM users WHERE LOWER(email) = $1', [req.email]);
   if (emailTaken) throw new RegistrationError(409, 'Этот email уже зарегистрирован', 'EMAIL_TAKEN');
+
+  // Одноразовость: потребить может только один запрос.
+  const consumed = await db.run(
+    'UPDATE registration_requests SET consumed_at = $1 WHERE id = $2 AND consumed_at IS NULL',
+    [nowIso, registrationId]
+  );
+  if (!consumed.changes) throw GONE();
 
   const maxUin = await db.get('SELECT COALESCE(MAX(uin), 0) + 1 AS next FROM users');
   const company = await db.get(`SELECT value FROM server_settings WHERE key = 'company_name'`);
@@ -269,7 +409,16 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
         Number(maxUin?.next || 1), company ? company.value : 'Корпоративная сеть', nowIso, status]
     );
   } catch (err) {
-    // Гонка за один и тот же логин между проверкой и вставкой (UNIQUE).
+    // Учётная запись не создана — код снова действует (попытки по-прежнему
+    // считаются атомарно выше).
+    await db.run('UPDATE registration_requests SET consumed_at = NULL WHERE id = $1', [registrationId])
+      .catch(() => {});
+    // Гонка за логин или почту между проверкой и вставкой (UNIQUE) — 409.
+    // Любая другая ошибка базы — внутренняя (500), а не «логин занят».
+    if (!isUniqueViolation(err)) throw err;
+    if (/email/i.test(`${err.constraint || ''} ${err.message || ''}`)) {
+      throw new RegistrationError(409, 'Этот email уже зарегистрирован', 'EMAIL_TAKEN');
+    }
     throw new RegistrationError(409, 'Этот логин уже занят', 'USERNAME_TAKEN');
   }
   const userId = inserted.rows[0].id;
@@ -294,7 +443,12 @@ module.exports = {
   RegistrationError,
   CODE_TTL_SEC,
   MAX_ATTEMPTS,
+  REGISTRATION_DISABLED_MESSAGE,
   setMailer,
+  configureLimits,
+  resetGlobalCounters,
+  resetPurgeClock,
+  isUniqueViolation,
   isAllowed,
   listAllowlist,
   addAllowlist,

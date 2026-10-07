@@ -52,8 +52,19 @@ const REQUIRED_HTTP = [
   'http/sync.bootstrap.json', 'http/sync.page.json', 'http/sync.cursor-invalid.json',
   'http/files.policy.json', 'http/files.upload.json',
   'http/announcements.list.json',
-  'http/devices.push-token-register.json', 'http/devices.push-token-invalid.json', 'http/devices.push-token-delete.json'
+  'http/devices.push-token-register.json', 'http/devices.push-token-invalid.json', 'http/devices.push-token-delete.json',
+  // самостоятельная регистрация, удаление аккаунта, жалобы и блокировки (registration.md)
+  'http/settings.info.json',
+  'http/auth.register-request-disabled.json', 'http/auth.register-request-invalid.json',
+  'http/auth.register-request-mail-not-configured.json',
+  'http/auth.register-verify-disabled.json', 'http/auth.register-verify-invalid.json', 'http/auth.register-verify-expired.json',
+  'http/blocks.add.json', 'http/blocks.list.json', 'http/blocks.remove.json',
+  'http/reports.create.json',
+  'http/users.delete-me.json', 'http/users.delete-me-wrong-password.json'
 ];
+
+// Варианты кадров, которые клиенты обязаны различать по code.
+const REQUIRED_WS_VARIANTS = ['ws/error.dm_not_allowed.json'];
 
 // Что уходит через поставщиков push (задача 18): по форме на сообщение и звонок.
 const REQUIRED_PUSH = [
@@ -104,6 +115,65 @@ test('every required WebSocket event has a committed fixture', () => {
 test('every required HTTP fixture is committed', () => {
   const files = committedFiles();
   for (const f of REQUIRED_HTTP) assert.ok(files.includes(f), `missing ${f}`);
+});
+
+test('every required WebSocket variant is committed', () => {
+  const files = committedFiles();
+  for (const f of REQUIRED_WS_VARIANTS) assert.ok(files.includes(f), `missing ${f}`);
+  const dm = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'ws/error.dm_not_allowed.json'), 'utf8'));
+  assert.strictEqual(dm.code, 'DM_NOT_ALLOWED');
+  assert.strictEqual(dm.retryable, false);
+});
+
+// openapi.yaml описывает каждый маршрут, ответ которого снят в фикстуру: новый
+// маршрут без описания в контракте — это дрейф (final review, parity Part 1 №2).
+test('openapi.yaml documents every captured HTTP endpoint and status', () => {
+  const yaml = fs.readFileSync(path.join(REPO, 'mobile/contracts/openapi.yaml'), 'utf8');
+  const norm = (p) => p.replace(/\{[^}]+\}/g, '{}');
+  const ops = new Map(); // "/path" -> Map(method -> Set(status))
+  let current = null;
+  let method = null;
+  let inResponses = false;
+  for (const line of yaml.split(/\r?\n/)) {
+    let m;
+    if ((m = /^  (\/[^:\s]*):\s*$/.exec(line))) { current = norm(m[1]); ops.set(current, ops.get(current) || new Map()); method = null; continue; }
+    if (/^\S/.test(line)) { current = null; continue; }
+    if (!current) continue;
+    if ((m = /^    (get|post|put|patch|delete):\s*$/.exec(line))) { method = m[1].toUpperCase(); ops.get(current).set(method, new Set()); inResponses = false; continue; }
+    if (method && /^      responses:\s*$/.test(line)) { inResponses = true; continue; }
+    if (method && /^      \S/.test(line)) inResponses = false;
+    if (method && inResponses && (m = /^        ['"]?(\d{3})['"]?:/.exec(line))) ops.get(current).get(method).add(m[1]);
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'manifest.json'), 'utf8'));
+  const missing = [];
+  for (const [file, meta] of Object.entries(manifest)) {
+    if (meta.kind !== 'http') continue;
+    const p = norm(meta.path.replace(/^\/api/, ''));
+    const statuses = ops.get(p)?.get(meta.method);
+    if (!statuses) missing.push(`${meta.method} ${p} (${file})`);
+    else if (!statuses.has(String(meta.status))) missing.push(`${meta.method} ${p} -> ${meta.status} (${file})`);
+  }
+  assert.deepStrictEqual(missing, [], `openapi.yaml lacks:\n${missing.join('\n')}`);
+});
+
+// Примеры в контракте — нейтральные (example.com/.test/.invalid), без адресов
+// и телефонов, похожих на настоящих сотрудников, и без хостов компании.
+test('contract examples use neutral data', () => {
+  const files = [
+    'mobile/contracts/openapi.yaml', 'mobile/contracts/registration.md',
+    ...committedFiles().map((f) => `mobile/contracts/fixtures/${f}`)
+  ];
+  const problems = [];
+  for (const rel of files) {
+    const text = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    for (const [, addr] of text.matchAll(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g)) {
+      if (!/@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net|test)|example|invalid|test)$/i.test(addr)) problems.push(`${rel}: e-mail ${addr}`);
+    }
+    for (const re of [/centras\.kz/gi, /\bcic\.kz\b/gi, /kz\.centras\./gi, /\+7 \(7\d\d\) \d{3}-\d\d-\d\d/g]) {
+      for (const [hit] of text.matchAll(re)) problems.push(`${rel}: ${hit}`);
+    }
+  }
+  assert.deepStrictEqual(problems, []);
 });
 
 test('every required push payload fixture is committed and carries ids only', () => {

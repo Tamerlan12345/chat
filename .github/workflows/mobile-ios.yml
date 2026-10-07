@@ -343,7 +343,14 @@ jobs:
           git -C "$work" init -q
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$work" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git"
+          # The token travels as an HTTP header from the environment (as
+          # actions/checkout does), never inside the remote URL or argv.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::${auth}"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}"
+          git -C "$work" remote add origin "https://github.com/${REPOSITORY}.git"
           # ls-remote exits 2 only when the branch is absent; any other failure stops the job.
           set +e
           git -C "$work" ls-remote --exit-code --heads origin ci/ios-screenshots > /dev/null

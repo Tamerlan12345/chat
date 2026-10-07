@@ -310,6 +310,10 @@ module.exports = {
   // активируется сразу после кода из письма (через запятую). Дополняет список,
   // заданный администратором в базе; остальные адреса попадают на рассмотрение.
   REGISTRATION_ALLOWED_EMAILS: (process.env.REGISTRATION_ALLOWED_EMAILS || '').trim(),
+  // Общие (на весь сервер) пределы самостоятельной регистрации: заявок на код
+  // в час и неудачных проверок кода в час — со всех адресов вместе (решение R).
+  REGISTRATION_GLOBAL_REQUESTS_PER_HOUR: boundedInt('REGISTRATION_GLOBAL_REQUESTS_PER_HOUR', 60, { min: 1, max: 100000 }),
+  REGISTRATION_GLOBAL_FAILED_VERIFIES_PER_HOUR: boundedInt('REGISTRATION_GLOBAL_FAILED_VERIFIES_PER_HOUR', 300, { min: 1, max: 100000 }),
 
   SERVER_VERSION: '2026.1.0-pro'
 };

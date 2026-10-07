@@ -1,6 +1,6 @@
 {
   "headers": {
-    "apns-topic": "kz.centras.centychat.voip",
+    "apns-topic": "com.example.centychat.voip",
     "apns-push-type": "voip",
     "apns-priority": "10",
     "apns-expiration": "1790931630"

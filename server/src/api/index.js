@@ -1963,6 +1963,9 @@ router.post('/admin/reports/:id/close', requireAuth, requireAdmin, route(async (
 router.post('/blocks', requireAuth, route(async (req, res) => {
   try {
     const result = await Safety.blockUser(req.user.id, req.body?.userId);
+    // Звонок, который уже звонит (или ждёт телефон, разбуженный push), не
+    // переживает блокировку — в обе стороны.
+    wsServer.endCallsBetween(req.user.id, result.userId);
     res.status(201).json(result);
   } catch (err) {
     sendSafetyError(res, err);
@@ -2002,7 +2005,16 @@ router.delete('/users/me', requireAuth, route(async (req, res) => {
     AuditService.log({ action: 'account_deleted', ip, details: { deletedUserId: req.user.id } });
     wsServer.disconnectUser(req.user.id, 'Учётная запись удалена');
     wsServer.forgetPushedChats(req.user.id);
-    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser({ ...req.user, full_name: 'Удалённый сотрудник', is_active: 0, status: 'offline', avatar_url: null }) });
+    // Рассылается уже обезличенная строка из базы: прежние логин, почта,
+    // телефон и должность стёрты и по сокетам не уходят (registration.md §3).
+    const erased = await UserService.getUserById(req.user.id);
+    wsServer.broadcast({
+      type: 'user_updated',
+      user: UserService.toPublicUser({
+        ...(erased || { id: req.user.id, username: `deleted~${req.user.id}`, full_name: 'Удалённый сотрудник' }),
+        is_active: 0, status: 'offline', avatar_url: null
+      })
+    });
     res.json({ success: true });
   } catch (err) {
     if (err instanceof Account.AccountError && err.code === 'INVALID_PASSWORD') registerFailure(failKey, failLimit);
@@ -2190,6 +2202,9 @@ async function acceptUpload(req, res, next) {
   }
   const running = activeUploads.get(userId) || 0;
   if (running >= MAX_PARALLEL_UPLOADS) {
+    // Подсказка клиенту, когда спросить снова: мобильные клиенты ждут по
+    // Retry-After, а не помечают файл как «не загрузилось».
+    res.set('Retry-After', String(jitterSeconds(3)));
     return res.status(429).json({ error: 'Дождитесь окончания текущих загрузок' });
   }
   activeUploads.set(userId, running + 1);
