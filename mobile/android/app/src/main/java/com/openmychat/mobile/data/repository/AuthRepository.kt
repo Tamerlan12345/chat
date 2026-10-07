@@ -65,28 +65,7 @@ class DefaultAuthRepository @Inject constructor(
     override suspend fun login(username: String, password: String): LoginResult {
         try {
             val resp = apiClient.login(LoginRequest(username = username.trim(), password = password))
-
-            // Attempt device claim with a random 256-bit secret (base64url)
-            try {
-                val secretBytes = ByteArray(32)
-                SecureRandom().nextBytes(secretBytes)
-                val secretString = java.util.Base64.getUrlEncoder()
-                    .withoutPadding()
-                    .encodeToString(secretBytes)
-                val claimResp = apiClient.claimDevice(
-                    DeviceClaimRequest(
-                        deviceId = sessionManager.deviceId,
-                        deviceSecret = secretString
-                    )
-                )
-                if (claimResp.claimed) {
-                    sessionManager.deviceSecret = secretString
-                }
-            } catch (error: SecureStorageUnavailableException) {
-                throw error
-            } catch (_: Exception) {
-                // Device claim is optional; password sign-in already succeeded.
-            }
+            claimThisDevice(apiClient, sessionManager)
 
             return if (resp.user.mustChangePassword) {
                 sessionManager.mustChangePassword = true
@@ -112,5 +91,36 @@ class DefaultAuthRepository @Inject constructor(
             // The remote call failed after (or before) the local clear; make sure local state is gone.
             if (!sessionManager.clearSession()) throw SecureStorageUnavailableException()
         }
+    }
+}
+
+/**
+ * Claims this device for the account just signed in (password sign-in, or a registration that
+ * signed in — parity P8): a random 256-bit secret (base64url) the login screen's knock uses later.
+ * Optional — a failure leaves the sign-in as it is — except that a secure store that cannot keep the
+ * secret is reported, never swallowed.
+ */
+internal suspend fun claimThisDevice(apiClient: ApiClient, sessionManager: SessionManager) {
+    try {
+        val secretBytes = ByteArray(32)
+        SecureRandom().nextBytes(secretBytes)
+        val secretString = java.util.Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(secretBytes)
+        val claimResp = apiClient.claimDevice(
+            DeviceClaimRequest(
+                deviceId = sessionManager.deviceId,
+                deviceSecret = secretString
+            )
+        )
+        if (claimResp.claimed) {
+            sessionManager.deviceSecret = secretString
+        }
+    } catch (error: SecureStorageUnavailableException) {
+        throw error
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        // Device claim is optional; the sign-in already succeeded.
     }
 }

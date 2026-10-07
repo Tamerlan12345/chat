@@ -348,6 +348,34 @@ class SessionManager private constructor(
         ephemeralDeviceId = null
     }
 
+    /**
+     * Ends the session only when [token] is still the session's token: a refusal of an older token
+     * (another account's, or one already replaced) says nothing about the session signed in now.
+     */
+    @Synchronized
+    fun clearSessionIfCurrent(token: String): Boolean {
+        if (readString(KEY_TOKEN) != token) return true
+        return clearSession()
+    }
+
+    /**
+     * Explicit sign-out: the session and the device secret go together, in one commit, so the login
+     * screen's knock cannot sign the same person back in without a password (final review I1). False
+     * when the store could not be written — the caller must not report a sign-out then.
+     */
+    fun clearSessionForSignOut(): Boolean {
+        val cleared = editSecureStorage {
+            remove(KEY_TOKEN)
+            remove(KEY_CURRENT_USER)
+            remove(KEY_MUST_CHANGE_PASSWORD)
+            remove(KEY_DEVICE_SECRET)
+        }
+        _tokenFlow.value = null
+        _currentUserFlow.value = null
+        _mustChangePasswordFlow.value = false
+        return cleared
+    }
+
     fun clearSession(): Boolean {
         val cleared = editSecureStorage {
             remove(KEY_TOKEN)

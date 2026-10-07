@@ -26,7 +26,7 @@ class RefreshUnreachableException : IOException("Сервер не ответи�
 
 /**
  * Answers a 401 by refreshing the token once (shared by concurrent requests, [RefreshCoordinator])
- * and repeating the request with it. A definitive refusal lets the 401 through (the session ends);
+ * and repeating the request with it — only ever as the account the request was sent for. A definitive refusal lets the 401 through (the session ends);
  * an unreachable refresh fails the request as a network error instead.
  */
 class SessionAuthenticator(
@@ -43,7 +43,11 @@ class SessionAuthenticator(
         if (responseCount(response) >= 3) return null
         if (!canSendCredentials(response.request.url)) return null
 
+        // A request that went without a token is never answered with this session's token (it was
+        // made signed out, or for nobody): it would run as an account it was not made for.
         val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: return null
+        val owner = response.request.tag(BoundCredentials::class.java)?.owner
         var unreachable = false
         val validToken = coordinator.refreshIfNeeded(
             requestToken = requestToken,
@@ -58,7 +62,12 @@ class SessionAuthenticator(
                     }
                 }
             },
-            updateToken = updateToken
+            updateToken = updateToken,
+            // Renewed by another request meanwhile: replayed only when it is the same account's
+            // session (final review I4) — never another account's that signed in since.
+            mayUseCurrent = { active ->
+                JwtClaims.sameAccount(requestToken, active) && (owner == null || JwtClaims.userId(active) == owner)
+            }
         )
         if (validToken == null) {
             if (unreachable) throw RefreshUnreachableException()

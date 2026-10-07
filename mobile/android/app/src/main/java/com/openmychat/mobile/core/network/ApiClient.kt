@@ -5,6 +5,7 @@ import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -86,7 +87,8 @@ class ApiClient(
                     null
                 }
                 RefreshFailurePolicy.classify(response.code, token).also {
-                    if (it == RefreshOutcome.Rejected) sessionManager.clearSession()
+                    // The refused session ends — unless another one was signed in meanwhile.
+                    if (it == RefreshOutcome.Rejected) sessionManager.clearSessionIfCurrent(currentToken)
                 }
             }
         } catch (_: Exception) {
@@ -244,6 +246,7 @@ class ApiClient(
     }
 
     suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
+        val refreshing = sessionManager.token
         try {
             val httpRequest = Request.Builder()
                 .url("${getBaseUrl()}/auth/refresh")
@@ -254,25 +257,32 @@ class ApiClient(
             sessionManager.token = response.token
             response
         } catch (error: ApiException) {
-            if (RefreshFailurePolicy.shouldClearSession(error.statusCode)) {
-                sessionManager.clearSession()
+            if (RefreshFailurePolicy.shouldClearSession(error.statusCode) && refreshing != null) {
+                sessionManager.clearSessionIfCurrent(refreshing)
             }
             throw error
         }
     }
 
+    /**
+     * Explicit sign-out. The session and the device secret are wiped here first (fail closed); then
+     * `/auth/logout` names this device (push.md §2, final review I1), so the server revokes the token,
+     * unbinds the device secret and drops this device's push tokens in one request.
+     */
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
         val tokenForRemoteLogout = sessionManager.token
-        if (!sessionManager.clearSession()) {
+        val deviceId = runCatching { sessionManager.deviceId }.getOrNull()
+        if (!sessionManager.clearSessionForSignOut()) {
             throw SecureStorageUnavailableException()
         }
 
         if (tokenForRemoteLogout.isNullOrBlank()) return@withContext
 
+        val body = buildJsonObject { if (deviceId != null) put("device_id", JsonPrimitive(deviceId)) }
         val httpRequest = Request.Builder()
             .url("${getBaseUrl()}/auth/logout")
             .header("Authorization", "Bearer $tokenForRemoteLogout")
-            .post("{}".toRequestBody(jsonMediaType))
+            .post(body.toString().toRequestBody(jsonMediaType))
             .build()
 
         executeRequestNoContent(httpRequest)
@@ -455,26 +465,54 @@ class ApiClient(
     /**
      * A request whose status the caller interprets (the delivery engine: `/sync` 410, `POST` 409/503).
      * Never throws for an HTTP status: no answer at all is status 0. The session rules still apply —
-     * a 401 (after the token refresh failed) ends the session, as for every other request.
+     * a 401 (after the token refresh failed) ends the session, as for every other request, but only
+     * when it refused the session signed in now.
+     *
+     * Run in a [RequestOwner] context, the request is that account's: it goes only with its token,
+     * and not at all (status 0) when another account, or nobody, is signed in (final review I4).
      */
-    suspend fun raw(method: String, path: String, body: JsonElement? = null): RawResponse = withContext(Dispatchers.IO) {
-        // Contract paths carry the /api prefix; the base URL already ends with it.
-        val relative = path.removePrefix("/api")
-        val url = "${getBaseUrl()}$relative".toHttpUrlOrNull() ?: return@withContext RawResponse(0, "", null)
-        val request = Request.Builder().url(url).apply {
-            if (method == "GET") get() else method(method, (body ?: JsonObject(emptyMap())).toString().toRequestBody(jsonMediaType))
-        }.build()
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            return@withContext RawResponse(0, "", null)
+    suspend fun raw(method: String, path: String, body: JsonElement? = null): RawResponse {
+        val owner = currentCoroutineContext()[RequestOwner]?.userId
+        return withContext(Dispatchers.IO) {
+            // Contract paths carry the /api prefix; the base URL already ends with it.
+            val relative = path.removePrefix("/api")
+            val url = "${getBaseUrl()}$relative".toHttpUrlOrNull() ?: return@withContext RawResponse(0, "", null)
+            val credentials = credentialsFor(owner) ?: return@withContext RawResponse(0, "", null)
+            val request = Request.Builder().url(url).tag(BoundCredentials::class.java, credentials).apply {
+                if (method == "GET") get() else method(method, (body ?: JsonObject(emptyMap())).toString().toRequestBody(jsonMediaType))
+            }.build()
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: IOException) {
+                return@withContext RawResponse(0, "", null)
+            }
+            response.use {
+                val text = it.body?.string().orEmpty()
+                if (it.code == 401) endSessionRefused(refusedToken(it))
+                if (it.code == 403 && text.contains("MUST_CHANGE_PASSWORD")) sessionManager.mustChangePassword = true
+                RawResponse(it.code, text, retryAfterSeconds(it))
+            }
         }
-        response.use {
-            val text = it.body?.string().orEmpty()
-            if (it.code == 401) sessionManager.clearSession()
-            if (it.code == 403 && text.contains("MUST_CHANGE_PASSWORD")) sessionManager.mustChangePassword = true
-            RawResponse(it.code, text, retryAfterSeconds(it))
-        }
+    }
+
+    /**
+     * The binding of a request made now: the current token, and [owner] when stated. Null — a
+     * request for [owner] that must not go out, because the session is not that account's.
+     */
+    internal fun credentialsFor(owner: Long?): BoundCredentials? {
+        val token = sessionManager.token
+        if (owner != null && (token == null || JwtClaims.userId(token) != owner)) return null
+        return BoundCredentials(token, owner)
+    }
+
+    /** The token a 401 refused: the one the request carried, else the one it was made with. */
+    private fun refusedToken(response: Response): String? =
+        response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: response.request.tag(BoundCredentials::class.java)?.token
+
+    /** A 401 ends the session only when it refused the session signed in now (final review I4). */
+    private fun endSessionRefused(token: String?) {
+        if (token != null) sessionManager.clearSessionIfCurrent(token)
     }
 
     private inline fun <reified T> executeRequest(
@@ -486,7 +524,7 @@ class ApiClient(
         val bodyString = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response), refusedToken(response))
         }
 
         return try {
@@ -501,28 +539,34 @@ class ApiClient(
 
         if (!response.isSuccessful) {
             val bodyString = response.body?.string() ?: ""
-            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response))
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response), refusedToken(response))
         }
     }
 
     /** Transport failures: a refused certificate is reported apart from being offline. */
     private fun execute(requestClient: OkHttpClient, request: Request): Response = try {
-        requestClient.newCall(request).execute()
+        // Bound to the session of the moment it is made, not of the moment OkHttp sends it.
+        val bound = if (request.tag(BoundCredentials::class.java) != null) request
+        else request.newBuilder().tag(BoundCredentials::class.java, BoundCredentials(sessionManager.token, null)).build()
+        requestClient.newCall(bound).execute()
     } catch (e: SSLException) {
         throw ApiException(0, "TLS_ERROR", e.message ?: "Ошибка защищённого соединения")
     } catch (e: IOException) {
         throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
     }
 
-    /** `Retry-After` in delta-seconds (the form the server sends on 429/503); anything else is ignored. */
+    /** `Retry-After` in delta-seconds or as an HTTP-date ([RetryAfter]); anything else is ignored. */
     private fun retryAfterSeconds(response: Response): Long? =
-        response.header("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+        RetryAfter.seconds(response.header("Retry-After"), System.currentTimeMillis())
 
-    /** A refusal of a request made outside this class (attachments): the same session rules and Russian text. */
-    internal fun raise(code: Int, bodyString: String, retryAfterSeconds: Long?): Nothing =
-        handleErrorResponse(code, bodyString, retryAfterSeconds)
+    /**
+     * A refusal of a request made outside this class (attachments): the same session rules and
+     * Russian text. [refusedToken] — the token the refused request carried.
+     */
+    internal fun raise(code: Int, bodyString: String, retryAfterSeconds: Long?, refusedToken: String?): Nothing =
+        handleErrorResponse(code, bodyString, retryAfterSeconds, refusedToken)
 
-    private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long? = null): Nothing {
+    private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long?, refusedToken: String?): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"
         var attemptsLeft: Int? = null
@@ -542,9 +586,10 @@ class ApiClient(
         }
 
         if (code == 401) {
-            // A protected request reached the server and the session was rejected.
-            // Clear local credentials so the navigation guard can return to sign-in.
-            sessionManager.clearSession()
+            // A protected request reached the server and the session was rejected. Clear local
+            // credentials so the navigation guard can return to sign-in — when it is this session's
+            // refusal; a late refusal of an earlier account's token leaves the current one alone.
+            endSessionRefused(refusedToken)
             throw UnauthorizedException(errorMessage)
         }
 

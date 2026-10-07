@@ -725,4 +725,53 @@ class DeliveryEngineTest {
 
     @Suppress("unused")
     private fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.content
+    /** Final review I4: the engine's requests are made for its account, never for "whoever is signed in". */
+    @Test
+    fun everyRequestOfTheEngineIsMadeForTheAccountThatOwnsTheQueue() = runBlocking {
+        realtime.connectionState.value = ConnectionState.Connecting
+        val h = harness()
+        h.engine.enqueue(conv, "из фона", clientMsgId = "k1")
+        h.backend.postAnswer = { _, body -> com.openmychat.mobile.data.delivery.HttpOutcome(201, record(71, (body["client_msg_id"] as JsonPrimitive).content, "из фона")) }
+
+        h.runtime.flushInBackground()
+        realtime.connectionState.value = ConnectionState.Connected
+
+        assertEquals(listOf<Long?>(1L), h.backend.postOwners)
+        assertTrue(h.backend.syncOwners.isNotEmpty())
+        assertTrue(h.backend.syncOwners.toString(), h.backend.syncOwners.all { it == 1L })
+    }
+
+    /** Parity P11 (delivery-state §5): a disk that keeps failing does not turn into a reconnect loop. */
+    @Test
+    fun aDiskThatKeepsFailingRestartsTheSocketWithAGrowingPause() = runBlocking {
+        val store = InMemoryDeliveryStore()
+        val h = harness(store)
+        h.engine.enqueue(conv, "x", clientMsgId = "k1")
+        store.failAllPersists = java.io.IOException("disk")
+
+        realtime.emitFrame(echo(80, "k1"))
+        assertEquals("the first failure restarts at once", 1, realtime.restarts)
+
+        realtime.emitFrame(echo(80, "k1"))
+        realtime.emitFrame(echo(80, "k1"))
+        assertEquals("further failures wait", 1, realtime.restarts)
+        elapse(999)
+        assertEquals(1, realtime.restarts)
+        elapse(1)
+        assertEquals("one restart for the frames that failed meanwhile", 2, realtime.restarts)
+
+        realtime.emitFrame(echo(80, "k1"))
+        elapse(1_999)
+        assertEquals("the pause grows", 2, realtime.restarts)
+        elapse(1)
+        assertEquals(3, realtime.restarts)
+
+        store.failAllPersists = null
+        realtime.emitFrame(echo(80, "k1")) // stored: the disk is back
+        assertTrue(h.engine.state.value.outbox.isEmpty())
+        h.engine.enqueue(conv, "y", clientMsgId = "k2")
+        store.failNextPersist = java.io.IOException("disk")
+        realtime.emitFrame(echo(81, "k2"))
+        assertEquals("after a success the next failure restarts at once again", 4, realtime.restarts)
+    }
 }

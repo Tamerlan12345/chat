@@ -43,11 +43,11 @@ class FileTransferClientTest {
         .build()
 
     private val failures = mutableListOf<Int>()
-    private val client = FileTransferClient(http, { base }) { code, body, _ ->
+    private val client = FileTransferClient(http, { base }, { code, body, _, _ ->
         failures += code
         val text = Regex("\"error\":\"([^\"]*)\"").find(body)?.groupValues?.get(1) ?: "HTTP error $code"
         throw ApiException(code, null, text)
-    }
+    })
 
     private fun respond(request: Request, code: Int, body: String, vararg headers: Pair<String, String>): Response =
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("x")
@@ -165,7 +165,7 @@ class FileTransferClientTest {
                 throw IOException("Canceled")
             }
             .build()
-        val stalled = FileTransferClient(stalling, { base }) { code, _, _ -> throw ApiException(code, null, "x") }
+        val stalled = FileTransferClient(stalling, { base }, { code, _, _, _ -> throw ApiException(code, null, "x") })
 
         val job = launch(Dispatchers.IO) {
             runInterruptible { stalled.get(42, rangeFrom = null, ifRange = null, ifNoneMatch = null) }

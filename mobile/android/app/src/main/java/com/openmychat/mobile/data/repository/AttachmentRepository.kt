@@ -94,7 +94,8 @@ class DefaultAttachmentRepository @Inject constructor(
     private val transfer = FileTransferClient(
         client = apiClient.imageHttpClient,
         apiBaseUrl = { sessionManager.serverUrl.removeSuffix("/") },
-        fail = apiClient::raise
+        fail = apiClient::raise,
+        credentials = apiClient::credentialsFor
     )
     private val api = apiClient
 

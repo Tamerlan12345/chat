@@ -24,7 +24,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.openmychat.mobile.core.network.RequestOwner
 import java.util.UUID
+import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Runs the delivery model (delivery-state.md) for the whole process: one serial queue of events
@@ -425,6 +427,8 @@ class DeliveryEngine(
         work = newWork()
         epoch++
         alarms.clear()
+        restartScheduled = false
+        diskRestarts = 0
     }
 
     /** A socket already authenticated as [user] while the model is not online: its auth_success. */
@@ -537,6 +541,7 @@ class DeliveryEngine(
                 onPersistFailed(ev, type)
                 return Outcome(false, step.effects)
             }
+            diskRestarts = 0
         } else if (dirtyCache.isNotEmpty()) {
             scheduleCacheFlush()
         }
@@ -546,11 +551,15 @@ class DeliveryEngine(
         return Outcome(true, step.effects)
     }
 
+    /** Socket restarts for failed writes in a row (a disk that stays full); a stored event resets it. */
+    private var diskRestarts = 0
+    @Volatile private var restartScheduled = false
+
     /** §5: the new state is dropped; what happens next depends on who sent the event. */
     private fun onPersistFailed(ev: JsonObject, type: String?) {
         when (type) {
             in USER_EVENTS -> Unit // the caller shows the error; the composer keeps its text
-            in SERVER_EVENTS -> link.restart() // the next sync chain returns the same data
+            in SERVER_EVENTS -> restartAfterDiskFailure() // the next sync chain returns the same data
             else -> {
                 val retry = JsonObject(ev - "now")
                 val session = epoch
@@ -562,15 +571,42 @@ class DeliveryEngine(
         }
     }
 
+    /**
+     * The socket restarts so the next sync returns what could not be stored — at once the first
+     * time, then after a growing pause (1 s, 2 s … 30 s) while the disk keeps failing, so a full disk
+     * is not a reconnect loop (parity P11; iOS does the same). One restart covers the frames that
+     * failed while it waited.
+     */
+    private fun restartAfterDiskFailure() {
+        if (restartScheduled) return
+        if (diskRestarts == 0) {
+            diskRestarts = 1
+            link.restart()
+            return
+        }
+        restartScheduled = true
+        val wait = DeliveryReducer.backoff(diskRestarts.toLong())
+        diskRestarts++
+        val session = epoch
+        work.launch {
+            delay(wait)
+            restartScheduled = false
+            if (session == epoch) link.restart()
+        }
+    }
+
     private fun execute(effect: DeliveryEffect) {
         val session = epoch
+        // Requests are made for the account that owns the model (final review I4): they never go
+        // out under another account's token, whoever is signed in when they are sent.
+        val owner = current.me?.let(::RequestOwner) ?: EmptyCoroutineContext
         when (effect) {
             is DeliveryEffect.Persist, is DeliveryEffect.ClearComposer -> Unit
             is DeliveryEffect.SendWs -> {
                 // A refused write means the socket is closing: treat it as gone now (its close follows).
                 if (!link.send(effect.frame)) post(event("ws_disconnected") {})
             }
-            is DeliveryEffect.SendHttp -> work.launch {
+            is DeliveryEffect.SendHttp -> work.launch(owner) {
                 val result = runCatching { backend.post(effect.path, effect.body) }.getOrElse { e ->
                     if (e is CancellationException) throw e
                     HttpOutcome(0, null)
@@ -593,7 +629,7 @@ class DeliveryEngine(
                     if (session == epoch) post(effect.event)
                 }
             }
-            is DeliveryEffect.SyncRequest -> work.launch {
+            is DeliveryEffect.SyncRequest -> work.launch(owner) {
                 val outcome = runCatching { backend.sync(effect.cursor, effect.limit) }.getOrElse { e ->
                     if (e is CancellationException) throw e
                     SyncOutcome.Failed(0)
@@ -617,7 +653,7 @@ class DeliveryEngine(
                     }
                 )
             }
-            is DeliveryEffect.RefreshConversationLists -> work.launch {
+            is DeliveryEffect.RefreshConversationLists -> work.launch(owner) {
                 val snapshot = runCatching { backend.unreadSnapshot() }.getOrNull() ?: return@launch
                 if (session != epoch) return@launch
                 post(event("unread_snapshot") {
@@ -627,7 +663,7 @@ class DeliveryEngine(
                     }
                 })
             }
-            is DeliveryEffect.LoadHistory -> work.launch {
+            is DeliveryEffect.LoadHistory -> work.launch(owner) {
                 val page = runCatching { backend.history(effect.conversation) }.getOrNull() ?: return@launch
                 if (session != epoch) return@launch
                 post(event("history_page") { put("body", JsonArray(page)) })

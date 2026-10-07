@@ -107,7 +107,11 @@ class DefaultAccountRepository @Inject constructor(
 
     override suspend fun verifyRegistration(registrationId: String, code: String): RegistrationOutcome {
         val outcome = api.verifyRegistration(registrationId, code)
-        if (outcome is RegistrationOutcome.SignedIn) loginPreferences.lastUsername = outcome.user.username
+        if (outcome is RegistrationOutcome.SignedIn) {
+            loginPreferences.lastUsername = outcome.user.username
+            // Signed in exactly like a password sign-in: the device is claimed too (parity P8).
+            claimThisDevice(api, session)
+        }
         return outcome
     }
 
@@ -116,10 +120,9 @@ class DefaultAccountRepository @Inject constructor(
         // The server deleted the account: what follows runs whatever the local clear below does.
         afterServerDeletion()
         // The server revoked every token and unbound this device: nothing of the account may stay.
-        val cleared = session.clearSession()
-        val secretCleared = runCatching { session.deviceSecret = null }.isSuccess
+        val cleared = session.clearSessionForSignOut()
         loginPreferences.lastUsername = null
-        if (!cleared || !secretCleared) throw SecureStorageUnavailableException()
+        if (!cleared) throw SecureStorageUnavailableException()
     }
 
     override suspend fun report(body: ReportBody) = api.report(body)
