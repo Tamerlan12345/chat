@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Avatar from './Avatar';
 import Icon from './Icon';
+import { toastTarget } from '../lib/live-events.mjs';
 
 // Crystal-clear corporate notification chime using Web Audio API synthesis
 export function playNotificationSound(isUrgent = false) {
@@ -106,7 +107,7 @@ function ToastItem({ toast, onDismiss, onAction }) {
   const isAnnouncement = toast.type === 'announcement';
   const kind = isUrgent ? 'urgent' : isAnnouncement ? 'announcement' : 'chat';
   // «Нажмите, чтобы открыть» — только когда открывать есть что.
-  const hasTarget = Boolean(toast.data?.user || toast.data?.channel || isAnnouncement);
+  const hasTarget = Boolean(toastTarget(toast.data) || isAnnouncement);
 
   return (
     <div

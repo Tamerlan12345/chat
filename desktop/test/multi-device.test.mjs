@@ -79,3 +79,115 @@ test('conversation_read снимает карточки только своей 
   assert.ok(!toastIsForConversation(dm, { conversationType: 'direct', targetId: 6 }));
   assert.ok(!toastIsForConversation(wake, { conversationType: 'direct', targetId: 5 }), 'побудку не трогаем');
 });
+
+// ── Fix wave (Task 11, parity P16) ─────────────────────────────────────────
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const NOTIFY_DIR = path.join(here, '..', '..', 'mobile', 'contracts', 'fixtures', 'notify');
+
+test('isViewingHere: открытая в фокусе переписка при присутствии online; простой (away) — не смотрит', async () => {
+  const { isViewingHere } = await import('../src/renderer/src/lib/multi-device.mjs');
+  const view = { chat: { type: 'direct', id: 5 }, chatVisible: true, focused: true, presence: 'online' };
+  assert.strictEqual(isViewingHere(view, 'direct', 5), true);
+  assert.strictEqual(isViewingHere(view, 'direct', '5'), true, 'id строкой из кадра');
+  assert.strictEqual(isViewingHere(view, 'direct', 6), false, 'другой собеседник');
+  assert.strictEqual(isViewingHere(view, 'channel', 5), false, 'канал №5 — не сотрудник №5');
+  assert.strictEqual(isViewingHere({ ...view, presence: 'away' }, 'direct', 5), false, 'вектор 05: компьютер простаивает');
+  assert.strictEqual(isViewingHere({ ...view, focused: false }, 'direct', 5), false);
+  assert.strictEqual(isViewingHere({ ...view, chatVisible: false }, 'direct', 5), false);
+  assert.strictEqual(isViewingHere({ ...view, chat: null }, 'direct', 5), false);
+});
+
+test('новое чужое сообщение: смотрит — mark_read сразу (§4 п. 4), без счётчика и уведомления; не смотрит — счётчик и решение сервера', async () => {
+  const { incomingMessagePlan } = await import('../src/renderer/src/lib/multi-device.mjs');
+  assert.deepStrictEqual(incomingMessagePlan({ own: false, viewingHere: true, notify: false }),
+    { markRead: true, countUnread: false, notify: false });
+  assert.deepStrictEqual(incomingMessagePlan({ own: false, viewingHere: false, notify: true }),
+    { markRead: false, countUnread: true, notify: true });
+  assert.deepStrictEqual(incomingMessagePlan({ own: false, viewingHere: false, notify: false }),
+    { markRead: false, countUnread: true, notify: false }, 'читают на телефоне: счётчик от notify не зависит');
+  assert.deepStrictEqual(incomingMessagePlan({ own: false, viewingHere: false, notify: undefined }),
+    { markRead: false, countUnread: true, notify: true }, 'старый сервер');
+  assert.deepStrictEqual(incomingMessagePlan({ own: true, viewingHere: false, notify: true }),
+    { markRead: false, countUnread: false, notify: false });
+});
+
+test('векторы fixtures/notify: сокет компьютера (desk) показывает ровно то, что решил сервер, и читает, пока смотрит', async () => {
+  const { isViewingHere, incomingMessagePlan } = await import('../src/renderer/src/lib/multi-device.mjs');
+  const files = fs.readdirSync(NOTIFY_DIR).filter((f) => /^\d\d-.*\.json$/.test(f));
+  let checked = 0;
+  for (const file of files) {
+    const vector = JSON.parse(fs.readFileSync(path.join(NOTIFY_DIR, file), 'utf8'));
+    if (vector.decision !== 'message') continue;
+    const { recipientId, message, sockets } = vector.input;
+    for (const socket of sockets.filter((s) => s.deviceId === null && /^desk/.test(s.id))) {
+      const chat = socket.viewing ? { type: socket.viewing.conversationType, id: socket.viewing.targetId } : null;
+      // Окно в фокусе и раздел переписок открыт; присутствие — как у сокета.
+      const view = { chat, chatVisible: true, focused: true, presence: socket.presence };
+      // Переписка с точки зрения получателя: личная — собеседник (автор), канал — канал.
+      const convoId = message.conversationType === 'direct' ? message.senderId : message.targetId;
+      const viewingHere = isViewingHere(view, message.conversationType, convoId);
+      const notify = vector.expected.banner.includes(socket.id);
+      const plan = incomingMessagePlan({ own: message.senderId === recipientId, viewingHere, notify });
+      assert.strictEqual(plan.notify, notify, `${vector.name}: баннер на компьютере`);
+      const serverSaysViewing = socket.presence === 'online' && socket.viewing &&
+        socket.viewing.conversationType === message.conversationType && socket.viewing.targetId === convoId;
+      assert.strictEqual(plan.markRead, Boolean(serverSaysViewing) && message.senderId !== recipientId, `${vector.name}: mark_read`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked >= 5, `проверено сокетов компьютера: ${checked}`);
+  const v05 = JSON.parse(fs.readFileSync(path.join(NOTIFY_DIR, '05-desktop-away-while-viewing.json'), 'utf8'));
+  assert.deepStrictEqual(v05.expected.banner, ['desk'], 'вектор 05 на месте');
+});
+
+test('App.jsx: уведомление, счётчик и mark_read нового сообщения решает incomingMessagePlan; отметка прочтения учитывает присутствие', () => {
+  const app = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'App.jsx'), 'utf8');
+  assert.ok(!/const isCurrentActive =/.test(app), 'прежнее правило без присутствия убрано');
+  assert.strictEqual((app.match(/incomingMessagePlan\(/g) || []).length, 2, 'личные и каналы');
+  const mark = app.slice(app.indexOf('const markConversationRead'), app.indexOf('const markConversationRead') + 400);
+  assert.match(mark, /isViewingHere\(/, 'mark_read — только пока окно «смотрит» переписку');
+  const presence = app.slice(app.indexOf('const updateMyPresence'), app.indexOf('const updateMyPresence') + 700);
+  assert.match(presence, /markConversationRead\(\)/, 'вернулись «в сети» — открытая переписка прочитана (§4 п. 4)');
+});
+
+// ── Fix round 1 (Ruling S): один mark_read на сообщение ────────────────────
+// Новое сообщение в открытом чате отмечал и обработчик кадра (plan.markRead),
+// и ChatView (прокрутка внизу) — два кадра на одно сообщение.
+
+test('createReadMarks: та же переписка до того же сообщения — второй раз не отправляется', async () => {
+  const { createReadMarks } = await import('../src/renderer/src/lib/multi-device.mjs');
+  const marks = createReadMarks();
+  assert.strictEqual(marks.shouldSend('direct:5', 41), true);
+  assert.strictEqual(marks.shouldSend('direct:5', 41), false, 'то же сообщение — дубль');
+  assert.strictEqual(marks.shouldSend('direct:5', 40), false, 'более старое — уже прочитано');
+  assert.strictEqual(marks.shouldSend('direct:5', 42), true, 'новое сообщение');
+  assert.strictEqual(marks.shouldSend('channel:5', 42), true, 'канал №5 — другая переписка');
+  assert.strictEqual(marks.shouldSend('direct:5', undefined), true, 'без номера (фокус окна) — отправить');
+  assert.strictEqual(marks.shouldSend('direct:5', 'tmp-1'), true, 'неотправленное своё — отправить');
+  marks.reset();
+  assert.strictEqual(marks.shouldSend('direct:5', 42), true, 'новый сокет (auth_success) — заново');
+});
+
+test('latestMessageId: наибольший целый id в ленте', async () => {
+  const { latestMessageId } = await import('../src/renderer/src/lib/multi-device.mjs');
+  assert.strictEqual(latestMessageId([{ id: 3 }, { id: 9 }, { id: 'tmp-1' }, { id: 7 }]), 9);
+  assert.strictEqual(latestMessageId([]), null);
+  assert.strictEqual(latestMessageId(null), null);
+});
+
+test('App.jsx и ChatView: обе отметки идут через одну защиту от дублей с номером сообщения', () => {
+  const app = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'App.jsx'), 'utf8');
+  assert.strictEqual((app.match(/if \(plan\.markRead\) markConversationRead\(undefined, msg\.id\);/g) || []).length, 2);
+  const mark = app.slice(app.indexOf('const markConversationRead'), app.indexOf('const markConversationRead') + 600);
+  assert.match(mark, /readMarksRef\.current\.shouldSend\(/);
+  assert.match(app, /case 'auth_success':[\s\S]{0,400}readMarksRef\.current\.reset\(\)/, 'новый сокет — отметки заново');
+  assert.match(app, /onMarkRead=\{\(conversationType, targetId, upToId\) =>\s*markConversationRead\(\{ type: conversationType, id: targetId \}, upToId\)/);
+  const chat = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'ChatView.jsx'), 'utf8');
+  // При смене чата лента ещё прежняя: номер не передаётся, отметка уходит всегда.
+  assert.match(chat, /onMarkRead\(activeChat\.type, activeChat\.id, isChatSwitch \? undefined : latestMessageId\(messages\)\)/);
+});

@@ -36,6 +36,60 @@ export function applyConversationRead(state, event) {
   return state;
 }
 
+// Это окно сейчас показывает человеку переписку (conversationType, targetId):
+// то же условие, что у кадра viewing (§4), — открыта, раздел переписок виден,
+// окно в фокусе, присутствие «в сети». Кадр пришёл по сокету, значит связь
+// есть. Простаивающий компьютер с открытым чатом не «смотрит» (вектор 05).
+export function isViewingHere({ chat, chatVisible, focused, presence }, conversationType, targetId) {
+  const key = viewingKey({ chat, chatVisible, focused, connected: true, presence });
+  return key !== null && key === `${conversationType}:${Number(targetId)}`;
+}
+
+// Что делать с новым сообщением (§8, строка direct_message / channel_message):
+// смотрят здесь — сразу mark_read (§4 п. 4), без счётчика и уведомления;
+// иначе — счётчик +1 (от notify не зависит) и уведомление по решению сервера.
+export function incomingMessagePlan({ own, viewingHere, notify }) {
+  if (own) return { markRead: false, countUnread: false, notify: false };
+  return {
+    markRead: Boolean(viewingHere),
+    countUnread: !viewingHere,
+    notify: shouldNotify({ own: false, activeHere: viewingHere, notify })
+  };
+}
+
+// Одна отметка прочтения на сообщение. Новое сообщение открытого чата
+// отмечают и обработчик кадра, и лента (прокрутка внизу); помнится, до какого
+// сообщения переписка уже отмечена на этом сокете. Без номера (возврат фокуса,
+// смена чата, неотправленное своё) — отправлять: лишний кадр безопаснее
+// пропущенного прочтения. reset() — новый сокет (auth_success).
+export function createReadMarks() {
+  const last = new Map();
+  return {
+    shouldSend(key, upToId) {
+      const id = Number(upToId);
+      if (upToId === undefined || upToId === null || !Number.isInteger(id) || id <= 0) return true;
+      const prev = last.get(key);
+      if (prev !== undefined && id <= prev) return false;
+      last.set(key, id);
+      return true;
+    },
+    reset() {
+      last.clear();
+    }
+  };
+}
+
+// Наибольший целый id в ленте (неотправленные свои — со строковым id — не в счёт).
+export function latestMessageId(messages) {
+  if (!Array.isArray(messages)) return null;
+  let max = null;
+  for (const m of messages) {
+    const id = Number(m?.id);
+    if (Number.isInteger(id) && id > 0 && (max === null || id > max)) max = id;
+  }
+  return max;
+}
+
 // Уведомление о новом сообщении (§5): своё и открытое здесь в фокусе — нет;
 // иначе решает сервер полем notify (чат могут читать на телефоне); старый
 // сервер поля не шлёт — тогда уведомлять, как раньше.

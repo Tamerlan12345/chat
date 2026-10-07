@@ -24,6 +24,7 @@ const {
 const { wasLaunchedAtLogin, resolveEnabled, writePreference, applyAutostart, isAutostartSupported } = require('./autostart');
 
 const { decidePermissionRequest, decidePermissionCheck } = require('./permissions');
+const { isWindowAway, presenceSignal } = require('./window-presence');
 const { isInsecureRequestBlocked } = require('./server-url');
 const { readClientConfig, resolveEffectiveServerUrl, resolveSystemDirs } = require('./client-config');
 const { verifyInstaller } = require('./update-verify');
@@ -546,6 +547,9 @@ function createMainWindow() {
   });
   win.webContents.on('did-finish-load', () => {
     log('mainWindow did-finish-load successfully!');
+    // Запуск при входе в Windows — окно сразу в трее: странице, которая
+    // считает себя «в сети», сообщаем настоящее состояние.
+    if (isWindowAway(win)) sendWindowPresence('hidden-at-load');
   });
 
   // Перезагрузка или уход страницы на другой адрес: той страницы, что
@@ -586,6 +590,7 @@ function createMainWindow() {
 
   win.on('hide', () => {
     syncIndicator();
+    sendWindowPresence('hidden');
     // Окно ушло в трей посреди сеанса — сотрудник должен понимать, что доступ
     // к экрану не закончился вместе с окном.
     if (hostSession.active && tray && process.platform === 'win32') {
@@ -598,9 +603,10 @@ function createMainWindow() {
       } catch {}
     }
   });
-  win.on('show', syncIndicator);
-  win.on('minimize', syncIndicator);
-  win.on('restore', syncIndicator);
+  win.on('show', () => { syncIndicator(); sendWindowPresence('shown'); });
+  // Свёрнутое окно или окно в трее — сотрудник «отошёл» (multi-device.md §2).
+  win.on('minimize', () => { syncIndicator(); sendWindowPresence('minimized'); });
+  win.on('restore', () => { syncIndicator(); sendWindowPresence('restored'); });
 
   win.on('focus', () => {
     log('mainWindow focus -> stop flashing');
@@ -922,13 +928,30 @@ function setTrayPresence(state) {
 }
 
 let isCurrentlyIdle = false;
+let isScreenLocked = false;
 let presenceInterval = null;
+
+// Итог сигналов компьютера: окно, простой, блокировка экрана. Возврат
+// (разблокировка, пробуждение, ввод после простоя) при свёрнутом окне не
+// делает сотрудника «в сети».
+function currentPresence() {
+  return presenceSignal({ windowAway: isWindowAway(mainWindow), idle: isCurrentlyIdle, locked: isScreenLocked });
+}
+
+function sendWindowPresence(reason) {
+  const status = currentPresence();
+  setTrayPresence(status);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('power-monitor-event', { state: reason, status });
+  }
+}
 
 function setupPowerAndPresenceMonitoring() {
   log('Setting up powerMonitor and automated presence state triggers...');
 
   powerMonitor.on('lock-screen', () => {
     log('powerMonitor: lock-screen detected -> triggering away');
+    isScreenLocked = true;
     setTrayPresence('away');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('power-monitor-event', { state: 'locked', status: 'away' });
@@ -938,10 +961,8 @@ function setupPowerAndPresenceMonitoring() {
   powerMonitor.on('unlock-screen', () => {
     log('powerMonitor: unlock-screen detected -> triggering online');
     isCurrentlyIdle = false;
-    setTrayPresence('online');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('power-monitor-event', { state: 'unlocked', status: 'online' });
-    }
+    isScreenLocked = false;
+    sendWindowPresence('unlocked');
   });
 
   powerMonitor.on('suspend', () => {
@@ -955,10 +976,7 @@ function setupPowerAndPresenceMonitoring() {
   powerMonitor.on('resume', () => {
     log('powerMonitor: resume from sleep detected -> triggering online');
     isCurrentlyIdle = false;
-    setTrayPresence('online');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('power-monitor-event', { state: 'resume', status: 'online' });
-    }
+    sendWindowPresence('resume');
   });
 
   // Automated Inactivity / Idle Polling
@@ -977,9 +995,10 @@ function setupPowerAndPresenceMonitoring() {
       } else if (idleSeconds < 10 && isCurrentlyIdle) {
         isCurrentlyIdle = false;
         log(`powerMonitor: user resumed input (idle ${idleSeconds}s) -> transitioning to online`);
-        setTrayPresence('online');
+        const status = currentPresence();
+        setTrayPresence(status);
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('power-monitor-event', { state: 'active', status: 'online', idleSeconds });
+          mainWindow.webContents.send('power-monitor-event', { state: 'active', status, idleSeconds });
         }
       }
     } catch (err) {
@@ -1589,6 +1608,13 @@ ipcMain.handle('show-notification', (event, data) => {
     }
   }
   return true;
+});
+
+// Итог окна и системы для страницы, которая подписалась позже кадра
+// did-finish-load (окно, запущенное в трее).
+ipcMain.handle('get-window-presence', (event) => {
+  if (!isFromServerPage(event, { quiet: true })) return 'online';
+  return currentPresence();
 });
 
 ipcMain.handle('get-system-idle-time', (event) => {

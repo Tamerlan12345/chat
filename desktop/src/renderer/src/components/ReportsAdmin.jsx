@@ -7,6 +7,8 @@ import {
   REPORT_FILTERS,
   reportsPath,
   reportStatusLabel,
+  reportReasonLabel,
+  reporterName,
   describeReportTarget,
   previewText,
   formatAdminDate
@@ -29,11 +31,17 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
   const [closingId, setClosingId] = useState(null);
   // Ответы на быстрое переключение фильтра приходят в произвольном порядке.
   const sequence = useRef(createRequestSequence());
+  // Текущий фильтр: закрытие жалобы перечитывает список по нему, а не по
+  // фильтру, который был на момент подтверждения.
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
-  const load = useCallback(async (which) => {
+  // keepRows — перечитать, не стирая таблицу (после закрытия жалобы): иначе
+  // список на миг сменялся индикатором загрузки.
+  const load = useCallback(async (which, { keepRows = false } = {}) => {
     const id = sequence.current.next();
     setLoadError('');
-    setReports(null);
+    if (!keepRows) setReports(null);
     try {
       const rows = await api(reportsPath(which), { fallback: 'Не удалось загрузить жалобы' });
       if (sequence.current.isCurrent(id)) setReports(Array.isArray(rows) ? rows : []);
@@ -49,7 +57,7 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
     const confirmed = await confirm({
       title: 'Закрыть жалобу',
       message:
-        `Закрыть жалобу №${report.id} от «${report.reporter?.name}» на ${target.kind === 'Сообщение' ? 'сообщение пользователя' : 'пользователя'} «${target.who}»?\n` +
+        `Закрыть жалобу №${report.id} от «${reporterName(report)}» на ${target.kind === 'Сообщение' ? 'сообщение пользователя' : 'пользователя'} «${target.who}»?\n` +
         'Закрытая жалоба считается рассмотренной и уходит из списка открытых.',
       confirmText: 'Закрыть жалобу'
     });
@@ -58,9 +66,12 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
     try {
       await api(`/api/admin/reports/${report.id}/close`, { method: 'POST', fallback: 'Не удалось закрыть жалобу' });
       showToast?.(`Жалоба №${report.id} закрыта`);
-      await load(filter);
+      await load(filterRef.current, { keepRows: true });
     } catch (err) {
       showToast?.(err.message, 'error');
+      // Жалобы уже нет (её закрыл другой администратор или автор удалил
+      // учётную запись) — список устарел, перечитываем.
+      if (err.status === 404) await load(filterRef.current, { keepRows: true });
     } finally {
       setClosingId(null);
     }
@@ -74,13 +85,14 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
         так в списке остаются только те, что ещё ждут решения.
       </p>
 
-      <div className="sec-tabs" role="tablist" aria-label="Фильтр жалоб">
+      {/* Группа кнопок-переключателей, а не вкладки: у вкладок нет стрелок и
+          tabpanel, и чтение экрана обещало бы то, чего нет. */}
+      <div className="sec-tabs" role="group" aria-label="Фильтр жалоб">
         {REPORT_FILTERS.map((item) => (
           <button
             key={item.id}
             type="button"
-            role="tab"
-            aria-selected={filter === item.id}
+            aria-pressed={filter === item.id}
             className={`sec-tab${filter === item.id ? ' is-active' : ''}`}
             onClick={() => setFilter(item.id)}
           >
@@ -125,18 +137,20 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
                 return (
                   <tr key={report.id}>
                     <td className="sec-nowrap sec-num">{formatAdminDate(report.createdAt)}</td>
-                    <td>{report.reporter?.name || '—'}</td>
+                    <td>{reporterName(report)}</td>
                     <td className="sec-details-cell">
                       <div><strong>{target.kind}</strong>: {target.who}</div>
                       {target.kind === 'Сообщение' && (
-                        <div className="sec-muted">
+                        <div className="sec-muted" title={target.text || undefined}>
                           {target.text ? `«${previewText(target.text, 140)}»` : 'текст недоступен — сообщение удалено'}
                         </div>
                       )}
                     </td>
                     <td className="sec-details-cell">
-                      <div>{report.reason}</div>
-                      {report.details && <div className="sec-muted">{previewText(report.details, 200)}</div>}
+                      <div>{reportReasonLabel(report.reason)}</div>
+                      {report.details && (
+                        <ExpandableText text={report.details} max={200} />
+                      )}
                     </td>
                     <td>
                       <span className={`rep-status ${isOpen ? 'is-open' : 'is-closed'}`}>
@@ -165,6 +179,32 @@ export default function ReportsAdmin({ serverUrl, showToast }) {
         </div>
       )}
       {confirmDialog}
+    </div>
+  );
+}
+
+// Подробности жалобы бывают до 2000 символов: в таблице — начало, по кнопке —
+// целиком, чтобы администратор мог прочитать жалобу перед решением.
+function ExpandableText({ text, max }) {
+  const [expanded, setExpanded] = useState(false);
+  const short = previewText(text, max);
+  const isCut = short !== String(text ?? '').replace(/\s+/g, ' ').trim();
+  return (
+    <div className="sec-muted" style={expanded ? { whiteSpace: 'pre-line' } : undefined}>
+      {expanded ? text : short}
+      {isCut && (
+        <>
+          {' '}
+          <button
+            type="button"
+            className="conf-link-btn"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? 'Свернуть' : 'Показать полностью'}
+          </button>
+        </>
+      )}
     </div>
   );
 }

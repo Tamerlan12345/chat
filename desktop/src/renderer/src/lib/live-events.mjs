@@ -20,6 +20,21 @@ export function registrationToast(event) {
   return {
     title: 'Новая заявка на регистрацию',
     body: who ? `Заявку подал(а) ${who}` : 'Откройте консоль администратора',
-    type: 'system'
+    type: 'system',
+    // Клик открывает консоль на вкладке «Заявки».
+    data: { admin: 'registrations' }
   };
+}
+
+// Вкладки консоли, в которые ведут уведомления.
+const ADMIN_TABS = new Set(['registrations']);
+
+// Куда ведёт клик по уведомлению: личный чат, канал или вкладка консоли.
+// null — открывать нечего (клик просто убирает карточку).
+export function toastTarget(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (data.user) return { kind: 'direct', user: data.user };
+  if (data.channel) return { kind: 'channel', channel: data.channel };
+  if (typeof data.admin === 'string' && ADMIN_TABS.has(data.admin)) return { kind: 'admin', tab: data.admin };
+  return null;
 }
