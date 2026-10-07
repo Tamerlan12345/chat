@@ -29,6 +29,7 @@ export const COPY = Object.freeze({
   'upload.refused': 'Сервер не принял файл',
   'download.forbidden': 'Нет доступа к файлу',
   'download.failed': 'Не удалось скачать файл',
+  'download.no_network': 'Нет связи с сервером — файл не скачан',
 
   'delivery.DM_NOT_ALLOWED': 'Сообщение не может быть доставлено'
 });

@@ -32,6 +32,7 @@ const CANON = {
   'upload.refused': 'Сервер не принял файл',
   'download.forbidden': 'Нет доступа к файлу',
   'download.failed': 'Не удалось скачать файл',
+  'download.no_network': 'Нет связи с сервером — файл не скачан',
   'delivery.DM_NOT_ALLOWED': 'Сообщение не может быть доставлено'
 };
 
@@ -77,6 +78,7 @@ test('экраны берут тексты из COPY: выход, вход, ст
   assert.ok(!/проверьте сеть и повторите/.test(login));
   const chat = read('components', 'ChatView.jsx');
   assert.match(chat, /COPY\['download\.forbidden'\]/);
+  assert.match(chat, /onNotice\?\.\(COPY\['download\.no_network'\], suggestedName\)/);
 });
 
 test('правило L: на экране входа только знак CentyChat — ни строки компании, ни слогана', () => {

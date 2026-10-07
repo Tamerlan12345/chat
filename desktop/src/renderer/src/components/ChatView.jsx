@@ -364,7 +364,7 @@ export default function ChatView({
       link.remove();
       URL.revokeObjectURL(objectUrl);
     } catch {
-      onNotice?.('Не удалось скачать файл', 'Нет связи с сервером');
+      onNotice?.(COPY['download.no_network'], suggestedName);
     }
   };
 
