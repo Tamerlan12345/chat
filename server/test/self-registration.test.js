@@ -675,3 +675,106 @@ test('«печатает…» не доходит через блокировк�
     a.terminate(); b.terminate();
   }
 });
+
+// ── I-2: блокировка закрывает звонки, «Побудку» и правку личных сообщений ──
+
+async function blockSock(name) {
+  const sock = new WebSocket(wsUrl);
+  sock.frames = [];
+  sock.on('message', (raw) => { try { sock.frames.push(JSON.parse(raw.toString('utf8'))); } catch {} });
+  sock.on('error', () => {});
+  await new Promise((resolve) => sock.on('open', resolve));
+  sock.send(JSON.stringify({ type: 'auth', token: people[name].token }));
+  const started = Date.now();
+  while (!sock.frames.some((f) => f.type === 'auth_success')) {
+    if (Date.now() - started > 3000) throw new Error(`${name}: нет auth_success`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return sock;
+}
+
+async function frameOf(sock, predicate, timeoutMs = 3000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const hit = sock.frames.find(predicate);
+    if (hit) return hit;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('кадр не пришёл за отведённое время');
+}
+
+test('блокировка: звонок в обе стороны не встаёт — call_unavailable «не в сети», вызываемому ничего, push нет', async () => {
+  const wsServer = require('../src/ws/server');
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  try {
+    // Без блокировки звонок доходит.
+    b.send(JSON.stringify({ type: 'call_offer', targetUserId: people.alice.id, sdp: 'x' }));
+    await frameOf(a, (f) => f.type === 'call_offer' && f.senderId === people.bob.id);
+    b.send(JSON.stringify({ type: 'call_end', targetUserId: people.alice.id }));
+    await new Promise((r) => setTimeout(r, 150));
+    a.frames.length = 0; b.frames.length = 0;
+    wsServer.pendingOffers.clear();
+
+    await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+    for (const [caller, callee, calleeId, callerId] of [[b, a, people.alice.id, people.bob.id], [a, b, people.bob.id, people.alice.id]]) {
+      caller.send(JSON.stringify({ type: 'call_offer', targetUserId: calleeId, sdp: 'x' }));
+      const reply = await frameOf(caller, (f) => f.type === 'call_unavailable' && f.targetUserId === calleeId);
+      assert.strictEqual(reply.reason, 'Сотрудник сейчас не в сети', 'ответ не выдаёт блокировку');
+      await new Promise((r) => setTimeout(r, 150));
+      assert.ok(!callee.frames.some((f) => f.type === 'call_offer'), 'вызываемый не получает звонок');
+      assert.ok(!wsServer.pendingOffers.has(callerId), 'вызов не встаёт — и push о звонке не уходит');
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    wsServer.pendingOffers.clear();
+    a.terminate(); b.terminate();
+  }
+});
+
+test('блокировка: «Побудка» в обе стороны — wake_error invalid_target, сигнала нет', async () => {
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+  try {
+    for (const [sender, target, targetId] of [[b, a, people.alice.id], [a, b, people.bob.id]]) {
+      sender.send(JSON.stringify({ type: 'wake_send', targetUserId: targetId }));
+      const err = await frameOf(sender, (f) => f.type === 'wake_error' || f.type === 'wake_sent');
+      assert.strictEqual(err.type, 'wake_error');
+      assert.strictEqual(err.code, 'invalid_target');
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(!target.frames.some((f) => f.type === 'wake_ring'), 'сигнал не доходит');
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    a.terminate(); b.terminate();
+  }
+});
+
+test('блокировка: правка личного сообщения в обе стороны — DM_NOT_ALLOWED, текст прежний, message_updated не уходит', async () => {
+  const fromBob = await sendDirect('bob', 'alice', 'исходный текст Бориса');
+  const fromAlice = await sendDirect('alice', 'bob', 'исходный текст Алисы');
+  assert.strictEqual(fromBob.status, 201);
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+  try {
+    for (const [editor, other, msgId, original] of [[b, a, fromBob.json.id, 'исходный текст Бориса'], [a, b, fromAlice.json.id, 'исходный текст Алисы']]) {
+      editor.send(JSON.stringify({ type: 'edit_message', messageId: msgId, text: 'грубая правка' }));
+      const err = await frameOf(editor, (f) => f.type === 'error' && f.context === 'edit_message');
+      assert.strictEqual(err.code, 'DM_NOT_ALLOWED');
+      assert.strictEqual(err.retryable, false);
+      assert.ok(!/блок/i.test(err.message));
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(!other.frames.some((f) => f.type === 'message_updated'), 'правка не доходит до собеседника');
+      assert.strictEqual(chat.prepare('SELECT text FROM messages WHERE id = ?').get(msgId).text, original);
+    }
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+  }
+  // После разблокировки правка снова работает.
+  b.send(JSON.stringify({ type: 'edit_message', messageId: fromBob.json.id, text: 'вежливая правка' }));
+  const updated = await frameOf(a, (f) => f.type === 'message_updated' && f.message.id === fromBob.json.id);
+  assert.strictEqual(updated.message.text, 'вежливая правка');
+  a.terminate(); b.terminate();
+});

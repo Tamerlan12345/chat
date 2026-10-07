@@ -509,7 +509,10 @@ class WsServer {
     } finally {
       this.wakeInFlight.delete(sender.id);
     }
-    if (!target || target.is_active === 0 || target.is_active === false) {
+    // Блокировка в любую сторону закрывает и «Побудку» (registration.md §4).
+    // Ответ тот же, что для несуществующего адреса, — блокировку он не выдаёт.
+    if (!target || target.is_active === 0 || target.is_active === false ||
+        require('../services/safety.service').isBlockedEitherWay(sender.id, targetId)) {
       return reply({ type: 'wake_error', code: 'invalid_target', targetUserId: targetId, message: 'Разбудить можно только коллегу' });
     }
     if (this.wakeRetryAt(sender.id) > Date.now()) {
@@ -1232,6 +1235,13 @@ class WsServer {
               type: 'call_denied',
               reason: 'Звонки не разрешены для вашей роли. Обратитесь к администратору.'
             }));
+            return;
+          }
+          // Блокировка в любую сторону закрывает звонки (registration.md §4):
+          // ни кадра call_offer, ни push о звонке. Ответ — как для сотрудника
+          // не в сети, блокировку он не выдаёт (и «Не беспокоить» тоже).
+          if (require('../services/safety.service').isBlockedEitherWay(currentUser.id, targetUserId)) {
+            safeSend(ws, { type: 'call_unavailable', targetUserId, reason: NOT_ONLINE_REASON });
             return;
           }
           // «Не беспокоить» — значит не звонить: раньше вызов проходил, и один
