@@ -74,9 +74,8 @@ test.beforeEach(() => {
   // Пределы по адресу не должны мешать соседним тестам (кроме теста пределов).
   rateLimiter.resetLimit(`reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
   rateLimiter.resetLimit(`reg-verify-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
-  rateLimiter.resetLimit('reg-req-global');
-  rateLimiter.resetLimit('reg-verify-fail-global');
-  Registration.configureLimits?.(null);
+  Registration.resetGlobalCounters();
+  Registration.configureLimits(null);
   Registration.setMailer(testMailer);
 });
 
@@ -385,7 +384,7 @@ test('общий бюджет неудачных проверок кода: по
   const alert = await identity.get(`SELECT rule, severity FROM security_alerts WHERE rule = 'registration_code_bruteforce'`);
   assert.ok(alert, 'оповещение безопасности записано');
 
-  rateLimiter.resetLimit('reg-verify-fail-global');
+  Registration.resetGlobalCounters();
   Registration.configureLimits(null);
   const ok = await verifyCode(b.json.registrationId, codeB);
   assert.strictEqual(ok.status, 202);
@@ -678,13 +677,13 @@ test('«печатает…» не доходит через блокировк�
 
 // ── I-2: блокировка закрывает звонки, «Побудку» и правку личных сообщений ──
 
-async function blockSock(name) {
+async function blockSock(name, authExtra = {}) {
   const sock = new WebSocket(wsUrl);
   sock.frames = [];
   sock.on('message', (raw) => { try { sock.frames.push(JSON.parse(raw.toString('utf8'))); } catch {} });
   sock.on('error', () => {});
   await new Promise((resolve) => sock.on('open', resolve));
-  sock.send(JSON.stringify({ type: 'auth', token: people[name].token }));
+  sock.send(JSON.stringify({ type: 'auth', token: people[name].token, ...authExtra }));
   const started = Date.now();
   while (!sock.frames.some((f) => f.type === 'auth_success')) {
     if (Date.now() - started > 3000) throw new Error(`${name}: нет auth_success`);
@@ -825,4 +824,113 @@ test('одобрение отклонённой прежде заявки вкл
   assert.strictEqual(approved.status, 200);
   const login = await api('POST', '/api/auth/login', { body: { username: 'legacy.rejected', password: PASSWORD } });
   assert.strictEqual(login.status, 200);
+});
+
+// ── Fix round 1 (Ruling T) ──
+
+const resetGlobal = () => Registration.resetGlobalCounters();
+const resetIpLimit = () => rateLimiter.resetLimit(`reg-req-ip:${require('../src/services/ip-access.service').rateLimitIpKey('127.0.0.1')}`);
+
+test('общий предел заявок считает только отправленные письма: 400, 409 и сбой письма бюджет не тратят', async () => {
+  resetGlobal();
+  Registration.configureLimits({ globalRequestsPerHour: 1 });
+  try {
+    resetIpLimit();
+    assert.strictEqual((await requestCode({ email: 'budget.taken@spray.org', username: 'alice' })).status, 409);
+    resetIpLimit();
+    assert.strictEqual((await requestCode({ email: 'не-почта', username: 'budget.bad' })).status, 400);
+    resetIpLimit();
+    Registration.setMailer(createMailer({
+      config: { SMTP_HOST: 'smtp.test', SMTP_FROM: 'noreply@test.kz' },
+      transport: { sendMail: async () => { throw Object.assign(new Error('relay down'), { code: 'ECONNECTION' }); } },
+      logger: silent
+    }));
+    const failed = await requestCode({ email: 'budget.fail@spray.org', username: 'budget.fail' });
+    assert.strictEqual(failed.status, 503);
+    assert.strictEqual(failed.json.code, 'EMAIL_SEND_FAILED');
+    Registration.setMailer(testMailer);
+    resetIpLimit();
+    assert.strictEqual((await requestCode({ email: 'budget.ok@spray.org', username: 'budget.ok' })).status, 202, 'бюджет не израсходован отказами');
+    resetIpLimit();
+    assert.strictEqual((await requestCode({ email: 'budget.over@spray.org', username: 'budget.over' })).status, 429, 'одно письмо — и бюджет исчерпан');
+  } finally {
+    Registration.setMailer(testMailer);
+    Registration.configureLimits(null);
+    resetGlobal();
+  }
+});
+
+test('общие счётчики регистрации не вытесняются переполнением карты пределов', async () => {
+  resetGlobal();
+  Registration.configureLimits({ globalRequestsPerHour: 1, globalFailedVerifiesPerHour: 1 });
+  try {
+    resetIpLimit();
+    const first = await requestCode({ email: 'evict.a@spray.org', username: 'evict.a' });
+    assert.strictEqual(first.status, 202);
+    const code = lastCode();
+    assert.strictEqual((await verifyCode(first.json.registrationId, wrongCode(code))).status, 400);
+    // Поток ключей с множества адресов (IPv6 /64) переполняет общую карту пределов.
+    rateLimiter.configureLimiter({ maxBuckets: 3, nameMaxBuckets: 3 });
+    for (let i = 0; i < 20; i++) rateLimiter.checkRateLimit(`flood-key-${i}`, { maxAttempts: 1, windowMs: 3600000 });
+    rateLimiter.configureLimiter({});
+    resetIpLimit();
+    assert.strictEqual((await requestCode({ email: 'evict.b@spray.org', username: 'evict.b' })).status, 429, 'бюджет заявок пережил вытеснение');
+    assert.strictEqual((await verifyCode(first.json.registrationId, code)).status, 429, 'бюджет неудачных проверок пережил вытеснение');
+  } finally {
+    rateLimiter.configureLimiter({});
+    Registration.configureLimits(null);
+    resetGlobal();
+  }
+});
+
+test('блокировка снимает уже звонящий вызов: вызываемому call_end, вызывающему call_unavailable, вызов не встаёт', async () => {
+  const wsServer = require('../src/ws/server');
+  const a = await blockSock('alice');
+  const b = await blockSock('bob');
+  try {
+    b.send(JSON.stringify({ type: 'call_offer', targetUserId: people.alice.id, sdp: 'x' }));
+    await frameOf(a, (f) => f.type === 'call_offer' && f.senderId === people.bob.id);
+    assert.ok(wsServer.pendingOffers.has(people.bob.id));
+    await api('POST', '/api/blocks', { token: people.alice.token, body: { userId: people.bob.id } });
+    const end = await frameOf(a, (f) => f.type === 'call_end' && f.senderId === people.bob.id);
+    assert.ok(end.reason, 'причина конца вызова');
+    const unavailable = await frameOf(b, (f) => f.type === 'call_unavailable' && f.targetUserId === people.alice.id);
+    assert.strictEqual(unavailable.reason, 'Сотрудник сейчас не в сети');
+    assert.ok(!wsServer.pendingOffers.has(people.bob.id), 'вызов снят — и push о нём больше не уходит');
+    // Опоздавший ответ разговора не начинает.
+    a.send(JSON.stringify({ type: 'call_answer', targetUserId: people.bob.id }));
+    await new Promise((r) => setTimeout(r, 150));
+    assert.ok(!b.frames.some((f) => f.type === 'call_answer'));
+    assert.notStrictEqual(wsServer.activeCalls.get(people.alice.id), people.bob.id);
+  } finally {
+    await api('DELETE', `/api/blocks/${people.bob.id}`, { token: people.alice.token });
+    wsServer.pendingOffers.clear();
+    a.terminate(); b.terminate();
+  }
+});
+
+test('блокировка вызывающим снимает вызов через push: разбуженный телефон при входе получает call_end, а не call_offer', async () => {
+  const wsServer = require('../src/ws/server');
+  for (let i = 0; i < 200 && wsServer.isUserOnline(people.alice.id); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(!wsServer.isUserOnline(people.alice.id), 'у alice нет сокета');
+  // Вызов bob → alice ждёт телефон alice, разбуженный push (у alice нет сокета).
+  wsServer.pendingOffers.set(people.bob.id, {
+    targetId: people.alice.id, at: Date.now(), seq: 990001, ws: null, viaPush: true, devices: [],
+    frame: { type: 'call_offer', targetUserId: people.alice.id, senderId: people.bob.id, senderName: 'Борис Петров' }
+  });
+  // Блокирует сам вызывающий — в обратную сторону вызов тоже снимается.
+  await api('POST', '/api/blocks', { token: people.bob.token, body: { userId: people.alice.id } });
+  let phone;
+  try {
+    assert.ok(!wsServer.pendingOffers.has(people.bob.id), 'вызов снят');
+    phone = await blockSock('alice', { device_id: 'alice-phone-r1', platform: 'android' });
+    const end = await frameOf(phone, (f) => f.type === 'call_end' && f.senderId === people.bob.id);
+    assert.ok(end.reason);
+    assert.ok(!phone.frames.some((f) => f.type === 'call_offer'), 'снятый вызов не воспроизводится при входе');
+  } finally {
+    await api('DELETE', `/api/blocks/${people.alice.id}`, { token: people.bob.token });
+    wsServer.pendingOffers.clear();
+    wsServer.endedPushOffers?.clear();
+    phone?.terminate();
+  }
 });

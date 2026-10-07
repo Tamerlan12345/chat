@@ -14,7 +14,7 @@ const { hashPassword } = require('../db/identity/password');
 const config = require('../config');
 const UserService = require('./user.service');
 const AuthService = require('./auth.service');
-const { checkRateLimit, isRateLimited, registerFailure } = require('./rate-limiter');
+const { checkRateLimit } = require('./rate-limiter');
 const SettingsService = require('./settings.service');
 const defaultMailer = require('./mailer.service');
 const { isValidAddress, buildVerificationEmail, EMAIL_NOT_CONFIGURED } = defaultMailer;
@@ -34,8 +34,49 @@ const DEFAULT_LIMITS = Object.freeze({
   maxPendingAccounts: MAX_PENDING_ACCOUNTS
 });
 let limits = { ...DEFAULT_LIMITS };
-const GLOBAL_REQUEST_KEY = 'reg-req-global';
-const GLOBAL_VERIFY_FAIL_KEY = 'reg-verify-fail-global';
+
+// Общие счётчики — свои, а не в общей карте rate-limiter: та при переполнении
+// вытесняет самые старые ключи, и поток запросов с тысяч адресов (IPv6 /64)
+// обнулял бы бюджет решения R. Здесь два числа, вытеснять нечего.
+// Фиксированное окно в час, как у остальных пределов регистрации.
+function newWindow() {
+  return { count: 0, windowStart: 0 };
+}
+const globalCounters = { requests: newWindow(), failedVerifies: newWindow() };
+
+function currentWindow(counter, now = Date.now()) {
+  if (now - counter.windowStart >= GLOBAL_WINDOW_MS) {
+    counter.count = 0;
+    counter.windowStart = now;
+  }
+  return counter;
+}
+
+// Взять единицу бюджета; null — бюджет исчерпан. Возвращённую отметку можно
+// вернуть (refundGlobal), если письмо так и не ушло.
+function takeGlobal(counter, max) {
+  const w = currentWindow(counter);
+  if (w.count >= max) return null;
+  w.count += 1;
+  return { counter, windowStart: w.windowStart };
+}
+
+function refundGlobal(ticket) {
+  if (ticket && ticket.counter.windowStart === ticket.windowStart && ticket.counter.count > 0) ticket.counter.count -= 1;
+}
+
+function bumpGlobal(counter) {
+  currentWindow(counter).count += 1;
+}
+
+function globalExhausted(counter, max) {
+  return currentWindow(counter).count >= max;
+}
+
+function resetGlobalCounters() {
+  globalCounters.requests = newWindow();
+  globalCounters.failedVerifies = newWindow();
+}
 // Чистка просроченных заявок по ходу работы — не чаще раза в 10 минут.
 const PURGE_INTERVAL_MS = 10 * 60000;
 let lastPurgeAt = 0;
@@ -226,13 +267,6 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
       !checkRateLimit(`reg-req-email:${emailKey(email)}`, { maxAttempts: 3, windowMs: 3600000, scope: 'name' })) {
     throw new RegistrationError(429, 'Слишком много запросов. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
   }
-  // Общий предел — после пределов на IP и почту: поток с одного адреса
-  // упирается в свой предел и общий бюджет не расходует.
-  if (!checkRateLimit(GLOBAL_REQUEST_KEY, { maxAttempts: limits.globalRequestsPerHour, windowMs: GLOBAL_WINDOW_MS })) {
-    alertOncePerWindow('registration_request_flood', 'Исчерпан общий предел заявок на регистрацию');
-    throw new RegistrationError(429, 'Слишком много запросов. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
-  }
-
   await maybePurgeExpired();
   const db = identity();
   const taken = await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
@@ -245,6 +279,23 @@ async function requestRegistration(body, { ip = '0.0.0.0' } = {}) {
     throw new RegistrationError(429, 'Сервис временно перегружен. Повторите позже.', 'RATE_LIMITED');
   }
 
+  // Общий предел считает только письма с кодом: проверка — после полей,
+  // пределов на IP и почту, занятости и ёмкости; если письмо не ушло (сбой
+  // почты, занят расчёт хэша), единица бюджета возвращается.
+  const ticket = takeGlobal(globalCounters.requests, limits.globalRequestsPerHour);
+  if (!ticket) {
+    alertOncePerWindow('registration_request_flood', 'Исчерпан общий предел заявок на регистрацию');
+    throw new RegistrationError(429, 'Слишком много запросов. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
+  }
+  try {
+    return await createRequestAndSendCode(db, { email, username, displayName, password });
+  } catch (err) {
+    refundGlobal(ticket);
+    throw err;
+  }
+}
+
+async function createRequestAndSendCode(db, { email, username, displayName, password }) {
   const passwordHash = await hashPassword(password); // может бросить PASSWORD_HASH_BUSY
   const registrationId = crypto.randomBytes(18).toString('base64url');
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -291,8 +342,7 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
   }
   // Общий бюджет неудачных проверок исчерпан — перебор идёт с многих адресов.
   // Ждут все, попытка не засчитывается.
-  const verifyFailLimit = { maxAttempts: limits.globalFailedVerifiesPerHour, windowMs: GLOBAL_WINDOW_MS };
-  if (isRateLimited(GLOBAL_VERIFY_FAIL_KEY, verifyFailLimit)) {
+  if (globalExhausted(globalCounters.failedVerifies, limits.globalFailedVerifiesPerHour)) {
     alertOncePerWindow('registration_code_bruteforce', 'Исчерпан общий бюджет неудачных проверок кода регистрации — возможен перебор');
     throw new RegistrationError(429, 'Слишком много попыток. Повторите позже.', 'RATE_LIMITED', { retryAfter: 600 });
   }
@@ -311,7 +361,7 @@ async function verifyRegistration(body, { ip = '0.0.0.0' } = {}) {
   if (!row) throw GONE();
 
   if (!safeEqualHex(row.code_hash, hashCode(registrationId, code))) {
-    registerFailure(GLOBAL_VERIFY_FAIL_KEY, verifyFailLimit);
+    bumpGlobal(globalCounters.failedVerifies);
     const left = Math.max(0, MAX_ATTEMPTS - Number(row.attempts));
     if (left === 0) throw GONE();
     throw new RegistrationError(400, 'Неверный код', 'CODE_INVALID', { attemptsLeft: left });
@@ -396,6 +446,7 @@ module.exports = {
   REGISTRATION_DISABLED_MESSAGE,
   setMailer,
   configureLimits,
+  resetGlobalCounters,
   resetPurgeClock,
   isUniqueViolation,
   isAllowed,

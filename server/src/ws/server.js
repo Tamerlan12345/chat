@@ -1923,6 +1923,30 @@ class WsServer {
     return attempt.cancelled || Boolean(ws.revoked) || !this.socketUser.has(ws);
   }
 
+  // Блокировка (POST /api/blocks): вызовы между парой, которые уже звонят или
+  // проверяются, снимаются в обе стороны. Вызываемому — call_end (сокеты
+  // перестают звонить; телефон, разбуженный push, получит его при входе вместо
+  // call_offer), вызывающему — call_unavailable с обычной причиной: ответ
+  // блокировку не выдаёт. Снятый вызов не будит телефон: очередь push
+  // проверяет pendingOffers перед каждой попыткой (callOffer).
+  endCallsBetween(a, b) {
+    const pair = [[Number(a), Number(b)], [Number(b), Number(a)]];
+    for (const [callerId, calleeId] of pair) {
+      const attemptKey = `${callerId}>${calleeId}`;
+      const checking = this.offerAttempts.get(attemptKey);
+      if (checking && !checking.cancelled) {
+        checking.cancelled = true;
+        this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+      }
+      const offer = this.pendingOffers.get(callerId);
+      if (!offer || offer.targetId !== calleeId) continue;
+      this.rememberEndedPushOffer(callerId, 'unavailable');
+      this.pendingOffers.delete(callerId);
+      this.sendToUser(calleeId, this.callEndFrame(callerId, 'unavailable', offer.frame?.senderName));
+      this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+    }
+  }
+
   // Вызов с push закончился: запомнить ненадолго, чтобы телефон, разбуженный
   // push и вошедший позже, сразу погасил экран звонка. Сокеты, которые уже на
   // связи, узнают о конце сами (call_end, answered_elsewhere) — запись им не

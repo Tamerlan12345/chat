@@ -1963,6 +1963,9 @@ router.post('/admin/reports/:id/close', requireAuth, requireAdmin, route(async (
 router.post('/blocks', requireAuth, route(async (req, res) => {
   try {
     const result = await Safety.blockUser(req.user.id, req.body?.userId);
+    // Звонок, который уже звонит (или ждёт телефон, разбуженный push), не
+    // переживает блокировку — в обе стороны.
+    wsServer.endCallsBetween(req.user.id, result.userId);
     res.status(201).json(result);
   } catch (err) {
     sendSafetyError(res, err);
