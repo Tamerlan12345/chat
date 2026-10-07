@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,6 +31,9 @@ interface NotificationSink {
 
     /** Снять показанное уведомление переписки. */
     fun cancel(conversation: ConversationRef)
+
+    /** Снять все уведомления приложения (учётная запись вышла или сменилась). */
+    fun cancelAll()
 }
 
 /** Переписку прочитали на другом устройстве (кадр conversation_read или тихий push read). */
@@ -82,6 +87,9 @@ sealed interface PushPayload {
  * - Push ([onPush]): `read` — то же снятие, ничего не показывать; `message` — не показывать, если
  *   сообщение уже пришло по сокету или переписка открыта; звонки — без изменений, не здесь.
  *
+ * - Учётная запись вышла или сменилась: все её уведомления снимаются (final review M3, parity P10) —
+ *   текст чужой переписки не остаётся в шторке, а нажатие не открывает её в другом сеансе.
+ *
  * Решение «кому» принимает сервер; клиент его не повторяет.
  */
 @Singleton
@@ -91,6 +99,7 @@ class MessageNotifier @Inject constructor(
     private val readBus: ConversationReadBus,
     private val activeConversations: ActiveConversationRegistry,
     private val presence: PresenceController,
+    private val session: com.openmychat.mobile.data.repository.SessionRepository,
     @ApplicationScope scope: CoroutineScope
 ) {
     @Volatile private var myId: Long? = null
@@ -105,6 +114,19 @@ class MessageNotifier @Inject constructor(
         scope.launch { realtime.events.collect(::onEvent) }
         // Переписку открыли здесь — её уведомление больше не нужно.
         scope.launch { activeConversations.active.collect { open -> if (open != null) sink.cancel(open) } }
+        scope.launch {
+            var seen = false
+            var last: Long? = null
+            session.currentUser.map { it?.id }.distinctUntilChanged().collect { account ->
+                if (seen && account != last) {
+                    sink.cancelAll()
+                    synchronized(known) { known.clear() }
+                    myId = null
+                }
+                seen = true
+                last = account
+            }
+        }
     }
 
     private fun onEvent(event: WsEvent) {

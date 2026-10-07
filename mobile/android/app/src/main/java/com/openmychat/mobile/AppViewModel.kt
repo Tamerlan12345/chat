@@ -37,6 +37,8 @@ class AppViewModel @Inject constructor(
 
     val routeStates: Flow<AuthenticatedRouteState> get() = sessionRepository.routeStates
     fun routeState(): AuthenticatedRouteState = sessionRepository.routeState()
+    /** The account signed in now (a notification tap opens a chat only for its own account). */
+    fun currentAccount(): Long? = sessionRepository.currentUserId
     fun acceptsIncomingCall(): Boolean = SessionRouteGuard.acceptsIncomingCall(routeState())
 
     /** Events handled above any single screen: wake buzz, incoming calls, forced disconnects. */

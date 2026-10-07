@@ -419,7 +419,9 @@ class ChatViewModel @AssistedInject constructor(
      * `reply_to_id`. While a message is being edited, this saves the edit instead.
      */
     fun send(text: String, replyTo: Message?, onAccepted: () -> Unit) {
-        if (text.isBlank()) return
+        // The text goes exactly as typed (delivery-state §6.1, parity P4): the model decides what is
+        // empty with the contract's fixed whitespace set and says so (EMPTY_TEXT).
+        if (text.isEmpty()) return
         val editing = _editingMessage.value
         if (editing == null && composerLock.value != ComposerLock.NONE) return
         // One press, one message: a second tap before the first is stored (the composer still shows
@@ -429,11 +431,11 @@ class ChatViewModel @AssistedInject constructor(
         viewModelScope.launch {
             val outcome = try {
                 if (editing != null) {
-                    delivery.editSent(editing.id, text.trim())
+                    delivery.editSent(editing.id, text)
                 } else {
                     // Written by this screen's account: never taken into another account's queue.
                     delivery.enqueue(
-                        conversationKey, text.trim(),
+                        conversationKey, text,
                         replyToId = replyTo?.id?.takeIf { it > 0 && replyTo.sendState == SendState.SENT },
                         owner = screenAccount, ownerStated = true
                     )
