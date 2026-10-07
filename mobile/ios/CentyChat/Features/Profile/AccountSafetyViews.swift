@@ -197,11 +197,11 @@ struct BlockedUsersView: View {
         List {
             if account.blocked.isEmpty {
                 Section {
-                    Text(account.blocksState.isLoading ? "Загрузка…" : "Вы никого не блокировали.")
+                    Text(account.blocksState.isLoading ? String(localized: "Загрузка…") : AppCopy.blockedListEmpty)
                         .foregroundStyle(CentyColors.textSecondary)
                         .accessibilityIdentifier("blocked-empty")
                 } footer: {
-                    Text("Заблокировать человека можно в диалоге: меню «⋯» вверху, пункт «Заблокировать».")
+                    Text(verbatim: AppCopy.blockedListEmptyHint)
                 }
             } else {
                 Section {
@@ -211,10 +211,10 @@ struct BlockedUsersView: View {
                             Text(user.name)
                                 .font(.body)
                             Spacer()
-                            Button("Разблокировать") {
+                            Button(AppCopy.unblockAction) {
                                 Task {
                                     if let failure = await account.unblock(userId: user.id) {
-                                        errorMessage = failure.message(at: .now)
+                                        errorMessage = failure.retryDeadline != nil ? failure.message(at: .now) : AppCopy.unblockFailed
                                     }
                                 }
                             }
@@ -225,7 +225,7 @@ struct BlockedUsersView: View {
                         }
                     }
                 } footer: {
-                    Text("Сообщения заблокированных людей скрыты на этом устройстве.")
+                    Text(verbatim: AppCopy.blockedListFooter)
                 }
             }
 
@@ -239,7 +239,7 @@ struct BlockedUsersView: View {
         }
         .scrollContentBackground(.hidden)
         .background(CentyColors.list)
-        .navigationTitle("Заблокированные")
+        .navigationTitle(AppCopy.blockedListTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task { await account.loadBlocks() }
         .alert(
@@ -272,7 +272,7 @@ struct DeleteAccountView: View {
             Form {
                 Section {
                     Label {
-                        Text("Аккаунт, переписка и личные данные будут удалены безвозвратно. Восстановить их нельзя.")
+                        Text(verbatim: AppCopy.deleteWarning)
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -329,7 +329,7 @@ struct DeleteAccountView: View {
                         HStack {
                             Spacer()
                             if account.isDeleting { ProgressView() }
-                            Text(account.isDeleting ? "Удаление…" : "Удалить аккаунт")
+                            Text(account.isDeleting ? "Удаление…" : "Удалить учётную запись")
                                 .font(.body.weight(.semibold))
                             Spacer()
                         }
@@ -340,7 +340,7 @@ struct DeleteAccountView: View {
             }
             .scrollContentBackground(.hidden)
             .background(CentyColors.list)
-            .navigationTitle("Удаление аккаунта")
+            .navigationTitle("Удаление учётной записи")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -349,14 +349,15 @@ struct DeleteAccountView: View {
                         .accessibilityIdentifier("delete-cancel")
                 }
             }
-            .alert("Удалить аккаунт навсегда?", isPresented: $showsConfirmation) {
+            .alert(AppCopy.deleteConfirmTitle, isPresented: $showsConfirmation) {
                 Button("Отмена", role: .cancel) {}
                 Button("Удалить", role: .destructive) { delete() }
             } message: {
+                // The unsent line first, a blank line, then the body (`delete.confirm.body`).
                 if let unsent = UnsentNotice.text(container.delivery.unsentCount) {
-                    Text(verbatim: unsent + ". " + String(localized: "Это действие нельзя отменить."))
+                    Text(verbatim: unsent + "\n\n" + AppCopy.deleteConfirmBody)
                 } else {
-                    Text("Это действие нельзя отменить.")
+                    Text(verbatim: AppCopy.deleteConfirmBody)
                 }
             }
         }

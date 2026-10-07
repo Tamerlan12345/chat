@@ -60,7 +60,7 @@ final class ComposerLockTests: XCTestCase {
 
     func testMyOwnBlockComesFirst() {
         XCTAssertEqual(ComposerLock.of(blockedByMe: true, refused: true), .blockedByMe)
-        XCTAssertEqual(ComposerLock.of(blockedByMe: false, refused: false), .none)
+        XCTAssertEqual(ComposerLock.of(blockedByMe: false, refused: false), .unlocked)
     }
 
     func testABlockHidesOnlyDirectMessages() {

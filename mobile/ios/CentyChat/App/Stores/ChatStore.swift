@@ -18,6 +18,9 @@ public final class ChatStore: RealtimeEventHandling {
     public private(set) var isLoadingOlder = false
     /// A short notice for the open chat (a refused file, a delete the server did not take…).
     public private(set) var notice: ChatNotice?
+    /// The server refused a send of this direct chat with `DM_NOT_ALLOWED`: the composer is closed
+    /// until delivery is seen to work again (parity P5).
+    public private(set) var deliveryRefused = false
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let realtime: RealtimeStore
@@ -30,6 +33,7 @@ public final class ChatStore: RealtimeEventHandling {
     @ObservationIgnored private var lastTypingSent = Date.distantPast
     @ObservationIgnored private var lastInput: ProjectionInput?
     @ObservationIgnored private var noticeSerial = 0
+    @ObservationIgnored private var refusal: RefusedDelivery?
 
     static let pageSize = 50
 
@@ -50,6 +54,9 @@ public final class ChatStore: RealtimeEventHandling {
         self.delivery = delivery
         self.presenceController = presenceController
         self.projection = ChatProjection(conversationType: conversation.type, targetId: conversation.targetId)
+        if conversation.type == .direct {
+            refusal = RefusedDelivery(conversation: conversation.deliveryKey, peer: conversation.targetId)
+        }
         rebuild()
     }
 
@@ -100,6 +107,19 @@ public final class ChatStore: RealtimeEventHandling {
             handedOver: uploads.handedOver,
             fileURL: { files.url($0) }
         )
+        if var current = refusal {
+            current.observe(outbox: state.outbox, shown: messages)
+            refusal = current
+            if deliveryRefused != current.closed { deliveryRefused = current.closed }
+        }
+    }
+
+    /// Delivery was seen to work (a fresh history, an unblock): the composer opens again.
+    private func reopenDelivery() {
+        guard var current = refusal else { return }
+        current.reopen(outbox: engine.state.outbox)
+        refusal = current
+        if deliveryRefused != current.closed { deliveryRefused = current.closed }
     }
 
     // MARK: - Visibility
@@ -165,6 +185,7 @@ public final class ChatStore: RealtimeEventHandling {
             let stale = oldest.map { first in shownBefore.filter { $0 >= first } } ?? shownBefore
             try await engine.replaceHistory(key, records: records, stale: stale, owner: owner)
             if records.count < Self.pageSize { reachedStart = true }
+            reopenDelivery()
             rebuild()
             loadState = .loaded
         } catch {
@@ -265,7 +286,7 @@ public final class ChatStore: RealtimeEventHandling {
         )
         rebuild()
         if !outcome.composerCleared {
-            show(DeliveryNotices.text(outcome.userError) ?? String(localized: "Сообщение не сохранено — попробуйте ещё раз"))
+            show(DeliveryNotices.text(outcome.userError) ?? DeliveryNotices.notSaved)
         }
         return outcome.composerCleared
     }
@@ -286,7 +307,7 @@ public final class ChatStore: RealtimeEventHandling {
         }
         let accepted = await uploads.add(conversation: key, picked: picked, replyToId: replyTo.flatMap { $0.id > 0 ? $0.id : nil }, owner: me)
         rebuild()
-        if !accepted { show(String(localized: "Не удалось подготовить файл к отправке")) }
+        if !accepted { show(AppCopy.uploadCannotPrepare) }
         return accepted
     }
 
@@ -302,7 +323,7 @@ public final class ChatStore: RealtimeEventHandling {
             outcome = await engine.edit(messageId: message.id, text: text)
         }
         rebuild()
-        if let error = outcome.userError { show(DeliveryNotices.text(error) ?? String(localized: "Сообщение нельзя изменить")) }
+        if let error = outcome.userError { show(DeliveryNotices.text(error) ?? AppCopy.deliveryNotEditable) }
         return outcome.persisted && outcome.userError == nil
     }
 
@@ -318,7 +339,7 @@ public final class ChatStore: RealtimeEventHandling {
             }
         } else if message.senderId == session.currentUser?.id {
             let outcome = await engine.delete(messageId: message.id)
-            if let error = outcome.userError { show(DeliveryNotices.text(error) ?? String(localized: "Сообщение нельзя удалить")) }
+            if let error = outcome.userError { show(DeliveryNotices.text(error) ?? AppCopy.deliveryNotDeletable) }
         } else {
             // Moderation of another person's message is outside the delivery model (§6.3 `delete`).
             await realtime.send(.deleteMessage(messageId: message.id))
@@ -371,17 +392,22 @@ public struct ChatNotice: Equatable, Sendable {
 
 /// The Russian text of a delivery `user_error` code (`delivery-state.md` §5).
 enum DeliveryNotices {
-    static let notSaved = String(localized: "Сообщение не сохранено — попробуйте ещё раз")
+    static let notSaved = AppCopy.deliveryNotSaved
 
+    /// The canonical text of a code (`copy-ru.md` §2).
     static func text(_ code: String?) -> String? {
         switch code {
         case nil: return nil
-        case "EMPTY_TEXT": return String(localized: "Нельзя отправить пустое сообщение")
-        case "TEXT_TOO_LONG": return String(localized: "Сообщение длиннее 16 000 символов")
-        case "NOT_EDITABLE", "EDIT_REJECTED": return String(localized: "Сообщение нельзя изменить")
-        case "NOT_DELETABLE", "DELETE_REJECTED": return String(localized: "Сообщение нельзя удалить")
-        case "DELETE_NOT_CONFIRMED": return String(localized: "Сервер не подтвердил удаление — сообщение снова видно")
-        default: return String(localized: "Сообщение не сохранено — попробуйте ещё раз")
+        case "EMPTY_TEXT": return AppCopy.deliveryEmptyText
+        case "TEXT_TOO_LONG": return AppCopy.deliveryTextTooLong
+        case "NOT_EDITABLE": return AppCopy.deliveryNotEditable
+        case "EDIT_REJECTED": return AppCopy.deliveryEditRejected
+        case "NOT_DELETABLE": return AppCopy.deliveryNotDeletable
+        case "DELETE_REJECTED": return AppCopy.deliveryDeleteRejected
+        case "DELETE_NOT_CONFIRMED": return AppCopy.deliveryDeleteNotConfirmed
+        case "DM_NOT_ALLOWED": return AppCopy.deliveryDMNotAllowed
+        case "INVALID_CLIENT_MSG_ID", "INVALID_CONVERSATION", "INVALID_MESSAGE_TYPE": return AppCopy.deliveryInvalidKey
+        default: return notSaved
         }
     }
 }

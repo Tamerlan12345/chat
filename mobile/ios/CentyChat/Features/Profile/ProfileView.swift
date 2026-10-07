@@ -15,7 +15,8 @@ public struct ProfileView: View {
     @State private var showDeleteAccountSheet: Bool = false
     @State private var selectedStatus: UserStatus = .online
     /// Unsent messages wait: the sign-out asks first (they would be deleted).
-    @State private var unsentWarning: String?
+    /// The sign-out question on screen, with the unsent count it showed (nil inside — unknown).
+    @State private var signOutQuestion: SignOutQuestion?
 
     public init() {}
 
@@ -139,24 +140,22 @@ public struct ProfileView: View {
 
                 Section {
                     Button(role: .destructive) {
-                        if let warning = UnsentNotice.text(container.delivery.unsentCount) {
-                            unsentWarning = warning
-                        } else {
-                            Task { await session.logout() }
-                        }
+                        // Always asked (final review M3, `copy-ru.md` §1).
+                        signOutQuestion = SignOutQuestion(unsent: container.delivery.unsentCount)
                     } label: {
-                        Label("Выйти из аккаунта", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("Выйти из учётной записи", systemImage: "rectangle.portrait.and.arrow.right")
                             .foregroundStyle(CentyColors.dangerText)
                     }
+                    .accessibilityIdentifier("profile-sign-out")
                     Button(role: .destructive) {
                         showDeleteAccountSheet = true
                     } label: {
-                        Label("Удалить аккаунт", systemImage: "trash")
+                        Label("Удалить учётную запись", systemImage: "trash")
                             .foregroundStyle(CentyColors.dangerText)
                     }
                     .accessibilityIdentifier("profile-delete-account")
                 } footer: {
-                    Text("Удаление аккаунта необратимо.")
+                    Text("Удаление учётной записи необратимо.")
                         .foregroundStyle(CentyColors.textDim)
                 }
                 .listRowBackground(CentyColors.card)
@@ -174,16 +173,14 @@ public struct ProfileView: View {
                 }
             }
             .alert(
-                "Выйти из аккаунта?",
-                isPresented: Binding(get: { unsentWarning != nil }, set: { if !$0 { unsentWarning = nil } })
-            ) {
-                Button("Отмена", role: .cancel) { unsentWarning = nil }
-                Button("Выйти", role: .destructive) {
-                    unsentWarning = nil
-                    Task { await session.logout() }
-                }
-            } message: {
-                Text(unsentWarning ?? "")
+                AppCopy.signOutTitle,
+                isPresented: Binding(get: { signOutQuestion != nil }, set: { if !$0 { signOutQuestion = nil } }),
+                presenting: signOutQuestion
+            ) { asked in
+                Button("Отмена", role: .cancel) { signOutQuestion = nil }
+                Button(AppCopy.signOutConfirm, role: .destructive) { confirmSignOut(asked) }
+            } message: { asked in
+                Text(verbatim: SignOutPrompt.message(unsent: asked.unsent))
             }
             .sheet(isPresented: $showChangePasswordSheet) {
                 ChangePasswordModalView(isMandatory: false)
@@ -195,6 +192,21 @@ public struct ProfileView: View {
                 wakeColleaguePickerSheet
             }
         }
+    }
+
+    /// The count the user agreed to is the count deleted: if more became unsent while the question
+    /// was open, it is asked again with the new count.
+    private func confirmSignOut(_ asked: SignOutQuestion) {
+        signOutQuestion = nil
+        let now = container.delivery.unsentCount
+        if SignOutPrompt.needsAnotherLook(shown: asked.unsent, now: now) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                signOutQuestion = SignOutQuestion(unsent: now)
+            }
+            return
+        }
+        Task { await session.logout() }
     }
 
     private func header(_ user: User) -> some View {
@@ -324,3 +336,8 @@ private struct StatusChips: View {
         .previewEnvironment()
 }
 #endif
+
+/// The sign-out question with the unsent count it showed (nil — the store could not be read).
+private struct SignOutQuestion: Equatable {
+    let unsent: Int?
+}

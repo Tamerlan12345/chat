@@ -17,6 +17,10 @@ public final class AccountStore {
     /// Runs after a block or unblock went through: the server now hides or shows that person's
     /// direct messages, so lists and open chats are reloaded.
     @ObservationIgnored var onBlocksChanged: (@MainActor () async -> Void)?
+    /// The server's 429 wait for blocks and unblocks (one limit for both) and for reports: nothing
+    /// is sent before it is over (parity: Android's BlockController/ReportController).
+    @ObservationIgnored private var blocksWaitUntil: Date?
+    @ObservationIgnored private var reportsWaitUntil: Date?
 
     init(
         repository: any AccountRepository,
@@ -43,7 +47,8 @@ public final class AccountStore {
             blocksState = .loaded
         } catch {
             Log.session.error("Loading the block list failed: \(error.localizedDescription, privacy: .public)")
-            blocksState = .failed(AccountFailure(error, context: .generic, now: now()).message(at: now()) ?? "")
+            let failure = AccountFailure(error, context: .generic, now: now())
+            blocksState = .failed(failure.retryDeadline == nil ? AppCopy.blockedListLoadFailed : failure.message(at: now()) ?? AppCopy.blockedListLoadFailed)
         }
     }
 
@@ -51,6 +56,7 @@ public final class AccountStore {
     @discardableResult
     public func block(userId: Int64, name: String) async -> AccountFailure? {
         guard session.currentUser?.id != userId, !busyUserIds.contains(userId) else { return nil }
+        if let until = blocksWaitUntil, now() < until { return .throttled(until: until) }
         busyUserIds.insert(userId)
         defer { busyUserIds.remove(userId) }
         do {
@@ -61,13 +67,14 @@ public final class AccountStore {
             await onBlocksChanged?()
             return nil
         } catch {
-            return AccountFailure(error, context: .generic, now: now())
+            return blocksFailure(error)
         }
     }
 
     @discardableResult
     public func unblock(userId: Int64) async -> AccountFailure? {
         guard !busyUserIds.contains(userId) else { return nil }
+        if let until = blocksWaitUntil, now() < until { return .throttled(until: until) }
         busyUserIds.insert(userId)
         defer { busyUserIds.remove(userId) }
         do {
@@ -76,8 +83,14 @@ public final class AccountStore {
             await onBlocksChanged?()
             return nil
         } catch {
-            return AccountFailure(error, context: .generic, now: now())
+            return blocksFailure(error)
         }
+    }
+
+    private func blocksFailure(_ error: any Error) -> AccountFailure {
+        let failure = AccountFailure(error, context: .generic, now: now())
+        if let deadline = failure.retryDeadline { blocksWaitUntil = deadline }
+        return failure
     }
 
     // MARK: - Reports
@@ -89,6 +102,7 @@ public final class AccountStore {
         reason: ReportReason,
         details: String
     ) async -> AccountFailure? {
+        if let until = reportsWaitUntil, now() < until { return .throttled(until: until) }
         let trimmed = details.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = ReportBody(
             targetType: targetType,
@@ -100,7 +114,9 @@ public final class AccountStore {
             try await repository.report(body)
             return nil
         } catch {
-            return AccountFailure(error, context: .generic, now: now())
+            let failure = AccountFailure(error, context: .generic, now: now())
+            if let deadline = failure.retryDeadline { reportsWaitUntil = deadline }
+            return failure
         }
     }
 
@@ -128,5 +144,7 @@ public final class AccountStore {
         blocksState = .idle
         busyUserIds = []
         isDeleting = false
+        blocksWaitUntil = nil
+        reportsWaitUntil = nil
     }
 }

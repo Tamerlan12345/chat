@@ -31,8 +31,8 @@ protocol DownloadTransport: Sendable {
 /// over; 416 — drop the partial and ask again). A finished copy is revalidated with
 /// `If-None-Match` (304 keeps it) and opens offline when the server cannot be reached.
 actor AttachmentDownloader {
-    static let noNetwork = "Нет связи с сервером — файл не скачан"
-    static let interrupted = "Связь прервалась — нажмите ещё раз, загрузка продолжится"
+    static let noNetwork = AppCopy.downloadNoNetwork
+    static let interrupted = AppCopy.downloadInterrupted
     private static let partName = ".part"
     private static let tagName = ".etag"
 
@@ -228,9 +228,10 @@ actor AttachmentDownloader {
             return raw
         }
         switch status {
-        case 403: return "Нет доступа к файлу"
-        case 404: return "Файл не найден"
-        default: return "Не удалось скачать файл (код \(status))"
+        case 403: return AppCopy.downloadForbidden
+        case 404: return AppCopy.downloadNotFound
+        // An HTTP code means nothing to an employee (`download.failed`).
+        default: return AppCopy.downloadFailed
         }
     }
 

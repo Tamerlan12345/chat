@@ -140,7 +140,7 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Алиса Тестова"].waitForExistence(timeout: 20), "The profile must show the signed-in user.")
 
         // 9. Logout.
-        let logout = app.buttons["Выйти из аккаунта"]
+        let logout = app.buttons["profile-sign-out"]
         // The settings form is lazy: scroll until the row is built.
         for _ in 0..<6 where !logout.exists {
             app.swipeUp()
@@ -148,8 +148,10 @@ final class UserPathQATests: XCTestCase {
         }
         XCTAssertTrue(logout.exists, "The profile must offer logout.")
         tap(logout)
-        let confirm = app.alerts.buttons["Выйти"]
-        if confirm.waitForExistence(timeout: 3) { confirm.tap() }
+        // Sign-out always asks first (final review M3, copy-ru.md §1).
+        let question = app.alerts["Выйти из учётной записи?"]
+        XCTAssertTrue(question.waitForExistence(timeout: 5), "Sign-out must ask for a confirmation.")
+        question.buttons["Выйти"].tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["login-screen"].waitForExistence(timeout: 30),
             "Logout must return to the login screen."

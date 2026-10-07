@@ -84,7 +84,7 @@ final class RegistrationFlowUITests: XCTestCase {
         let application = launch(server: Self.unreachableServer)
         openRegistration(application)
 
-        fillForm(application, email: "mailoff@company.kz", name: "Мария Сидорова", username: "maria.mail")
+        fillForm(application, email: "mailoff@example.com", name: "Мария Сидорова", username: "maria.mail")
         submitForm(application)
 
         let error = application.descendants(matching: .any)["register-error"]

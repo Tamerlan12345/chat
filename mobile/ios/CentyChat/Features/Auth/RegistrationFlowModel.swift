@@ -90,8 +90,16 @@ public final class RegistrationFlowModel {
         code = RegistrationValidation.sanitizedCode(raw)
     }
 
+    /// Six digits, nothing in flight, and no server wait (429 / busy) still running — the button
+    /// waits out the server's Retry-After, as on Android.
     public var canVerify: Bool {
-        step == .code && !isBusy && code.count == RegistrationValidation.codeLength
+        step == .code && !isBusy && code.count == RegistrationValidation.codeLength && !isWaiting(at: now())
+    }
+
+    /// A server wait (429 Retry-After, a busy server) is still running at `date`.
+    public func isWaiting(at date: Date) -> Bool {
+        guard let deadline = failure?.retryDeadline else { return false }
+        return date < deadline
     }
 
     public func isCodeExpired(at date: Date) -> Bool {
@@ -106,7 +114,7 @@ public final class RegistrationFlowModel {
     }
 
     public func canResend(at date: Date) -> Bool {
-        step == .code && !isBusy && secondsUntilResend(at: date) == 0
+        step == .code && !isBusy && secondsUntilResend(at: date) == 0 && !isWaiting(at: date)
     }
 
     /// Whole seconds the current code stays valid; nil when no code was sent.
@@ -125,7 +133,9 @@ public final class RegistrationFlowModel {
     public func verify() async {
         guard canVerify, let challenge else { return }
         if isCodeExpired(at: now()) {
-            failure = .codeExpired
+            // The client's own timer: the exact reason is known, and the dead code is cleared.
+            failure = .codeExpiredLocally
+            code = ""
             return
         }
         isBusy = true

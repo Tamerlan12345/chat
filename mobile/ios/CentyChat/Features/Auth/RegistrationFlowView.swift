@@ -66,7 +66,7 @@ struct RegistrationFlowView: View {
         switch model.step {
         case .form: return "Регистрация"
         case .code: return "Подтверждение почты"
-        case .pending: return "Заявка отправлена"
+        case .pending: return LocalizedStringKey(AppCopy.regPendingTitle)
         }
     }
 
@@ -349,13 +349,13 @@ struct RegistrationFlowView: View {
                 .foregroundStyle(CentyColors.primaryBlue)
                 .accessibilityHidden(true)
                 .padding(.top, 24)
-            Text("Заявка отправлена на рассмотрение администратору")
+            Text(verbatim: AppCopy.regPendingTitle)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(CentyColors.textStrong)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text("Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен — попробуйте войти позже.")
+            Text(verbatim: AppCopy.regPendingBody)
                 .font(.subheadline)
                 .foregroundStyle(CentyColors.textSecondary)
                 .multilineTextAlignment(.center)

@@ -161,13 +161,22 @@ private struct ChatDetailContent: View {
         let name: String
     }
 
-    /// Messages of people the user blocked are hidden on this device.
+    /// A block hides the blocked person's direct messages; channels are not affected (parity P6).
     private var rows: [ChatRow] {
-        ChatTimeline.rows(store.messages.filter { !account.isBlocked($0.senderId) }, me: session.currentUser?.id)
+        let blocked = account.blockedIds
+        let visible = ChatVisibility.messages(store.messages, in: conversationType, isBlocked: { blocked.contains($0) })
+        return ChatTimeline.rows(visible, me: session.currentUser?.id)
     }
 
     private var isPeerBlocked: Bool {
         conversationType == .direct && account.isBlocked(targetId)
+    }
+
+    /// Nothing can be sent in this direct chat: I blocked the peer, or the server refused delivery
+    /// (`DM_NOT_ALLOWED`, parity P5). Editing an own message stays possible only while unlocked.
+    private var composerLock: ComposerLock {
+        guard conversationType == .direct else { return .unlocked }
+        return ComposerLock.of(blockedByMe: isPeerBlocked, refused: store.deliveryRefused)
     }
 
     /// The per-person menu and the card exist only in a dialog with someone else.
@@ -293,13 +302,13 @@ private struct ChatDetailContent: View {
                 Text(deleteMessage)
             }
             .alert(
-                "Заблокировать пользователя?",
+                AppCopy.blockTitle,
                 isPresented: Binding(get: { blockCandidate != nil }, set: { if !$0 { blockCandidate = nil } })
             ) {
                 Button("Отмена", role: .cancel) { blockCandidate = nil }
-                Button("Заблокировать", role: .destructive) { confirmBlock() }
+                Button(AppCopy.blockAction, role: .destructive) { confirmBlock() }
             } message: {
-                Text("Сообщения «\(blockCandidate?.name ?? "")» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле.")
+                Text(verbatim: AppCopy.blockBody(name: blockCandidate?.name ?? ""))
             }
             .alert(
                 "Не удалось выполнить действие",
@@ -464,18 +473,30 @@ private struct ChatDetailContent: View {
             .padding(.top, 64)
             .padding(.horizontal, 24)
         case .loaded:
-            VStack(spacing: 12) {
-                SpotIllustrationView(kind: conversationType == .channel ? .channel : .bubbles)
-                Text(conversationType == .channel ? "В канале пока тихо" : "Пока нет сообщений")
-                    .font(.headline)
-                    .foregroundStyle(CentyColors.textStrong)
-                Text("Напишите первое сообщение — оно появится здесь.")
-                    .font(.subheadline)
-                    .foregroundStyle(CentyColors.textSecondary)
-                    .multilineTextAlignment(.center)
+            if composerLock != .unlocked {
+                // No invitation to write where nothing can be sent (`chat.empty.locked`).
+                VStack(spacing: 12) {
+                    SpotIllustrationView(kind: .bubbles)
+                    Text(verbatim: AppCopy.chatEmptyLocked)
+                        .font(.headline)
+                        .foregroundStyle(CentyColors.textStrong)
+                }
+                .padding(.top, 64)
+                .padding(.horizontal, 24)
+            } else {
+                VStack(spacing: 12) {
+                    SpotIllustrationView(kind: conversationType == .channel ? .channel : .bubbles)
+                    Text(conversationType == .channel ? "В канале пока тихо" : "Пока нет сообщений")
+                        .font(.headline)
+                        .foregroundStyle(CentyColors.textStrong)
+                    Text("Напишите первое сообщение — оно появится здесь.")
+                        .font(.subheadline)
+                        .foregroundStyle(CentyColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 64)
+                .padding(.horizontal, 24)
             }
-            .padding(.top, 64)
-            .padding(.horizontal, 24)
         }
     }
 
@@ -759,6 +780,7 @@ private struct ChatDetailContent: View {
                 safetyError = failure.message(at: .now)
                 CentyHaptics.error()
             } else {
+                show(notice: AppCopy.blockDone)
                 CentyHaptics.warning()
             }
         }
@@ -767,8 +789,11 @@ private struct ChatDetailContent: View {
     private func unblockPeer() {
         Task {
             if let failure = await account.unblock(userId: targetId) {
-                safetyError = failure.message(at: .now)
+                // A server wait says how long; anything else is the plain «try again».
+                safetyError = failure.retryDeadline != nil ? failure.message(at: .now) : AppCopy.unblockFailed
                 CentyHaptics.error()
+            } else {
+                show(notice: AppCopy.unblockDone)
             }
         }
     }
@@ -790,16 +815,16 @@ private struct ChatDetailContent: View {
                 }
             }
 
-            if isPeerBlocked {
+            if composerLock == .blockedByMe {
                 HStack(spacing: 8) {
                     Image(systemName: "hand.raised.fill")
                         .foregroundStyle(CentyColors.dangerText)
                         .accessibilityHidden(true)
-                    Text("Вы заблокировали этого пользователя. Его сообщения скрыты.")
+                    Text(verbatim: AppCopy.blockedByMeBanner)
                         .font(.footnote)
                         .foregroundStyle(CentyColors.textSecondary)
                     Spacer(minLength: 8)
-                    Button("Разблокировать") { unblockPeer() }
+                    Button(AppCopy.unblockAction) { unblockPeer() }
                         .buttonStyle(CentyLinkButtonStyle())
                         .font(.footnote)
                         .accessibilityIdentifier("chat-unblock-banner")
@@ -808,10 +833,25 @@ private struct ChatDetailContent: View {
                 .padding(.vertical, 4)
                 .background(CentyColors.dangerSoft)
                 .accessibilityElement(children: .contain)
+            } else if composerLock == .notDeliverable {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .foregroundStyle(CentyColors.dangerText)
+                        .accessibilityHidden(true)
+                    Text(verbatim: AppCopy.dmNotAllowedBanner)
+                        .font(.footnote)
+                        .foregroundStyle(CentyColors.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(CentyColors.dangerSoft)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("chat-dm-not-allowed")
             }
 
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Сообщение...", text: $inputText, axis: .vertical)
+                TextField(isComposerLocked ? AppCopy.composerLockedPlaceholder : "Сообщение...", text: $inputText, axis: .vertical)
                     .lineLimit(1...6)
                     .font(.body)
                     .foregroundStyle(CentyColors.textMain)
@@ -823,7 +863,9 @@ private struct ChatDetailContent: View {
                     .onChange(of: inputText) {
                         Task { await store.sendTypingIfNeeded() }
                     }
+                    .disabled(isComposerLocked)
                 trailingButton
+                    .disabled(isComposerLocked)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -833,6 +875,11 @@ private struct ChatDetailContent: View {
         .overlay(alignment: .top) {
             Rectangle().fill(CentyColors.border).frame(height: 1)
         }
+    }
+
+    /// The field takes no new message while the chat is locked; an edit already open finishes.
+    private var isComposerLocked: Bool {
+        composerLock != .unlocked && editingMessage == nil
     }
 
     /// Attach while the field is empty, send (a 40-pt `primary` circle) once there is text: the two
@@ -916,7 +963,7 @@ private struct ChatDetailContent: View {
     /// write keeps the text, and a second tap meanwhile is ignored.
     private func sendOrUpdateMessage() async {
         let text = inputText
-        guard !inputIsBlank, !isSending else { return }
+        guard !inputIsBlank, !isSending, !isComposerLocked else { return }
         isSending = true
         defer { isSending = false }
 
@@ -1066,8 +1113,6 @@ private struct EndPinning: ViewModifier {
     let atEndChanged: (Bool) -> Void
 
     @State private var position = ScrollPosition(edge: .bottom)
-    /// UI tests only: the scroll geometry, readable as an accessibility label.
-    @State private var probe = ""
 
     func body(content: Content) -> some View {
         content
@@ -1083,17 +1128,16 @@ private struct EndPinning: ViewModifier {
                 guard pinned else { return }
                 position.scrollTo(edge: .bottom)
             }
-            .onScrollGeometryChange(for: String.self) { geometry in
-                LaunchTestFixture.exposesScrollProbe ? EndMetrics(geometry).description : ""
-            } action: { _, text in
-                if LaunchTestFixture.exposesScrollProbe {
-                    probe = text + " pinned=\(pinned)"
+            .modifier(ScrollProbe(pinned: pinned))
+            .onScrollGeometryChange(for: EndState.self) { geometry in
+                EndState(geometry)
+            } action: { old, new in
+                // Leaving the end by any means — a drag, a status-bar tap, a VoiceOver scroll —
+                // stops following; the end moving away (a new message, a taller row) does not.
+                if ChatScrollEnd.shouldUnpin(wasAtEnd: old.atEnd, isAtEnd: new.atEnd, endMoved: old.metrics != new.metrics) {
+                    pinned = false
                 }
-            }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                ChatScrollEnd.isAtEnd(visibleMaxY: geometry.visibleRect.maxY, contentHeight: geometry.contentSize.height)
-            } action: { _, atEnd in
-                atEndChanged(atEnd)
+                if old.atEnd != new.atEnd { atEndChanged(new.atEnd) }
             }
             .onScrollPhaseChange { _, phase in
                 // The reader takes over: following stops until they are back at the end.
@@ -1108,8 +1152,47 @@ private struct EndPinning: ViewModifier {
                     position.scrollTo(edge: .bottom)
                 }
             }
-            .overlay(alignment: .topLeading) {
-                if LaunchTestFixture.exposesScrollProbe {
+    }
+}
+
+/// Whether the chat is at its end, and where that end is.
+@available(iOS 18.0, *)
+private struct EndState: Equatable {
+    var atEnd: Bool
+    var metrics: EndMetrics
+
+    init(_ geometry: ScrollGeometry) {
+        atEnd = ChatScrollEnd.isAtEnd(
+            visibleMaxY: geometry.visibleRect.maxY,
+            bottomInset: geometry.contentInsets.bottom,
+            contentHeight: geometry.contentSize.height
+        )
+        metrics = EndMetrics(geometry)
+    }
+
+    static func == (lhs: EndState, rhs: EndState) -> Bool {
+        lhs.atEnd == rhs.atEnd && lhs.metrics == rhs.metrics
+    }
+}
+
+/// UI tests only: the scroll geometry, readable as an accessibility label (compiled out of Release).
+@available(iOS 18.0, *)
+private struct ScrollProbe: ViewModifier {
+    let pinned: Bool
+#if DEBUG
+    @State private var probe = ""
+#endif
+
+    func body(content: Content) -> some View {
+#if DEBUG
+        if LaunchTestFixture.exposesScrollProbe {
+            content
+                .onScrollGeometryChange(for: String.self) { geometry in
+                    EndMetrics(geometry).description
+                } action: { _, text in
+                    probe = text + " pinned=\(pinned)"
+                }
+                .overlay(alignment: .topLeading) {
                     Text(verbatim: probe)
                         .font(.system(size: 1))
                         .frame(width: 1, height: 1)
@@ -1117,7 +1200,12 @@ private struct EndPinning: ViewModifier {
                         .allowsHitTesting(false)
                         .accessibilityIdentifier("chat-scroll-probe")
                 }
-            }
+        } else {
+            content
+        }
+#else
+        content
+#endif
     }
 }
 
@@ -1165,11 +1253,14 @@ enum ChatScrollEnd {
         visibleMaxY >= contentHeight - tolerance
     }
 
+    /// The visible rect reaches under the composer (the bottom content inset): what lies behind
+    /// the composer is not on screen.
     static func isAtEnd(visibleMaxY: CGFloat, bottomInset: CGFloat, contentHeight: CGFloat) -> Bool {
-        isAtEnd(visibleMaxY: visibleMaxY, contentHeight: contentHeight)
+        isAtEnd(visibleMaxY: visibleMaxY - bottomInset, contentHeight: contentHeight)
     }
 
+    /// The reader left the end (by any means) while the end itself stayed where it was.
     static func shouldUnpin(wasAtEnd: Bool, isAtEnd: Bool, endMoved: Bool) -> Bool {
-        false
+        wasAtEnd && !isAtEnd && !endMoved
     }
 }
