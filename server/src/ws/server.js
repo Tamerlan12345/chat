@@ -1052,6 +1052,17 @@ class WsServer {
           actorId: currentUser.id,
           text: msg.text
         });
+        // Пока правка дочитывала сообщение (медленная база), его могло удалить
+        // параллельное удаление и уже разослать надгробие. message_updated
+        // после надгробия вернул бы клиентам текст удалённого сообщения:
+        // удаление побеждает, автору правки — тот же отказ, что и при правке
+        // уже удалённого.
+        if (MessageService.isGoneOrDeleted(updated?.id)) {
+          safeSend(ws, errorFrame('edit_message', msg, MessageService.describeError(
+            Object.assign(new Error('Сообщение удалено'), { code: 'MESSAGE_DELETED' })
+          )));
+          return;
+        }
         for (const userId of conversationRecipients(updated)) {
           this.sendToUser(userId, { type: 'message_updated', message: updated });
         }

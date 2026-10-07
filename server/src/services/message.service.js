@@ -632,6 +632,12 @@ class MessageService {
    * Старый текст уходит в message_history до того, как строка в messages
    * перезаписывается, — иначе первая же правка стирала бы след безвозвратно.
    */
+  // Сообщения нет или оно удалено (надгробие) — для проверки после ожидания.
+  static isGoneOrDeleted(messageId) {
+    const row = getDatabase().prepare('SELECT is_deleted FROM messages WHERE id = ?').get(Number(messageId));
+    return !row || Boolean(row.is_deleted);
+  }
+
   static isDirectBlocked(db, a, b) {
     return Boolean(db.prepare(
       'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
