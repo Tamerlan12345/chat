@@ -15,6 +15,12 @@ import javax.inject.Singleton
 /** The device's push token from the provider (FCM); null when push is not configured in this build. */
 interface PushTokenSource {
     suspend fun currentToken(): String?
+
+    /**
+     * Explicit sign-out: the provider forgets this device's token, so the old session's pushes stop
+     * even if `/auth/logout` never reached the server (review fix round 1). Nothing to do without push.
+     */
+    suspend fun delete() = Unit
 }
 
 /**

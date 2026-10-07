@@ -51,7 +51,8 @@ class ApiClient(
             .authenticator(SessionAuthenticator(
                 coordinator = refreshCoordinator,
                 currentToken = { sessionManager.token },
-                updateToken = { refreshedToken -> sessionManager.token = refreshedToken },
+                // The refresh stores the renewed token itself, only over the token it renewed.
+                updateToken = {},
                 canSendCredentials = ::canSendCurrentSessionCredentials,
                 refresh = ::refreshTokenForAuthenticator
             ))
@@ -86,9 +87,14 @@ class ApiClient(
                 } else {
                     null
                 }
-                RefreshFailurePolicy.classify(response.code, token).also {
+                when (val outcome = RefreshFailurePolicy.classify(response.code, token)) {
                     // The refused session ends — unless another one was signed in meanwhile.
-                    if (it == RefreshOutcome.Rejected) sessionManager.clearSessionIfCurrent(currentToken)
+                    RefreshOutcome.Rejected -> outcome.also { sessionManager.clearSessionIfCurrent(currentToken) }
+                    // Stored only over the token it renewed: never after a sign-out, never over
+                    // another account's session (review fix round 1).
+                    is RefreshOutcome.Renewed ->
+                        if (sessionManager.replaceTokenIfCurrent(currentToken, outcome.token)) outcome else RefreshOutcome.Superseded
+                    else -> outcome
                 }
             }
         } catch (_: Exception) {
@@ -114,7 +120,7 @@ class ApiClient(
                     nowEpochSeconds = nowSeconds,
                     currentToken = { sessionManager.token },
                     refresh = { current -> (refreshTokenForAuthenticator(current) as? RefreshOutcome.Renewed)?.token },
-                    updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
+                    updateToken = {}
                 )
             }
         } catch (_: Exception) {}
@@ -251,7 +257,8 @@ class ApiClient(
                 .build()
 
             val response: RefreshResponse = executeRequest(httpRequest)
-            sessionManager.token = response.token
+            // Only over the token it renewed: a sign-out or another sign-in meanwhile wins.
+            if (refreshing != null) sessionManager.replaceTokenIfCurrent(refreshing, response.token)
             response
         } catch (error: ApiException) {
             if (RefreshFailurePolicy.shouldClearSession(error.statusCode) && refreshing != null) {

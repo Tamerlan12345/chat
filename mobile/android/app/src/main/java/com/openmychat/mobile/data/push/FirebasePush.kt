@@ -9,6 +9,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -34,7 +35,20 @@ class FirebasePushTokenSource @Inject constructor(
         }
     }
 
+    override suspend fun delete() {
+        if (!isConfigured(context)) return
+        withTimeoutOrNull(DELETE_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                FirebaseMessaging.getInstance().deleteToken().addOnCompleteListener {
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+            }
+        }
+    }
+
     companion object {
+        private const val DELETE_TIMEOUT_MS = 5_000L
+
         fun isConfigured(context: Context): Boolean = runCatching { FirebaseApp.getApps(context).isNotEmpty() }.getOrDefault(false)
     }
 }

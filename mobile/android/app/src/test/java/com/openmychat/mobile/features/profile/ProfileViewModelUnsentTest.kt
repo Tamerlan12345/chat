@@ -168,6 +168,8 @@ class ProfileViewModelUnsentTest {
     @Test
     fun aSignOutTheSessionRefusedLeavesTheAccountWorking() = runTest(dispatcher) {
         val refusing = object : com.openmychat.mobile.data.repository.AuthRepository by FakeAuthRepository() {
+            // The session could not be cleared at all: it is still there.
+            override val hasSessionToken: Boolean = true
             override suspend fun logout() = throw com.openmychat.mobile.core.session.SecureStorageUnavailableException()
         }
         val h = com.openmychat.mobile.testing.DeliveryHarness(realtime, null, dispatcher)

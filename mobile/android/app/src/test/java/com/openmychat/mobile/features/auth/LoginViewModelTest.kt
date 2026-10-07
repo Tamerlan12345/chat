@@ -275,4 +275,13 @@ class LoginViewModelTest {
         runCurrent()
         assertTrue(unknown.registrationAvailable.value)
     }
+    /** Ruling U minor 3: after a sign-out whose wipe the secure store refused, the login screen says why. */
+    @Test
+    fun theLoginScreenSaysWhenTheSecureStorageIsUnavailable() = runTest(dispatcher) {
+        auth.secureStorageAvailable = false
+        val vm = viewModel()
+        vm.onScreenShown()
+        runCurrent()
+        assertEquals(LoginUiState.Error(LoginError.StorageUnavailable), vm.uiState.value)
+    }
 }

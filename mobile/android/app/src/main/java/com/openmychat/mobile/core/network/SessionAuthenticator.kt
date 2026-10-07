@@ -16,6 +16,12 @@ sealed interface RefreshOutcome {
 
     /** No definitive answer — no network, a timeout, a 5xx, an unreadable body: the session stands. */
     data object Unreachable : RefreshOutcome
+
+    /**
+     * Renewed, but the session it renewed was signed out or replaced by another account meanwhile:
+     * nothing is stored and the refused request is not replayed (review fix round 1).
+     */
+    data object Superseded : RefreshOutcome
 }
 
 /**
@@ -55,7 +61,7 @@ class SessionAuthenticator(
             refresh = { token ->
                 when (val outcome = refresh(token)) {
                     is RefreshOutcome.Renewed -> outcome.token
-                    RefreshOutcome.Rejected -> null
+                    RefreshOutcome.Rejected, RefreshOutcome.Superseded -> null
                     RefreshOutcome.Unreachable -> {
                         unreachable = true
                         null

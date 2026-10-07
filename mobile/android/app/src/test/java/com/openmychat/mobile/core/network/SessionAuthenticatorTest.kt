@@ -97,4 +97,11 @@ class SessionAuthenticatorTest {
         val retry = authenticator { RefreshOutcome.Renewed("unused") }.authenticate(null, refusal(com.openmychat.mobile.testing.jwt(1, "old")))
         assertEquals("Bearer $fresh", retry!!.header("Authorization"))
     }
+    /** Ruling U minor 1: the session was replaced while its refresh ran — the old request is not replayed. */
+    @Test
+    fun aRefreshWhoseSessionWasReplacedMeanwhileReplaysNothing() {
+        val retry = authenticator { RefreshOutcome.Superseded }.authenticate(null, unauthorized)
+        assertEquals(null, retry)
+        assertEquals("old", token)
+    }
 }

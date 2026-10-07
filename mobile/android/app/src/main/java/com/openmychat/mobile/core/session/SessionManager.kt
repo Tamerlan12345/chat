@@ -288,6 +288,7 @@ class SessionManager private constructor(
         persistAuthenticatedSession(authenticatedUser, token, mustChangePassword)
     }
 
+    @Synchronized
     private fun persistAuthenticatedSession(user: User, token: String, mustChangePassword: Boolean) {
         val encodedUser = json.encodeToString(user.copy(mustChangePassword = mustChangePassword))
         val recoveringFromPersistentInvalidation =
@@ -352,6 +353,22 @@ class SessionManager private constructor(
      * Ends the session only when [token] is still the session's token: a refusal of an older token
      * (another account's, or one already replaced) says nothing about the session signed in now.
      */
+    /**
+     * Stores a renewed token only while [old] — the token it renews — is still the session's token
+     * (review fix round 1). A refresh that lands after a sign-out, or after another account signed in,
+     * stores nothing (false). Runs under the same lock as every other change of the session. Throws
+     * [SecureStorageUnavailableException] when the store refuses the write.
+     */
+    @Synchronized
+    fun replaceTokenIfCurrent(old: String, new: String): Boolean {
+        if (_storageState.value == SessionStorageState.UNAVAILABLE) return false
+        if (readString(KEY_TOKEN) != old) return false
+        // A store that refuses the write is reported, never a token kept only in memory.
+        if (!writeString(KEY_TOKEN, new)) throw SecureStorageUnavailableException()
+        _tokenFlow.value = new
+        return true
+    }
+
     @Synchronized
     fun clearSessionIfCurrent(token: String): Boolean {
         if (readString(KEY_TOKEN) != token) return true
@@ -363,6 +380,7 @@ class SessionManager private constructor(
      * screen's knock cannot sign the same person back in without a password (final review I1). False
      * when the store could not be written — the caller must not report a sign-out then.
      */
+    @Synchronized
     fun clearSessionForSignOut(): Boolean {
         val cleared = editSecureStorage {
             remove(KEY_TOKEN)
@@ -376,6 +394,7 @@ class SessionManager private constructor(
         return cleared
     }
 
+    @Synchronized
     fun clearSession(): Boolean {
         val cleared = editSecureStorage {
             remove(KEY_TOKEN)

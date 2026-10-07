@@ -42,12 +42,16 @@ interface AuthRepository {
      * decision Q); null when that could not be read.
      */
     suspend fun registrationOpen(): Boolean? = null
+
+    /** False once the device's secure store refused a write (the session cannot be kept on it). */
+    val secureStorageAvailable: Boolean get() = true
 }
 
 @Singleton
 class DefaultAuthRepository @Inject constructor(
     private val apiClient: ApiClient,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val push: com.openmychat.mobile.data.push.PushTokenSource = NoPushTokens
 ) : AuthRepository {
 
     override val mustChangePassword: StateFlow<Boolean> get() = sessionManager.mustChangePasswordFlow
@@ -96,6 +100,9 @@ class DefaultAuthRepository @Inject constructor(
         null
     }
 
+    override val secureStorageAvailable: Boolean
+        get() = sessionManager.storageState.value == com.openmychat.mobile.core.session.SessionStorageState.AVAILABLE
+
     override suspend fun logout() {
         try {
             apiClient.logout()
@@ -104,6 +111,14 @@ class DefaultAuthRepository @Inject constructor(
         } catch (_: Exception) {
             // The remote call failed after (or before) the local clear; make sure local state is gone.
             if (!sessionManager.clearSession()) throw SecureStorageUnavailableException()
+        }
+        // Signed out here: this device's push token goes too, even when the server was not reached.
+        try {
+            push.delete()
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Best effort: /auth/logout (when it arrives) drops the token on the server as well.
         }
     }
 }
@@ -137,4 +152,9 @@ internal suspend fun claimThisDevice(apiClient: ApiClient, sessionManager: Sessi
     } catch (_: Exception) {
         // Device claim is optional; the sign-in already succeeded.
     }
+}
+
+/** No push provider (tests, previews). */
+object NoPushTokens : com.openmychat.mobile.data.push.PushTokenSource {
+    override suspend fun currentToken(): String? = null
 }

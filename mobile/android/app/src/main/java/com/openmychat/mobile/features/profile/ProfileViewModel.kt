@@ -241,6 +241,13 @@ class ProfileViewModel @Inject constructor(
             try {
                 authRepository.logout()
             } catch (error: SecureStorageUnavailableException) {
+                if (!authRepository.hasSessionToken) {
+                    // The store refused the wipe, but the session is gone from memory and the store is
+                    // marked unusable: this device IS signed out. Never say «выход отменён» then — the
+                    // login screen says the secure storage is unavailable (review fix round 1).
+                    onLoggedOut()
+                    return@launch
+                }
                 _logoutError.value = error.message ?: "Secure storage is unavailable"
                 // The session could not be cleared: whoever is still signed in goes on working.
                 outgoing.signOutAborted()

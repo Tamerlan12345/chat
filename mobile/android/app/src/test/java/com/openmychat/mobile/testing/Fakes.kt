@@ -176,6 +176,7 @@ class FakeAuthRepository : AuthRepository {
 
     /** `allow_registration` of /settings/info; null: could not be read. */
     var registrationOpen: Boolean? = null
+    override var secureStorageAvailable: Boolean = true
     override suspend fun registrationOpen(): Boolean? = registrationOpen
 }
 
