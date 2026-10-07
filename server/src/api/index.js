@@ -2199,6 +2199,9 @@ async function acceptUpload(req, res, next) {
   }
   const running = activeUploads.get(userId) || 0;
   if (running >= MAX_PARALLEL_UPLOADS) {
+    // Подсказка клиенту, когда спросить снова: мобильные клиенты ждут по
+    // Retry-After, а не помечают файл как «не загрузилось».
+    res.set('Retry-After', String(jitterSeconds(3)));
     return res.status(429).json({ error: 'Дождитесь окончания текущих загрузок' });
   }
   activeUploads.set(userId, running + 1);
