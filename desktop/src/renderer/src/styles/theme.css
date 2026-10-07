@@ -8496,6 +8496,7 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 .sec-state-empty { color: var(--text-muted); }
 .sec-state-error { border-style: solid; border-color: var(--danger-soft); background: var(--danger-soft); color: var(--danger-text); }
 .sec-state-error .sec-btn { margin-left: auto; }
+.sec-state-warning { border-style: solid; border-color: var(--warning-soft); background: var(--warning-soft); color: var(--warning-text); }
 .sec-spinner {
   width: 16px;
   height: 16px;
@@ -8998,16 +8999,6 @@ select option { background: var(--bg-elevated); color: var(--text-main); }
 .login-brand-lockup { gap: 12px; }
 .login-brand-lockup .brand-mark { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55), 0 8px 20px rgba(24, 10, 70, 0.35); }
 .login-brand .brand-wordmark { font-size: 24px; color: #ffffff; }
-.login-brand-lead {
-  max-width: 14em;
-  margin-top: auto;
-  font-family: var(--font-display);
-  font-size: var(--fs-2xl);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.015em;
-  text-wrap: balance;
-}
 
 .login-main {
   display: flex;

@@ -152,3 +152,29 @@ test('шаблон адреса совпадает с сервером (ALLOWLIS
   assert.ok(match, 'на сервере найден ALLOWLIST_PATTERN_RE');
   assert.strictEqual(ALLOWLIST_PATTERN_SOURCE, match[1]);
 });
+
+// ── Решение Q: allow_registration — главный выключатель самостоятельной
+// регистрации (и формой с компьютера, и кодом из письма с телефона; выключен —
+// сервер отвечает 403 REGISTRATION_DISABLED). Консоль говорит ровно это.
+
+test('тексты выключателя регистрации говорят правду о решении Q', async () => {
+  const { REGISTRATION_SWITCH } = await import('../src/renderer/src/lib/registration-admin.mjs');
+  assert.strictEqual(REGISTRATION_SWITCH.label, 'Самостоятельная регистрация сотрудников');
+  assert.match(REGISTRATION_SWITCH.hint, /кодом из письма/);
+  assert.match(REGISTRATION_SWITCH.hint, /«Разрешённые адреса»/);
+  assert.match(REGISTRATION_SWITCH.offTitle, /выключена/);
+  assert.match(REGISTRATION_SWITCH.offBody, /ни с компьютера, ни с телефона/);
+  assert.match(REGISTRATION_SWITCH.offBody, /в том числе с адресов из списка «Разрешённые адреса»/);
+  assert.match(REGISTRATION_SWITCH.offBody, /разделе «Настройки»/);
+  assert.match(REGISTRATION_SWITCH.allowlistOff, /не действует/);
+});
+
+test('консоль: в «Настройках» есть выключатель allow_registration; «Заявки» и «Разрешённые адреса» берут тексты из REGISTRATION_SWITCH', () => {
+  const modal = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'AdminUserModal.jsx'), 'utf8');
+  assert.match(modal, /allow_registration: e\.target\.checked \? 'true' : 'false'/, 'галочка в «Настройках»');
+  assert.match(modal, /REGISTRATION_SWITCH\.offTitle/);
+  assert.ok(!/новых заявок не появится/.test(modal), 'прежний текст убран');
+  assert.match(modal, /<RegistrationAllowlistAdmin[^>]*allowRegistration=\{sysSettings\.allow_registration === 'true' \|\| !settingsLoaded\}/);
+  const allowlist = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'RegistrationAllowlistAdmin.jsx'), 'utf8');
+  assert.match(allowlist, /!allowRegistration && [\s\S]{0,200}REGISTRATION_SWITCH\.allowlistOff/);
+});

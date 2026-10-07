@@ -18,7 +18,9 @@ export function formatBytes(bytes) {
 export function uploadProblem(file) {
   if (!file) return 'Файл не выбран';
   if (file.size === 0) return 'Файл пустой';
-  if (file.size > MAX_UPLOAD_BYTES) return 'Больше 100 МБ — такой файл отправить нельзя';
+  // Текст — общий для трёх клиентов и совпадает с ответом сервера 413
+  // (copy-ru: upload.too_big).
+  if (file.size > MAX_UPLOAD_BYTES) return 'Файл больше 100 МБ — такой файл загрузить нельзя';
   return null;
 }
 

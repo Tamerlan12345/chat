@@ -9,6 +9,7 @@ import { formatBytes, uploadProblem, imageFrame } from '../lib/attachments.mjs';
 import { canEdit, canDelete } from '../lib/message-actions.mjs';
 import { loadImage } from '../lib/image-cache';
 import { acceptAttr, checkFileAgainstPolicy } from '../lib/file-policy.mjs';
+import { COPY } from '../lib/copy-ru.mjs';
 
 // Действующий список разрешённых расширений — на время сеанса приложения, не
 // на чат: спрашивать сервер заново при каждом открытии окна незачем. Сброс —
@@ -350,7 +351,7 @@ export default function ChatView({
       // Сообщение в углу вместо alert(): модальное окно останавливало всё
       // приложение, включая приём сообщений, пока его не закроют.
       if (!res.ok) {
-        onNotice?.(res.status === 403 ? 'Нет доступа к этому файлу' : 'Не удалось скачать файл', suggestedName);
+        onNotice?.(res.status === 403 ? COPY['download.forbidden'] : COPY['download.failed'], suggestedName);
         return;
       }
       const blob = await res.blob();

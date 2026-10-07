@@ -61,7 +61,8 @@ export function checkFileAgainstPolicy(file, policy) {
   if (!policy || policy.enabled === false) return null;
 
   const ext = extensionOf(name);
-  if (!ext) return 'У файла нет расширения — такой файл сервер не примет';
+  // Как отвечает сервер (copy-ru: upload.no_extension).
+  if (!ext) return 'У файла нет расширения';
 
   const allowed = Array.isArray(policy.allowed) ? policy.allowed : [];
   if (!allowed.includes(ext)) return `Файлы .${ext} к отправке не разрешены`;

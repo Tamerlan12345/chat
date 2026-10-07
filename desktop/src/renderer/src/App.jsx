@@ -27,8 +27,9 @@ import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
 import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
-import { conversationSnippet, registrationToast } from './lib/live-events.mjs';
-import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
+import { conversationSnippet, registrationToast, toastTarget } from './lib/live-events.mjs';
+import { isSuperAdmin as userIsSuperAdmin, canOpenAdminConsole } from './lib/admin-access.mjs';
+import { COPY, connectionLabel } from './lib/copy-ru.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
 import { viewingKey, viewingFrame, applyConversationRead, authFrame, toastIsForConversation, isViewingHere, incomingMessagePlan } from './lib/multi-device.mjs';
 
@@ -99,6 +100,19 @@ export default function App() {
     return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://centychat-production.up.railway.app';
   });
   const [wsConnected, setWsConnected] = useState(false);
+  // Есть ли сеть у самого компьютера: без неё строка состояния говорит «Нет
+  // сети», с ней и без сокета — «Переподключение…».
+  const [networkOnline, setNetworkOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+  useEffect(() => {
+    const on = () => setNetworkOnline(true);
+    const off = () => setNetworkOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
 
   // Обработчики WebSocket, таймеры и подписки создаются один раз и видят
   // значения на момент создания. Токен же меняется — после входа по паролю,
@@ -197,6 +211,10 @@ export default function App() {
   const [registrationTick, setRegistrationTick] = useState(0);
   // Сотрудник, чью карточку надо открыть сразу при входе в консоль.
   const [adminFocusUserId, setAdminFocusUserId] = useState(null);
+  // Вкладка консоли, которую открыть (клик по уведомлению о заявке):
+  // { tab, at } — at меняется при каждом запросе, и уже открытая консоль
+  // переключается тоже.
+  const [adminFocusTab, setAdminFocusTab] = useState(null);
   // Отказ при загрузке базовых данных. Без него боковая панель показывала
   // «Загрузка…» вечно и ничего не объясняла.
   const [baseDataError, setBaseDataError] = useState(null);
@@ -568,9 +586,9 @@ export default function App() {
     // переход в профиль. Выйти по неосторожности — значит заново вводить
     // пароль, поэтому спрашиваем.
     const confirmed = await confirm({
-      title: 'Выход из учётной записи',
-      message: 'Выйти из учётной записи? Для продолжения работы потребуется снова ввести пароль.',
-      confirmText: 'Выйти',
+      title: COPY['signout.title'],
+      message: COPY['signout.body'],
+      confirmText: COPY['signout.confirm'],
       cancelText: 'Остаться'
     });
     if (!confirmed) {
@@ -1658,18 +1676,24 @@ export default function App() {
   // Подписка одна на всё время работы окна: раньше на каждую смену токена
   // добавлялась ещё одна, и после смены учётной записи клик по уведомлению
   // отрабатывал и за прежнего сотрудника.
-  const openDirectChatRef = useRef(openDirectChat);
-  const openChannelChatRef = useRef(openChannelChat);
-  openDirectChatRef.current = openDirectChat;
-  openChannelChatRef.current = openChannelChat;
+  // Куда ведёт уведомление (карточка в приложении или системное окно):
+  // личный чат, канал или вкладка консоли (новая заявка на регистрацию).
+  const openToastTarget = (data) => {
+    const target = toastTarget(data);
+    if (!target) return;
+    if (target.kind === 'direct') openDirectChat(target.user);
+    else if (target.kind === 'channel') openChannelChat(target.channel);
+    else if (target.kind === 'admin' && canOpenAdminConsole(currentUserRef.current)) {
+      setAdminFocusTab({ tab: target.tab, at: Date.now() });
+      setShowAdminModal(true);
+    }
+  };
+  const openToastTargetRef = useRef(openToastTarget);
+  openToastTargetRef.current = openToastTarget;
   useEffect(() => {
     if (!window.electronAPI?.onToastAction) return undefined;
     const off = window.electronAPI.onToastAction((toastData) => {
-      if (toastData?.data?.user) {
-        openDirectChatRef.current(toastData.data.user);
-      } else if (toastData?.data?.channel) {
-        openChannelChatRef.current(toastData.data.channel);
-      }
+      openToastTargetRef.current(toastData?.data);
     });
     return () => { if (typeof off === 'function') off(); };
   }, []);
@@ -1800,7 +1824,7 @@ export default function App() {
         try { data = JSON.parse(xhr.responseText); } catch {}
         if (xhr.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
         if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data });
-        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
+        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? COPY['upload.too_big'] : COPY['upload.refused']) });
       };
       xhr.onerror = () => resolve({ ok: false, error: 'Нет связи с сервером' });
       xhr.onabort = () => resolve({ ok: false, cancelled: true });
@@ -2678,7 +2702,7 @@ export default function App() {
         <div className="status-bar-left">
           <span className={`status-net-dot ${wsConnected ? 'online' : 'offline'}`} />
           <span className="status-bar-text">
-            {wsConnected ? 'Подключено' : 'Нет связи с сервером'}
+            {connectionLabel({ connected: wsConnected, networkOnline })}
           </span>
         </div>
 
@@ -2733,10 +2757,7 @@ export default function App() {
       <ToastNotificationStack
         toasts={toasts}
         onDismiss={dismissToast}
-        onAction={(t) => {
-          if (t.data?.user) openDirectChat(t.data.user);
-          else if (t.data?.channel) openChannelChat(t.data.channel);
-        }}
+        onAction={(t) => openToastTarget(t.data)}
       />
 
       {showCommandPalette && (
@@ -2830,10 +2851,12 @@ export default function App() {
           serverInfo={serverInfo}
           serverUrl={serverUrl}
           focusUserId={adminFocusUserId}
+          focusTab={adminFocusTab}
           registrationTick={registrationTick}
           onClose={() => {
             setShowAdminModal(false);
             setAdminFocusUserId(null);
+            setAdminFocusTab(null);
           }}
           onRefreshData={() => {
             loadBaseData();

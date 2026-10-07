@@ -6,13 +6,16 @@ import {
   validateAllowlistPattern,
   describeAllowlistEntry,
   allowlistErrorMessage,
-  formatAdminDate
+  formatAdminDate,
+  REGISTRATION_SWITCH
 } from '../lib/registration-admin.mjs';
 
 // Вкладка «Разрешённые адреса» (только суперадминистратор): кто из
 // зарегистрировавшихся сам получает доступ сразу после кода из письма, а чья
 // заявка ждёт решения во вкладке «Заявки».
-export default function RegistrationAllowlistAdmin({ serverUrl, showToast }) {
+// allowRegistration — значение allow_registration: выключенная регистрация
+// закрывает и разрешённые адреса (решение Q), и вкладка говорит об этом.
+export default function RegistrationAllowlistAdmin({ serverUrl, showToast, allowRegistration = true }) {
   const api = useAdminApi(serverUrl);
   const [confirm, confirmDialog] = useConfirm();
   const [entries, setEntries] = useState(null);
@@ -100,6 +103,12 @@ export default function RegistrationAllowlistAdmin({ serverUrl, showToast }) {
         (отдельный адрес или весь домен компании), учётная запись активируется сразу. Остальные заявки
         ждут вашего решения во вкладке «Заявки».
       </p>
+      {!allowRegistration && (
+        <div className="sec-state sec-state-warning" role="note" style={{ marginBottom: 12 }}>
+          <Icon name="alert" size={16} />
+          <span>{REGISTRATION_SWITCH.allowlistOff}</span>
+        </div>
+      )}
 
       <form className="sec-form" onSubmit={submit} noValidate>
         <div className="sec-field sec-field-block">
