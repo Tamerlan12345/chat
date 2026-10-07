@@ -16,9 +16,16 @@ struct CentyChatMobileApp: App {
             try? AttachmentFiles(root: AttachmentFiles.defaultRoot()).removeAll()
         }
 #endif
+        // Items of older versions become readable after the first unlock (final review I1).
+        KeychainManager.shared.upgradeItemProtection()
         let container = AppContainer.live()
         PushRouter.shared.notifications = container.notifications
         PushRouter.shared.pushTokens = container.pushTokens
+        PushRouter.shared.routes = container.notificationRoutes
+        PushRouter.shared.session = container.session
+        PushRouter.shared.flushInBackground = { [weak container] in
+            await container?.flushForBackgroundRefresh() ?? .nothingToDo
+        }
         _container = State(initialValue: container)
     }
 

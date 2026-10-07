@@ -2,18 +2,14 @@ import Foundation
 
 /// `POST /api/devices/push-token` body (`push.md` §2, `openapi.yaml`).
 struct PushTokenRegistration: Encodable, Equatable, Sendable {
-    /// Which APNs the token belongs to: builds run from Xcode get sandbox tokens,
-    /// TestFlight and App Store builds production ones.
+    /// Which APNs the token belongs to: read from the app's signing (`PushEnvironment`), not from
+    /// the build configuration — a development-signed Release build gets sandbox tokens.
     enum Environment: String, Encodable, Sendable {
         case sandbox
         case production
 
         static var current: Environment {
-#if DEBUG
-            return .sandbox
-#else
-            return .production
-#endif
+            PushEnvironment.current
         }
     }
 
@@ -76,7 +72,8 @@ struct DisabledPushTokenService: PushTokenService {
 /// the server drops the token on `/auth/logout` (with `device_id`) and on account deletion.
 ///
 /// Without an Apple developer account the build has no `aps-environment` entitlement: APNs
-/// never hands out a token, so nothing is registered.
+/// never hands out a token, so nothing is registered and push is simply off (decision P;
+/// `docs/PUSH-SETUP.md` §3).
 @MainActor
 final class PushTokenRegistrar {
     private let service: any PushTokenService

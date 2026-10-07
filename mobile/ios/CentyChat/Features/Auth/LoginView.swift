@@ -34,7 +34,11 @@ public struct LoginView: View {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     card(at: context.date)
                 }
-                registrationEntry
+                // Decision Q: offered only while the server takes registrations; unknown (offline)
+                // keeps it — the server still refuses with REGISTRATION_DISABLED if it is closed.
+                if session.registrationOpen != false {
+                    registrationEntry
+                }
                 Text("Забыли пароль? Обратитесь к администратору.")
                     .font(.footnote)
                     .foregroundStyle(CentyColors.textDim)

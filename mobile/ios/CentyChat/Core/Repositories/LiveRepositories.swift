@@ -20,6 +20,15 @@ struct LiveAuthRepository: AuthRepository {
     var hasStoredToken: Bool { keychain.authToken != nil }
     var hasDeviceSecret: Bool { keychain.deviceSecret != nil }
     var savedUsername: String? { keychain.savedUsername }
+    var storedUser: User? { (try? keychain.storedUserSnapshot()) ?? nil }
+
+    func rememberUser(_ user: User) {
+        do {
+            try keychain.saveUserSnapshot(user)
+        } catch {
+            Log.session.notice("The signed-in user could not be kept for an offline launch")
+        }
+    }
 
     func bindStoredCredentials(to origin: String) throws -> StoredCredentialDecision {
         try keychain.bindCredentials(toOrigin: origin)

@@ -76,7 +76,7 @@ final class ChatProjectionTests: XCTestCase {
         let shown = build(state)
         XCTAssertEqual(shown.map(\.sendState), [.failed, .failed])
         XCTAssertEqual(shown[0].failureReason, "Пользователь ограничил личные сообщения")
-        XCTAssertEqual(shown[1].failureReason, "Сервер не ответил")
+        XCTAssertEqual(shown[1].failureReason, "сервер не ответил")
     }
 
     func testTheRowKeepsItsIdentityWhenTheServerConfirmsIt() async {

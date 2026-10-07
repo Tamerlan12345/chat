@@ -145,9 +145,67 @@ final class ContractFixtureTests: XCTestCase {
             XCTAssertFalse(try decoder.decode(PublicUser.self, from: data).fullName.isEmpty, file)
         case "users.list":
             XCTAssertFalse(try decoder.decode([PublicUser].self, from: data).isEmpty, file)
+        // Registration (decision Q): the switch and every refusal the screens branch on.
+        case "auth.register-request-disabled":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "REGISTRATION_DISABLED", file)
+            XCTAssertEqual(accountFailure(403, error, .registrationRequest), .registrationDisabled, file)
+        case "auth.register-verify-disabled":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "REGISTRATION_DISABLED", file)
+            XCTAssertEqual(accountFailure(403, error, .registrationVerify), .registrationDisabled, file)
+        case "auth.register-request-invalid":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertNil(error.code, file)
+            XCTAssertEqual(accountFailure(400, error, .registrationRequest), .invalidInput(error.error), file)
+        case "auth.register-request-mail-not-configured":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "EMAIL_NOT_CONFIGURED", file)
+            XCTAssertEqual(accountFailure(503, error, .registrationRequest), .mailNotConfigured, file)
+        case "auth.register-verify-expired":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "CODE_EXPIRED", file)
+            XCTAssertEqual(accountFailure(410, error, .registrationVerify), .codeExpired, file)
+        case "auth.register-verify-invalid":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "CODE_INVALID", file)
+            XCTAssertNil(error.attemptsLeft, "a malformed code has no attemptsLeft: \(file)")
+            XCTAssertEqual(accountFailure(400, error, .registrationVerify), .wrongCode(error.error, attemptsLeft: nil), file)
+        // Blocks and reports.
+        case "blocks.add":
+            XCTAssertEqual(try decoder.decode(BlockedUser.self, from: data).id, 3, file)
+        case "blocks.list":
+            let blocked = try decoder.decode(BlockListResponse.self, from: data).blocked
+            XCTAssertEqual(blocked.map(\.id), [3], file)
+            XCTAssertEqual(blocked.first?.name, "Боб Тестов", file)
+        case "blocks.remove", "users.delete-me":
+            XCTAssertTrue(try decoder.decode(SuccessResponse.self, from: data).success, file)
+        case "reports.create":
+            let report = try decoder.decode(ReportCreatedResponse.self, from: data)
+            XCTAssertGreaterThan(report.id, 0, file)
+            XCTAssertEqual(report.status, "open", file)
+        case "users.delete-me-wrong-password":
+            let error = try decoder.decode(ServerErrorResponse.self, from: data)
+            XCTAssertEqual(error.code, "INVALID_PASSWORD", file)
+            XCTAssertEqual(accountFailure(400, error, .deleteAccount), .wrongPassword, file)
+        // The login screen shows «Зарегистрироваться» only while the server takes registrations.
+        case "settings.info":
+            let info = try decoder.decode(ServerInfo.self, from: data)
+            XCTAssertTrue(info.allowRegistration, file)
+            XCTAssertFalse(info.serverName.isEmpty, file)
         default:
             XCTFail("\(file): no DTO is mapped to this fixture; add one before the contract can ship")
         }
+    }
+
+    /// What the account screens make of a fixture's refusal, as `APIClient` reports it.
+    private func accountFailure(_ status: Int, _ error: ServerErrorResponse, _ context: AccountFailure.Context) -> AccountFailure {
+        let api: APIError = if let attemptsLeft = error.attemptsLeft {
+            .rejectedWithAttempts(statusCode: status, message: error.error, code: error.code, attemptsLeft: attemptsLeft)
+        } else {
+            .httpError(statusCode: status, message: error.error, code: error.code)
+        }
+        return AccountFailure(api, context: context, now: Date(timeIntervalSince1970: 1_000))
     }
 
     // MARK: - Push

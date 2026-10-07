@@ -234,7 +234,7 @@ struct MessageBubbleView: View {
     private var failedRow: some View {
         VStack(alignment: .trailing, spacing: 0) {
             Label {
-                Text(message.failureReason.map { "Не отправлено: \($0)" } ?? String(localized: "Не отправлено"))
+                Text(message.failureReason.map { AppCopy.deliveryFailed(reason: $0) } ?? AppCopy.deliveryFailed)
             } icon: {
                 Image(systemName: "exclamationmark.circle.fill")
             }
@@ -242,10 +242,10 @@ struct MessageBubbleView: View {
             .foregroundStyle(CentyColors.dangerText)
             .multilineTextAlignment(.trailing)
             HStack(spacing: 16) {
-                Button("Повторить") { onAction(.retry, message) }
+                Button(AppCopy.deliveryRetry) { onAction(.retry, message) }
                     .buttonStyle(CentyLinkButtonStyle())
                     .accessibilityIdentifier("message-retry")
-                Button("Удалить", role: .destructive) { onAction(.delete, message) }
+                Button(AppCopy.deliveryDiscard, role: .destructive) { onAction(.delete, message) }
                     .buttonStyle(CentyLinkButtonStyle(tint: CentyColors.dangerText))
                     .accessibilityIdentifier("message-discard")
             }

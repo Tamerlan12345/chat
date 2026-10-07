@@ -345,6 +345,232 @@ final class AttachmentUploadsTests: XCTestCase {
         XCTAssertTrue(uploads.items.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles(root: folder).url(pending.localPath).path))
     }
+    // MARK: - Fix wave (final review M1, M2)
+
+    /// «Удалить» while the uploaded file is being handed to the outbox (its enqueue still writing):
+    /// the message must never go out (final review M1, "cancelled messages are never sent").
+    func testAFileCancelledDuringItsHandOverIsNeverSent() async throws {
+        let disk = GatedDeliveryStore()
+        let link = FakeDeliveryLink()
+        let gatedEngine = DeliveryEngine(store: disk, link: link, backend: FakeDeliveryBackend(), clock: clock)
+        gatedEngine.start()
+        await gatedEngine.idle()
+        try await gatedEngine.adopt(2)
+        let uploads = AttachmentUploads(
+            store: store,
+            files: AttachmentFiles(root: folder),
+            uploader: uploader,
+            engine: gatedEngine,
+            clock: clock,
+            owner: { [unowned self] in self.signedIn }
+        )
+        uploads.start()
+        let uploadDone = TestGate()
+        uploader.hold(uploadDone)
+        uploader.answer = FakeUploader.done(70)
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        let pending = try XCTUnwrap(uploads.items.first?.pending)
+        uploads.setOnline(true)
+        await pause()
+        XCTAssertEqual(uploader.calls, 1)
+
+        // The upload finishes; its enqueue is now waiting on the disk.
+        let diskWrite = TestGate()
+        await disk.hold(diskWrite)
+        await uploadDone.open()
+        await pause()
+        XCTAssertTrue(uploads.items.contains { $0.id == pending.clientMsgId }, "still being handed over")
+
+        await uploads.cancel(pending.clientMsgId)
+        await disk.hold(nil)
+        await diskWrite.open()
+        await settle(gatedEngine)
+        link.setAuthenticated(2)
+        link.setAccepting(true)
+        gatedEngine.receive(DeliveryFixtures.authSuccess(2))
+        await settle(gatedEngine)
+
+        XCTAssertFalse(gatedEngine.state.outbox.contains { $0.clientMsgId == pending.clientMsgId }, "a cancelled file never stays in the queue")
+        XCTAssertEqual(link.sends(of: pending.clientMsgId), 0, "and is never sent")
+        XCTAssertNil(uploads.handedOver[pending.clientMsgId])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles(root: folder).url(pending.localPath).path))
+    }
+
+    /// The same with the socket up (review fix round 1): the enqueue's own step would send the
+    /// message at once; the engine withdraws it before any effect runs, so it never goes out.
+    func testAFileCancelledDuringItsHandOverIsNeverSentWithTheSocketUp() async throws {
+        let disk = GatedDeliveryStore()
+        let link = FakeDeliveryLink()
+        let gatedEngine = DeliveryEngine(store: disk, link: link, backend: FakeDeliveryBackend(), clock: clock)
+        gatedEngine.start()
+        await gatedEngine.idle()
+        try await gatedEngine.adopt(2)
+        link.setAuthenticated(2)
+        link.setAccepting(true)
+        gatedEngine.receive(DeliveryFixtures.authSuccess(2))
+        await settle(gatedEngine)
+        XCTAssertEqual(gatedEngine.state.connection, DeliveryState.online)
+        let uploads = AttachmentUploads(
+            store: store,
+            files: AttachmentFiles(root: folder),
+            uploader: uploader,
+            engine: gatedEngine,
+            clock: clock,
+            owner: { [unowned self] in self.signedIn }
+        )
+        uploads.start()
+        let uploadDone = TestGate()
+        uploader.hold(uploadDone)
+        uploader.answer = FakeUploader.done(71)
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        let pending = try XCTUnwrap(uploads.items.first?.pending)
+        uploads.setOnline(true)
+        await pause()
+
+        let diskWrite = TestGate()
+        await disk.hold(diskWrite)
+        await uploadDone.open()
+        await pause()
+        XCTAssertTrue(uploads.items.contains { $0.id == pending.clientMsgId }, "still being handed over")
+
+        await uploads.cancel(pending.clientMsgId)
+        await disk.hold(nil)
+        await diskWrite.open()
+        await settle(gatedEngine)
+
+        XCTAssertEqual(link.sends(of: pending.clientMsgId), 0, "a cancelled file is never sent")
+        XCTAssertFalse(
+            gatedEngine.state.outbox.contains { $0.clientMsgId == pending.clientMsgId && !$0.pendingDelete },
+            "nothing of it waits to be sent"
+        )
+        XCTAssertNil(uploads.handedOver[pending.clientMsgId])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles(root: folder).url(pending.localPath).path))
+    }
+
+    /// No answer again and again: the pause doubles (15 s, 30 s, 60 s …) instead of re-sending the
+    /// whole file every 15 s (final review M2).
+    func testRepeatedTransportFailuresBackOffExponentially() async throws {
+        let uploads = makeUploads()
+        uploader.answer = .failure(URLError(.networkConnectionLost))
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        uploads.setOnline(true)
+        await settle()
+        XCTAssertEqual(uploader.calls, 1)
+
+        clock.advance(by: 15_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2)
+
+        clock.advance(by: 15_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2, "the second pause is 30 s")
+        clock.advance(by: 15_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 3)
+
+        clock.advance(by: 59_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 3, "the third pause is 60 s")
+        clock.advance(by: 1_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 4)
+        XCTAssertEqual(uploads.items.first?.pending.failed, false, "no answer is never a refusal")
+    }
+
+    func testThePauseNeverGrowsBeyondTenMinutes() {
+        XCTAssertEqual(AttachmentUploads.backoffMs(failures: 1), 15_000)
+        XCTAssertEqual(AttachmentUploads.backoffMs(failures: 2), 30_000)
+        XCTAssertEqual(AttachmentUploads.backoffMs(failures: 6), 480_000)
+        XCTAssertEqual(AttachmentUploads.backoffMs(failures: 7), 600_000)
+        XCTAssertEqual(AttachmentUploads.backoffMs(failures: 40), 600_000)
+    }
+
+    /// A server that keeps failing after it got the file (a storage error): after a few tries the
+    /// file is failed with «Повторить» instead of being re-sent forever.
+    func testAServerThatKeepsFailingEndsInAFailedFileAfterABudget() async throws {
+        let uploads = makeUploads()
+        uploader.answer = .failure(APIError.httpError(statusCode: 500, message: "Ошибка хранилища", code: nil, retryAfter: nil))
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        uploads.setOnline(true)
+        await settle()
+        for _ in 0..<12 {
+            clock.advance(by: 600_000)
+            await settle()
+        }
+
+        XCTAssertEqual(uploader.calls, AttachmentUploads.maxServerFailures)
+        XCTAssertEqual(uploads.items.first?.pending.failed, true)
+        XCTAssertEqual(uploads.items.first?.pending.error, "Ошибка хранилища")
+        XCTAssertNotNil(uploads.lastNotice)
+
+        uploader.answer = FakeUploader.done(80)
+        uploads.retry(try XCTUnwrap(uploads.items.first?.id))
+        await settle()
+        XCTAssertEqual(engine.state.outbox.count, 1, "«Повторить» starts over")
+    }
+
+    /// The network came back: a file waiting out its pause goes at once, and the pauses start over.
+    func testANewConnectionEndsThePauseAndStartsTheBackoffOver() async throws {
+        let uploads = makeUploads()
+        uploader.answer = .failure(URLError(.networkConnectionLost))
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        uploads.setOnline(true)
+        await settle()
+        clock.advance(by: 15_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 2)
+
+        uploads.setOnline(false)
+        uploads.setOnline(true)
+        await settle()
+        XCTAssertEqual(uploader.calls, 3, "no waiting out the old pause")
+
+        clock.advance(by: 15_000)
+        await settle()
+        XCTAssertEqual(uploader.calls, 4, "the pause is 15 s again")
+    }
+
+    /// Lets queued work run without waiting on the engine (its disk may be held).
+    private func pause() async {
+        for _ in 0..<10 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private func settle(_ other: DeliveryEngine) async {
+        for _ in 0..<15 {
+            await other.idle()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
+}
+
+/// The engine's disk, able to hold a write in flight.
+actor GatedDeliveryStore: DeliveryStore {
+    private let inner = InMemoryDeliveryStore()
+    private var gate: TestGate?
+
+    func hold(_ gate: TestGate?) {
+        self.gate = gate
+    }
+
+    func load() async throws -> StoredDelivery {
+        try await inner.load()
+    }
+
+    func persist(slices: [String], state: DeliveryState, cache: [String: [JSONObject]]) async throws {
+        if let gate { await gate.wait() }
+        try await inner.persist(slices: slices, state: state, cache: cache)
+    }
+
+    func writeCache(_ cache: [String: [JSONObject]], me: Int64?) async throws {
+        try await inner.writeCache(cache, me: me)
+    }
+
+    func clear() async throws {
+        try await inner.clear()
+    }
 }
 
 /// `POST /api/files/upload` with a scripted answer; can hold uploads at a gate and counts how many

@@ -31,6 +31,14 @@ public enum AccountFailure: Equatable, Sendable {
     /// 400 LAST_ADMIN: the only administrator cannot delete the account.
     case lastAdmin
     case unavailable
+    /// `403 REGISTRATION_DISABLED`: the administrator closed self-registration (decision Q).
+    case registrationDisabled
+    /// `503 BUSY` / `PASSWORD_HASH_BUSY`: the server is busy, not the user's fault (`reg.busy`).
+    case serverBusy(until: Date)
+    /// The code's own timer ran out on this device (`reg.code_expired_local`).
+    case codeExpiredLocally
+    /// The device's secure storage could not be used (`reg.storage`).
+    case storage
 
     static let defaultThrottleWait: TimeInterval = 60
     /// `503` codes of a busy server (`BUSY` — no free password-hash slot): a short wait, as on Android.
@@ -41,6 +49,8 @@ public enum AccountFailure: Equatable, Sendable {
         switch error {
         case let apiError as APIError:
             self = Self.classify(apiError, context: context, now: now)
+        case is KeychainManagerError:
+            self = .storage
         case is URLError:
             self = .offline
         default:
@@ -60,6 +70,13 @@ public enum AccountFailure: Equatable, Sendable {
             return .wrongCode(clean(message), attemptsLeft: attemptsLeft)
         case .httpError(let status, let message, let code, let retryAfter):
             let throttle = now.addingTimeInterval(retryAfter ?? defaultThrottleWait)
+            let isRegistration = context == .registrationRequest || context == .registrationVerify
+            // Decision Q: the switch is checked first, so no other refusal hides it.
+            if isRegistration, code == "REGISTRATION_DISABLED" { return .registrationDisabled }
+            // A busy server is a short wait, not the user's fault (`reg.busy`).
+            if isRegistration, status == 503, let code, busyCodes.contains(code) {
+                return .serverBusy(until: now.addingTimeInterval(retryAfter ?? 5))
+            }
             switch context {
             case .registrationRequest:
                 switch status {
@@ -67,10 +84,7 @@ public enum AccountFailure: Equatable, Sendable {
                 case 409: return .conflict(conflictText(code: code, message: message))
                 case 429: return .throttled(until: throttle)
                 case 503:
-                    // A busy password hasher is a short wait; anything else is the missing mail setup.
-                    if let code, busyCodes.contains(code) {
-                        return .throttled(until: now.addingTimeInterval(retryAfter ?? 5))
-                    }
+                    // `EMAIL_NOT_CONFIGURED` — and older servers' 503 without a code — is the missing mail setup.
                     if code == "EMAIL_SEND_FAILED" { return .mailSendFailed }
                     return .mailNotConfigured
                 default: return .unavailable
@@ -102,8 +116,8 @@ public enum AccountFailure: Equatable, Sendable {
     /// `USERNAME_TAKEN` / `EMAIL_TAKEN` get fixed copy; any other 409 keeps the server's text.
     static func conflictText(code: String?, message: String) -> String {
         switch code {
-        case "USERNAME_TAKEN": return String(localized: "Этот логин уже занят. Выберите другой.")
-        case "EMAIL_TAKEN": return String(localized: "На этот адрес почты уже подана заявка или есть аккаунт.")
+        case "USERNAME_TAKEN": return AppCopy.regUsernameTaken
+        case "EMAIL_TAKEN": return AppCopy.regEmailTaken
         default: return clean(message)
         }
     }
@@ -115,42 +129,61 @@ public enum AccountFailure: Equatable, Sendable {
         return String(collapsed.prefix(messageLimit - 1)) + "…"
     }
 
+    /// When another attempt is allowed, for failures that impose a wait.
     var retryDeadline: Date? {
-        if case .throttled(let until) = self { return until }
-        return nil
+        switch self {
+        case .throttled(let until), .serverBusy(let until): return until
+        default: return nil
+        }
     }
 
-    /// The text for the error box at `date`, or nil once a wait is over.
+    /// The text for the error box at `date`, or nil once a wait is over (`copy-ru.md` §3, §5).
     func message(at date: Date) -> String? {
         switch self {
         case .offline:
-            return String(localized: "Нет связи с сервером. Проверьте подключение к интернету.")
+            return AppCopy.regOffline
         case .mailNotConfigured:
-            return String(localized: "Сервер пока не может отправить письмо с кодом: почта не настроена. Регистрация временно недоступна — обратитесь к администратору.")
+            return AppCopy.regMailNotConfigured
         case .throttled(let until):
-            let total = Int(until.timeIntervalSince(date).rounded(.up))
-            guard total > 0 else { return nil }
-            return String(localized: "Слишком много попыток. Повторите через \(total) с.")
+            guard let wait = Self.remaining(until: until, at: date) else { return nil }
+            return AppCopy.regThrottled(wait: wait)
+        case .serverBusy(let until):
+            guard let wait = Self.remaining(until: until, at: date) else { return nil }
+            return AppCopy.regBusy(wait: wait)
         case .invalidInput(let text):
-            return text.isEmpty ? String(localized: "Проверьте введённые данные.") : text
+            return text.isEmpty ? AppCopy.regInvalidInput : text
         case .conflict(let text):
-            return text.isEmpty ? String(localized: "Такой логин или адрес почты уже зарегистрирован.") : text
+            return text.isEmpty ? AppCopy.regConflict : text
         case .wrongCode(let text, let attemptsLeft):
-            var base = text.isEmpty ? String(localized: "Неверный код. Проверьте письмо и попробуйте ещё раз.") : text
+            var base = text.isEmpty ? AppCopy.regWrongCode : text
             while base.hasSuffix(".") { base.removeLast() }
-            guard let attemptsLeft else { return base + "." }
-            return base + String(localized: ". Осталось попыток: \(attemptsLeft).")
+            base += "."
+            guard let attemptsLeft else { return base }
+            return AppCopy.regAttemptsLeft(text: base, count: attemptsLeft)
         case .codeExpired:
-            return String(localized: "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код.")
+            return AppCopy.regCodeExpired
+        case .codeExpiredLocally:
+            return AppCopy.regCodeExpiredLocal
         case .mailSendFailed:
-            return String(localized: "Не удалось отправить письмо с кодом. Повторите попытку позже.")
+            return AppCopy.regMailSendFailed
         case .wrongPassword:
-            return String(localized: "Неверный пароль.")
+            return AppCopy.deleteWrongPassword
         case .lastAdmin:
-            return String(localized: "Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт.")
+            return AppCopy.deleteLastAdmin
         case .unavailable:
-            return String(localized: "Не удалось выполнить действие. Повторите попытку позже.")
+            return AppCopy.regUnavailable
+        case .registrationDisabled:
+            return AppCopy.regDisabled
+        case .storage:
+            return AppCopy.regStorage
         }
+    }
+
+    /// The `{wait}` until `deadline`; nil once it has passed.
+    private static func remaining(until deadline: Date, at date: Date) -> String? {
+        let total = Int(deadline.timeIntervalSince(date).rounded(.up))
+        guard total > 0 else { return nil }
+        return AppCopy.wait(seconds: total)
     }
 }
 

@@ -238,3 +238,119 @@ final class FakePushTokenService: PushTokenService, @unchecked Sendable {
         return true
     }
 }
+
+/// Decision P: push code now, keys later. Which APNs a token belongs to comes from how the app was
+/// signed, never from the build configuration; permission is asked once, after sign-in; a tap on
+/// a message notification opens its chat (the payload has only ids).
+final class PushEnvironmentTests: XCTestCase {
+    private func profile(aps: String?) -> Data {
+        let entitlement = aps.map { "<key>aps-environment</key><string>\($0)</string>" } ?? ""
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>Name</key><string>CentyChat</string>\
+        <key>Entitlements</key><dict>\(entitlement)<key>application-identifier</key><string>TEAM.com.example.centychat</string></dict></dict></plist>
+        """
+        // A provisioning profile is a CMS envelope around this plist.
+        return Data([0x30, 0x82, 0x01, 0x00, 0x06, 0x09]) + Data(plist.utf8) + Data([0x00, 0xA0, 0x82])
+    }
+
+    func testTheSigningProfileDecidesTheEnvironment() {
+        XCTAssertEqual(PushEnvironment.resolve(profile: profile(aps: "development"), isSimulator: false), .sandbox)
+        XCTAssertEqual(PushEnvironment.resolve(profile: profile(aps: "production"), isSimulator: false), .production)
+    }
+
+    func testWithoutAProfileTheSimulatorIsSandboxAndTheStoreIsProduction() {
+        // App Store and TestFlight builds carry no embedded profile.
+        XCTAssertEqual(PushEnvironment.resolve(profile: nil, isSimulator: false), .production)
+        XCTAssertEqual(PushEnvironment.resolve(profile: nil, isSimulator: true), .sandbox)
+        XCTAssertEqual(PushEnvironment.resolve(profile: Data("not a profile".utf8), isSimulator: true), .sandbox)
+        XCTAssertEqual(PushEnvironment.resolve(profile: profile(aps: nil), isSimulator: false), .production)
+    }
+
+    func testOnlyAMessageNotificationOpensAChat() {
+        XCTAssertEqual(
+            NotificationTap.conversation(from: ["type": "message", "conversationType": "direct", "targetId": 3, "messageId": 41]),
+            ConversationKey(type: .direct, targetId: 3)
+        )
+        XCTAssertEqual(
+            NotificationTap.conversation(from: ["type": "message", "conversationType": "channel", "targetId": "7", "messageId": "9"]),
+            ConversationKey(type: .channel, targetId: 7)
+        )
+        XCTAssertNil(NotificationTap.conversation(from: ["type": "read", "conversationType": "direct", "targetId": 3]))
+        XCTAssertNil(NotificationTap.conversation(from: ["type": "message", "conversationType": "direct", "targetId": 0, "messageId": 1]))
+        XCTAssertNil(NotificationTap.conversation(from: ["aps": ["alert": "Текст"]]))
+    }
+}
+
+/// The system's permission question, scripted: it records how often it was asked.
+private final class FakeAuthorization: NotificationAuthorizing, @unchecked Sendable {
+    let state = Locked((status: NotificationAuthorization.notDetermined, requests: 0, grant: true))
+
+    func status() async -> NotificationAuthorization { state.value.status }
+
+    func request() async -> Bool {
+        state.withValue { state in
+            state.requests += 1
+            state.status = state.grant ? .allowed : .denied
+            return state.grant
+        }
+    }
+}
+
+@MainActor
+final class NotificationRequestTests: XCTestCase {
+    func testPermissionIsAskedOnceAfterSignInAndThePushTokenIsRequested() async {
+        let authorization = FakeAuthorization()
+        let registered = Locked(0)
+        let asker = NotificationPermission(authorization: authorization, registerForRemote: { registered.withValue { $0 += 1 } })
+
+        await asker.signedIn()
+        await asker.signedIn()
+
+        XCTAssertEqual(authorization.state.value.requests, 1, "the system question is asked once")
+        XCTAssertEqual(registered.value, 2, "the token is (re)requested at every sign-in while allowed")
+    }
+
+    func testARefusalIsNotAskedAgain() async {
+        let authorization = FakeAuthorization()
+        authorization.state.withValue { $0.grant = false }
+        let registered = Locked(0)
+        let asker = NotificationPermission(authorization: authorization, registerForRemote: { registered.withValue { $0 += 1 } })
+
+        await asker.signedIn()
+        await asker.signedIn()
+
+        XCTAssertEqual(authorization.state.value.requests, 1)
+        XCTAssertEqual(registered.value, 0)
+    }
+
+    func testATappedNotificationWaitsForTheChatListAndIsTakenOnce() {
+        let routes = NotificationRoutes()
+        XCTAssertFalse(routes.open(["type": "read", "conversationType": "direct", "targetId": 3], account: 1))
+        XCTAssertNil(routes.take(signedIn: 1))
+
+        XCTAssertTrue(routes.open(["type": "message", "conversationType": "direct", "targetId": 3, "messageId": 41], account: 1))
+        XCTAssertEqual(routes.take(signedIn: 1), ConversationKey(type: .direct, targetId: 3))
+        XCTAssertNil(routes.take(signedIn: 1), "opened once")
+    }
+
+    /// A tap belongs to the account that was signed in when it came (review fix round 1): another
+    /// account never opens it, and the end of the session drops it.
+    func testATappedNotificationOpensOnlyForItsAccount() {
+        let routes = NotificationRoutes()
+        let chat = ConversationKey(type: .direct, targetId: 3)
+
+        routes.open(chat, account: 1)
+        XCTAssertNil(routes.take(signedIn: 2), "another account signed in meanwhile")
+        XCTAssertNil(routes.take(signedIn: 1), "and the route is gone")
+
+        routes.open(chat, account: 1)
+        routes.clear()
+        XCTAssertNil(routes.take(signedIn: 1), "the session ended")
+
+        // Tapped while the stored session was being restored: it opens for that session.
+        routes.open(chat, account: nil)
+        XCTAssertEqual(routes.take(signedIn: 7), chat)
+    }
+}

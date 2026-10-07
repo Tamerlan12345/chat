@@ -155,9 +155,9 @@ final class ChatProjection {
             return message
         }
         if failure?.reason == DeliveryFailure.maxAttempts {
-            return String(localized: "Сервер не ответил")
+            return AppCopy.deliveryReasonNoAnswer
         }
-        return String(localized: "Сервер не принял сообщение")
+        return AppCopy.deliveryReasonRejected
     }
 
     /// A stable negative id for a message the server has not numbered yet (FNV-1a of the key).

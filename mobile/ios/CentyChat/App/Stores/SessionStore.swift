@@ -36,6 +36,8 @@ protocol SessionLifecycleDelegate: AnyObject {
     /// An explicit sign-out the user confirmed: the account's unsent messages are deleted first. Throws
     /// when they could not be deleted — the sign-out is then cancelled (nothing is left half-done).
     func sessionWillSignOut() async throws
+    /// The explicit sign-out went through on the server (the session ends next).
+    func sessionDidSignOut()
     /// The account's data must not outlive it (the account was deleted, or the stored credentials
     /// were another server's): its unsent messages are deleted, best effort.
     func sessionDidDiscardAccount() async
@@ -65,6 +67,26 @@ public final class SessionStore: RealtimeEventHandling {
     @ObservationIgnored private let deviceDescriptor: @MainActor () -> DeviceDescriptor
     @ObservationIgnored private var hasRealtimeAuthenticated = false
     @ObservationIgnored private var isRevalidating = false
+    /// The launch could not finish (no server answer and no remembered user, or a Keychain that
+    /// cannot be read yet): it is tried again when the network or the device is back.
+    @ObservationIgnored private var restorePending = false
+    /// Entered from the remembered user without the server: once the socket authenticates, the
+    /// lists are loaded as after a reconnect.
+    @ObservationIgnored private var enteredOffline = false
+    /// Whether the server takes self-registrations (`allow_registration` of /settings/info);
+    /// nil — not known yet (offline): the entry stays, the server still refuses if it is closed.
+    public private(set) var registrationOpen: Bool?
+    /// Why the launch waits (no server answer, nobody remembered), shown with «Повторить».
+    public private(set) var launchProblem: String?
+
+    /// Automatic tries of a launch that waits for the server, so far.
+    @ObservationIgnored private var restoreAttempts = 0
+    @ObservationIgnored private var restoreRetry: Task<Void, Never>?
+
+    /// The pause (seconds) before automatic try `attempt` of a launch that waits: 2, 4, 8 … 60.
+    nonisolated static func restoreRetryDelay(attempt: Int) -> Int {
+        min(60, 1 << min(max(attempt, 1), 6))
+    }
 
     init(
         auth: any AuthRepository,
@@ -90,6 +112,38 @@ public final class SessionStore: RealtimeEventHandling {
     }
 
     public var isAuthenticated: Bool { phase == .authenticated }
+
+    /// A launch that could not reach the server (or read the Keychain) tries again: the network
+    /// came back, the device was unlocked, or the app came to the foreground.
+    func retryRestoreIfNeeded() async {
+        guard restorePending, !isSigningIn, phase == .launching else { return }
+        restorePending = false
+        restoreRetry?.cancel()
+        restoreRetry = nil
+        await bootstrap()
+        if !restorePending {
+            launchProblem = nil
+            restoreAttempts = 0
+        }
+    }
+
+    /// What the launch screen says while it waits: no network, or the server failing.
+    private static func launchProblemText(for error: any Error) -> String {
+        if case APIError.noConnection? = error as? APIError { return AppCopy.loginOffline }
+        if error is URLError { return AppCopy.loginOffline }
+        return AppCopy.regUnavailable
+    }
+
+    private func scheduleRestoreRetry() {
+        restoreAttempts += 1
+        let delay = Self.restoreRetryDelay(attempt: restoreAttempts)
+        restoreRetry?.cancel()
+        restoreRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.retryRestoreIfNeeded()
+        }
+    }
     public var savedUsername: String? { auth.savedUsername }
 
     /// Absolute URL for a server-relative attachment path (`/api/files/download/1`).
@@ -103,7 +157,23 @@ public final class SessionStore: RealtimeEventHandling {
 
     public func bootstrap() async {
         // Credentials issued by another server are wiped before anything is sent.
-        guard let binding = bindStoredCredentials() else {
+        let binding: StoredCredentialDecision?
+        do {
+            binding = try auth.bindStoredCredentials(to: environment.origin)
+            if binding == .wiped {
+                Log.session.notice("Discarded credentials issued by another server")
+            }
+        } catch KeychainManagerError.unavailable {
+            // Locked before the first unlock: nothing can be read, so nothing is decided or wiped.
+            Log.session.notice("Stored credentials cannot be read yet; the launch waits")
+            restorePending = true
+            phase = .launching
+            return
+        } catch {
+            Log.session.error("Wiping foreign credentials failed: \(error.localizedDescription, privacy: .public)")
+            binding = nil
+        }
+        guard let binding else {
             // Fail closed: the foreign credentials could not be removed, so they are not used.
             await delegate?.sessionDidEnd()
             phase = .signedOut
@@ -128,20 +198,6 @@ public final class SessionStore: RealtimeEventHandling {
         }
     }
 
-    /// nil when credentials from another server are stored and could not be wiped.
-    private func bindStoredCredentials() -> StoredCredentialDecision? {
-        do {
-            let decision = try auth.bindStoredCredentials(to: environment.origin)
-            if decision == .wiped {
-                Log.session.notice("Discarded credentials issued by another server")
-            }
-            return decision
-        } catch {
-            Log.session.error("Wiping foreign credentials failed: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
     /// Health is advisory: an unhealthy answer is reported but the session is still restored.
     private func refreshServerInfo() async {
         do {
@@ -153,6 +209,7 @@ public final class SessionStore: RealtimeEventHandling {
             let info = try await server.fetchServerInfo()
             // The company stays data (`serverInfo.companyName`), not a caption on the login screen.
             serverInfo = info
+            registrationOpen = info.allowRegistration
         } catch {
             Log.session.error("Server health check failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -168,9 +225,21 @@ public final class SessionStore: RealtimeEventHandling {
             clearStoredCredentials()
             await enterWithDeviceSecret(discardsSession: true)
         } catch {
+            // No answer, or the server failing (5xx): nothing refused the session (final review I2).
             Log.session.error("Session validation failed: \(error.localizedDescription, privacy: .public)")
-            errorMessage = error.userMessage
-            phase = .signedOut
+            if let remembered = auth.storedUser {
+                // Signed in as before: the queue and the cached chats stay reachable, the socket
+                // keeps trying with its backoff, and the server's answer settles it.
+                enteredOffline = true
+                await enter(remembered)
+            } else {
+                // Nobody remembered (the first launch of this version): the launch screen says why,
+                // with «Повторить», and tries again by itself after a growing pause (review fix round 1).
+                restorePending = true
+                phase = .launching
+                launchProblem = Self.launchProblemText(for: error)
+                scheduleRestoreRetry()
+            }
         }
     }
 
@@ -209,6 +278,7 @@ public final class SessionStore: RealtimeEventHandling {
     /// Moves to the authenticated phase, or to the mandatory password change when the server demands it.
     private func enter(_ user: User) async {
         currentUser = user
+        auth.rememberUser(user)
         guard !user.mustChangePassword else {
             await requirePasswordChange()
             return
@@ -236,7 +306,8 @@ public final class SessionStore: RealtimeEventHandling {
         guard !isSigningIn else { throw SessionError.loginInProgress }
         isSigningIn = true
         defer { isSigningIn = false }
-        let cleanedUsername = username.trimmingCharacters(in: .whitespaces).lowercased()
+        // Trimmed only: the server compares logins case-sensitively (parity with Android and desktop).
+        let cleanedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             let response = try await auth.login(username: cleanedUsername, password: password)
             // Device Claim для беспарольного входа (Parity Matrix Section 2)
@@ -291,7 +362,7 @@ public final class SessionStore: RealtimeEventHandling {
             try await delegate?.sessionWillSignOut()
         } catch {
             // Nothing was deleted (the discard is all or nothing); the account takes its queue back.
-            errorMessage = String(localized: "Не удалось удалить неотправленные сообщения — выход отменён")
+            errorMessage = AppCopy.signOutFailedUnsent
             await delegate?.sessionSignOutAborted()
             await resumeAfterAbortedSignOut()
             return
@@ -305,6 +376,7 @@ public final class SessionStore: RealtimeEventHandling {
             await resumeAfterAbortedSignOut()
             return
         }
+        delegate?.sessionDidSignOut()
         await endSession()
     }
 
@@ -316,6 +388,7 @@ public final class SessionStore: RealtimeEventHandling {
 
     private func endSession() async {
         await realtime.stop()
+        enteredOffline = false
         currentUser = nil
         // The wipe finishes before the login screen can start another session.
         await delegate?.sessionDidEnd()
@@ -358,7 +431,8 @@ public final class SessionStore: RealtimeEventHandling {
                 await enter(user)
             } else {
                 await endSession()
-                errorMessage = reason
+                // The server ended the session (`conn.signed_out`); its own wording varies by cause.
+                errorMessage = AppCopy.connSignedOut
             }
         } catch {
             // Offline: keep the session; the socket keeps retrying with backoff.
@@ -373,7 +447,12 @@ public final class SessionStore: RealtimeEventHandling {
         case .authSuccess(let user):
             guard phase == .authenticated else { return }
             currentUser = user
-            if hasRealtimeAuthenticated {
+            auth.rememberUser(user)
+            if enteredOffline {
+                // The launch went without the server: what it missed is loaded now.
+                enteredOffline = false
+                Task { await delegate?.sessionDidResume() }
+            } else if hasRealtimeAuthenticated {
                 // A reconnect: pick up anything missed while offline.
                 Task { await delegate?.sessionDidResume() }
             }
@@ -383,7 +462,9 @@ public final class SessionStore: RealtimeEventHandling {
             switch code {
             case "MUST_CHANGE_PASSWORD":
                 Task { await requirePasswordChange() }
-            case "INVALID_TOKEN":
+            case "INVALID_TOKEN", "TOKEN_MISSING":
+                // TOKEN_MISSING: the socket found no token while the session is authenticated (a
+                // refused refresh cleared it). Checked with the server; ends only on its refusal.
                 Task { await revalidate(reason: message) }
             default:
                 errorMessage = message

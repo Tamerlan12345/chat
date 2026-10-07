@@ -67,7 +67,7 @@ final class RegistrationFlowUITests: XCTestCase {
         let pending = application.descendants(matching: .any)["register-pending"]
         XCTAssertTrue(pending.waitForExistence(timeout: 10), "The pending screen must open")
         XCTAssertTrue(
-            application.staticTexts["Заявка отправлена на рассмотрение администратору"].exists,
+            application.staticTexts["Заявка на рассмотрении"].exists,
             "The pending screen must say the application waits for the administrator"
         )
         XCTAssertFalse(application.tabBars.firstMatch.exists, "A pending account has no session")
@@ -84,7 +84,7 @@ final class RegistrationFlowUITests: XCTestCase {
         let application = launch(server: Self.unreachableServer)
         openRegistration(application)
 
-        fillForm(application, email: "mailoff@company.kz", name: "Мария Сидорова", username: "maria.mail")
+        fillForm(application, email: "mailoff@example.com", name: "Мария Сидорова", username: "maria.mail")
         submitForm(application)
 
         let error = application.descendants(matching: .any)["register-error"]
@@ -314,6 +314,33 @@ extension XCUIApplication {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         } while Date() < deadline
+    }
+
+    /// Taps `element` inside the part of the screen it really occupies. At accessibility text sizes
+    /// a list row can be taller than what is left above the tab bar: its centre then lies under the
+    /// bar (or off screen), and a centre tap lands there and opens nothing. The row is scrolled up
+    /// while its top is too low to tap, and tapped a little below its top edge.
+    func tapVisiblePart(of element: XCUIElement) {
+        let window = windows.firstMatch.frame
+        var bottom = window.maxY
+        let bar = tabBars.firstMatch
+        if bar.exists, bar.frame.minY > window.minY { bottom = min(bottom, bar.frame.minY) }
+        var frame = element.frame
+        var swipes = 0
+        while frame.minY > bottom - 60, swipes < 4 {
+            swipeUp(velocity: .slow)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            frame = element.frame
+            swipes += 1
+        }
+        let y = min(max(frame.minY, window.minY) + min(44, frame.height / 2), bottom - 8)
+        coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: y)).tap()
+    }
+
+    /// The element whose accessibility label contains `text`: SwiftUI may expose a text only as part
+    /// of a combined element (a header, a list row), so an exact `staticTexts[text]` can miss it.
+    func element(labelContaining text: String) -> XCUIElement {
+        descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
 
     /// Prints the app and SpringBoard trees, so a failed CI run shows what covered the screen.

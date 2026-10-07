@@ -250,7 +250,7 @@ final class ScreenshotTourTests: XCTestCase {
             XCTAssertTrue(StandAPI(baseURL: standURL).sendDirect(from: self.bob, to: "alice", text: latest), "The stand must accept Bob's message")
             let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Боб Тестов")).firstMatch
             _ = row.waitForExistence(timeout: 5)
-            tapCentre(row.exists ? row : bob)
+            app.tapVisiblePart(of: row.exists ? row : bob)
             XCTAssertTrue(composerField(app).waitForExistence(timeout: 15), "The chat must open in the detail column")
             // The bubble, not the inbox preview in the sidebar that shows the same text.
             let newest = app.scrollViews["chat-messages"].staticTexts[latest]
@@ -346,9 +346,9 @@ final class ScreenshotTourTests: XCTestCase {
                 pause(1)
                 let department = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "department-")).element(boundBy: 1)
                 if department.exists {
-                    tapCentre(department)
+                    app.tapVisiblePart(of: department)
                     pause(1.5)
-                    tapCentre(department)
+                    app.tapVisiblePart(of: department)
                     pause(1)
                 }
             }
@@ -477,7 +477,7 @@ final class ScreenshotTourTests: XCTestCase {
                 pause(1)
             }
             if row.waitForExistence(timeout: 5) {
-                tapCentre(row)
+                app.tapVisiblePart(of: row)
                 if app.descendants(matching: .any)["person-card"].waitForExistence(timeout: 15) {
                     pause(1.5)
                     capture(app, named: "11-person-card-\(suffix)")
@@ -509,7 +509,7 @@ final class ScreenshotTourTests: XCTestCase {
             pause(1)
             capture(app, named: "13-announcements-\(suffix)")
             if announcement.exists {
-                tapCentre(announcement)
+                app.tapVisiblePart(of: announcement)
                 let close = app.buttons["Закрыть"]
                 if close.waitForExistence(timeout: 10) {
                     pause(1)

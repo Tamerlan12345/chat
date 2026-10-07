@@ -32,10 +32,22 @@ private struct SessionRootView: View {
         Group {
             switch session.phase {
             case .launching:
-                // A blank canvas for the moment the stored session is checked (no spinner).
-                CentyColors.canvas
-                    .ignoresSafeArea()
-                    .accessibilityLabel("Загрузка")
+                if let problem = session.launchProblem {
+                    // The launch waits for the server (nobody remembered yet): say why, offer
+                    // «Повторить»; it also tries again by itself (review fix round 1).
+                    EmptyStateView(illustration: .offline, title: LocalizedStringKey(problem)) {
+                        EmptyStateAction(title: LocalizedStringKey(AppCopy.deliveryRetry), systemImage: "arrow.clockwise") {
+                            Task { await session.retryRestoreIfNeeded() }
+                        }
+                        .accessibilityIdentifier("launch-retry")
+                    }
+                    .background(CentyColors.canvas.ignoresSafeArea())
+                } else {
+                    // A blank canvas for the moment the stored session is checked (no spinner).
+                    CentyColors.canvas
+                        .ignoresSafeArea()
+                        .accessibilityLabel("Загрузка")
+                }
             case .signedOut:
                 LoginView()
             case .passwordChangeRequired:
@@ -58,9 +70,17 @@ private struct SessionRootView: View {
                 Task { await container.appBecameActive() }
             case .background:
                 container.presence.sceneDidEnterBackground()
+                // What still waits goes out in a background refresh (`delivery-state.md` §4.2).
+                if session.isAuthenticated {
+                    DeliveryBackgroundTask.schedule(whenUnsent: container.delivery.unsentCount)
+                }
             default:
                 break
             }
+        }
+        // The first unlock since the device started: the stored session can be read now.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            Task { await container.protectedDataBecameAvailable() }
         }
         .fullScreenCover(isPresented: Binding(
             get: { calls.activeCall != nil },

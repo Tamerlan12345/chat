@@ -92,8 +92,11 @@ public final class MessageNotificationsStore: RealtimeEventHandling {
         )
     }
 
+    /// The session ended: what it showed on the lock screen goes with it (parity P10) — nobody sees
+    /// the previous account's messages, and a tap cannot open a chat of an account that is gone.
     func reset() {
         knownMessageIDs.removeAll()
+        enqueue { center in await center.removeAllDelivered() }
     }
 
     /// Waits for queued notification work (tests).

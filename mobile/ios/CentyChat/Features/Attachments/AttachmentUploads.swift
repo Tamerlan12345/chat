@@ -137,6 +137,17 @@ final class AttachmentUploads {
 
     /// Pause before a queued file goes again while the connection stays up.
     nonisolated static let retryDelayMs: Int64 = 15_000
+    /// Server errors in a row after which a file is failed («Повторить»).
+    nonisolated static let maxServerFailures = 5
+    /// The longest pause between two tries of one file.
+    nonisolated static let backoffCeilingMs: Int64 = 600_000
+
+    /// The pause after `failures` waits in a row: 15 s, 30 s, 60 s … up to 10 minutes, so a link that
+    /// keeps dropping does not re-send a 100 MB file every 15 s (final review M2).
+    nonisolated static func backoffMs(failures: Int) -> Int64 {
+        let doublings = Int64(max(0, min(failures - 1, 16)))
+        return min(backoffCeilingMs, retryDelayMs * (Int64(1) << doublings))
+    }
 
     private(set) var items: [Item] = [] {
         didSet { onChange?() }
@@ -179,6 +190,14 @@ final class AttachmentUploads {
     @ObservationIgnored private var noticeSerial = 0
     /// Bumped by a wipe: an upload of the old account that answers later is dropped.
     @ObservationIgnored private var epoch = 0
+    /// Waits in a row per file (no answer, a busy or failing server): the next pause doubles.
+    @ObservationIgnored private var waitStreak: [String: Int] = [:]
+    /// Server failures in a row per file, against `maxServerFailures`.
+    @ObservationIgnored private var serverFailures: [String: Int] = [:]
+    /// Files whose enqueue into the outbox is being written right now.
+    @ObservationIgnored private var handingOver = Set<String>()
+    /// «Удалить» arrived while the file was being handed over: it is withdrawn once the write ends.
+    @ObservationIgnored private var cancelledDuringHandOver = Set<String>()
 
     init(
         store: any PendingUploadStore,
@@ -237,9 +256,17 @@ final class AttachmentUploads {
         pump()
     }
 
-    /// The socket is up (or not): waiting files go when it is.
+    /// The socket is up (or not): waiting files go when it is. A connection that came back ends the
+    /// pauses: what waited goes now, and the pauses start over from 15 s.
     func setOnline(_ value: Bool) {
+        let cameBack = value && !online
         online = value
+        if cameBack {
+            waitStreak.removeAll()
+            for key in Array(retries.keys) {
+                retries.removeValue(forKey: key)?.cancel()
+            }
+        }
         if value { pump() }
     }
 
@@ -288,6 +315,8 @@ final class AttachmentUploads {
         guard let index = items.firstIndex(where: { $0.id == clientMsgId }), items[index].pending.failed else { return }
         items[index].pending.failed = false
         items[index].pending.error = nil
+        waitStreak[clientMsgId] = nil
+        serverFailures[clientMsgId] = nil
         let again = items[index].pending
         let store = self.store
         Task { try? await store.putUpload(again) }
@@ -300,8 +329,16 @@ final class AttachmentUploads {
     /// «Отменить» / «Удалить»: the upload stops and the file is forgotten.
     func cancel(_ clientMsgId: String) async {
         guard let item = items.first(where: { $0.id == clientMsgId }) else { return }
+        if handingOver.contains(clientMsgId) {
+            // Its enqueue is being written: the engine sends nothing of it and cancels it right
+            // after the write, socket up or not (final review M1).
+            cancelledDuringHandOver.insert(clientMsgId)
+            engine.withdraw(clientMsgId: clientMsgId)
+        }
         running.removeValue(forKey: clientMsgId)?.cancel()
         retries.removeValue(forKey: clientMsgId)?.cancel()
+        waitStreak[clientMsgId] = nil
+        serverFailures[clientMsgId] = nil
         items.removeAll { $0.id == clientMsgId }
         uploaded[clientMsgId] = nil
         forced.remove(clientMsgId)
@@ -410,6 +447,9 @@ final class AttachmentUploads {
         uploaded.removeAll()
         forced.removeAll()
         attempts.removeAll()
+        waitStreak.removeAll()
+        serverFailures.removeAll()
+        cancelledDuringHandOver.removeAll()
     }
 
     /// Once the outbox no longer holds a handed-over file (confirmed or dropped), its copy goes.
@@ -486,6 +526,8 @@ final class AttachmentUploads {
             }
             if attempts[key] == attempt { attempts[key] = nil }
             guard epoch == session, items.contains(where: { $0.id == key }) else { return }
+            waitStreak[key] = nil
+            serverFailures[key] = nil
             setProgress(key, 1)
             uploaded[key] = done
             await enqueueUploaded()
@@ -493,10 +535,13 @@ final class AttachmentUploads {
             if attempts[key] == attempt { attempts[key] = nil }
             guard epoch == session, items.contains(where: { $0.id == key }) else { return }
             if error is CancellationError { return }
-            if let wait = AttachmentRules.retryDelayMs(error) {
-                // No answer, or the server asks to wait: not refused, it goes again later.
+            if AttachmentRules.retryDelayMs(error) != nil, !serverBudgetSpent(key, error) {
+                // No answer, or the server asks to wait: not refused, it goes again later — after the
+                // server's own Retry-After, or a pause that doubles with every wait in a row.
+                let streak = (waitStreak[key] ?? 0) + 1
+                waitStreak[key] = streak
                 setProgress(key, nil)
-                scheduleRetry(key, after: wait)
+                scheduleRetry(key, after: AttachmentRules.serverWaitMs(error) ?? Self.backoffMs(failures: streak))
                 return
             }
             let reason = AttachmentRules.failureText(error)
@@ -515,6 +560,14 @@ final class AttachmentUploads {
             // A refused file does not hold up the ones picked after it.
             await enqueueUploaded()
         }
+    }
+
+    /// Counts a server failure of `key`; true once the budget is spent (the file is then failed).
+    private func serverBudgetSpent(_ key: String, _ error: any Error) -> Bool {
+        guard AttachmentRules.isServerFailure(error) else { return false }
+        let count = (serverFailures[key] ?? 0) + 1
+        serverFailures[key] = count
+        return count >= Self.maxServerFailures
     }
 
     /// Uploaded files enter the outbox in the order they were picked (per conversation): a later file
@@ -546,6 +599,8 @@ final class AttachmentUploads {
         let key = pending.clientMsgId
         let session = epoch
         uploaded[key] = nil
+        handingOver.insert(key)
+        defer { handingOver.remove(key) }
         do {
             let metadata = AttachmentRules.metadata(fileId: done.id, size: done.fileSize, mimeType: done.mimeType, width: pending.width ?? done.width, height: pending.height ?? done.height)
             let outcome = await engine.enqueue(
@@ -558,6 +613,22 @@ final class AttachmentUploads {
                 owner: pending.owner
             )
             guard epoch == session else { return }
+            if cancelledDuringHandOver.remove(key) != nil || !items.contains(where: { $0.id == key }) {
+                // «Удалить» came while the outbox was being written (final review M1): the entry is
+                // withdrawn before it can go out — a cancelled message is never sent.
+                // The engine withdrew it; if the cancel came too late for that, cancel it now.
+                if outcome.persisted, engine.state.outbox.contains(where: { $0.clientMsgId == key && !$0.pendingDelete }) {
+                    _ = await engine.cancel(clientMsgId: key)
+                }
+                files.discard(pending.localPath)
+                items.removeAll { $0.id == key }
+                do {
+                    try await store.removeUpload(key)
+                } catch {
+                    log("a cancelled file's row could not be deleted: \(error)")
+                }
+                return
+            }
             if !outcome.persisted {
                 // The outbox could not be written: the file waits and goes again.
                 setProgress(key, nil)

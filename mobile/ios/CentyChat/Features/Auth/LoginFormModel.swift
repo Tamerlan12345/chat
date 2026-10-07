@@ -71,25 +71,25 @@ public enum LoginFailure: Equatable, Sendable {
         }
     }
 
-    /// The text for the error box at `date`, or nil once a wait is over.
+    /// The text for the error box at `date`, or nil once a wait is over (`copy-ru.md` §6).
     func message(at date: Date) -> String? {
         switch self {
         case .invalidCredentials:
-            return String(localized: "Неверный логин или пароль")
+            return AppCopy.loginInvalid
         case .throttled(let until):
             guard let wait = Self.remaining(until: until, at: date) else { return nil }
             return String(localized: "Слишком много попыток входа. Повторите через \(wait).")
         case .serverBusy(let until):
             guard let wait = Self.remaining(until: until, at: date) else { return nil }
-            return String(localized: "Сервер обрабатывает много входов. Повторите через \(wait).")
+            return AppCopy.loginBusy(wait: wait)
         case .accountPending:
-            return String(localized: "Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения.")
+            return AppCopy.loginPendingBody
         case .accountRejected:
-            return String(localized: "Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании.")
+            return AppCopy.loginRejectedBody
         case .offline:
-            return String(localized: "Нет связи с сервером. Проверьте подключение к интернету.")
+            return AppCopy.loginOffline
         case .storage:
-            return String(localized: "Не удалось надёжно сохранить данные сессии на этом устройстве.")
+            return AppCopy.regStorage
         case .unavailable:
             return String(localized: "Не удалось войти. Повторите попытку позже.")
         }
@@ -99,15 +99,7 @@ public enum LoginFailure: Equatable, Sendable {
     private static func remaining(until deadline: Date, at date: Date) -> String? {
         let total = Int(deadline.timeIntervalSince(date).rounded(.up))
         guard total > 0 else { return nil }
-        let minutes = total / 60
-        let seconds = total % 60
-        if minutes == 0 {
-            return String(localized: "\(seconds) с")
-        }
-        if seconds == 0 {
-            return String(localized: "\(minutes) мин")
-        }
-        return String(localized: "\(minutes) мин \(seconds) с")
+        return AppCopy.wait(seconds: total)
     }
 }
 

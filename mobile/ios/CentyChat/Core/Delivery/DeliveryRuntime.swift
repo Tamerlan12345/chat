@@ -161,19 +161,11 @@ final class DeliveryRuntime {
 
 /// «N неотправленных сообщений будут удалены» with Russian plural forms; nil when nothing waits.
 enum UnsentNotice {
+    /// `signout.unsent` with its count; `signout.unsent_unknown` when the store cannot be read yet;
+    /// nil when nothing waits.
     static func text(_ count: Int?) -> String? {
-        guard let count else {
-            return String(localized: "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены")
-        }
+        guard let count else { return AppCopy.signOutUnsentUnknown }
         guard count > 0 else { return nil }
-        let lastTwo = count % 100
-        let last = count % 10
-        if last == 1 && lastTwo != 11 {
-            return String(localized: "\(count) неотправленное сообщение будет удалено")
-        }
-        if (2...4).contains(last) && !(12...14).contains(lastTwo) {
-            return String(localized: "\(count) неотправленных сообщения будут удалены")
-        }
-        return String(localized: "\(count) неотправленных сообщений будут удалены")
+        return AppCopy.signOutUnsent(count)
     }
 }

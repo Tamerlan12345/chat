@@ -105,6 +105,9 @@ public final class DeliveryEngine {
     @ObservationIgnored private var cacheFlushScheduled = false
     @ObservationIgnored private var errorSerial = 0
     @ObservationIgnored private var diskFailures: Int64 = 0
+    /// Keys withdrawn while their `enqueue` was being written (a file cancelled during its hand-over):
+    /// that step sends nothing, and the entry is cancelled right after (final review M1).
+    @ObservationIgnored private var withdrawn = Set<String>()
     @ObservationIgnored private var stateWaiters: [UUID: (predicate: (DeliveryState) -> Bool, continuation: CheckedContinuation<Bool, Never>)] = [:]
 
     /// Fail closed: the stored model could not be read ("load") or another account's could not be
@@ -262,6 +265,13 @@ public final class DeliveryEngine {
     /// An unsent message is withdrawn: it is never sent later (§7.10).
     public func cancel(clientMsgId: String) async -> Outcome {
         await dispatch(["type": "cancel", "client_msg_id": .string(clientMsgId)])
+    }
+
+    /// The entry being enqueued under `clientMsgId` must never go out (it was cancelled while its
+    /// enqueue was still being written). Takes effect at once, ahead of the queue: the enqueue's own
+    /// step then sends nothing and is followed by a `cancel`.
+    public func withdraw(clientMsgId: String) {
+        withdrawn.insert(clientMsgId)
     }
 
     public func retry(clientMsgId: String) async -> Outcome {
@@ -522,6 +532,7 @@ public final class DeliveryEngine {
         epoch += 1
         alarms.removeAll()
         dirtyCache.removeAll()
+        withdrawn.removeAll()
         setState(DeliveryState())
         for handler in onWipe { handler() }
     }
@@ -641,10 +652,29 @@ public final class DeliveryEngine {
             scheduleCacheFlush()
         }
         setState(step.state)
+        // Withdrawn while this enqueue was being written: its own send never runs (the reducer
+        // pumps in the same step), and a cancel follows — the server is told to refuse the key.
+        var withdrawnKey: String?
+        if type == "enqueue", let key = ev["client_msg_id"]?.string, withdrawn.remove(key) != nil {
+            withdrawnKey = key
+        }
         for effect in step.effects {
+            if let key = withdrawnKey, Self.sends(effect, key) { continue }
             await execute(effect)
         }
+        if let key = withdrawnKey {
+            _ = await process(["type": "cancel", "client_msg_id": .string(key)])
+        }
         return Outcome(persisted: true, effects: step.effects)
+    }
+
+    /// The effect sends the entry `key` (over the socket or HTTP).
+    private static func sends(_ effect: DeliveryEffect, _ key: String) -> Bool {
+        switch effect {
+        case .sendWs(let frame): return frame["client_msg_id"]?.string == key
+        case .sendHttp(let clientMsgId, _, _, _, _): return clientMsgId == key
+        default: return false
+        }
     }
 
     /// §5: the new state is dropped; what happens next depends on who sent the event.

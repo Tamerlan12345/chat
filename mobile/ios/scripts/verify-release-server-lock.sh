@@ -25,7 +25,8 @@ else
   failures=$((failures + 1))
 fi
 
-for forbidden in "$override" "-centychat-server-url" "CentyChatServerURL" "CENTYCHAT_UI_TESTING" "-reset-secure-state" "-centychat-color-scheme" "-centychat-ui-delivery-offline"; do
+# Every Debug-only test hook: launch arguments, environment keys and the UI-test account stand-in.
+for forbidden in "$override" "-centychat-server-url" "CentyChatServerURL" "CENTYCHAT_UI_TESTING" "-reset-secure-state" "-centychat-color-scheme" "-centychat-ui-delivery-offline" "-centychat-stub-account" "CENTYCHAT_STUB_SIGNIN" "-allow-insecure-loopback" "UITestAccountRepository" "-centychat-ui-gallery"; do
   if contains "$forbidden"; then
     echo "FAIL: Release binary contains the Debug override point '$forbidden'" >&2
     failures=$((failures + 1))

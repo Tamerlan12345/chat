@@ -279,7 +279,7 @@ public enum DeliveryReducer {
     }
 
     /// A tombstone confirms the delete (and makes any pending edit pointless) — §6.3.
-    private static func confirmDeleted(_ state: inout DeliveryState, _ id: Int64?) {
+    private static func confirmDeleted(_ state: inout DeliveryState, _ id: Int64) {
         state.ops.removeAll { $0.messageId == id }
     }
 
@@ -831,7 +831,9 @@ public enum DeliveryReducer {
                     state.messages[found.conv]?[found.index].updatedAt = updatedAt.string
                 }
             }
-            confirmDeleted(&state, messageId)
+            // Without an integer id nothing is confirmed: the pending cancels of unsent messages
+            // (their ops carry no message id) stay (parity with Android).
+            if let messageId { confirmDeleted(&state, messageId) }
         case "message_cancelled":
             onCancelled(&state, frame)
         case "message_status_updated":

@@ -45,7 +45,7 @@ final class PeopleSearchTests: XCTestCase {
         XCTAssertTrue(SearchText.isPhoneQuery("+7 (702) 303-30-30"))
         XCTAssertFalse(SearchText.isPhoneQuery("12"))
         XCTAssertFalse(SearchText.isPhoneQuery("отдел 214"))
-        XCTAssertEqual(SearchText.digits("+7 (727) 244-77-00"), "77272447700")
+        XCTAssertEqual(SearchText.digits("+7 (700) 123-45-00"), "77001234500")
     }
 
     // MARK: - Ranks
@@ -72,17 +72,17 @@ final class PeopleSearchTests: XCTestCase {
     func testOtherFieldsRankLast() {
         let ivanov = person(
             1, "Иванов Пётр", job: "Бухгалтер", department: "Финансы", extension: "214",
-            phone: "+7 (727) 244-77-00", email: "p.ivanov@cic.kz", username: "pivanov"
+            phone: "+7 (700) 123-45-00", email: "p.ivanov@example.com", username: "pivanov"
         )
-        for query in ["бухг", "финан", "214", "244-77", "7272447700", "cic.kz", "pivan"] {
+        for query in ["бухг", "финан", "214", "123-45", "7001234500", "example.com", "pivan"] {
             XCTAssertEqual(PeopleSearch.match(ivanov, query: query)?.rank, .otherField, query)
         }
     }
 
     func testPhoneMatchIgnoresPunctuation() {
-        let ivanov = person(1, "Иванов Пётр", phone: "+7 (727) 244-77-00")
-        XCTAssertNotNil(PeopleSearch.match(ivanov, query: "(727) 244"))
-        XCTAssertNil(PeopleSearch.match(ivanov, query: "8-727"))
+        let ivanov = person(1, "Иванов Пётр", phone: "+7 (700) 123-45-00")
+        XCTAssertNotNil(PeopleSearch.match(ivanov, query: "(700) 123"))
+        XCTAssertNil(PeopleSearch.match(ivanov, query: "8-700"))
     }
 
     func testAPhoneTypedWithSpacesIsFound() {

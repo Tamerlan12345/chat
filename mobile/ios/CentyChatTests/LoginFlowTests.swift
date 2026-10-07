@@ -53,7 +53,7 @@ final class LoginErrorMappingTests: XCTestCase {
         let failure = LoginFailure(error, now: now)
 
         XCTAssertEqual(failure, .serverBusy(until: now.addingTimeInterval(3)))
-        XCTAssertEqual(failure.message(at: now), "Сервер обрабатывает много входов. Повторите через 3 с.")
+        XCTAssertEqual(failure.message(at: now), "Сервер сейчас занят. Повторите через 3 с.")
     }
 
     func testOfflineIsExplained() {
@@ -277,7 +277,7 @@ final class SessionLoginTests: XCTestCase {
         app.auth.state.withValue {
             $0.hasToken = true
             $0.hasDeviceSecret = true
-            $0.issuerOrigin = "https://chat.old-company.kz"
+            $0.issuerOrigin = "https://chat.old-company.example"
         }
 
         await app.session.bootstrap()
@@ -295,7 +295,7 @@ final class SessionLoginTests: XCTestCase {
         let app = TestApp()
         app.auth.state.withValue {
             $0.hasToken = true
-            $0.issuerOrigin = "https://chat.old-company.kz"
+            $0.issuerOrigin = "https://chat.old-company.example"
             $0.bindError = KeychainManagerError.deleteFailed(status: -25308)
         }
 

@@ -94,6 +94,10 @@ public struct ChatListView: View {
             }
         }
         .environment(router)
+        // A tapped message notification (decision P): its chat opens here, in «Чаты».
+        .onChange(of: container.notificationRoutes.serial, initial: true) {
+            openTappedNotification()
+        }
         .onAppear {
             guard search == nil else { return }
             let conversations = self.conversations
@@ -196,6 +200,23 @@ public struct ChatListView: View {
         } else {
             router.push(.chat(route))
         }
+    }
+
+    /// The chat of a tapped notification: the ids come from the payload, the title from what the
+    /// app already knows (the chat loads its content from the server).
+    private func openTappedNotification() {
+        guard let key = container.notificationRoutes.take(signedIn: container.session.currentUser?.id) else { return }
+        navigation?.selectedTab = .chats
+        let title: String
+        if key.type == .channel {
+            title = conversations.channels.first { $0.id == key.targetId }?.name ?? String(localized: "Канал")
+        } else {
+            title = conversations.directConversations.first { $0.userId == key.targetId }?.fullName
+                ?? conversations.users.first { $0.id == key.targetId }?.fullName
+                ?? String(localized: "Сотрудник")
+        }
+        router.popToRoot()
+        open(ChatRoute(type: key.type, targetId: key.targetId, title: title))
     }
 
     private func openSelection(_ selection: SearchSelection) {

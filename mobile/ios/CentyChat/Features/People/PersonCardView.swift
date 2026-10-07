@@ -58,6 +58,8 @@ private struct PersonCardContent: View {
     @State private var safetyError: String?
     /// «Скопировано»: a second copy restarts the time instead of hiding early.
     @State private var copied = TransientFlag()
+    /// What the short HUD says: «Скопировано», or the result of a block/unblock.
+    @State private var hudText = String(localized: "Скопировано")
 
     /// Until the directory or the server answers, the row's name and photo.
     private var person: Person {
@@ -98,7 +100,7 @@ private struct PersonCardContent: View {
         .accessibilityIdentifier("person-card")
         .overlay(alignment: .bottom) {
             if copied.isOn {
-                HUDCapsule(text: "Скопировано")
+                HUDCapsule(text: LocalizedStringKey(hudText))
                     .padding(.bottom, 24)
                     .transition(.opacity)
                     .accessibilityIdentifier("person-copied")
@@ -108,11 +110,11 @@ private struct PersonCardContent: View {
         .sheet(item: $reportTarget) { target in
             ReportSheetView(target: target)
         }
-        .alert("Заблокировать пользователя?", isPresented: $confirmsBlock) {
+        .alert(AppCopy.blockTitle, isPresented: $confirmsBlock) {
             Button("Отмена", role: .cancel) {}
-            Button("Заблокировать", role: .destructive) { block() }
+            Button(AppCopy.blockAction, role: .destructive) { block() }
         } message: {
-            Text("Сообщения «\(person.fullName)» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле.")
+            Text(verbatim: AppCopy.blockBody(name: person.fullName))
         }
         .alert(
             "Не удалось выполнить действие",
@@ -331,7 +333,13 @@ private struct PersonCardContent: View {
     private func copy(_ value: String) {
         UIPasteboard.general.string = value
         CentyHaptics.light()
-        UIAccessibility.post(notification: .announcement, argument: String(localized: "Скопировано"))
+        showHUD(String(localized: "Скопировано"))
+    }
+
+    /// A short notice at the bottom, read by VoiceOver.
+    private func showHUD(_ text: String) {
+        hudText = text
+        UIAccessibility.post(notification: .announcement, argument: text)
         copied.show(for: .milliseconds(1_500))
     }
 
@@ -376,6 +384,7 @@ private struct PersonCardContent: View {
                 safetyError = failure.message(at: .now)
                 CentyHaptics.error()
             } else {
+                showHUD(AppCopy.blockDone)
                 CentyHaptics.warning()
             }
         }
@@ -385,8 +394,10 @@ private struct PersonCardContent: View {
         let target = person.id
         Task {
             if let failure = await account.unblock(userId: target) {
-                safetyError = failure.message(at: .now)
+                safetyError = failure.retryDeadline != nil ? failure.message(at: .now) : AppCopy.unblockFailed
                 CentyHaptics.error()
+            } else {
+                showHUD(AppCopy.unblockDone)
             }
         }
     }

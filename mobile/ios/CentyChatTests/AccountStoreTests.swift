@@ -214,4 +214,50 @@ final class AccountStoreTests: XCTestCase {
         }
         XCTAssertEqual(Set(ReportReason.allCases.map(\.rawValue)).count, ReportReason.allCases.count)
     }
+
+    // MARK: - Server waits (429)
+
+    /// A 429 on a report or a block holds that action until the server's Retry-After is over
+    /// (parity: Android's ReportController/BlockController); nothing is sent meanwhile.
+    func testAThrottledReportIsHeldUntilTheServersWaitIsOver() async throws {
+        let (_, app, account) = try await makeStore()
+        let clock = Locked(Date(timeIntervalSince1970: 5_000))
+        let store = AccountStore(repository: account, session: app.session, now: { clock.value })
+        account.state.withValue { $0.reportError = APIError.httpError(statusCode: 429, message: "x", code: nil, retryAfter: 30) }
+
+        _ = await store.report(targetType: .user, targetId: 3, reason: .spam, details: "")
+        account.state.withValue { $0.reportError = nil }
+        clock.withValue { $0 = $0.addingTimeInterval(10) }
+        let held = await store.report(targetType: .user, targetId: 3, reason: .spam, details: "")
+
+        XCTAssertEqual(held, .throttled(until: Date(timeIntervalSince1970: 5_030)))
+        XCTAssertEqual(account.state.value.reports.count, 1, "nothing is sent during the wait")
+
+        clock.withValue { $0 = $0.addingTimeInterval(21) }
+        let sent = await store.report(targetType: .user, targetId: 3, reason: .spam, details: "")
+        XCTAssertNil(sent)
+        XCTAssertEqual(account.state.value.reports.count, 2)
+    }
+
+    func testAThrottledBlockIsHeldUntilTheServersWaitIsOver() async throws {
+        let (_, app, account) = try await makeStore()
+        let clock = Locked(Date(timeIntervalSince1970: 5_000))
+        let store = AccountStore(repository: account, session: app.session, now: { clock.value })
+        account.state.withValue { $0.blockError = APIError.httpError(statusCode: 429, message: "x", code: nil, retryAfter: 30) }
+
+        _ = await store.block(userId: 3, name: "Боб Тестов")
+        account.state.withValue { $0.blockError = nil }
+        let held = await store.block(userId: 3, name: "Боб Тестов")
+
+        XCTAssertEqual(held, .throttled(until: Date(timeIntervalSince1970: 5_030)))
+        XCTAssertTrue(account.state.value.blockedIds.isEmpty)
+        let heldUnblock = await store.unblock(userId: 4)
+        XCTAssertEqual(heldUnblock, .throttled(until: Date(timeIntervalSince1970: 5_030)), "the server limits blocks and unblocks together")
+
+        clock.withValue { $0 = $0.addingTimeInterval(31) }
+        let blocked = await store.block(userId: 3, name: "Боб Тестов")
+        XCTAssertNil(blocked)
+        XCTAssertEqual(account.state.value.blockedIds, [3])
+    }
 }
+

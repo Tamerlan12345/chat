@@ -187,7 +187,7 @@ final class ChatOutboxTests: XCTestCase {
         await app.session.logout()
 
         XCTAssertEqual(app.session.phase, .authenticated)
-        XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения — выход отменён")
+        XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения. Выход отменён.")
         XCTAssertEqual(chat.messages.map(\.text), ["Останусь"], "nothing was deleted: the message is still there")
         await app.goOnline()
         let sent = await frames("send_message")
@@ -205,7 +205,7 @@ final class ChatOutboxTests: XCTestCase {
         await app.session.logout()
 
         XCTAssertEqual(app.session.phase, .authenticated)
-        XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения — выход отменён")
+        XCTAssertEqual(app.session.errorMessage, "Не удалось удалить неотправленные сообщения. Выход отменён.")
         let stored = await app.deliveryStore.contents
         XCTAssertEqual(stored.outbox.map(\.text), ["Останусь с файлами"], "nothing was deleted, as the message says")
         let next = await chat.send(text: "И ещё одно")

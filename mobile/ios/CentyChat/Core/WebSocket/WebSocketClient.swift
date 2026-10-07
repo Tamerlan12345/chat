@@ -33,6 +33,8 @@ struct ReconnectBackoff: Sendable {
 /// WebSocket клиент CentyChat с поддержкой автореконнекта, heartbeat ping/pong и бинарного аудио-релея
 public actor WebSocketClient {
     public static let shared = WebSocketClient()
+    /// The local `auth_error` code for "no token is stored" (never sent by the server).
+    static let tokenMissing = "TOKEN_MISSING"
 
     typealias Credentials = @Sendable () -> (serverURL: String, token: String?)
     typealias TransportFactory = @Sendable (URLRequest) -> any WebSocketTransport
@@ -43,6 +45,8 @@ public actor WebSocketClient {
     // MARK: - Dependencies
 
     private let credentials: Credentials
+    /// False while the stored session cannot be read (before the first unlock).
+    private let tokenReadable: @Sendable () -> Bool
     private let handshake: HandshakeProvider
     private let makeTransport: TransportFactory
     private let sleep: Sleeper
@@ -89,8 +93,10 @@ public actor WebSocketClient {
         sleep: @escaping Sleeper = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: -0.2...0.2) },
         pingIntervalSeconds: TimeInterval = 30,
-        handshake: @escaping HandshakeProvider = { RealtimeHandshakeState.shared.handshake() }
+        handshake: @escaping HandshakeProvider = { RealtimeHandshakeState.shared.handshake() },
+        tokenReadable: @escaping @Sendable () -> Bool = { KeychainManager.shared.canReadStoredItems }
     ) {
+        self.tokenReadable = tokenReadable
         self.credentials = credentials
         self.handshake = handshake
         self.makeTransport = makeTransport
@@ -151,13 +157,33 @@ public actor WebSocketClient {
         reconnectTask = nil
         isIntentionalDisconnect = false
 
+        // Before the first unlock the stored session cannot be read: a socket without its token
+        // would be refused and end the session. Wait with the usual backoff instead (final review I1).
+        guard tokenReadable() else {
+            Log.realtime.notice("WebSocket connect deferred: the stored session cannot be read yet")
+            scheduleReconnect()
+            return
+        }
+
         let current = credentials()
         guard let serverURL = ServerEndpointPolicy.configuredURL(from: current.serverURL),
               let wsUrl = ServerEndpointPolicy.webSocketURL(for: serverURL) else {
             Log.realtime.error("WebSocket connect skipped: no secure server URL is configured")
             return
         }
-        guard current.token == nil || ServerEndpointPolicy.allowsAuthorization(to: wsUrl) else {
+        // Readable but absent: a refresh the server refused cleared it. A tokenless socket would only
+        // be closed by the server; the session is asked (once per streak) to check itself instead,
+        // and ends only if the server refuses it (review fix round 1).
+        guard current.token != nil else {
+            Log.realtime.notice("WebSocket connect skipped: no stored session token")
+            if reportedAuthErrorCode != Self.tokenMissing {
+                reportedAuthErrorCode = Self.tokenMissing
+                eventContinuation?.yield(.authError(code: Self.tokenMissing, message: ""))
+            }
+            scheduleReconnect()
+            return
+        }
+        guard ServerEndpointPolicy.allowsAuthorization(to: wsUrl) else {
             Log.realtime.error("WebSocket connect refused: authorization requires a secure transport")
             return
         }
@@ -400,7 +426,11 @@ public actor WebSocketClient {
         self.generation += 1
         reportClosed()
         tearDownTransport()
+        scheduleReconnect()
+    }
 
+    /// The next attempt after the backoff's delay.
+    private func scheduleReconnect() {
         let delay = backoff.nextDelay(jitter: jitter())
         let attempt = backoff.attempt
         connectionState = .reconnecting(attempt: attempt, delay: delay)

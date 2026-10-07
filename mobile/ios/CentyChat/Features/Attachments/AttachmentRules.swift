@@ -20,8 +20,8 @@ enum AttachmentRules {
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
     private static let imageTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
-    static let noNetwork = "Нет связи с сервером"
-    static let refused = "Сервер не принял файл"
+    static let noNetwork = AppCopy.uploadNoNetwork
+    static let refused = AppCopy.uploadRefused
 
     /// The server's rule: no dot, a leading dot or a trailing dot — no extension.
     static func extensionOf(_ name: String) -> String {
@@ -50,13 +50,13 @@ enum AttachmentRules {
     /// Nil — the file may be sent; otherwise the reason, in the server's words. `policy` nil — unknown
     /// (the server still checks).
     static func problem(name: String, size: Int64?, policy: FilePolicyEffectiveResponse?) -> String? {
-        if size == 0 { return "Файл пустой" }
-        if let size, size > maxBytes { return "Файл больше 100 МБ — такой файл загрузить нельзя" }
+        if size == 0 { return AppCopy.uploadEmpty }
+        if let size, size > maxBytes { return AppCopy.uploadTooBig }
         guard let policy, policy.enabled else { return nil }
         let ext = extensionOf(name)
-        if ext.isEmpty { return "У файла нет расширения" }
+        if ext.isEmpty { return AppCopy.uploadNoExtension }
         let allowed = Set(policy.allowed.map { $0.trimmingCharacters(in: .whitespaces).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) })
-        if !allowed.contains(ext) { return "Файлы .\(ext) к отправке не разрешены" }
+        if !allowed.contains(ext) { return AppCopy.uploadExtensionNotAllowed(ext) }
         return nil
     }
 
@@ -81,6 +81,20 @@ enum AttachmentRules {
               status == 408 || status == 429 || (500...599).contains(status) else { return nil }
         if let retryAfter, retryAfter > 0 { return Int64((retryAfter * 1_000).rounded(.up)) }
         return AttachmentUploads.retryDelayMs
+    }
+
+    /// The server's own wait (`Retry-After`) in milliseconds, when it sent one.
+    static func serverWaitMs(_ error: any Error) -> Int64? {
+        guard let api = error as? APIError, case .httpError(_, _, _, let retryAfter) = api,
+              let retryAfter, retryAfter > 0 else { return nil }
+        return Int64((retryAfter * 1_000).rounded(.up))
+    }
+
+    /// The server took the file and failed with it (5xx, a full disk): counted against a budget, so a
+    /// broken storage does not get the whole file again forever (final review M2).
+    static func isServerFailure(_ error: any Error) -> Bool {
+        guard let api = error as? APIError, case .httpError(let status, _, _, _) = api else { return false }
+        return (500...599).contains(status)
     }
 
     /// The reason an upload failed, for the bubble and the notice.

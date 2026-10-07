@@ -93,7 +93,7 @@ final class RegistrationFlowTests: XCTestCase {
     }
 
     private func fill(_ model: RegistrationFlowModel) {
-        model.email = "  Ivan@Company.KZ "
+        model.email = "  Ivan@Example.COM "
         model.displayName = "  Иван   Иванов "
         model.username = " Ivan.Petrov "
         model.password = "Str0ng-Passw0rd"
@@ -123,8 +123,8 @@ final class RegistrationFlowTests: XCTestCase {
     }
 
     func testFieldValidationRules() {
-        XCTAssertNil(RegistrationValidation.emailError("ivan@company.kz"))
-        for bad in ["", "ivan", "ivan@", "@company.kz", "ivan@company", "iv an@company.kz", "a@@b.kz", "a@.kz", "a@b."] {
+        XCTAssertNil(RegistrationValidation.emailError("ivan@example.com"))
+        for bad in ["", "ivan", "ivan@", "@example.com", "ivan@company", "iv an@example.com", "a@@b.example", "a@.example", "a@b."] {
             XCTAssertNotNil(RegistrationValidation.emailError(bad), bad)
         }
         XCTAssertNil(RegistrationValidation.usernameError("ivan.petrov-1_x"))
@@ -158,7 +158,7 @@ final class RegistrationFlowTests: XCTestCase {
         XCTAssertEqual(model.step, .code)
         XCTAssertNil(model.failure)
         let sent = try XCTUnwrap(account.state.value.requests.first)
-        XCTAssertEqual(sent.email, "ivan@company.kz")
+        XCTAssertEqual(sent.email, "ivan@example.com")
         XCTAssertEqual(sent.displayName, "Иван Иванов")
         XCTAssertEqual(sent.username, "ivan.petrov")
         XCTAssertEqual(sent.password, "Str0ng-Passw0rd", "The password is sent as typed")
@@ -333,7 +333,10 @@ final class RegistrationFlowTests: XCTestCase {
         XCTAssertEqual(model.secondsUntilExpiry(at: clock.value), 0)
         await model.verify()
 
-        XCTAssertEqual(model.failure, .codeExpired)
+        // The client knows the exact reason: its own timer ran out (`reg.code_expired_local`).
+        XCTAssertEqual(model.failure, .codeExpiredLocally)
+        XCTAssertEqual(model.errorMessage(at: clock.value), "Срок действия кода истёк. Запросите новый код.")
+        XCTAssertEqual(model.code, "", "a dead code is cleared, as on Android")
         XCTAssertTrue(account.state.value.verifications.isEmpty)
     }
 
@@ -391,7 +394,7 @@ final class RegistrationFlowTests: XCTestCase {
         XCTAssertEqual(model.step, .form)
         XCTAssertNil(model.challenge)
         XCTAssertEqual(model.code, "")
-        XCTAssertEqual(model.email, "  Ivan@Company.KZ ", "The typed values are kept for editing")
+        XCTAssertEqual(model.email, "  Ivan@Example.COM ", "The typed values are kept for editing")
     }
 
     // MARK: - Session
@@ -405,5 +408,84 @@ final class RegistrationFlowTests: XCTestCase {
 
         XCTAssertEqual(app.session.phase, .authenticated)
         XCTAssertEqual(app.session.currentUser?.id, TestModels.me.id)
+    }
+
+    // MARK: - Waits and the registration switch
+
+    /// 429 on «Подтвердить»: the button waits out the server's Retry-After (parity: Android holds it).
+    func testAThrottledVerifyWaitsOutTheServersRetryAfter() async {
+        let model = makeModel()
+        await reachCodeStep(model)
+        account.state.withValue {
+            $0.verifyResult = .failure(APIError.httpError(statusCode: 429, message: "Слишком много запросов", code: nil, retryAfter: 20))
+        }
+        model.updateCode("123456")
+        await model.verify()
+        XCTAssertEqual(model.failure, .throttled(until: t0.addingTimeInterval(20)))
+
+        model.updateCode("654321")
+        XCTAssertFalse(model.canVerify, "no second try during the wait")
+        await model.verify()
+        XCTAssertEqual(account.state.value.verifications.count, 1)
+
+        advance(21)
+        XCTAssertTrue(model.canVerify)
+        account.state.withValue { $0.verifyResult = .success(.pending) }
+        await model.verify()
+        XCTAssertEqual(account.state.value.verifications.count, 2)
+        XCTAssertEqual(model.step, .pending)
+    }
+
+    /// 429 on «Отправить код ещё раз»: the resend waits out the server's Retry-After too.
+    func testAThrottledResendWaitsOutTheServersRetryAfter() async {
+        let model = makeModel()
+        await reachCodeStep(model)
+        advance(60)
+        account.state.withValue {
+            $0.requestResult = .failure(APIError.httpError(statusCode: 429, message: "x", code: nil, retryAfter: 120))
+        }
+        await model.resend()
+        XCTAssertEqual(account.state.value.requests.count, 2)
+
+        advance(60)
+        XCTAssertFalse(model.canResend(at: clock.value), "the timer is over, the server's wait is not")
+        await model.resend()
+        XCTAssertEqual(account.state.value.requests.count, 2)
+
+        advance(61)
+        XCTAssertTrue(model.canResend(at: clock.value))
+    }
+
+    func testAClosedRegistrationSaysSoAtEveryStep() async {
+        account.state.withValue {
+            $0.requestResult = .failure(APIError.httpError(statusCode: 403, message: "Регистрация сейчас закрыта. Обратитесь к администратору.", code: "REGISTRATION_DISABLED"))
+        }
+        let model = makeModel()
+        fill(model)
+        await model.submitForm()
+        XCTAssertEqual(model.failure, .registrationDisabled)
+        XCTAssertEqual(model.errorMessage(at: t0), "Регистрация сейчас закрыта. Обратитесь к администратору.")
+
+        account.state.withValue {
+            $0.requestResult = .success(RegistrationChallenge(status: "code_sent", registrationId: "reg-1", expiresInSec: 600))
+            $0.verifyResult = .failure(APIError.httpError(statusCode: 403, message: "Регистрация сейчас закрыта. Обратитесь к администратору.", code: "REGISTRATION_DISABLED"))
+        }
+        let second = makeModel()
+        await reachCodeStep(second)
+        second.updateCode("123456")
+        await second.verify()
+        XCTAssertEqual(second.failure, .registrationDisabled, "not «Неверный код»: the code was never checked")
+        XCTAssertEqual(second.code, "123456", "the code is not spent; it may work once registration reopens")
+    }
+
+    func testABusyServerIsAWaitNotTooManyAttempts() async {
+        account.state.withValue {
+            $0.requestResult = .failure(APIError.httpError(statusCode: 503, message: "busy", code: "BUSY", retryAfter: 150))
+        }
+        let model = makeModel()
+        fill(model)
+        await model.submitForm()
+
+        XCTAssertEqual(model.errorMessage(at: t0), "Сервер сейчас занят. Повторите через 2 мин 30 с.")
     }
 }

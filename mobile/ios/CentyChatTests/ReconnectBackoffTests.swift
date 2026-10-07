@@ -84,6 +84,53 @@ final class ReconnectBackoffTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(harness.transportCount, 3)
     }
 
+    /// While the device is locked before its first unlock the stored session cannot be read: the
+    /// socket waits (with the usual backoff) instead of connecting without a token, which the
+    /// server would answer with a rejection that ends the session.
+    func testNoSocketOpensWhileTheStoredSessionCannotBeRead() async throws {
+        let readable = Locked(false)
+        let harness = SocketHarness(script: [.deliverThenHang(SocketFrames.authSuccess)])
+        let client = harness.makeClient(tokenReadable: { readable.value })
+
+        await client.connect()
+        let delays = try await harness.clock.waitForDelays(count: 2)
+        XCTAssertEqual(harness.transportCount, 0, "no socket without a readable token")
+        XCTAssertEqual(delays, [1, 2])
+
+        readable.withValue { $0 = true }
+        for _ in 0..<200 where harness.transportCount == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await client.disconnect()
+        XCTAssertEqual(harness.transportCount, 1, "once readable, it connects")
+    }
+
+    /// Readable but absent (a refused refresh cleared it): no socket goes out without a token — the
+    /// server would close it — and the session is asked to check itself, once per streak (review
+    /// fix round 1). It still ends only on a definitive refusal (SessionStore).
+    func testATokenlessSocketIsNeverOpenedAndTheSessionChecksItself() async throws {
+        let harness = SocketHarness(script: [])
+        let client = harness.makeClient(token: nil)
+        let events = await client.makeEventStream()
+        let codes = Locked<[String]>([])
+        let consumer = Task {
+            for await event in events {
+                if case .authError(let code, _) = event { codes.withValue { $0.append(code) } }
+            }
+        }
+
+        await client.connect()
+        _ = try await harness.clock.waitForDelays(count: 3)
+        for _ in 0..<200 where codes.value.isEmpty {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await client.disconnect()
+        consumer.cancel()
+
+        XCTAssertEqual(harness.transportCount, 0)
+        XCTAssertEqual(codes.value, ["TOKEN_MISSING"])
+    }
+
     func testJitterNeverPushesTheDelayAboveTheCap() {
         var backoff = ReconnectBackoff()
         var delays: [TimeInterval] = []
@@ -302,13 +349,13 @@ private final class SocketHarness: @unchecked Sendable {
         sent.value.map(\.normalizedJSON)
     }
 
-    func makeClient() -> WebSocketClient {
+    func makeClient(token: String? = "secret-token", tokenReadable: @escaping @Sendable () -> Bool = { true }) -> WebSocketClient {
         let script = self.script
         let sent = self.sent
         let clock = self.clock
         let created = self.created
         return WebSocketClient(
-            credentials: { ("https://chat.example.com", "secret-token") },
+            credentials: { ("https://chat.example.com", token) },
             makeTransport: { _ in
                 created.withValue { $0 += 1 }
                 let step = script.withValue { steps -> TransportStep in
@@ -318,7 +365,8 @@ private final class SocketHarness: @unchecked Sendable {
             },
             sleep: { seconds in try await clock.sleep(seconds) },
             jitter: { 0 },
-            pingIntervalSeconds: ManualClock.heartbeatInterval
+            pingIntervalSeconds: ManualClock.heartbeatInterval,
+            tokenReadable: tokenReadable
         )
     }
 }
