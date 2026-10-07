@@ -2002,7 +2002,16 @@ router.delete('/users/me', requireAuth, route(async (req, res) => {
     AuditService.log({ action: 'account_deleted', ip, details: { deletedUserId: req.user.id } });
     wsServer.disconnectUser(req.user.id, 'Учётная запись удалена');
     wsServer.forgetPushedChats(req.user.id);
-    wsServer.broadcast({ type: 'user_updated', user: UserService.toPublicUser({ ...req.user, full_name: 'Удалённый сотрудник', is_active: 0, status: 'offline', avatar_url: null }) });
+    // Рассылается уже обезличенная строка из базы: прежние логин, почта,
+    // телефон и должность стёрты и по сокетам не уходят (registration.md §3).
+    const erased = await UserService.getUserById(req.user.id);
+    wsServer.broadcast({
+      type: 'user_updated',
+      user: UserService.toPublicUser({
+        ...(erased || { id: req.user.id, username: `deleted~${req.user.id}`, full_name: 'Удалённый сотрудник' }),
+        is_active: 0, status: 'offline', avatar_url: null
+      })
+    });
     res.json({ success: true });
   } catch (err) {
     if (err instanceof Account.AccountError && err.code === 'INVALID_PASSWORD') registerFailure(failKey, failLimit);

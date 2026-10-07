@@ -778,3 +778,51 @@ test('блокировка: правка личного сообщения в о
   assert.strictEqual(updated.message.text, 'вежливая правка');
   a.terminate(); b.terminate();
 });
+
+// ── Удаление аккаунта: рассылка без стёртых данных, кэш аватара (Minor 1, 2) ──
+
+test('удаление аккаунта: user_updated не несёт стёртых личных данных, копии аватара удалены', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const config = require('../src/config');
+  const Images = require('../src/media/images');
+  const leaky = await UserService.createUser({
+    username: 'leaky.person', full_name: 'Утечкин Пётр', email: 'leaky@test.kz', phone: '+7 700 000 00 11',
+    job_title: 'Бухгалтер', password: PASSWORD
+  });
+  await UserService.setMustChangePassword(leaky.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(leaky.id));
+
+  const avatarsDir = path.join(config.UPLOADS_DIR, '.avatars');
+  fs.mkdirSync(avatarsDir, { recursive: true });
+  const cached = Object.keys(Images.AVATAR_SIZES).map((size) => path.join(avatarsDir, `${leaky.id}-0123456789abcdef-${size}.jpg`));
+  for (const file of cached) fs.writeFileSync(file, 'jpeg');
+
+  const observer = await blockSock('alice');
+  try {
+    const res = await api('DELETE', '/api/users/me', { token, body: { password: PASSWORD } });
+    assert.strictEqual(res.status, 200);
+    const frame = await frameOf(observer, (f) => f.type === 'user_updated' && f.user?.id === leaky.id);
+    const text = JSON.stringify(frame);
+    for (const secret of ['leaky', 'Утечкин', '+7 700 000 00 11', 'Бухгалтер']) {
+      assert.ok(!text.includes(secret), `рассылка не содержит «${secret}»: ${text}`);
+    }
+    assert.strictEqual(frame.user.full_name, 'Удалённый сотрудник');
+    assert.ok(!frame.user.email && !frame.user.phone && !frame.user.job_title);
+    assert.strictEqual(frame.user.is_active, 0);
+  } finally {
+    observer.terminate();
+  }
+  for (const file of cached) assert.ok(!fs.existsSync(file), `копия аватара удалена: ${path.basename(file)}`);
+});
+
+// Minor 6: заявка, отклонённая прежней версией сервера, лежит с is_active = 0.
+test('одобрение отклонённой прежде заявки включает учётную запись', async () => {
+  const legacy = await UserService.createUser({ username: 'legacy.rejected', full_name: 'Отклонённый Прежде', password: PASSWORD });
+  await UserService.setMustChangePassword(legacy.id, false);
+  await identity.run(`UPDATE users SET approval_status = 'rejected', is_active = 0 WHERE id = $1`, [legacy.id]);
+  const approved = await api('POST', `/api/admin/registrations/${legacy.id}/approve`, { token: people.admin.token });
+  assert.strictEqual(approved.status, 200);
+  const login = await api('POST', '/api/auth/login', { body: { username: 'legacy.rejected', password: PASSWORD } });
+  assert.strictEqual(login.status, 200);
+});

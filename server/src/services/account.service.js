@@ -71,6 +71,13 @@ async function deleteOwnAccount(userId, password) {
      WHERE id = $1`,
     [uid, `deleted~${uid}`]
   );
+  // Перекодированные копии фото (uploads/.avatars) тоже стираются: не отдаются
+  // и так, но не должны оставаться на диске и в резервных копиях.
+  try {
+    await require('../media/avatars').purgeAvatarCache(uid);
+  } catch (err) {
+    console.warn('[Account] копии аватара не удалены:', err.message);
+  }
   return { success: true };
 }
 
