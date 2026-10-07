@@ -127,6 +127,10 @@ public struct UserNotificationCenterBridge: LocalNotificationCenter {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
+    public func removeAllDelivered() async {
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
     /// Asks once for alerts, sounds and badges; the UI decides when.
     public static func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
