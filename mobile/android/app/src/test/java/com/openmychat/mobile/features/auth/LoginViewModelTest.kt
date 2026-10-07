@@ -250,4 +250,29 @@ class LoginViewModelTest {
         assertNull(preferences.lastUsername)
         assertEquals("the form keeps what was typed", "typo-name", vm.username.value)
     }
+    // --- decision Q: the registration entry follows /settings/info ----------------------------
+
+    @Test
+    fun theRegistrationEntryIsHiddenWhenTheServerHasRegistrationOff() = runTest(dispatcher) {
+        auth.registrationOpen = false
+        val vm = viewModel()
+        vm.onScreenShown()
+        runCurrent()
+        assertFalse(vm.registrationAvailable.value)
+    }
+
+    @Test
+    fun theRegistrationEntryShowsWhenOpenOrUnknown() = runTest(dispatcher) {
+        auth.registrationOpen = true
+        val open = viewModel()
+        open.onScreenShown()
+        runCurrent()
+        assertTrue(open.registrationAvailable.value)
+
+        auth.registrationOpen = null // offline: the server still says so if it is closed
+        val unknown = viewModel()
+        unknown.onScreenShown()
+        runCurrent()
+        assertTrue(unknown.registrationAvailable.value)
+    }
 }

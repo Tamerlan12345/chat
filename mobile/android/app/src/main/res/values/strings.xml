@@ -381,6 +381,7 @@
 
     <!-- Account failures (AccountFailure) -->
     <string name="account_error_offline">Нет связи с сервером. Проверьте подключение к интернету.</string>
+    <string name="account_error_registration_disabled">Регистрация сейчас закрыта. Обратитесь к администратору.</string>
     <string name="account_error_mail_not_configured">Отправка почты не настроена. Регистрация временно недоступна — обратитесь к администратору.</string>
     <string name="account_error_throttled">Слишком много попыток. Повторите через %1$s.</string>
     <string name="account_error_invalid_input">Проверьте введённые данные.</string>

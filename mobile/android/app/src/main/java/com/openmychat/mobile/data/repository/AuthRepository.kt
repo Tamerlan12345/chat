@@ -36,6 +36,12 @@ interface AuthRepository {
 
     /** Clears the local session (remote logout is best effort). Throws when it cannot be cleared. */
     suspend fun logout()
+
+    /**
+     * Whether the server takes self-registrations (`allow_registration` of the public /settings/info,
+     * decision Q); null when that could not be read.
+     */
+    suspend fun registrationOpen(): Boolean? = null
 }
 
 @Singleton
@@ -81,6 +87,14 @@ class DefaultAuthRepository @Inject constructor(
 
     override suspend fun changePassword(oldPassword: String, newPassword: String): ChangePasswordResponse =
         apiClient.changePassword(ChangePasswordRequest(oldPassword = oldPassword, newPassword = newPassword))
+
+    override suspend fun registrationOpen(): Boolean? = try {
+        apiClient.fetchServerInfo().allowRegistration
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
 
     override suspend fun logout() {
         try {

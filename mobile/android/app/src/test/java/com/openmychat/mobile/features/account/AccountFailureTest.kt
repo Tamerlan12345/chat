@@ -173,4 +173,12 @@ class AccountFailureTest {
         assertEquals(0L, throttled.secondsLeft(now + 2_500))
         assertNull(AccountFailure.WrongPassword.retryDeadline)
     }
+    // --- decision Q: the administrator closed self-registration ---------------------------------
+
+    @Test
+    fun registrationClosedByTheAdministratorIsItsOwnStateAtEitherStep() {
+        val refusal = ApiException(403, "REGISTRATION_DISABLED", "Регистрация сейчас закрыта. Обратитесь к администратору.")
+        assertEquals(AccountFailure.RegistrationDisabled, map(refusal, Context.REGISTRATION_REQUEST))
+        assertEquals("not a wrong code", AccountFailure.RegistrationDisabled, map(refusal, Context.REGISTRATION_VERIFY))
+    }
 }

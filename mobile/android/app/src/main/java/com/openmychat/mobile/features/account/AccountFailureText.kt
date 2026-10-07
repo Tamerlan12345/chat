@@ -10,6 +10,7 @@ import com.openmychat.mobile.features.auth.formatCountdown
 fun accountFailureText(failure: AccountFailure, nowMillis: Long): String? = when (failure) {
     AccountFailure.Offline -> stringResource(R.string.account_error_offline)
     AccountFailure.MailNotConfigured -> stringResource(R.string.account_error_mail_not_configured)
+    AccountFailure.RegistrationDisabled -> stringResource(R.string.account_error_registration_disabled)
     is AccountFailure.Throttled -> failure.secondsLeft(nowMillis).takeIf { it > 0 }
         ?.let { stringResource(R.string.account_error_throttled, formatCountdown(it)) }
     is AccountFailure.InvalidInput -> failure.text.ifEmpty { stringResource(R.string.account_error_invalid_input) }

@@ -16,6 +16,9 @@ sealed interface AccountFailure {
 
     data object Offline : AccountFailure
 
+    /** `403 REGISTRATION_DISABLED`: the administrator turned self-registration off (decision Q). */
+    data object RegistrationDisabled : AccountFailure
+
     /** `503`: the server cannot send the confirmation e-mail (mail is not configured). */
     data object MailNotConfigured : AccountFailure
 
@@ -66,6 +69,10 @@ sealed interface AccountFailure {
             val status = error.statusCode
             val code = error.errorCode
             if (status == 0) return Offline
+            // Decision Q: self-registration is off — at either step, whatever the status.
+            if (code == "REGISTRATION_DISABLED" &&
+                (context == Context.REGISTRATION_REQUEST || context == Context.REGISTRATION_VERIFY)
+            ) return RegistrationDisabled
             fun throttled(defaultSeconds: Long = DEFAULT_THROTTLE_SECONDS) =
                 Throttled(nowMillis + (error.retryAfterSeconds ?: defaultSeconds) * 1_000)
             return when (context) {

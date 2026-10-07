@@ -173,6 +173,10 @@ class FakeAuthRepository : AuthRepository {
         ChangePasswordResponse(success = true)
 
     override suspend fun logout() = Unit
+
+    /** `allow_registration` of /settings/info; null: could not be read. */
+    var registrationOpen: Boolean? = null
+    override suspend fun registrationOpen(): Boolean? = registrationOpen
 }
 
 /** Scriptable [AccountRepository]: registration, deletion, reports and blocks without a server. */

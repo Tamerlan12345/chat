@@ -96,6 +96,10 @@ class LoginViewModel @Inject constructor(
     /** The brand mark's intro plays once per login screen, not again after rotation. */
     var introPlayed = false
 
+    /** The «Зарегистрироваться» entry: hidden once the server says registration is off (decision Q). */
+    private val _registrationAvailable = MutableStateFlow(true)
+    val registrationAvailable: StateFlow<Boolean> = _registrationAvailable.asStateFlow()
+
     private var screenShown = false
     private var countdown: Job? = null
 
@@ -126,6 +130,10 @@ class LoginViewModel @Inject constructor(
     fun onScreenShown() {
         if (screenShown) return
         screenShown = true
+        viewModelScope.launch {
+            // Hidden only on the server's word; unknown (offline) keeps it, the server refuses then.
+            if (authRepository.registrationOpen() == false) _registrationAvailable.value = false
+        }
         viewModelScope.launch {
             val paired = try {
                 authRepository.knock()
