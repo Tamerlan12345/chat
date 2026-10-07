@@ -54,8 +54,6 @@ public final class SessionStore: RealtimeEventHandling {
     public private(set) var phase: SessionPhase
     public var currentUser: User?
     public private(set) var serverInfo = ServerInfo()
-    /// `company_name` from `/api/settings/info`, once the server has answered.
-    public private(set) var companyName: String?
     public private(set) var isSigningIn = false
     public var errorMessage: String?
 
@@ -153,8 +151,8 @@ public final class SessionStore: RealtimeEventHandling {
                 return
             }
             let info = try await server.fetchServerInfo()
+            // The company stays data (`serverInfo.companyName`), not a caption on the login screen.
             serverInfo = info
-            companyName = info.companyName
         } catch {
             Log.session.error("Server health check failed: \(error.localizedDescription, privacy: .public)")
         }

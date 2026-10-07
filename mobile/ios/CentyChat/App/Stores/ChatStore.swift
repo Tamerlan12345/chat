@@ -211,6 +211,16 @@ public final class ChatStore: RealtimeEventHandling {
         return true
     }
 
+    /// The chat opened at a search hit: the history around it, or a notice when it is gone.
+    public func open(at messageId: Int64) async -> Bool {
+        let found = await loadAround(messageId)
+        if !found {
+            // The screen asked for it: said even before the chat counts as visible.
+            show(String(localized: "Сообщение не найдено — возможно, его удалили"))
+        }
+        return found
+    }
+
     /// The page before the oldest loaded message (`beforeId`), when the reader reaches the top.
     public func loadOlder() async {
         guard !isLoadingOlder, !reachedStart, let oldest = engine.state.messages[key]?.first?.id else { return }

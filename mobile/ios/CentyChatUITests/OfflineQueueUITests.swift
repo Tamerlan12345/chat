@@ -35,6 +35,10 @@ final class OfflineQueueUITests: XCTestCase {
         signIn(offline)
         XCTAssertTrue(offline.tabBars.firstMatch.waitForExistence(timeout: 40), "Alice must reach the tabs.")
         offline.dismissSystemPrompts(timeout: 10)
+        // The inbox while the message transport is down (the connection banner, once it shows).
+        _ = offline.staticTexts["Боб Тестов"].waitForExistence(timeout: 40)
+        pause(3)
+        capture(offline, named: "19-offline-inbox")
         openChatWithBob(offline)
 
         // 2. Send: the bubble waits in the queue; the composer is empty (the entry is on disk).

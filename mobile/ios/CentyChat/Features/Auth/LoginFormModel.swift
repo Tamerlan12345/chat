@@ -172,31 +172,3 @@ public final class LoginFormModel {
         }
     }
 }
-
-/// Copy shown next to the brand mark.
-public enum BrandCopy {
-    public static let companyNameLimit = 80
-
-    /// `company_name` from the server, rendered as plain text: control and bidi-override
-    /// characters removed, whitespace collapsed, capped at `companyNameLimit` characters.
-    /// Falls back to «Корпоративный мессенджер».
-    public static func companyLine(_ raw: String?) -> String {
-        let fallback = String(localized: "Корпоративный мессенджер")
-        guard let raw else { return fallback }
-        let visible = String(String.UnicodeScalarView(raw.unicodeScalars.map { scalar -> Unicode.Scalar in
-            switch scalar.properties.generalCategory {
-            case .control, .format, .lineSeparator, .paragraphSeparator:
-                return " "
-            default:
-                return scalar
-            }
-        }))
-        let collapsed = visible
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-        guard !collapsed.isEmpty else { return fallback }
-        guard collapsed.count > companyNameLimit else { return collapsed }
-        let trimmed = collapsed.prefix(companyNameLimit - 1).trimmingCharacters(in: .whitespaces)
-        return trimmed + "…"
-    }
-}

@@ -22,7 +22,7 @@ permissions:
 jobs:
   ios-simulator-tests:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Validate iOS privacy manifest
@@ -152,6 +152,88 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: mobile/ios/build/video/ios-ui.mp4
+      # The motion recordings of the design brief («UI layer v2» acceptance): the walkthrough test
+      # on its own, once in light, once in dark and once with Reduce Motion switched on in the
+      # simulator. Evidence only: a failure here never fails the job.
+      - name: Record the motion walkthrough (light, dark, Reduce Motion)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
+        run: |
+          set +e
+          out=mobile/ios/build/motion
+          mkdir -p "$out"
+          for mode in light dark reduce; do
+            appearance="$mode"
+            if [ "$mode" = reduce ]; then
+              appearance=light
+              xcrun simctl spawn "$SIMULATOR_UDID" defaults write com.apple.Accessibility ReduceMotionEnabled -bool true
+            fi
+            xcrun simctl io "$SIMULATOR_UDID" recordVideo --codec=h264 --force "$out/raw-$mode.mp4" > "$RUNNER_TEMP/motion-record-$mode.log" 2>&1 &
+            recorder=$!
+            sleep 2
+            TEST_RUNNER_CENTYCHAT_MOTION_VIDEO="$appearance" xcodebuild \
+             -project mobile/ios/CentyChat.xcodeproj \
+             -scheme CentyChat \
+             -configuration Debug \
+             -destination "id=$SIMULATOR_UDID" \
+             -derivedDataPath mobile/ios/build/derived \
+             -only-testing:CentyChatUITests/ScreenshotTourTests/testMotionWalkthrough \
+             test-without-building > "$RUNNER_TEMP/motion-$mode.log" 2>&1
+            echo "motion $mode: xcodebuild exit $?"
+            grep -E "error: -\[|Test Case .* (passed|failed)" "$RUNNER_TEMP/motion-$mode.log" | tail -n 20 || true
+            kill -INT "$recorder" 2>/dev/null
+            for _ in $(seq 1 60); do kill -0 "$recorder" 2>/dev/null || break; sleep 1; done
+            if [ -s "$out/raw-$mode.mp4" ]; then
+              avconvert --preset Preset960x540 --source "$out/raw-$mode.mp4" --output "$out/ios-motion-$mode.mp4" --replace \
+                || mv -f "$out/raw-$mode.mp4" "$out/ios-motion-$mode.mp4"
+              rm -f "$out/raw-$mode.mp4"
+            fi
+          done
+          xcrun simctl spawn "$SIMULATOR_UDID" defaults write com.apple.Accessibility ReduceMotionEnabled -bool false
+          ls -l "$out"
+      - name: Upload motion videos
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-motion-videos
+          if-no-files-found: ignore
+          retention-days: 7
+          path: mobile/ios/build/motion/ios-motion-*.mp4
+      # iPad (regular width): the split view with a chat selected keeps the tab bar. The same
+      # build runs on an iPad simulator (the app targets iPhone and iPad); screenshots join the set.
+      - name: Run the iPad split-view check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          TEST_RUNNER_CENTYCHAT_DEV_STAND_URL: https://localhost:8443
+        run: |
+          set -o pipefail
+          xcrun simctl shutdown "$SIMULATOR_UDID" || true
+          ipad=""
+          for name in "iPad Pro 11-inch (M4)" "iPad Air 11-inch (M2)" "iPad Air 11-inch (M3)" "iPad (10th generation)" "iPad Pro 13-inch (M4)"; do
+            ipad="$(xcrun simctl list devices available --json | python3 mobile/ios/scripts/pick-simulator.py "$name" 2>/dev/null || true)"
+            [ -n "$ipad" ] && break
+          done
+          if [ -z "$ipad" ]; then
+            echo "No iPad simulator available"
+            xcrun simctl list devices available | grep -i ipad || true
+            exit 1
+          fi
+          echo "iPad simulator: $name ($ipad)"
+          xcrun simctl boot "$ipad" || true
+          xcrun simctl bootstatus "$ipad" -b
+          xcrun simctl keychain "$ipad" add-root-cert mobile/dev/certs/dev-ca.crt
+          xcodebuild \
+           -project mobile/ios/CentyChat.xcodeproj \
+           -scheme CentyChat \
+           -configuration Debug \
+           -destination "id=$ipad" \
+           -derivedDataPath mobile/ios/build/derived \
+           -resultBundlePath mobile/ios/build/CentyChat-ipad.xcresult \
+           -only-testing:CentyChatUITests/ScreenshotTourTests/testIPadSplitViewKeepsTheTabBar \
+           test-without-building \
+           2>&1 | tee "$RUNNER_TEMP/xcodebuild-ipad.log"
       # Compiler errors and failing tests as annotations and in the job summary.
       - name: Report build and test failures
         if: always()
@@ -159,6 +241,9 @@ jobs:
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-build.log" "" "iOS build-for-testing"
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-unit.log" mobile/ios/build/CentyChat-unit.xcresult "iOS unit tests"
           python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-test.log" mobile/ios/build/CentyChat.xcresult "iOS UI tests (user path)"
+          if [ -f "$RUNNER_TEMP/xcodebuild-ipad.log" ]; then
+            python3 mobile/ios/scripts/report-xcodebuild.py "$RUNNER_TEMP/xcodebuild-ipad.log" mobile/ios/build/CentyChat-ipad.xcresult "iPad split view"
+          fi
       - name: Dev stand log
         if: always()
         # The seed passwords are dev-only, but the CI log never echoes them.
@@ -174,14 +259,23 @@ jobs:
             mobile/ios/build/CentyChat-unit.xcresult
       - name: Export screenshot attachments as PNG
         if: always() && github.event_name == 'push'
-        run: python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+        run: |
+          python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat.xcresult mobile/ios/build/screenshots
+          if [ -d mobile/ios/build/CentyChat-ipad.xcresult ]; then
+            python3 mobile/ios/scripts/export-xcresult-screenshots.py mobile/ios/build/CentyChat-ipad.xcresult mobile/ios/build/screenshots || true
+          fi
+          # The motion recordings travel with the screenshots (they are small after avconvert).
+          mkdir -p mobile/ios/build/screenshots
+          cp mobile/ios/build/motion/ios-motion-*.mp4 mobile/ios/build/screenshots/ 2>/dev/null || true
       - name: Upload exported screenshots
         if: always() && github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-screenshots
           if-no-files-found: ignore
-          path: mobile/ios/build/screenshots/*.png
+          path: |
+            mobile/ios/build/screenshots/*.png
+            mobile/ios/build/screenshots/*.mp4
 
   # The Release configuration must be locked to production: build it with a hostile
   # CENTYCHAT_SERVER_URL and check the binary ignores it and has no Debug override points.
@@ -239,7 +333,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          shots=(screenshots/*.png)
+          shots=(screenshots/*.png screenshots/*.mp4)
           if [ ${#shots[@]} -eq 0 ]; then
             echo "No screenshots exported; nothing to publish."
             exit 0

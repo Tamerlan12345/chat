@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// The app's front door: brand lockup, company name and one card with login and password.
+/// The app's front door: the CentyChat lockup and one card with login and password.
 ///
 /// There is no server field and no way to change the server: the build is fixed to one
 /// (`ServerEnvironment`). The password stays in memory only (`LoginFormModel`).
@@ -29,7 +29,7 @@ public struct LoginView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: 28) {
+            VStack(spacing: 24) {
                 lockup
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     card(at: context.date)
@@ -41,7 +41,7 @@ public struct LoginView: View {
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: 420)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
             .padding(.top, 48)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity)
@@ -92,16 +92,8 @@ public struct LoginView: View {
             BrandMark(size: min(markSize, 120))
                 .scaleEffect(isMarkVisible ? 1 : 0.86)
                 .opacity(isMarkVisible ? 1 : 0)
-            VStack(spacing: 6) {
-                BrandWordmark()
-                // Plain text from /api/settings/info, sanitised and length-capped.
-                Text(BrandCopy.companyLine(session.companyName))
-                    .font(.subheadline)
-                    .foregroundStyle(CentyColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("login-company")
-            }
+            // Only the lockup: no company line and no tagline (owner, 2026-10-06 — «это чат, понятно»).
+            BrandWordmark()
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
@@ -178,8 +170,8 @@ public struct LoginView: View {
                     .opacity(form.isSubmitting ? 1 : 0)
                     .accessibilityHidden(!form.isSubmitting)
                 }
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 48)
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(LoginPrimaryButtonStyle(isBusy: form.isSubmitting, reduceMotion: reduceMotion))
             .disabled(!canSubmit)
@@ -191,7 +183,7 @@ public struct LoginView: View {
         .opacity(form.isSubmitting ? 0.92 : 1)
         .animation(.easeOut(duration: 0.18), value: form.isSubmitting)
         .animation(.easeOut(duration: 0.18), value: message)
-        .padding(20)
+        .padding(16)
         .background(CentyColors.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -278,6 +270,8 @@ struct LoginErrorBox: View {
     }
 }
 
+/// A filled field (`bg-sunken`, radius 8); the outline appears only while it is focused (anti-
+/// generated polish rule 1: outlines only where the desktop has them).
 struct LoginFieldStyle: ViewModifier {
     let isFocused: Bool
     var trailingPadding: CGFloat = 12
@@ -289,16 +283,18 @@ struct LoginFieldStyle: ViewModifier {
             .padding(.leading, 12)
             .padding(.trailing, trailingPadding)
             .frame(minHeight: 48)
-            .background(CentyColors.fieldBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(CentyColors.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isFocused ? CentyColors.primaryBlue : CentyColors.border, lineWidth: isFocused ? 1.5 : 1)
+                    .strokeBorder(isFocused ? CentyColors.primaryBlue : Color.clear, lineWidth: 1.5)
             }
+            .animation(.easeOut(duration: CentyMotion.fast), value: isFocused)
     }
 }
 
+/// The primary button of the auth screens: the system-wide primary style (50 pt, radius 12,
+/// disabled at 38 % with a dim label, a request in flight at full strength).
 struct LoginPrimaryButtonStyle: ButtonStyle {
-    /// A request is in flight: the button shows progress at full strength, not as disabled.
     let isBusy: Bool
     let reduceMotion: Bool
     @Environment(\.isEnabled) private var isEnabled
@@ -309,14 +305,23 @@ struct LoginPrimaryButtonStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
+        let enabled = isEnabled || isBusy
         configuration.label
-            .foregroundStyle(CentyColors.onPrimary)
+            .font(.headline)
+            .foregroundStyle(enabled ? CentyColors.onPrimary : CentyColors.textDim)
+            .frame(minHeight: 50)
             .background(
-                configuration.isPressed ? CentyColors.primaryPressed : CentyColors.primaryBlue,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill((configuration.isPressed ? CentyColors.primaryPressed : CentyColors.primaryBlue).opacity(enabled ? 1 : 0.38))
             )
-            .opacity(isEnabled || isBusy ? 1 : 0.45)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: CentyMotion.fast), value: configuration.isPressed)
     }
 }
+
+#if DEBUG
+#Preview("Вход") {
+    LoginView()
+        .previewEnvironment(.preview(signedIn: false))
+}
+#endif

@@ -90,6 +90,8 @@ struct AttachmentImageViewer: View {
                 EmptyView()
             }
         }
+        // A container: its own identifier must not replace the close button's.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("image-viewer")
         .task {
             if let local = attachment.localFile {

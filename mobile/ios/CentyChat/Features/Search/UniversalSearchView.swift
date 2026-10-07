@@ -18,18 +18,21 @@ struct UniversalSearchResultsView: View {
     let open: (SearchSelection) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// When the results screen appeared: its sections fade through with a short stagger then, while
+    /// typing updates them without animation.
+    @State private var appearedAt = Date()
 
     var body: some View {
         let state = model.state
         Group {
             if state.nothingFound {
-                ContentUnavailableView {
-                    Label("Ничего не нашли по «\(state.query.trimmingCharacters(in: .whitespacesAndNewlines))»", systemImage: "magnifyingglass")
-                } description: {
-                    Text("Проверьте написание: ищем по людям, каналам и тексту сообщений.")
-                } actions: {
+                EmptyStateView(
+                    illustration: .search,
+                    title: "Ничего не нашли по «\(state.query.trimmingCharacters(in: .whitespacesAndNewlines))»",
+                    message: "Проверьте написание: ищем по людям, каналам и тексту сообщений."
+                ) {
                     Button("Очистить поиск") { model.clear() }
-                        .foregroundStyle(CentyColors.accentText)
+                        .buttonStyle(CentyLinkButtonStyle())
                         .accessibilityIdentifier("search-clear")
                 }
             } else {
@@ -43,14 +46,24 @@ struct UniversalSearchResultsView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .listSectionSpacing(.compact)
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: state.messages)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(CentyColors.chatBackground)
+        .background(CentyColors.list)
+        .transition(.opacity)
+        .onAppear { appearedAt = Date() }
         .accessibilityIdentifier("search-results")
+    }
+
+    /// The first three items of a section, 30 ms apart, right after the screen appeared (fade-through);
+    /// none later (typing) and none with Reduce Motion.
+    private func stagger(_ index: Int) -> (delay: TimeInterval, skip: Bool) {
+        let fresh = Date().timeIntervalSince(appearedAt) < 0.4
+        return (Stagger.searchItem(index: index, reduceMotion: reduceMotion), reduceMotion || !fresh || index > 2)
     }
 
     // MARK: - Sections
@@ -82,7 +95,7 @@ struct UniversalSearchResultsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(CentyColors.cardBackground)
+                    .listRowBackground(CentyColors.card)
                     .accessibilityIdentifier("search-recent-\(item.id)")
                 }
             }
@@ -95,17 +108,18 @@ struct UniversalSearchResultsView: View {
     private func people(_ state: UniversalSearchState) -> some View {
         if !state.people.isEmpty {
             Section {
-                ForEach(state.people) { match in
+                ForEach(Array(state.people.enumerated()), id: \.element.id) { index, match in
                     Button {
                         open(.person(match.person))
                     } label: {
                         HStack(spacing: 8) {
-                            PersonRowView(match: match, zoom: zoom)
+                            PersonRowView(match: match, zoom: zoom, surface: CentyColors.card)
                             disclosure
                         }
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(CentyColors.cardBackground)
+                    .staggeredAppearance(delay: stagger(index).delay, reduceMotion: stagger(index).skip)
+                    .listRowBackground(CentyColors.card)
                     .accessibilityIdentifier("search-person-\(match.person.id)")
                 }
                 if state.peopleTotal > state.people.count {
@@ -114,7 +128,7 @@ struct UniversalSearchResultsView: View {
                     }
                     .foregroundStyle(CentyColors.accentText)
                     .frame(minHeight: 44)
-                    .listRowBackground(CentyColors.cardBackground)
+                    .listRowBackground(CentyColors.card)
                     .accessibilityIdentifier("search-all-people")
                 }
             } header: {
@@ -127,13 +141,13 @@ struct UniversalSearchResultsView: View {
     private func channels(_ state: UniversalSearchState) -> some View {
         if !state.channels.isEmpty {
             Section {
-                ForEach(state.channels) { match in
+                ForEach(Array(state.channels.enumerated()), id: \.element.id) { index, match in
                     Button {
                         open(.channel(match.channel))
                     } label: {
                         HStack(spacing: 12) {
                             ChannelBadge()
-                            Text(Highlight.attributed(match.channel.name, match.highlights))
+                            Highlight.text(match.channel.name, match.highlights)
                                 .font(.headline)
                                 .foregroundStyle(CentyColors.textStrong)
                                 .lineLimit(1)
@@ -144,7 +158,8 @@ struct UniversalSearchResultsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(CentyColors.cardBackground)
+                    .listRowBackground(CentyColors.card)
+                    .staggeredAppearance(delay: stagger(index).delay, reduceMotion: stagger(index).skip)
                     .accessibilityIdentifier("search-channel-\(match.channel.id)")
                 }
             } header: {
@@ -162,7 +177,7 @@ struct UniversalSearchResultsView: View {
             case .loading:
                 ForEach(0..<2, id: \.self) { index in
                     MessageSkeletonRow(wide: index == 0)
-                        .listRowBackground(CentyColors.cardBackground)
+                        .listRowBackground(CentyColors.card)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Ищем сообщения")
@@ -185,7 +200,7 @@ struct UniversalSearchResultsView: View {
                             MessageHitRow(hit: hit)
                         }
                         .buttonStyle(.plain)
-                        .listRowBackground(CentyColors.cardBackground)
+                        .listRowBackground(CentyColors.card)
                         .transition(.opacity)
                         .accessibilityIdentifier("search-message-\(hit.message.id)")
                     }
@@ -210,13 +225,13 @@ struct UniversalSearchResultsView: View {
         Text(text)
             .font(.subheadline)
             .foregroundStyle(danger ? CentyColors.dangerText : CentyColors.textDim)
-            .listRowBackground(CentyColors.cardBackground)
+            .listRowBackground(CentyColors.card)
     }
 
     private var disclosure: some View {
         Image(systemName: "chevron.right")
             .font(.footnote.weight(.semibold))
-            .foregroundStyle(Color(uiColor: .tertiaryLabel))
+            .foregroundStyle(CentyColors.textDim)
             .accessibilityHidden(true)
     }
 }
@@ -226,12 +241,7 @@ struct ChannelBadge: View {
     var size: CGFloat = 40
 
     var body: some View {
-        Image(systemName: "number")
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(CentyColors.accentText)
-            .frame(width: size, height: size)
-            .background(Circle().fill(CentyColors.primarySoft))
-            .accessibilityHidden(true)
+        ChannelAvatar(size: size)
     }
 }
 
@@ -261,11 +271,8 @@ private struct MessageHitRow: View {
             if hit.conversationType == .channel {
                 ChannelBadge()
             } else {
-                AvatarView(
-                    name: hit.conversationTitle.isEmpty ? sender : hit.conversationTitle,
-                    avatarUrl: hit.isOwn ? nil : hit.message.senderAvatar,
-                    size: 40
-                )
+                // The author's avatar: yours next to «Вы».
+                AvatarView(name: hit.avatarName, avatarUrl: hit.avatarUrl, size: 40)
                 .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -284,7 +291,7 @@ private struct MessageHitRow: View {
                     .font(.caption)
                     .foregroundStyle(CentyColors.textDim)
                     .lineLimit(1)
-                Text(Highlight.attributed(hit.snippet, hit.highlights))
+                Highlight.text(hit.snippet, hit.highlights)
                     .font(.subheadline)
                     .foregroundStyle(CentyColors.textSecondary)
                     .lineLimit(2)
@@ -303,21 +310,15 @@ private struct MessageSkeletonRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
-                .fill(Color(uiColor: .tertiarySystemFill))
+                .fill(CentyColors.sunken)
                 .frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 6) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(uiColor: .tertiarySystemFill))
-                    .frame(width: wide ? 160 : 120, height: 14)
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(uiColor: .quaternarySystemFill))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 12)
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(uiColor: .quaternarySystemFill))
-                    .frame(width: 140, height: 12)
+                SkeletonBar(width: wide ? 160 : 120, height: 14)
+                SkeletonBar(height: 12)
+                SkeletonBar(width: 140, height: 12)
             }
         }
         .padding(.vertical, 4)
+        .shimmering()
     }
 }

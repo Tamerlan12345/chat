@@ -164,6 +164,37 @@ final class UniversalSearchModelTests: XCTestCase {
         XCTAssertEqual(hits[2].route.type, .channel)
     }
 
+    func testAHitShowsItsAuthorsPhotoAndOwnDialogHitsShowYours() async throws {
+        directory.state.selfPerson = Person(id: me, fullName: "Тест Тестов", avatarUrl: "/api/users/1/avatar?v=3")
+        directory.state.people[8].avatarUrl = "/api/users/30/avatar?v=1"
+        let model = makeModel(debounce: .milliseconds(10))
+        model.setQuery("отчёт")
+        _ = await eventually { await self.server.queries == ["отчёт"] }
+        await server.answer("отчёт", with: [
+            message(2, "Готов отчёт", from: 30, to: me),
+            message(3, "Мой отчёт", from: me, to: 11),
+        ])
+        _ = await eventually { model.state.messages.hits != nil }
+        let hits = try XCTUnwrap(model.state.messages.hits)
+        XCTAssertEqual(hits.map(\.avatarName), ["Петров Иван", "Тест Тестов"], "«Вы» goes with your own avatar")
+        XCTAssertEqual(hits.map(\.avatarUrl), ["/api/users/30/avatar?v=1", "/api/users/1/avatar?v=3"])
+    }
+
+    func testTheDirectoryIsRankedOncePerQueryNotOnEveryRead() {
+        let model = makeModel()
+        model.setQuery("иван")
+        _ = model.state
+        _ = model.state
+        _ = model.firstResult
+        XCTAssertEqual(model.rankings, 1, "Reading the state again must not re-rank the directory")
+        model.setQuery("иванов")
+        _ = model.state
+        XCTAssertEqual(model.rankings, 2)
+        directory.state.people.append(Person(id: 99, fullName: "Иванова Новая"))
+        _ = model.state
+        XCTAssertEqual(model.rankings, 3, "A changed directory is ranked again")
+    }
+
     func testATrailingSpaceNeitherSearchesAgainNorLeavesTheSkeleton() async {
         let model = makeModel(debounce: .milliseconds(10))
         model.setQuery("план")

@@ -9,6 +9,8 @@ public final class CallStore: RealtimeEventHandling {
     public var activeCall: CallSession?
     public private(set) var callAudioError: String?
     public private(set) var callAudioRequiresMicrophonePermission = false
+    /// The peer's voice level, 0…1, for the call stage's meter.
+    public private(set) var peerLevel: Float = 0
 
     @ObservationIgnored private let realtime: RealtimeStore
     @ObservationIgnored private let audioRelayFactory: @MainActor (Int64) -> AudioCallRelay
@@ -40,6 +42,12 @@ public final class CallStore: RealtimeEventHandling {
     /// Feeds one decoded frame from the peer into the active relay.
     func receiveAudio(_ frame: AudioRelayEngine.DecodedAudioFrame) {
         audioRelay?.receive(frame)
+        guard activeCall != nil else { return }
+        // The meter moves in visible steps only: no redraw per frame for noise.
+        let level = AudioLevel.normalized(AudioLevel.rms(frame.samples))
+        if abs(level - peerLevel) >= 0.04 || (level == 0) != (peerLevel == 0) {
+            peerLevel = level
+        }
     }
 
     // MARK: - Realtime
@@ -235,6 +243,7 @@ public final class CallStore: RealtimeEventHandling {
         callTimer = nil
         audioRelay?.stop()
         audioRelay = nil
+        peerLevel = 0
         if !retainingAudioError {
             callAudioError = nil
             callAudioRequiresMicrophonePermission = false

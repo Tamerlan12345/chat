@@ -16,7 +16,7 @@ struct PersonCardView: View {
             if let model {
                 PersonCardContent(model: model, route: route)
             } else {
-                CentyColors.chatBackground.ignoresSafeArea()
+                CentyColors.list.ignoresSafeArea()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -56,7 +56,8 @@ private struct PersonCardContent: View {
     @State private var reportTarget: ReportTarget?
     @State private var confirmsBlock = false
     @State private var safetyError: String?
-    @State private var showsCopied = false
+    /// «Скопировано»: a second copy restarts the time instead of hiding early.
+    @State private var copied = TransientFlag()
 
     /// Until the directory or the server answers, the row's name and photo.
     private var person: Person {
@@ -91,21 +92,19 @@ private struct PersonCardContent: View {
             }
         }
         .listStyle(.insetGrouped)
+        .listSectionSpacing(24)
         .scrollContentBackground(.hidden)
-        .background(CentyColors.chatBackground)
+        .background(CentyColors.list)
         .accessibilityIdentifier("person-card")
         .overlay(alignment: .bottom) {
-            if showsCopied {
-                Text("Скопировано")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
+            if copied.isOn {
+                HUDCapsule(text: "Скопировано")
                     .padding(.bottom, 24)
                     .transition(.opacity)
                     .accessibilityIdentifier("person-copied")
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: CentyMotion.fast), value: copied.isOn)
         .sheet(item: $reportTarget) { target in
             ReportSheetView(target: target)
         }
@@ -129,7 +128,7 @@ private struct PersonCardContent: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            AvatarView(name: person.fullName, avatarUrl: person.avatarUrl, size: 96)
+            AvatarView(name: person.fullName, avatarUrl: person.avatarUrl, size: 96, ringColor: CentyColors.list)
                 .accessibilityHidden(true)
             // Never red (unlike the desktop panel): on a phone that would read as an error.
             Text(person.fullName)
@@ -186,7 +185,8 @@ private struct PersonCardContent: View {
                     hint: model.inactive ? String(localized: "Сотрудник больше не работает") : nil,
                     identifier: "person-write"
                 ) {
-                    router?.push(.chat(.direct(with: person)))
+                    // Opened from this person's chat header: back to that chat, no second copy.
+                    router?.open(chat: .direct(with: person))
                 }
                 ActionTile(
                     title: "Позвонить",
@@ -291,7 +291,7 @@ private struct PersonCardContent: View {
                     LabeledContent("Роль", value: role)
                 }
             }
-            .listRowBackground(CentyColors.cardBackground)
+            .listRowBackground(CentyColors.card)
         }
     }
 
@@ -332,11 +332,7 @@ private struct PersonCardContent: View {
         UIPasteboard.general.string = value
         CentyHaptics.light()
         UIAccessibility.post(notification: .announcement, argument: String(localized: "Скопировано"))
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { showsCopied = true }
-        Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { showsCopied = false }
-        }
+        copied.show(for: .milliseconds(1_500))
     }
 
     // MARK: - Safety
@@ -370,7 +366,7 @@ private struct PersonCardContent: View {
                 .accessibilityIdentifier("person-block")
             }
         }
-        .listRowBackground(CentyColors.cardBackground)
+        .listRowBackground(CentyColors.card)
     }
 
     private func block() {
@@ -471,3 +467,12 @@ private struct ActionTileStyle: ButtonStyle {
         }
     }
 }
+
+#if DEBUG
+#Preview("Карточка") {
+    NavigationStack {
+        PersonCardView(route: PersonRoute(id: 2, name: "Боб Тестов"))
+    }
+    .previewEnvironment()
+}
+#endif

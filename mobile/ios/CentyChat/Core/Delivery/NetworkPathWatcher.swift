@@ -12,6 +12,8 @@ final class NetworkPathWatcher {
     /// Whether the device has a usable path now; nil before the first answer.
     var isAvailable: Bool? { wasSatisfied }
     private var started = false
+    /// Every change of the path (the connection banner's «Нет сети»).
+    var onChange: (@MainActor (Bool) -> Void)?
 
     /// `onAvailable` runs on the main actor after each transition to a satisfied path.
     func start(onAvailable: @escaping @MainActor @Sendable () -> Void) {
@@ -23,6 +25,7 @@ final class NetworkPathWatcher {
                 guard let self else { return }
                 let previous = self.wasSatisfied
                 self.wasSatisfied = satisfied
+                if previous != satisfied { self.onChange?(satisfied) }
                 if satisfied && previous == false { onAvailable() }
             }
         }

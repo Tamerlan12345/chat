@@ -12,6 +12,17 @@
         }
       }
     },
+    "%@ из %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ из %@"
+          }
+        }
+      }
+    },
     "%@ печатает..." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -155,6 +166,17 @@
         }
       }
     },
+    "А это прямо сейчас отправляется" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "А это прямо сейчас отправляется"
+          }
+        }
+      }
+    },
     "АО \"Страховая компания \"Сентрас Иншуранс\"" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -184,6 +206,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Авторизация..."
+          }
+        }
+      }
+    },
+    "Администратор" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Администратор"
           }
         }
       }
@@ -228,6 +261,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Аккаунт, переписка и личные данные будут удалены безвозвратно. Восстановить их нельзя."
+          }
+        }
+      }
+    },
+    "Алиса Тестова" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Алиса Тестова"
           }
         }
       }
@@ -287,6 +331,39 @@
         }
       }
     },
+    "Безопасность и поддержка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Безопасность и поддержка"
+          }
+        }
+      }
+    },
+    "Боб Тестов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Боб Тестов"
+          }
+        }
+      }
+    },
+    "Боб печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Боб печатает..."
+          }
+        }
+      }
+    },
     "Будить можно не чаще раза в минуту" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -294,6 +371,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Будить можно не чаще раза в минуту"
+          }
+        }
+      }
+    },
+    "Бухгалтер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бухгалтер"
+          }
+        }
+      }
+    },
+    "Бухгалтерия" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бухгалтерия"
           }
         }
       }
@@ -331,6 +430,17 @@
         }
       }
     },
+    "В канале пока тихо" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В канале пока тихо"
+          }
+        }
+      }
+    },
     "В сети" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -360,6 +470,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В справочнике пока никого нет"
+          }
+        }
+      }
+    },
+    "Важность: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Важность: %@"
           }
         }
       }
@@ -426,6 +547,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Введите текущий пароль и новый надежный пароль (минимум 8 символов)."
+          }
+        }
+      }
+    },
+    "Ведущий аналитик" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ведущий аналитик"
           }
         }
       }
@@ -518,6 +650,17 @@
         }
       }
     },
+    "Все объявления подтверждены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все объявления подтверждены"
+          }
+        }
+      }
+    },
     "Все распоряжения подписаны" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -562,6 +705,17 @@
         }
       }
     },
+    "Вход" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход"
+          }
+        }
+      }
+    },
     "Вход в CentyChat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -591,6 +745,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вход…"
+          }
+        }
+      }
+    },
+    "Вчера" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вчера"
           }
         }
       }
@@ -639,6 +804,17 @@
         }
       }
     },
+    "Выберите диалог" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите диалог"
+          }
+        }
+      }
+    },
     "Выбранным сотрудникам" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -657,6 +833,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выбрать"
+          }
+        }
+      }
+    },
+    "Выбрать, кому отправить сигнал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать, кому отправить сигнал"
           }
         }
       }
@@ -760,6 +947,17 @@
         }
       }
     },
+    "Выполнено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнено"
+          }
+        }
+      }
+    },
     "Выполняется вход" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -771,6 +969,28 @@
         }
       }
     },
+    "Галерея" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Галерея"
+          }
+        }
+      }
+    },
+    "Головной офис" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Головной офис"
+          }
+        }
+      }
+    },
     "Готов к вызову" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -778,6 +998,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Готов к вызову"
+          }
+        }
+      }
+    },
+    "Да, уже открыла." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Да, уже открыла."
+          }
+        }
+      }
+    },
+    "Данияр Нурпеисов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данияр Нурпеисов"
           }
         }
       }
@@ -804,6 +1046,17 @@
         }
       }
     },
+    "Длительность %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Длительность %@"
+          }
+        }
+      }
+    },
     "Для защиты сессии требуется защищённое соединение (HTTPS)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -822,6 +1075,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Для звонка нужен доступ к микрофону."
+          }
+        }
+      }
+    },
+    "Договор согласован, подпишите, пожалуйста, до пятницы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Договор согласован, подпишите, пожалуйста, до пятницы"
           }
         }
       }
@@ -866,6 +1130,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Другое"
+          }
+        }
+      }
+    },
+    "Елена Ким" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Елена Ким"
+          }
+        }
+      }
+    },
+    "Жалоба" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалоба"
           }
         }
       }
@@ -987,6 +1273,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Забыли пароль? Обратитесь к администратору."
+          }
+        }
+      }
+    },
+    "Завершить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить"
           }
         }
       }
@@ -1167,6 +1464,17 @@
         }
       }
     },
+    "Звонок" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок"
+          }
+        }
+      }
+    },
     "Звонок завершен" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1222,6 +1530,39 @@
         }
       }
     },
+    "Здесь появятся приказы и новости компании." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь появятся приказы и новости компании."
+          }
+        }
+      }
+    },
+    "И таблицу тоже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "И таблицу тоже."
+          }
+        }
+      }
+    },
+    "ИТ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ИТ"
+          }
+        }
+      }
+    },
     "Идентификатор (UIN)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1266,6 +1607,17 @@
         }
       }
     },
+    "Инженер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инженер"
+          }
+        }
+      }
+    },
     "Ищем сообщения" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1277,6 +1629,17 @@
         }
       }
     },
+    "К последним сообщениям" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "К последним сообщениям"
+          }
+        }
+      }
+    },
     "Канал" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1284,6 +1647,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Канал"
+          }
+        }
+      }
+    },
+    "Канал для разработки мобильных клиентов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Канал для разработки мобильных клиентов"
           }
         }
       }
@@ -1306,6 +1680,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Каналы (%lld)"
+          }
+        }
+      }
+    },
+    "Каналы собирают отдел или проект в одной переписке." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каналы собирают отдел или проект в одной переписке."
+          }
+        }
+      }
+    },
+    "Карина Смирнова" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карина Смирнова"
+          }
+        }
+      }
+    },
+    "Карина печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карина печатает..."
+          }
+        }
+      }
+    },
+    "Карточка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карточка"
+          }
+        }
+      }
+    },
+    "Карточка сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карточка сотрудника"
+          }
+        }
+      }
+    },
+    "Кнопки" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кнопки"
           }
         }
       }
@@ -1350,6 +1790,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код."
+          }
+        }
+      }
+    },
+    "Компания" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компания"
+          }
+        }
+      }
+    },
+    "Компоненты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компоненты"
           }
         }
       }
@@ -1541,6 +2003,28 @@
         }
       }
     },
+    "Микрофон" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон"
+          }
+        }
+      }
+    },
+    "Микрофон выкл." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон выкл."
+          }
+        }
+      }
+    },
     "Мобильный" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1548,6 +2032,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Мобильный"
+          }
+        }
+      }
+    },
+    "Можно через %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Можно через %lld с"
           }
         }
       }
@@ -1607,6 +2102,17 @@
         }
       }
     },
+    "Найти сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найти сотрудника"
+          }
+        }
+      }
+    },
     "Написать" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1625,6 +2131,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Написать письмо"
+          }
+        }
+      }
+    },
+    "Напишите коллеге — переписка появится здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напишите коллеге — переписка появится здесь."
+          }
+        }
+      }
+    },
+    "Напишите первое сообщение — оно появится здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напишите первое сообщение — оно появится здесь."
           }
         }
       }
@@ -1669,6 +2197,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не в сети — звонок сейчас не дойдёт"
+          }
+        }
+      }
+    },
+    "Не выполнено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не выполнено"
           }
         }
       }
@@ -1779,6 +2318,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось загрузить каналы"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить объявления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить объявления"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить переписку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить переписку"
           }
         }
       }
@@ -1977,6 +2538,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось скачать файл (код %@)"
+          }
+        }
+      }
+    },
+    "Не удалось создать канал. Проверьте название и попробуйте ещё раз." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать канал. Проверьте название и попробуйте ещё раз."
           }
         }
       }
@@ -2212,6 +2784,17 @@
         }
       }
     },
+    "Нет сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сети"
+          }
+        }
+      }
+    },
     "Нет сообщений" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2267,6 +2850,17 @@
         }
       }
     },
+    "Новые распоряжения, требующие ознакомления, появятся здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новые распоряжения, требующие ознакомления, появятся здесь."
+          }
+        }
+      }
+    },
     "Новый диалог" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2285,6 +2879,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Новый канал"
+          }
+        }
+      }
+    },
+    "Новый пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый пароль"
           }
         }
       }
@@ -2329,6 +2934,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновить список"
+          }
+        }
+      }
+    },
+    "Обновление регламента командировок" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновление регламента командировок"
+          }
+        }
+      }
+    },
+    "Объявление" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объявление"
+          }
+        }
+      }
+    },
+    "Объявлений пока нет" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объявлений пока нет"
           }
         }
       }
@@ -2520,6 +3158,17 @@
         }
       }
     },
+    "Открыть карточку сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть карточку сотрудника"
+          }
+        }
+      }
+    },
     "Открыть настройки" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2538,6 +3187,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открыть настройки микрофона"
+          }
+        }
+      }
+    },
+    "Открыть объявление" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть объявление"
+          }
+        }
+      }
+    },
+    "Открыть переписку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть переписку"
           }
         }
       }
@@ -2608,6 +3279,17 @@
         }
       }
     },
+    "Отправила правки." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправила правки."
+          }
+        }
+      }
+    },
     "Отправить" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2648,6 +3330,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отправить код ещё раз через %@ с"
+          }
+        }
+      }
+    },
+    "Отправить сигнал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить сигнал"
           }
         }
       }
@@ -2828,6 +3521,17 @@
         }
       }
     },
+    "Пароли совпадают" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароли совпадают"
+          }
+        }
+      }
+    },
     "Пароль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2872,6 +3576,28 @@
         }
       }
     },
+    "Переписка откроется здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписка откроется здесь."
+          }
+        }
+      }
+    },
+    "Переподключение…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переподключение…"
+          }
+        }
+      }
+    },
     "По требованиям корпоративной безопасности АО СК «Сентрас Иншуранс» вам необходимо установить новый пароль перед продолжением работы." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2894,6 +3620,28 @@
         }
       }
     },
+    "Побудить коллегу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудить коллегу"
+          }
+        }
+      }
+    },
+    "Побудка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудка"
+          }
+        }
+      }
+    },
     "Повторите новый пароль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2912,6 +3660,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Повторить"
+          }
+        }
+      }
+    },
+    "Повторить загрузку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить загрузку"
           }
         }
       }
@@ -3048,6 +3807,17 @@
         }
       }
     },
+    "Поиск по имени" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск по имени"
+          }
+        }
+      }
+    },
     "Поиск по переписке и сотрудникам" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3059,6 +3829,50 @@
         }
       }
     },
+    "Пока нет диалогов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет диалогов"
+          }
+        }
+      }
+    },
+    "Пока нет каналов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет каналов"
+          }
+        }
+      }
+    },
+    "Пока нет сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет сообщений"
+          }
+        }
+      }
+    },
+    "Показаны только требующие ознакомления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показаны только требующие ознакомления"
+          }
+        }
+      }
+    },
     "Показать в «Отделах»" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3066,6 +3880,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показать в «Отделах»"
+          }
+        }
+      }
+    },
+    "Показать все" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать все"
           }
         }
       }
@@ -3147,6 +3972,17 @@
         }
       }
     },
+    "Посмотришь отчёт до обеда?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Посмотришь отчёт до обеда?"
+          }
+        }
+      }
+    },
     "Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен — попробуйте войти позже." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3176,6 +4012,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Приватный канал"
+          }
+        }
+      }
+    },
+    "Привет, Алиса! Всё работает." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привет, Алиса! Всё работает."
           }
         }
       }
@@ -3334,6 +4181,17 @@
         }
       }
     },
+    "Прокрутить к последнему сообщению" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить к последнему сообщению"
+          }
+        }
+      }
+    },
     "Профиль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3433,6 +4291,17 @@
         }
       }
     },
+    "Разработка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разработка"
+          }
+        }
+      }
+    },
     "Распоряжение" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3462,6 +4331,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Регистрация"
+          }
+        }
+      }
+    },
+    "Регламент.pdf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Регламент.pdf"
           }
         }
       }
@@ -3506,6 +4386,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Роль"
+          }
+        }
+      }
+    },
+    "Руководитель отдела продаж" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Руководитель отдела продаж"
+          }
+        }
+      }
+    },
+    "С 1 ноября авансовые отчёты подаются через систему в течение трёх рабочих дней после возвращения." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С 1 ноября авансовые отчёты подаются через систему в течение трёх рабочих дней после возвращения."
+          }
+        }
+      }
+    },
+    "Сборка зелёная" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сборка зелёная"
           }
         }
       }
@@ -3561,6 +4474,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Свёрнут"
+          }
+        }
+      }
+    },
+    "Сегодня" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сегодня"
           }
         }
       }
@@ -3649,6 +4573,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сервер не принял файл"
+          }
+        }
+      }
+    },
+    "Сервер не принял это сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не принял это сообщение"
           }
         }
       }
@@ -3774,6 +4709,17 @@
         }
       }
     },
+    "Скрыть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть"
+          }
+        }
+      }
+    },
     "Скрыть пароль" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3851,6 +4797,17 @@
         }
       }
     },
+    "Снова в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снова в сети"
+          }
+        }
+      }
+    },
     "Собеседник занят или недоступен" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3880,6 +4837,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Собеседник недоступен"
+          }
+        }
+      }
+    },
+    "Собеседник печатает" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник печатает"
+          }
+        }
+      }
+    },
+    "Совещание в 15:00" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Совещание в 15:00"
           }
         }
       }
@@ -3968,6 +4947,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сообщение ещё не отправлено. Оно будет удалено с этого устройства и не будет отправлено."
+          }
+        }
+      }
+    },
+    "Сообщение не найдено — возможно, его удалили" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение не найдено — возможно, его удалили"
           }
         }
       }
@@ -4071,6 +5061,17 @@
         }
       }
     },
+    "Состояния" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояния"
+          }
+        }
+      }
+    },
     "Сотрудник" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4137,6 +5138,17 @@
         }
       }
     },
+    "Спасибо, прочитала." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спасибо, прочитала."
+          }
+        }
+      }
+    },
     "Спасибо. Администратор рассмотрит её. Чтобы больше не видеть сообщения этого человека, его можно заблокировать." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4192,6 +5204,17 @@
         }
       }
     },
+    "Счёт отправила на почту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Счёт отправила на почту"
+          }
+        }
+      }
+    },
     "Такой логин или адрес почты уже зарегистрирован." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4236,6 +5259,17 @@
         }
       }
     },
+    "Тестовое оповещение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тестовое оповещение"
+          }
+        }
+      }
+    },
     "Только требующие ознакомления" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4243,6 +5277,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только требующие ознакомления"
+          }
+        }
+      }
+    },
+    "Требует ознакомления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требует ознакомления"
           }
         }
       }
@@ -4401,6 +5446,17 @@
         }
       }
     },
+    "Уровень звука собеседника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уровень звука собеседника"
+          }
+        }
+      }
+    },
     "Устройство: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4522,6 +5578,17 @@
         }
       }
     },
+    "Филиал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Филиал"
+          }
+        }
+      }
+    },
     "Фото" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4540,6 +5607,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фото %@"
+          }
+        }
+      }
+    },
+    "Чат" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат"
           }
         }
       }
@@ -4621,6 +5699,28 @@
         }
       }
     },
+    "Это объявление создано сидированием dev-стенда." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это объявление создано сидированием dev-стенда."
+          }
+        }
+      }
+    },
+    "Это ушло, пока не было сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это ушло, пока не было сети"
+          }
+        }
+      }
+    },
     "Этот логин уже занят. Выберите другой." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4628,6 +5728,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Этот логин уже занят. Выберите другой."
+          }
+        }
+      }
+    },
+    "Юрист" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Юрист"
           }
         }
       }
@@ -4786,6 +5897,61 @@
         }
       }
     },
+    "непрочитанное сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанное сообщение"
+          }
+        }
+      }
+    },
+    "непрочитанных сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанных сообщений"
+          }
+        }
+      }
+    },
+    "непрочитанных сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанных сообщения"
+          }
+        }
+      }
+    },
+    "новое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "новое"
+          }
+        }
+      }
+    },
+    "новых" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "новых"
+          }
+        }
+      }
+    },
     "нояб." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4793,6 +5959,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "нояб."
+          }
+        }
+      }
+    },
+    "общий" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "общий"
           }
         }
       }

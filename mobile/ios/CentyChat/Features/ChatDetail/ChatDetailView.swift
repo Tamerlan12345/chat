@@ -15,6 +15,9 @@ public struct ChatDetailView: View {
     public let status: UserStatus?
     /// Open the chat at this message (a search hit) and pulse it.
     public let highlightMessageId: Int64?
+    /// A chat pushed onto a tab's stack (iPhone) takes the screen without the tab bar; the iPad
+    /// split view's detail column keeps it.
+    public let hidesTabBar: Bool
 
     public init(
         conversationType: ConversationType,
@@ -22,7 +25,8 @@ public struct ChatDetailView: View {
         title: String,
         avatarUrl: String? = nil,
         status: UserStatus? = nil,
-        highlightMessageId: Int64? = nil
+        highlightMessageId: Int64? = nil,
+        hidesTabBar: Bool = true
     ) {
         self.conversationType = conversationType
         self.targetId = targetId
@@ -30,6 +34,7 @@ public struct ChatDetailView: View {
         self.avatarUrl = avatarUrl
         self.status = status
         self.highlightMessageId = highlightMessageId
+        self.hidesTabBar = hidesTabBar
     }
 
     public var body: some View {
@@ -40,7 +45,8 @@ public struct ChatDetailView: View {
             title: title,
             avatarUrl: avatarUrl,
             status: status,
-            highlightMessageId: highlightMessageId
+            highlightMessageId: highlightMessageId,
+            hidesTabBar: hidesTabBar
         )
     }
 }
@@ -51,12 +57,39 @@ private struct ScrollRequest: Equatable {
     let pulses: Bool
 }
 
-/// The chat screen bound to one `ChatStore`.
+/// The rows of one day: the sticky date pill over them.
+private struct DaySection: Identifiable {
+    let id: String
+    let date: Date
+    var rows: [ChatRow]
+
+    static func of(_ rows: [ChatRow]) -> [DaySection] {
+        var sections: [DaySection] = []
+        for row in rows {
+            if row.startsDay || sections.isEmpty {
+                sections.append(DaySection(id: "day-" + row.id, date: row.message.createdAt, rows: []))
+            }
+            sections[sections.count - 1].rows.append(row)
+        }
+        return sections
+    }
+}
+
+/// The chat screen bound to one `ChatStore` (design brief «Chat», «UI layer v2»):
+/// - the L2 canvas, the tab bar hidden, the top bar flat at rest and lifting on scroll (system);
+/// - the header: avatar and name (a tap opens the person's card over the chat), presence in
+///   `textDim` or «печатает…» in `accentText`;
+/// - grouped bubbles (gap 2 inside a group, 8 between groups), sticky quiet date pills;
+/// - the composer on the L3 bar material in `.safeAreaInset(edge: .bottom)`, glued to the keyboard,
+///   the list anchored at the bottom and dismissing the keyboard interactively — no manual offsets;
+/// - "the message lands": an own bubble lifts in from the composer (spring, a fade with Reduce Motion),
+///   incoming ones fade and rise 8 pt; scrolled up, «↓ N новых» instead of a jump.
 private struct ChatDetailContent: View {
     @Environment(SessionStore.self) private var session
     @Environment(ConversationsStore.self) private var conversations
     @Environment(CallStore.self) private var calls
     @Environment(AccountStore.self) private var account
+    @Environment(NavigationRouter.self) private var router: NavigationRouter?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -67,8 +100,9 @@ private struct ChatDetailContent: View {
     let avatarUrl: String?
     let status: UserStatus?
     let highlightMessageId: Int64?
+    let hidesTabBar: Bool
 
-    init(store: ChatStore, opener: AttachmentOpener, thumbnails: AttachmentThumbnails, title: String, avatarUrl: String?, status: UserStatus?, highlightMessageId: Int64?) {
+    init(store: ChatStore, opener: AttachmentOpener, thumbnails: AttachmentThumbnails, title: String, avatarUrl: String?, status: UserStatus?, highlightMessageId: Int64?, hidesTabBar: Bool) {
         self.store = store
         _opener = State(initialValue: opener)
         self.thumbnails = thumbnails
@@ -76,6 +110,9 @@ private struct ChatDetailContent: View {
         self.avatarUrl = avatarUrl
         self.status = status
         self.highlightMessageId = highlightMessageId
+        self.hidesTabBar = hidesTabBar
+        // Opening at a search hit: the hit, not the end.
+        _pinnedToEnd = State(initialValue: highlightMessageId == nil)
     }
 
     @State private var inputText: String = ""
@@ -92,11 +129,25 @@ private struct ChatDetailContent: View {
     @State private var blockCandidate: BlockCandidate?
     @State private var safetyError: String?
     @State private var noticeText: String?
+    @State private var copied = TransientFlag()
+    /// The newest message is on screen (the list follows it); scrolled up, new ones are counted.
+    @State private var isAtBottom = true
+    @State private var newWhileAway = 0
+    /// The list follows its end (open, own message, back at the end); the reader's drag stops it.
+    @State private var pinnedToEnd: Bool
+    /// Asks the iOS 18 scroll position to go to the bottom edge (animated or not).
+    @State private var endRequests = 0
+    @State private var endRequestAnimated = false
+    /// The first page is on screen: later inserts animate ("the message lands"), it did not.
+    @State private var settled = false
+    @FocusState private var composerFocused: Bool
 
     // Вложения
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showsPhotoPicker = false
     @State private var showsFileImporter = false
+
+    private static let bottomID = "chat-bottom"
 
     private var conversationType: ConversationType { store.conversation.type }
     private var targetId: Int64 { store.conversation.targetId }
@@ -119,7 +170,7 @@ private struct ChatDetailContent: View {
         conversationType == .direct && account.isBlocked(targetId)
     }
 
-    /// The per-person menu exists only in a dialog with someone else.
+    /// The per-person menu and the card exist only in a dialog with someone else.
     private var showsPersonMenu: Bool {
         conversationType == .direct && targetId != session.currentUser?.id
     }
@@ -139,229 +190,360 @@ private struct ChatDetailContent: View {
         DeliveryReducer.isBlank(inputText)
     }
 
+    /// Live presence of the peer (the inbox store follows `user_status_changed`).
+    private var peerStatus: UserStatus? {
+        guard conversationType == .direct else { return nil }
+        return conversations.directConversations.first(where: { $0.userId == targetId })?.status ?? status
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            messageList
-
-            if let typingText {
-                HStack {
-                    TypingIndicatorView(text: typingText)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-                .background(Color(uiColor: .systemBackground))
-            }
-
-            if let editMsg = editingMessage {
-                composerBanner(title: "Редактирование", text: editMsg.text, closeLabel: "Отменить редактирование") {
-                    editingMessage = nil
-                    inputText = ""
-                }
-            } else if let reply = replyingTo {
-                composerBanner(title: "Ответ \(reply.senderName)", text: reply.text, closeLabel: "Отменить ответ") {
-                    replyingTo = nil
+        messageList
+            .overlay(alignment: .bottom) {
+                if copied.isOn {
+                    HUDCapsule(text: "Скопировано")
+                        .padding(.bottom, 12)
+                        .transition(.opacity)
+                        .accessibilityIdentifier("chat-copied")
                 }
             }
-
-            if isPeerBlocked {
-                HStack(spacing: 8) {
-                    Image(systemName: "hand.raised.fill")
-                        .foregroundColor(CentyColors.dangerText)
-                        .accessibilityHidden(true)
-                    Text("Вы заблокировали этого пользователя. Его сообщения скрыты.")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                    Spacer(minLength: 8)
-                    Button("Разблокировать") { unblockPeer() }
-                        .font(.footnote.weight(.semibold))
-                        .accessibilityIdentifier("chat-unblock-banner")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .accessibilityElement(children: .contain)
+            .animation(.easeOut(duration: CentyMotion.base), value: copied.isOn)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                composer
             }
-
-            inputBar
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
-        .onAppear {
-            store.screenDidAppear(sceneIsActive: scenePhase == .active)
-        }
-        .onDisappear {
-            store.screenDidDisappear()
-        }
-        .onChange(of: scenePhase) {
-            let isActive = scenePhase == .active
-            Task { await store.sceneActivityChanged(isActive: isActive) }
-        }
-        .task {
-            await store.load()
-            if let target = highlightMessageId, !jumpHandled {
-                let found = await store.loadAround(target)
-                jumpHandled = true
-                if found, let row = store.messages.first(where: { $0.id == target }) {
-                    scrollRequest = ScrollRequest(rowID: row.rowID, pulses: true)
-                } else if let last = store.messages.last {
-                    scrollRequest = ScrollRequest(rowID: last.rowID, pulses: false)
+            .background(CentyColors.canvas.ignoresSafeArea())
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            // The chat takes the screen: no tab bar under the composer.
+            .toolbar(hidesTabBar ? .hidden : .automatic, for: .tabBar)
+            .toolbar { toolbar }
+            .connectionBanner()
+            .overlay(alignment: .top) {
+                if let noticeText {
+                    NoticeToast(text: noticeText) {
+                        dismissNotice()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
             }
-            await store.markAsRead()
-        }
-        .onChange(of: store.notice) { _, notice in
-            if let notice { noticeText = notice.text }
-        }
-        .onChange(of: opener.notice) { _, notice in
-            if let notice {
-                noticeText = notice
-                opener.notice = nil
+            .animation(CentyMotion.or(CentyMotion.easeOut(CentyMotion.slow), reduceMotion: reduceMotion), value: noticeText)
+            .onAppear {
+                store.screenDidAppear(sceneIsActive: scenePhase == .active)
             }
-        }
-        .sheet(item: $reportTarget) { target in
-            ReportSheetView(target: target)
-        }
-        .quickLookPreview(Binding(
-            get: { opener.preview?.url },
-            set: { if $0 == nil { opener.preview = nil } }
-        ))
-        .sheet(item: $opener.shareable) { file in
-            ShareSheet(url: file.url)
-                .presentationDetents([.medium, .large])
-        }
-        .fullScreenCover(item: $opener.viewer) { attachment in
-            AttachmentImageViewer(attachment: attachment, opener: opener, thumbnails: thumbnails)
-        }
-        .photosPicker(isPresented: $showsPhotoPicker, selection: $selectedPhotoItem, matching: .images)
-        .onChange(of: selectedPhotoItem) {
-            Task { await handleSelectedPhoto() }
-        }
-        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
-            Task { await handleImportedFile(result) }
-        }
-        .confirmationDialog(
-            deleteTitle,
-            isPresented: Binding(get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Удалить", role: .destructive) { confirmDelete() }
-            Button("Отмена", role: .cancel) { deleteCandidate = nil }
-        } message: {
-            Text(deleteMessage)
-        }
-        .alert(
-            "Заблокировать пользователя?",
-            isPresented: Binding(get: { blockCandidate != nil }, set: { if !$0 { blockCandidate = nil } })
-        ) {
-            Button("Отмена", role: .cancel) { blockCandidate = nil }
-            Button("Заблокировать", role: .destructive) { confirmBlock() }
-        } message: {
-            Text("Сообщения «\(blockCandidate?.name ?? "")» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле.")
-        }
-        .alert(
-            "Не удалось выполнить действие",
-            isPresented: Binding(get: { safetyError != nil }, set: { if !$0 { safetyError = nil } })
-        ) {
-            Button("ОК", role: .cancel) {}
-        } message: {
-            Text(safetyError ?? "")
-        }
-        .alert(
-            "Сообщение",
-            isPresented: Binding(get: { noticeText != nil }, set: { if !$0 { noticeText = nil; store.dismissNotice() } })
-        ) {
-            Button("ОК", role: .cancel) {}
-        } message: {
-            Text(noticeText ?? "")
-        }
+            .onDisappear {
+                store.screenDidDisappear()
+            }
+            .onChange(of: scenePhase) {
+                let isActive = scenePhase == .active
+                Task { await store.sceneActivityChanged(isActive: isActive) }
+            }
+            .task {
+                await store.load()
+                if let target = highlightMessageId, !jumpHandled {
+                    // A gone hit leaves a notice instead of a silent jump to the end.
+                    let found = await store.open(at: target)
+                    jumpHandled = true
+                    if found, let row = store.messages.first(where: { $0.id == target }) {
+                        scrollRequest = ScrollRequest(rowID: row.rowID, pulses: true)
+                    } else if let last = rows.last {
+                        scrollRequest = ScrollRequest(rowID: last.id, pulses: false)
+                    }
+                }
+                await store.markAsRead()
+            }
+            .onChange(of: store.notice) { _, notice in
+                if let notice { show(notice: notice.text) }
+            }
+            .onChange(of: opener.notice) { _, notice in
+                if let notice {
+                    show(notice: notice)
+                    opener.notice = nil
+                }
+            }
+            .sheet(item: $reportTarget) { target in
+                ReportSheetView(target: target)
+            }
+            .quickLookPreview(Binding(
+                get: { opener.preview?.url },
+                set: { if $0 == nil { opener.preview = nil } }
+            ))
+            .sheet(item: $opener.shareable) { file in
+                ShareSheet(url: file.url)
+                    .presentationDetents([.medium, .large])
+            }
+            .fullScreenCover(item: $opener.viewer) { attachment in
+                AttachmentImageViewer(attachment: attachment, opener: opener, thumbnails: thumbnails)
+            }
+            .photosPicker(isPresented: $showsPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+            .onChange(of: selectedPhotoItem) {
+                Task { await handleSelectedPhoto() }
+            }
+            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+                Task { await handleImportedFile(result) }
+            }
+            .confirmationDialog(
+                deleteTitle,
+                isPresented: Binding(get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Удалить", role: .destructive) { confirmDelete() }
+                Button("Отмена", role: .cancel) { deleteCandidate = nil }
+            } message: {
+                Text(deleteMessage)
+            }
+            .alert(
+                "Заблокировать пользователя?",
+                isPresented: Binding(get: { blockCandidate != nil }, set: { if !$0 { blockCandidate = nil } })
+            ) {
+                Button("Отмена", role: .cancel) { blockCandidate = nil }
+                Button("Заблокировать", role: .destructive) { confirmBlock() }
+            } message: {
+                Text("Сообщения «\(blockCandidate?.name ?? "")» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле.")
+            }
+            .alert(
+                "Не удалось выполнить действие",
+                isPresented: Binding(get: { safetyError != nil }, set: { if !$0 { safetyError = nil } })
+            ) {
+                Button("Закрыть", role: .cancel) {}
+            } message: {
+                Text(safetyError ?? "")
+            }
     }
 
     // MARK: - Message list
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        let rows = self.rows
+        let sections = DaySection.of(rows)
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     if !store.reachedStart && !rows.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .accessibilityLabel(Text("Загрузка более ранних сообщений"))
                             .onAppear { Task { await store.loadOlder() } }
                     }
-                    ForEach(rows) { row in
-                        if row.startsDay {
-                            DaySeparator(date: row.message.createdAt)
-                        }
-                        MessageBubbleView(
-                            message: row.message,
-                            isCurrentUser: row.message.senderId == session.currentUser?.id,
-                            showSenderHeader: conversationType == .channel && row.startsGroup,
-                            showsMeta: row.showsMeta,
-                            transfer: MessageAttachment.of(row.message)?.fileId.flatMap { opener.transfers[$0] },
-                            thumbnails: thumbnails,
-                            onAction: handle,
-                            onOpenAttachment: { opener.open($0) }
-                        )
-                        .padding(.top, row.startsGroup ? 6 : 0)
-                        // The search hit pulses once the chat scrolled to it.
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(CentyColors.primarySoft)
-                                .padding(-4)
-                                .opacity(pulsingRowID == row.id ? 1 : 0)
-                        )
-                        .id(row.id)
+                    if rows.isEmpty {
+                        emptyHistory
                     }
+                    ForEach(sections) { section in
+                        Section {
+                            ForEach(section.rows) { row in
+                                bubbleRow(row, firstOfDay: row.id == section.rows.first?.id)
+                            }
+                        } header: {
+                            DateSeparator(date: section.date)
+                        }
+                    }
+                    if typingText != nil {
+                        HStack {
+                            TypingBubble()
+                            Spacer(minLength: 48)
+                        }
+                        .padding(.top, 8)
+                        .transition(.opacity)
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.bottomID)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .animation(settled ? CentyMotion.lift(reduceMotion: reduceMotion) : nil, value: rows.last?.id)
+                .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText != nil)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(CentyColors.chatBackground)
-            .onChange(of: store.messages.last?.rowID) { _, last in
+            // The message list as one container: its texts are told apart from the same words
+            // elsewhere (the inbox preview next to it on iPad).
+            .accessibilityIdentifier("chat-messages")
+            // iOS 18: a scroll position pinned to the bottom edge, kept there while the lazy rows
+            // measure themselves; «at the end» from the scroll geometry (never from a row's
+            // appear/disappear, which can ping-pong with the state it sets).
+            .modifier(ChatEndBehaviour(
+                pinned: $pinnedToEnd,
+                requests: endRequests,
+                animated: endRequestAnimated,
+                reduceMotion: reduceMotion
+            ) { atEnd in
+                guard atEnd != isAtBottom else { return }
+                isAtBottom = atEnd
+                if atEnd {
+                    newWhileAway = 0
+                    // Back at the end by hand: follow again.
+                    pinnedToEnd = true
+                }
+            })
+            .onAppear {
+                if isFollowingBottom, !rows.isEmpty {
+                    scrollToEnd(proxy, animated: false)
+                    settled = true
+                }
+            }
+            // Follows what the list shows: messages of blocked people are not rows.
+            .onChange(of: rows.last?.id) { old, last in
                 // Opening at a search hit: the list waits for the history around it.
-                guard isFollowingBottom, let last else { return }
-                withAnimation(reduceMotion ? nil : .default) {
-                    proxy.scrollTo(last, anchor: .bottom)
+                guard isFollowingBottom, last != nil else { return }
+                let isOwn = rows.last?.message.senderId == session.currentUser?.id
+                if old == nil {
+                    // The first page: to the end, and kept there while the rows settle.
+                    scrollToEnd(proxy, animated: false)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(300))
+                        // From now on new messages land with the lift (not the first page).
+                        settled = true
+                    }
+                } else if pinnedToEnd || isAtBottom || isOwn {
+                    scrollToEnd(proxy, animated: true)
+                } else {
+                    newWhileAway += 1
                 }
             }
             .onChange(of: scrollRequest) { _, request in
                 guard let request else { return }
-                proxy.scrollTo(request.rowID, anchor: request.pulses ? .center : .bottom)
-                if request.pulses { pulse(request.rowID) }
-            }
-            .onAppear {
-                if isFollowingBottom, let last = store.messages.last {
-                    proxy.scrollTo(last.rowID, anchor: .bottom)
+                settled = true
+                if request.pulses {
+                    // A search hit: stay on it, do not follow the end.
+                    pinnedToEnd = false
+                    proxy.scrollTo(request.rowID, anchor: .center)
+                    pulse(request.rowID)
+                } else {
+                    scrollToEnd(proxy, animated: false)
                 }
             }
+            .onChange(of: composerFocused) { _, focused in
+                // The keyboard rises: the conversation follows only if the reader was at the end.
+                guard focused, isAtBottom || pinnedToEnd, !rows.isEmpty else { return }
+                scrollToEnd(proxy, animated: true)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                ZStack {
+                    if !isAtBottom && !pinnedToEnd && !rows.isEmpty {
+                        JumpToLatestPill(newCount: newWhileAway) {
+                            scrollToEnd(proxy, animated: true)
+                        }
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 8)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                    }
+                }
+                // Only the pill animates, never the list.
+                .animation(CentyMotion.or(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion), value: isAtBottom)
+            }
         }
+    }
+
+    @ViewBuilder
+    private var emptyHistory: some View {
+        switch store.loadState {
+        case .idle, .loading:
+            VStack(spacing: 10) {
+                SkeletonBubble(width: 200)
+                SkeletonBubble(isOwn: true, width: 150)
+                SkeletonBubble(width: 230)
+                SkeletonBubble(isOwn: true, width: 120)
+            }
+            .padding(.top, 16)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("Загрузка"))
+        case .failed(let message):
+            VStack(spacing: 12) {
+                SpotIllustrationView(kind: .offline)
+                Text("Не удалось загрузить переписку")
+                    .font(.headline)
+                    .foregroundStyle(CentyColors.textStrong)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(CentyColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                EmptyStateAction(title: "Повторить", systemImage: "arrow.clockwise") {
+                    Task { await store.load() }
+                }
+            }
+            .padding(.top, 64)
+            .padding(.horizontal, 24)
+        case .loaded:
+            VStack(spacing: 12) {
+                SpotIllustrationView(kind: conversationType == .channel ? .channel : .bubbles)
+                Text(conversationType == .channel ? "В канале пока тихо" : "Пока нет сообщений")
+                    .font(.headline)
+                    .foregroundStyle(CentyColors.textStrong)
+                Text("Напишите первое сообщение — оно появится здесь.")
+                    .font(.subheadline)
+                    .foregroundStyle(CentyColors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.top, 64)
+            .padding(.horizontal, 24)
+        }
+    }
+
+    private func bubbleRow(_ row: ChatRow, firstOfDay: Bool) -> some View {
+        let message = row.message
+        let isOwn = message.senderId == session.currentUser?.id
+        let insertion: AnyTransition = reduceMotion
+            ? .opacity
+            : (isOwn
+                ? .scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity).combined(with: .offset(y: 12))
+                : .opacity.combined(with: .offset(y: 8)))
+        return MessageBubbleView(
+            message: message,
+            isCurrentUser: isOwn,
+            showSenderHeader: conversationType == .channel && row.startsGroup,
+            showsMeta: row.showsMeta,
+            startsGroup: row.startsGroup,
+            endsGroup: row.endsGroup,
+            transfer: MessageAttachment.of(message)?.fileId.flatMap { opener.transfers[$0] },
+            thumbnails: thumbnails,
+            onAction: handle,
+            onOpenAttachment: { opener.open($0) },
+            onCopied: { copied.show(for: .milliseconds(1_500)) }
+        )
+        // Rhythm: 8 between groups, 2 inside a group.
+        .padding(.top, firstOfDay ? 2 : (row.startsGroup ? 8 : 2))
+        // The search hit pulses once the chat scrolled to it.
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(CentyColors.primarySoft)
+                .padding(-4)
+                .opacity(pulsingRowID == row.id ? 1 : 0)
+        )
+        .swipeToReply(isEnabled: !message.isDeleted && message.sendState == nil) {
+            reply(to: message)
+        }
+        .transition(.asymmetric(insertion: insertion, removal: .opacity))
+        .id(row.id)
     }
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            VStack(spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                    .lineLimit(1)
-                if let status = status, conversationType == .direct {
-                    HStack(spacing: 4) {
-                        StatusBadge(status: status, size: 8)
-                        Text(status.displayName)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
+            header
         }
 
-        ToolbarItem(placement: .navigationBarTrailing) {
-            HStack(spacing: 12) {
+        ToolbarItem(placement: .topBarTrailing) {
+            HStack(spacing: 0) {
+                if isCallingAllowed {
+                    Button {
+                        Task {
+                            let colleague = PublicUser(id: targetId, username: "", fullName: title, avatarUrl: avatarUrl, status: peerStatus ?? .online)
+                            await calls.startOutgoingCall(targetUser: colleague)
+                        }
+                    } label: {
+                        Image(systemName: "phone")
+                            .font(.body.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Позвонить")
+                }
                 if showsPersonMenu {
                     Menu {
+                        Button {
+                            openCard()
+                        } label: {
+                            Label("Карточка сотрудника", systemImage: "person.crop.circle")
+                        }
                         if isPeerBlocked {
                             Button {
                                 unblockPeer()
@@ -382,23 +564,86 @@ private struct ChatDetailContent: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
-                            .foregroundColor(CentyColors.primaryBlue)
+                            .font(.body.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .accessibilityLabel("Действия с пользователем")
                     .accessibilityIdentifier("chat-person-menu")
                 }
-                if isCallingAllowed {
-                    Button(action: {
-                        Task {
-                            let colleague = PublicUser(id: targetId, username: "", fullName: title, avatarUrl: avatarUrl, status: status ?? .online)
-                            await calls.startOutgoingCall(targetUser: colleague)
-                        }
-                    }) {
-                        Image(systemName: "phone.fill")
-                            .foregroundColor(CentyColors.primaryBlue)
+            }
+            .foregroundStyle(CentyColors.accentText)
+        }
+    }
+
+    /// Avatar, name and presence (or «печатает…»); in a dialog a tap opens the person's card.
+    @ViewBuilder
+    private var header: some View {
+        let content = HStack(spacing: 8) {
+            if conversationType == .direct {
+                AvatarView(name: title, avatarUrl: avatarUrl, size: 32)
+            } else {
+                ChannelAvatar(size: 32)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(CentyColors.textStrong)
+                    .lineLimit(1)
+                if let typingText {
+                    TypingIndicatorView(text: typingText)
+                        .transition(.opacity)
+                } else if let peerStatus {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(peerStatus.color)
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                        Text(peerStatus.displayName)
+                            .font(.caption)
+                            .foregroundStyle(CentyColors.textDim)
                     }
-                    .accessibilityLabel("Позвонить")
+                    .transition(.opacity)
                 }
+            }
+            .animation(CentyMotion.or(CentyMotion.easeOut(), reduceMotion: reduceMotion), value: typingText)
+        }
+        if showsPersonMenu {
+            Button(action: openCard) {
+                content
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint(Text("Открыть карточку сотрудника"))
+            .accessibilityIdentifier("chat-header-avatar")
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The person's card over this chat; its «Написать» comes back here.
+    private func openCard() {
+        router?.push(.person(PersonRoute(id: targetId, name: title, avatarUrl: avatarUrl)))
+    }
+
+    /// To the newest message, and follow it from now on.
+    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
+        pinnedToEnd = true
+        newWhileAway = 0
+        if #available(iOS 18.0, *) {
+            endRequestAnimated = animated
+            endRequests += 1
+        } else {
+            guard let last = rows.last?.id else { return }
+            withAnimation(animated ? CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion) : nil) {
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+            // iOS 17: once more after the lazy rows measured themselves.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                proxy.scrollTo(last, anchor: .bottom)
             }
         }
     }
@@ -424,19 +669,42 @@ private struct ChatDetailContent: View {
         }
     }
 
+    // MARK: - Notices
+
+    /// A short notice under the top bar (never an alert for a non-blocking message); VoiceOver reads it.
+    private func show(notice text: String) {
+        noticeText = text
+        UIAccessibility.post(notification: .announcement, argument: text)
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            if noticeText == text { dismissNotice() }
+        }
+    }
+
+    private func dismissNotice() {
+        noticeText = nil
+        store.dismissNotice()
+    }
+
     // MARK: - Message actions
+
+    private func reply(to message: Message) {
+        editingMessage = nil
+        replyingTo = message
+        composerFocused = true
+    }
 
     private func handle(_ action: MessageMenuPolicy.Action, _ message: Message) {
         switch action {
         case .reply:
-            editingMessage = nil
-            replyingTo = message
+            reply(to: message)
         case .copy:
             break
         case .edit:
             replyingTo = nil
             editingMessage = message
             inputText = message.text
+            composerFocused = true
         case .retry:
             Task { await store.retry(message) }
         case .delete:
@@ -507,33 +775,72 @@ private struct ChatDetailContent: View {
 
     // MARK: - Composer
 
-    private func composerBanner(title: LocalizedStringKey, text: String, closeLabel: LocalizedStringKey, close: @escaping () -> Void) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundColor(CentyColors.accentText)
-                Text(text.isEmpty ? String(localized: "Вложение") : text)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .foregroundColor(.secondary)
+    /// The L3 plane: the bar material with a hairline, the edit/reply banner, the blocked banner and
+    /// the filled field (no outline) with the attach button that morphs into send.
+    private var composer: some View {
+        VStack(spacing: 0) {
+            if let editMsg = editingMessage {
+                composerBanner(title: "Редактирование", text: editMsg.text, closeLabel: "Отменить редактирование") {
+                    editingMessage = nil
+                    inputText = ""
+                }
+            } else if let reply = replyingTo {
+                composerBanner(title: "Ответ \(reply.senderName)", text: reply.text, closeLabel: "Отменить ответ") {
+                    replyingTo = nil
+                }
             }
-            Spacer()
-            Button(action: close) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
+
+            if isPeerBlocked {
+                HStack(spacing: 8) {
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundStyle(CentyColors.dangerText)
+                        .accessibilityHidden(true)
+                    Text("Вы заблокировали этого пользователя. Его сообщения скрыты.")
+                        .font(.footnote)
+                        .foregroundStyle(CentyColors.textSecondary)
+                    Spacer(minLength: 8)
+                    Button("Разблокировать") { unblockPeer() }
+                        .buttonStyle(CentyLinkButtonStyle())
+                        .font(.footnote)
+                        .accessibilityIdentifier("chat-unblock-banner")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .background(CentyColors.dangerSoft)
+                .accessibilityElement(children: .contain)
             }
-            .accessibilityLabel(closeLabel)
+
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Сообщение...", text: $inputText, axis: .vertical)
+                    .lineLimit(1...6)
+                    .font(.body)
+                    .foregroundStyle(CentyColors.textMain)
+                    .focused($composerFocused)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 44)
+                    .background(CentyColors.sunken, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .onChange(of: inputText) {
+                        Task { await store.sendTypingIfNeeded() }
+                    }
+                trailingButton
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .animation(CentyMotion.or(.spring(response: 0.25, dampingFraction: 0.85), reduceMotion: reduceMotion), value: inputText.isEmpty)
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 4)
-        .background(Color(uiColor: .secondarySystemBackground))
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Rectangle().fill(CentyColors.border).frame(height: 1)
+        }
     }
 
-    private var inputBar: some View {
-        HStack(spacing: 8) {
-            if canAttach && editingMessage == nil {
+    /// Attach while the field is empty, send (a 40-pt `primary` circle) once there is text: the two
+    /// morph with a scale and a crossfade (150 ms).
+    @ViewBuilder
+    private var trailingButton: some View {
+        ZStack {
+            if editingMessage == nil && inputText.isEmpty && canAttach {
                 Menu {
                     Button {
                         showsPhotoPicker = true
@@ -547,38 +854,62 @@ private struct ChatDetailContent: View {
                     }
                 } label: {
                     Image(systemName: "paperclip")
-                        .font(.system(size: 20))
-                        .foregroundColor(CentyColors.primaryBlue)
-                        .frame(minWidth: 44, minHeight: 44)
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(CentyColors.accentText)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Прикрепить")
                 .accessibilityIdentifier("chat-attach")
-            }
-
-            TextField("Сообщение...", text: $inputText, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .onChange(of: inputText) {
-                    Task { await store.sendTypingIfNeeded() }
+                .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+            } else {
+                Button {
+                    Task { await sendOrUpdateMessage() }
+                } label: {
+                    Image(systemName: editingMessage != nil ? "checkmark" : "arrow.up")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(inputIsBlank ? CentyColors.textDim : CentyColors.onPrimary)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(inputIsBlank ? CentyColors.sunken : CentyColors.primaryBlue))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(PressScaleStyle(reduceMotion: reduceMotion))
+                .accessibilityLabel(editingMessage != nil ? "Сохранить изменения" : "Отправить")
+                .disabled(inputIsBlank || isSending)
+                .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: inputText.isEmpty)
+    }
 
-            Button(action: {
-                Task { await sendOrUpdateMessage() }
-            }) {
-                Image(systemName: editingMessage != nil ? "checkmark.circle.fill" : "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(inputIsBlank ? .gray : CentyColors.primaryBlue)
+    private func composerBanner(title: LocalizedStringKey, text: String, closeLabel: LocalizedStringKey, close: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(CentyColors.primaryBlue)
+                .frame(width: 2)
+                .padding(.vertical, 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(CentyColors.accentText)
+                Text(text.isEmpty ? String(localized: "Вложение") : text)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(CentyColors.textSecondary)
+            }
+            Spacer()
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(CentyColors.textDim)
                     .frame(minWidth: 44, minHeight: 44)
             }
-            .accessibilityLabel(editingMessage != nil ? "Сохранить изменения" : "Отправить")
-            .disabled(inputIsBlank || isSending)
+            .accessibilityLabel(closeLabel)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(uiColor: .systemBackground))
+        .padding(.leading, 16)
+        .padding(.trailing, 4)
+        .transition(.opacity)
     }
 
     /// The composer clears only once the message is on disk (`delivery-state.md` §7.4); a refused
@@ -613,7 +944,7 @@ private struct ChatDetailContent: View {
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else { return }
             guard let picked = PhotoAttachment.make(from: data, contentType: item.supportedContentTypes.first) else {
-                noticeText = String(localized: "Не удалось прочитать фото")
+                show(notice: String(localized: "Не удалось прочитать фото"))
                 return
             }
             let reply = replyingTo
@@ -625,7 +956,7 @@ private struct ChatDetailContent: View {
             }
         } catch {
             Log.chat.error("Loading picked photo failed: \(error.localizedDescription, privacy: .public)")
-            noticeText = String(localized: "Не удалось прочитать фото")
+            show(notice: String(localized: "Не удалось прочитать фото"))
             CentyHaptics.error()
         }
     }
@@ -647,21 +978,32 @@ private struct ChatDetailContent: View {
     }
 }
 
-/// The date between the messages of two days.
-private struct DaySeparator: View {
-    let date: Date
+/// A short notice under the top bar (L3: elevated tone with a hairline), dismissed by a tap.
+struct NoticeToast: View {
+    let text: String
+    let dismiss: () -> Void
 
     var body: some View {
-        Text(date, format: .dateTime.day().month(.wide).year())
-            .environment(\.locale, Locale(identifier: "ru_RU"))
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .accessibilityAddTraits(.isHeader)
+        Button(action: dismiss) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(CentyColors.accentText)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(.subheadline)
+                    .foregroundStyle(CentyColors.textMain)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(CentyColors.elevated))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(CentyColors.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text("Скрыть"))
+        .accessibilityIdentifier("chat-notice")
     }
 }
 
@@ -682,5 +1024,144 @@ enum PhotoAttachment {
         }
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return nil }
         return PickedAttachment(source: .data(jpeg), name: "IMG_\(stamp).jpg", mimeType: "image/jpeg", width: width, height: height)
+    }
+}
+
+#if DEBUG
+#Preview("Чат") {
+    NavigationStack {
+        ChatDetailView(conversationType: .direct, targetId: 2, title: "Боб Тестов", status: .online)
+    }
+    .previewEnvironment()
+}
+#endif
+
+/// The end of the chat (iOS 18): a scroll position pinned to the bottom edge — the first frame
+/// opens there (`.initialOffset`), and while pinned every change of the content height (lazy rows
+/// measuring themselves, a new message) scrolls to the edge again, so estimated row heights never
+/// leave the newest message off screen. The reader's drag unpins it. Before iOS 18 the list counts
+/// as at the end and the view scrolls with its proxy.
+private struct ChatEndBehaviour: ViewModifier {
+    @Binding var pinned: Bool
+    let requests: Int
+    let animated: Bool
+    let reduceMotion: Bool
+    let atEndChanged: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.modifier(EndPinning(pinned: $pinned, requests: requests, animated: animated, reduceMotion: reduceMotion, atEndChanged: atEndChanged))
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct EndPinning: ViewModifier {
+    @Binding var pinned: Bool
+    let requests: Int
+    let animated: Bool
+    let reduceMotion: Bool
+    let atEndChanged: (Bool) -> Void
+
+    @State private var position = ScrollPosition(edge: .bottom)
+    /// UI tests only: the scroll geometry, readable as an accessibility label.
+    @State private var probe = ""
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // While pinned, any change of what decides where the end is — the content height (lazy
+            // rows measuring themselves, a new message) and the container's height and insets (a
+            // split-view column, bars and the composer settling after the first scroll) — scrolls
+            // to the edge again. Content height alone misses a container that settles later.
+            .onScrollGeometryChange(for: EndMetrics.self) { geometry in
+                EndMetrics(geometry)
+            } action: { _, _ in
+                guard pinned else { return }
+                position.scrollTo(edge: .bottom)
+            }
+            .onScrollGeometryChange(for: String.self) { geometry in
+                LaunchTestFixture.exposesScrollProbe ? EndMetrics(geometry).description : ""
+            } action: { _, text in
+                if LaunchTestFixture.exposesScrollProbe {
+                    probe = text + " pinned=\(pinned)"
+                }
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                ChatScrollEnd.isAtEnd(visibleMaxY: geometry.visibleRect.maxY, contentHeight: geometry.contentSize.height)
+            } action: { _, atEnd in
+                atEndChanged(atEnd)
+            }
+            .onScrollPhaseChange { _, phase in
+                // The reader takes over: following stops until they are back at the end.
+                if phase == .interacting { pinned = false }
+            }
+            .onChange(of: requests) {
+                if animated {
+                    withAnimation(CentyMotion.or(CentyMotion.decelerate(), reduceMotion: reduceMotion)) {
+                        position.scrollTo(edge: .bottom)
+                    }
+                } else {
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if LaunchTestFixture.exposesScrollProbe {
+                    Text(verbatim: probe)
+                        .font(.system(size: 1))
+                        .frame(width: 1, height: 1)
+                        .opacity(0.02)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("chat-scroll-probe")
+                }
+            }
+    }
+}
+
+/// What decides where the end of the chat is on screen.
+@available(iOS 18.0, *)
+private struct EndMetrics: Equatable, CustomStringConvertible {
+    var contentHeight: CGFloat
+    var containerHeight: CGFloat
+    var containerWidth: CGFloat
+    var topInset: CGFloat
+    var bottomInset: CGFloat
+    var visibleMaxY: CGFloat
+    var offsetY: CGFloat
+
+    init(_ geometry: ScrollGeometry) {
+        contentHeight = geometry.contentSize.height
+        containerHeight = geometry.containerSize.height
+        containerWidth = geometry.containerSize.width
+        topInset = geometry.contentInsets.top
+        bottomInset = geometry.contentInsets.bottom
+        visibleMaxY = geometry.visibleRect.maxY
+        offsetY = geometry.contentOffset.y
+    }
+
+    /// Re-scroll only when the end itself may have moved — not on every scrolled point.
+    static func == (lhs: EndMetrics, rhs: EndMetrics) -> Bool {
+        lhs.contentHeight == rhs.contentHeight
+            && lhs.containerHeight == rhs.containerHeight
+            && lhs.containerWidth == rhs.containerWidth
+            && lhs.topInset == rhs.topInset
+            && lhs.bottomInset == rhs.bottomInset
+    }
+
+    var description: String {
+        "content=\(Int(contentHeight)) container=\(Int(containerWidth))x\(Int(containerHeight)) insets=\(Int(topInset))/\(Int(bottomInset)) offset=\(Int(offsetY)) visibleMaxY=\(Int(visibleMaxY))"
+    }
+}
+
+/// Whether the chat shows its last row: the bottom of the visible rect (inset-aware) within the
+/// tolerance of the content's end.
+enum ChatScrollEnd {
+    static let tolerance: CGFloat = 48
+
+    static func isAtEnd(visibleMaxY: CGFloat, contentHeight: CGFloat) -> Bool {
+        visibleMaxY >= contentHeight - tolerance
     }
 }

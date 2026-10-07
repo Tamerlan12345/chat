@@ -32,6 +32,10 @@ public final class AppContainer: SessionLifecycleDelegate {
     let downloads: AttachmentDownloader
     /// Image previews of attachments (memory only); wiped when the session ends.
     let thumbnails: AttachmentThumbnails
+    /// Decoded avatar photos for synchronous display; wiped when the session ends.
+    let avatarMemo = AvatarImageMemo()
+    /// What the connection banner shows (the realtime link and the device's network).
+    let connectionStatus = ConnectionStatus()
     private let networkPath = NetworkPathWatcher()
 
     init(
@@ -158,7 +162,11 @@ public final class AppContainer: SessionLifecycleDelegate {
 
         // Every frame and close reaches the engine in order; its changes reach the open chats.
         realtime.deliverySink = { [weak engine] frame in engine?.receive(frame) }
-        realtime.onConnectionStateChange = { [weak uploads] state in uploads?.setOnline(state == .connected) }
+        let connectionStatus = self.connectionStatus
+        realtime.onConnectionStateChange = { [weak uploads, weak realtime, weak connectionStatus] state in
+            uploads?.setOnline(state == .connected)
+            connectionStatus?.connectionChanged(state, isRunning: realtime?.isRunning ?? false)
+        }
         engine.onStateChange.append { [weak chats] _ in chats?.modelChanged() }
         engine.onUserError.append { [weak chats] code in chats?.deliveryNotice(code: code) }
         uploads.onChange = { [weak chats] in chats?.modelChanged() }
@@ -275,6 +283,10 @@ public final class AppContainer: SessionLifecycleDelegate {
 
     /// Starts watching the device's network (the app, not unit tests).
     func startNetworkWatcher() {
+        let connectionStatus = self.connectionStatus
+        networkPath.onChange = { [weak connectionStatus] available in
+            connectionStatus?.networkChanged(available: available)
+        }
         networkPath.start { [weak self] in
             Task { await self?.networkBecameAvailable() }
         }
@@ -307,6 +319,7 @@ public final class AppContainer: SessionLifecycleDelegate {
         searchRecents.clear()
         calls.stopCallSession()
         // Colleagues' photos and downloaded attachments belong to the session that saw them.
+        avatarMemo.removeAll()
         await avatars.removeAll()
         await thumbnails.removeAll()
         do {
@@ -333,6 +346,8 @@ extension View {
             .environment(container.presence)
             .environment(container.notifications)
             .environment(container.account)
+            .environment(container.connectionStatus)
             .environment(\.avatarLoader, container.avatars)
+            .environment(\.avatarMemo, container.avatarMemo)
     }
 }

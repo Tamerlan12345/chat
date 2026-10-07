@@ -131,7 +131,8 @@ final class LegacyInstallMigrationTests: XCTestCase {
         }
     }
 
-    func testCompanyNameComesFromTheServer() async {
+    /// The login screen no longer shows it (owner, 2026-10-06), but the company stays as server data.
+    func testTheCompanyStaysAsServerData() async {
         let keychain = KeychainManager(testStore: SeededKeychainItemStore())
         RecordingURLProtocol.reset()
         let client = APIClient(session: RecordingURLProtocol.session(), keychain: keychain, environment: .test)
@@ -145,6 +146,6 @@ final class LegacyInstallMigrationTests: XCTestCase {
 
         await session.bootstrap()
 
-        XCTAssertEqual(session.companyName, "ТОО «Тестовая компания»")
+        XCTAssertEqual(session.serverInfo.companyName, "ТОО «Тестовая компания»")
     }
 }

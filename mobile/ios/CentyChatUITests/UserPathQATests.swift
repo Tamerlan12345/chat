@@ -51,7 +51,9 @@ final class UserPathQATests: XCTestCase {
         let dialog = app.staticTexts["Боб Тестов"]
         XCTAssertTrue(dialog.waitForExistence(timeout: 40), "The seeded dialog with Bob must be listed.")
 
-        // 3. Open the chat and see the history.
+        // 3. Open the chat and see the history. Bob writes first, so the newest message is known.
+        let latest = "QA последнее \(stamp)"
+        XCTAssertTrue(StandAPI(baseURL: standURL).sendDirect(from: bob, to: alice.username, text: latest), "The stand must accept Bob's message.")
         let chatBar = app.navigationBars["Боб Тестов"]
         for _ in 0..<3 where !chatBar.exists {
             tap(dialog)
@@ -63,9 +65,23 @@ final class UserPathQATests: XCTestCase {
             .matching(NSPredicate(format: "placeholderValue == %@ OR label == %@", "Сообщение...", "Сообщение...")).firstMatch
         if !composer.waitForExistence(timeout: 15) { print("UI-DUMP chat:\n" + app.debugDescription) }
         XCTAssertTrue(composer.exists, "The message composer must be shown.")
+        // The chat opens at its newest message: on screen, nothing to jump to.
+        // The bubble in the message list, not any other text with the same words.
+        let newest = app.scrollViews["chat-messages"].staticTexts[latest]
+        XCTAssertTrue(newest.waitForExistence(timeout: 30), "The newest message must be loaded.")
+        pause(2)
+        XCTAssertTrue(newest.isHittable, "A long chat opens at its newest message, on screen")
+        let jumpToLatest = app.buttons["chat-jump-latest"]
+        XCTAssertFalse(jumpToLatest.exists, "An opened chat is at its end: no «↓» pill")
+        // The seeded history is there above it (scrolled to: the list is lazy).
         let seededMessage = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "Всё работает")).firstMatch
-        if !seededMessage.waitForExistence(timeout: 30) { print("UI-DUMP history:\n" + app.debugDescription) }
+        for _ in 0..<15 where !(seededMessage.exists && seededMessage.isHittable) {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+            from.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)))
+            _ = seededMessage.waitForExistence(timeout: 1)
+        }
+        if !seededMessage.exists { print("UI-DUMP history:\n" + app.debugDescription) }
         XCTAssertTrue(seededMessage.exists, "The seeded history must load in the chat.")
 
         // 4. Send a message.
@@ -75,11 +91,15 @@ final class UserPathQATests: XCTestCase {
         XCTAssertTrue(waitUntil(send, "isEnabled == true"), "Send must enable once text is typed.")
         send.tap()
         XCTAssertTrue(app.staticTexts[outgoing].waitForExistence(timeout: 30), "The sent message must appear in the chat.")
+        pause(1.5)
+        XCTAssertFalse(jumpToLatest.exists, "After sending, the list follows the own message: no «↓» pill")
 
         // 5. Receive a message sent by Bob through the REST API while the chat is open.
         let delivered = StandAPI(baseURL: standURL).sendDirect(from: bob, to: alice.username, text: incoming)
         XCTAssertTrue(delivered, "The stand must accept Bob's message.")
         XCTAssertTrue(app.staticTexts[incoming].waitForExistence(timeout: 30), "The incoming message must arrive live.")
+        pause(1.5)
+        XCTAssertFalse(jumpToLatest.exists, "At the end, an incoming message is followed, not counted as «N новых»")
 
         // Back to the list: the dialog row must now carry the latest text.
         goBack(app)
@@ -105,7 +125,7 @@ final class UserPathQATests: XCTestCase {
         let announcementsTab = app.tabBars.buttons["Объявления"]
         XCTAssertTrue(announcementsTab.waitForExistence(timeout: 5))
         announcementsTab.tap()
-        let announcement = app.staticTexts["Тестовое оповещение"]
+        let announcement = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Тестовое оповещение")).firstMatch
         XCTAssertTrue(announcement.waitForExistence(timeout: 30), "The seeded announcement must be listed.")
         tap(announcement)
         let close = app.buttons["Закрыть"]
@@ -191,6 +211,10 @@ final class UserPathQATests: XCTestCase {
         }
     }
 
+    private func pause(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
     /// iOS offers "Save Password?" after a successful login and blocks every tap behind it.
     private func dismissSavePasswordPrompt(_ app: XCUIApplication) {
         app.dismissSystemPrompts(timeout: 10)
@@ -274,6 +298,49 @@ final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
         return send(request) != nil
     }
 
+    /// A photo from `sender` to `recipient` (`POST /api/files/upload`, then an `image` message), so
+    /// the chat shows an image attachment the viewer can open.
+    func sendPhotoDirect(from sender: (username: String, password: String), to recipient: String) -> Bool {
+        guard
+            let login = post("/api/auth/login", ["username": sender.username, "password": sender.password], token: nil),
+            let token = login["token"] as? String,
+            let recipientId = userId(named: recipient, token: token)
+        else { return false }
+        let jpeg = StandPhotos.landscape()
+        let name = "Фото со стенда.jpg"
+        let boundary = "CentyChatUITest-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/api/files/upload"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"stand-photo.jpg\"\r\n".utf8))
+        body.append(Data("Content-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(jpeg)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+        guard let uploaded = send(request) as? [String: Any], let fileId = uploaded["id"] as? Int else { return false }
+        let message: [String: Any] = [
+            "text": name,
+            "type": "image",
+            "metadata": [
+                "file_id": fileId,
+                "file_name": name,
+                "mime_type": "image/jpeg",
+                "size": jpeg.count,
+                "width": 480,
+                "height": 320,
+            ],
+        ]
+        var post = URLRequest(url: baseURL.appendingPathComponent("/api/messages/direct/\(recipientId)"))
+        post.httpMethod = "POST"
+        post.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        post.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        post.httpBody = try? JSONSerialization.data(withJSONObject: message)
+        return send(post) != nil
+    }
+
     private func userId(named username: String, token: String) -> Int? {
         guard let users = get("/api/users", token: token) as? [[String: Any]] else { return nil }
         return users.first { ($0["username"] as? String) == username }?["id"] as? Int
@@ -311,6 +378,29 @@ final class StandAPI: NSObject, URLSessionDelegate, @unchecked Sendable {
 
     private final class ResultBox: @unchecked Sendable {
         var value: Any?
+    }
+}
+
+/// A landscape picture for an image message (a sunset over hills): clearly a photo in the bubble.
+enum StandPhotos {
+    static func landscape() -> Data {
+        let size = CGSize(width: 480, height: 320)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.jpegData(withCompressionQuality: 0.85) { context in
+            let cg = context.cgContext
+            let sky = [UIColor(red: 0.98, green: 0.62, blue: 0.42, alpha: 1).cgColor, UIColor(red: 0.42, green: 0.36, blue: 0.78, alpha: 1).cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: sky, locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: CGPoint(x: 0, y: size.height), end: .zero, options: [])
+            }
+            UIColor(red: 1.0, green: 0.86, blue: 0.55, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 300, y: 120, width: 90, height: 90)).fill()
+            UIColor(red: 0.20, green: 0.30, blue: 0.36, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: -80, y: 210, width: 420, height: 220)).fill()
+            UIColor(red: 0.14, green: 0.22, blue: 0.28, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 180, y: 230, width: 400, height: 200)).fill()
+        }
     }
 }
 

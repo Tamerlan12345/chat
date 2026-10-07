@@ -16,7 +16,7 @@ public struct StatusBadge: View {
             .frame(width: size, height: size)
             .overlay(
                 Circle()
-                    .stroke(Color(uiColor: .systemBackground), lineWidth: max(1.5, size * 0.15))
+                    .stroke(CentyColors.card, lineWidth: max(1.5, size * 0.15))
             )
     }
 }
