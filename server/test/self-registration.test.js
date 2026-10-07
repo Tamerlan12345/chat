@@ -340,6 +340,22 @@ test('allow_registration выключена: request и verify — 403 REGISTRAT
   assert.strictEqual(again.json.user.username, 'switch.user');
 });
 
+test('allow_registration выключена: старая форма /auth/register отвечает тем же 403 REGISTRATION_DISABLED', async () => {
+  await SettingsService.setSetting('allow_registration', 'false');
+  try {
+    const res = await api('POST', '/api/auth/register', {
+      body: { username: 'legacy.closed', password: PASSWORD, full_name: 'Старая Форма' }
+    });
+    assert.strictEqual(res.status, 403);
+    // Канонический текст reg.disabled из mobile/contracts/copy/ru.json и код,
+    // по которому desktop (describeAuthFailure) выбирает тот же текст.
+    assert.deepStrictEqual(res.json, DISABLED);
+    assert.strictEqual(await UserService.getUserByUsername('legacy.closed'), null);
+  } finally {
+    await SettingsService.setSetting('allow_registration', 'true');
+  }
+});
+
 test('allow_registration включена: прежнее поведение (разрешённый — сразу, остальные — на рассмотрение)', async () => {
   assert.strictEqual(await SettingsService.getSetting('allow_registration'), 'true');
   const res = await requestCode({ email: 'open@elsewhere.org', username: 'open.user' });
