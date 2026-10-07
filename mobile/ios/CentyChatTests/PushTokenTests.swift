@@ -283,22 +283,23 @@ final class PushEnvironmentTests: XCTestCase {
     }
 }
 
-@MainActor
-final class NotificationRequestTests: XCTestCase {
-    private final class FakeAuthorization: NotificationAuthorizing, @unchecked Sendable {
-        let state = Locked((status: NotificationAuthorization.notDetermined, requests: 0, grant: true))
+/// The system's permission question, scripted: it records how often it was asked.
+private final class FakeAuthorization: NotificationAuthorizing, @unchecked Sendable {
+    let state = Locked((status: NotificationAuthorization.notDetermined, requests: 0, grant: true))
 
-        func status() async -> NotificationAuthorization { state.value.status }
+    func status() async -> NotificationAuthorization { state.value.status }
 
-        func request() async -> Bool {
-            state.withValue { state in
-                state.requests += 1
-                state.status = state.grant ? .allowed : .denied
-                return state.grant
-            }
+    func request() async -> Bool {
+        state.withValue { state in
+            state.requests += 1
+            state.status = state.grant ? .allowed : .denied
+            return state.grant
         }
     }
+}
 
+@MainActor
+final class NotificationRequestTests: XCTestCase {
     func testPermissionIsAskedOnceAfterSignInAndThePushTokenIsRequested() async {
         let authorization = FakeAuthorization()
         let registered = Locked(0)

@@ -74,6 +74,12 @@ public protocol LocalNotificationCenter: Sendable {
     func removeDelivered(threadIdentifier: String) async
     /// Removes the delivered notification of one message (deleted, cancelled).
     func removeDelivered(identifier: String) async
+    /// Removes every delivered notification of the app (the session ended).
+    func removeAllDelivered() async
+}
+
+public extension LocalNotificationCenter {
+    func removeAllDelivered() async {}
 }
 
 /// Shows nothing: unit tests and previews.
