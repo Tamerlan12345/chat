@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   validateAllowlistPattern,
   describeAllowlistEntry,
@@ -11,6 +14,8 @@ import {
   previewText,
   formatAdminDate
 } from '../src/renderer/src/lib/registration-admin.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 // Зеркало server/src/services/registration.service.js (normalizePattern):
 // адрес user@domain.kz или домен @domain.kz, нижний регистр, до 254 символов.
@@ -87,4 +92,63 @@ test('formatAdminDate — дата по-русски, мусор даёт про
   assert.strictEqual(formatAdminDate('', 'UTC'), '—');
   assert.strictEqual(formatAdminDate('не дата', 'UTC'), '—');
   assert.strictEqual(formatAdminDate(undefined, 'UTC'), '—');
+});
+
+// ── Fix wave (Task 11) ─────────────────────────────────────────────────────
+
+test('reportReasonLabel — коды причин с телефонов показываются по-русски, как в iOS', async () => {
+  const { reportReasonLabel } = await import('../src/renderer/src/lib/registration-admin.mjs');
+  assert.strictEqual(reportReasonLabel('spam'), 'Спам или реклама');
+  assert.strictEqual(reportReasonLabel('abuse'), 'Оскорбления или травля');
+  assert.strictEqual(reportReasonLabel('inappropriate'), 'Недопустимое содержимое');
+  assert.strictEqual(reportReasonLabel('threat'), 'Угрозы или опасные действия');
+  assert.strictEqual(reportReasonLabel('other'), 'Другое');
+  assert.strictEqual(reportReasonLabel(' SPAM '), 'Спам или реклама', 'регистр и пробелы не мешают');
+});
+
+test('reportReasonLabel — свободный текст старых клиентов показывается как есть, пустое — прочерк', async () => {
+  const { reportReasonLabel } = await import('../src/renderer/src/lib/registration-admin.mjs');
+  assert.strictEqual(reportReasonLabel('Хамит в общем канале'), 'Хамит в общем канале');
+  assert.strictEqual(reportReasonLabel('constructor'), 'constructor', 'не наследуемые свойства объекта');
+  assert.strictEqual(reportReasonLabel(''), '—');
+  assert.strictEqual(reportReasonLabel(null), '—');
+  assert.strictEqual(reportReasonLabel(undefined), '—');
+});
+
+test('reporterName — автор жалобы без имени показывается прочерком, а не «undefined»', async () => {
+  const { reporterName } = await import('../src/renderer/src/lib/registration-admin.mjs');
+  assert.strictEqual(reporterName({ reporter: { name: 'Анна' } }), 'Анна');
+  assert.strictEqual(reporterName({ reporter: null }), '—');
+  assert.strictEqual(reporterName({}), '—');
+});
+
+test('allowlistErrorMessage — без тела ответа берётся текст конкретного действия (загрузка, удаление)', () => {
+  assert.strictEqual(
+    allowlistErrorMessage(null, 500, 'Не удалось загрузить список разрешённых адресов'),
+    'Не удалось загрузить список разрешённых адресов'
+  );
+  assert.strictEqual(allowlistErrorMessage({}, 502, 'Не удалось убрать запись'), 'Не удалось убрать запись');
+  assert.strictEqual(allowlistErrorMessage({ error: 'Запись не найдена' }, 404, 'Не удалось убрать запись'), 'Запись не найдена');
+  assert.strictEqual(allowlistErrorMessage(null, 403, 'Не удалось убрать запись'), 'Недостаточно прав для этого действия');
+  assert.strictEqual(allowlistErrorMessage(null, 500), 'Не удалось выполнить действие', 'без текста действия — общий');
+});
+
+test('useAdminApi передаёт explain текст действия (fallback), иначе он терялся', () => {
+  const src = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'useAdminApi.js'), 'utf8');
+  assert.match(src, /\(data, res\.status, fallback\)/);
+});
+
+test('сводка «Жалобы» показывает причину через reportReasonLabel, а автора — через reporterName', () => {
+  const src = fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', 'components', 'ReportsAdmin.jsx'), 'utf8');
+  assert.ok(!/\{report\.reason\}/.test(src), 'сырой код причины не выводится');
+  assert.match(src, /reportReasonLabel\(report\.reason\)/);
+  assert.ok(!/report\.reporter\?\.name/.test(src), 'имя автора — только через reporterName');
+});
+
+test('шаблон адреса совпадает с сервером (ALLOWLIST_PATTERN_RE) — без дрейфа', async () => {
+  const { ALLOWLIST_PATTERN_SOURCE } = await import('../src/renderer/src/lib/registration-admin.mjs');
+  const server = fs.readFileSync(path.join(here, '..', '..', 'server', 'src', 'services', 'registration.service.js'), 'utf8');
+  const match = server.match(/const ALLOWLIST_PATTERN_RE = \/(.+)\/;\r?\n/);
+  assert.ok(match, 'на сервере найден ALLOWLIST_PATTERN_RE');
+  assert.strictEqual(ALLOWLIST_PATTERN_SOURCE, match[1]);
 });

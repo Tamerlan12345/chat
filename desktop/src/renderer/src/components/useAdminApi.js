@@ -1,8 +1,9 @@
 import { useCallback } from 'react';
-import { errorMessageFrom } from '../lib/admin-access.mjs';
+import { errorMessageFrom, httpError } from '../lib/admin-access.mjs';
 
 // Запрос к серверу от имени администратора. Отказ превращается в Error с
-// русским текстом: explain(data, status) — свой разбор тела, иначе общий.
+// русским текстом: explain(data, status, fallback) — свой разбор тела, иначе
+// общий; fallback — текст конкретного действия, когда тело ничего не объясняет.
 export function useAdminApi(serverUrl) {
   return useCallback(async (path, { method = 'GET', body, fallback = 'Сервер отклонил запрос', explain } = {}) => {
     const token = localStorage.getItem('mychat_token') || '';
@@ -22,7 +23,7 @@ export function useAdminApi(serverUrl) {
     if (!res.ok) {
       let data = null;
       try { data = await res.json(); } catch { data = null; }
-      throw new Error((explain || ((d, s) => errorMessageFrom(d, s, fallback)))(data, res.status));
+      throw httpError((explain || errorMessageFrom)(data, res.status, fallback), res.status);
     }
     return res.json().catch(() => ({}));
   }, [serverUrl]);

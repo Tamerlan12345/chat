@@ -85,6 +85,8 @@ export default function RegistrationAllowlistAdmin({ serverUrl, showToast }) {
       await load();
     } catch (err) {
       showToast?.(err.message, 'error');
+      // Запись уже убрал другой администратор — список устарел.
+      if (err.status === 404) await load();
     } finally {
       setRemovingId(null);
     }

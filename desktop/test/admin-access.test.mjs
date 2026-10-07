@@ -106,3 +106,12 @@ test('«Без подразделения» сохраняется как null, 
   assert.strictEqual(toDepartmentId('7'), 7);
   assert.strictEqual(toDepartmentId(3), 3);
 });
+
+test('httpError — русский текст отказа и код ответа (по 404 консоль перечитывает список)', async () => {
+  const { httpError } = await import('../src/renderer/src/lib/admin-access.mjs');
+  const err = httpError('Жалоба не найдена', 404);
+  assert.ok(err instanceof Error);
+  assert.strictEqual(err.message, 'Жалоба не найдена');
+  assert.strictEqual(err.status, 404);
+  assert.strictEqual(httpError('Нет связи с сервером').status, undefined);
+});
