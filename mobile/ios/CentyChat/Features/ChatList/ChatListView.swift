@@ -205,7 +205,7 @@ public struct ChatListView: View {
     /// The chat of a tapped notification: the ids come from the payload, the title from what the
     /// app already knows (the chat loads its content from the server).
     private func openTappedNotification() {
-        guard let key = container.notificationRoutes.take() else { return }
+        guard let key = container.notificationRoutes.take(signedIn: container.session.currentUser?.id) else { return }
         navigation?.selectedTab = .chats
         let title: String
         if key.type == .channel {

@@ -61,6 +61,7 @@ public final class AppContainer: SessionLifecycleDelegate {
         pushTokenService: (any PushTokenService)? = nil,
         notificationAuthorization: (any NotificationAuthorizing)? = nil,
         registerForRemoteNotifications: @escaping @MainActor () -> Void = {},
+        unregisterForRemoteNotifications: @escaping @MainActor () -> Void = {},
         deviceId: @escaping @MainActor () -> String? = { nil },
         avatarLoader: AvatarImageLoader? = nil,
         deliveryStore: any DeliveryStore = InMemoryDeliveryStore(),

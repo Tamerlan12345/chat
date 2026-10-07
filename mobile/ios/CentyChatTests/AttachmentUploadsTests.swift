@@ -396,6 +396,57 @@ final class AttachmentUploadsTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles(root: folder).url(pending.localPath).path))
     }
 
+    /// The same with the socket up (review fix round 1): the enqueue's own step would send the
+    /// message at once; the engine withdraws it before any effect runs, so it never goes out.
+    func testAFileCancelledDuringItsHandOverIsNeverSentWithTheSocketUp() async throws {
+        let disk = GatedDeliveryStore()
+        let link = FakeDeliveryLink()
+        let gatedEngine = DeliveryEngine(store: disk, link: link, backend: FakeDeliveryBackend(), clock: clock)
+        gatedEngine.start()
+        await gatedEngine.idle()
+        try await gatedEngine.adopt(2)
+        link.setAuthenticated(2)
+        link.setAccepting(true)
+        gatedEngine.receive(DeliveryFixtures.authSuccess(2))
+        await settle(gatedEngine)
+        XCTAssertEqual(gatedEngine.state.connection, DeliveryState.online)
+        let uploads = AttachmentUploads(
+            store: store,
+            files: AttachmentFiles(root: folder),
+            uploader: uploader,
+            engine: gatedEngine,
+            clock: clock,
+            owner: { [unowned self] in self.signedIn }
+        )
+        uploads.start()
+        let uploadDone = TestGate()
+        uploader.hold(uploadDone)
+        uploader.answer = FakeUploader.done(71)
+        _ = await uploads.add(conversation: "direct:3", picked: try picked(), replyToId: nil, owner: 2)
+        let pending = try XCTUnwrap(uploads.items.first?.pending)
+        uploads.setOnline(true)
+        await pause()
+
+        let diskWrite = TestGate()
+        await disk.hold(diskWrite)
+        await uploadDone.open()
+        await pause()
+        XCTAssertTrue(uploads.items.contains { $0.id == pending.clientMsgId }, "still being handed over")
+
+        await uploads.cancel(pending.clientMsgId)
+        await disk.hold(nil)
+        await diskWrite.open()
+        await settle(gatedEngine)
+
+        XCTAssertEqual(link.sends(of: pending.clientMsgId), 0, "a cancelled file is never sent")
+        XCTAssertFalse(
+            gatedEngine.state.outbox.contains { $0.clientMsgId == pending.clientMsgId && !$0.pendingDelete },
+            "nothing of it waits to be sent"
+        )
+        XCTAssertNil(uploads.handedOver[pending.clientMsgId])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles(root: folder).url(pending.localPath).path))
+    }
+
     /// No answer again and again: the pause doubles (15 s, 30 s, 60 s …) instead of re-sending the
     /// whole file every 15 s (final review M2).
     func testRepeatedTransportFailuresBackOffExponentially() async throws {

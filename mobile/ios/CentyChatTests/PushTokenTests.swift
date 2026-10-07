@@ -327,11 +327,30 @@ final class NotificationRequestTests: XCTestCase {
 
     func testATappedNotificationWaitsForTheChatListAndIsTakenOnce() {
         let routes = NotificationRoutes()
-        XCTAssertFalse(routes.open(["type": "read", "conversationType": "direct", "targetId": 3]))
-        XCTAssertNil(routes.take())
+        XCTAssertFalse(routes.open(["type": "read", "conversationType": "direct", "targetId": 3], account: 1))
+        XCTAssertNil(routes.take(signedIn: 1))
 
-        XCTAssertTrue(routes.open(["type": "message", "conversationType": "direct", "targetId": 3, "messageId": 41]))
-        XCTAssertEqual(routes.take(), ConversationKey(type: .direct, targetId: 3))
-        XCTAssertNil(routes.take(), "opened once")
+        XCTAssertTrue(routes.open(["type": "message", "conversationType": "direct", "targetId": 3, "messageId": 41], account: 1))
+        XCTAssertEqual(routes.take(signedIn: 1), ConversationKey(type: .direct, targetId: 3))
+        XCTAssertNil(routes.take(signedIn: 1), "opened once")
+    }
+
+    /// A tap belongs to the account that was signed in when it came (review fix round 1): another
+    /// account never opens it, and the end of the session drops it.
+    func testATappedNotificationOpensOnlyForItsAccount() {
+        let routes = NotificationRoutes()
+        let chat = ConversationKey(type: .direct, targetId: 3)
+
+        routes.open(chat, account: 1)
+        XCTAssertNil(routes.take(signedIn: 2), "another account signed in meanwhile")
+        XCTAssertNil(routes.take(signedIn: 1), "and the route is gone")
+
+        routes.open(chat, account: 1)
+        routes.clear()
+        XCTAssertNil(routes.take(signedIn: 1), "the session ended")
+
+        // Tapped while the stored session was being restored: it opens for that session.
+        routes.open(chat, account: nil)
+        XCTAssertEqual(routes.take(signedIn: 7), chat)
     }
 }

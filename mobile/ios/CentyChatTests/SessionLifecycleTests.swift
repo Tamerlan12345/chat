@@ -327,4 +327,75 @@ final class SessionResilienceTests: XCTestCase {
         await open.session.bootstrap()
         XCTAssertEqual(open.session.registrationOpen, true)
     }
+
+    // MARK: - Review fix round 1
+
+    /// A session whose token is gone (a refused refresh cleared it) checks itself instead of
+    /// reconnecting tokenless forever; it ends only when the server refuses it.
+    func testAMissingTokenMakesTheSessionCheckItself() async throws {
+        let app = TestApp()
+        await app.session.bootstrap()
+        _ = try await app.session.login(username: "qa", password: "password")
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.noConnection) }
+
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"TOKEN_MISSING","message":""}"#))
+        let checked = await eventually { app.auth.state.value.currentUserCount > 1 }
+        XCTAssertTrue(checked, "the session asked the server")
+        XCTAssertEqual(app.session.phase, .authenticated, "no answer is not a refusal")
+
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.unauthorized) }
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"auth_error","code":"TOKEN_MISSING","message":""}"#))
+        let signedOut = await eventually { app.session.phase == .signedOut }
+        XCTAssertTrue(signedOut, "a refusal ends it")
+    }
+
+    /// The first launch of this version without a remembered user and without the server: never an
+    /// endless blank screen — the problem is shown with «Повторить» (review fix round 1).
+    func testALaunchWithoutTheServerShowsWhyAndCanBeRetried() async {
+        let app = TestApp()
+        app.auth.state.withValue {
+            $0.hasToken = true
+            $0.currentUserResult = .failure(APIError.noConnection)
+        }
+        await app.session.bootstrap()
+        XCTAssertEqual(app.session.phase, .launching)
+        XCTAssertEqual(app.session.launchProblem, "Нет связи с сервером. Проверьте подключение к интернету.")
+        XCTAssertNil(app.session.errorMessage, "said on the screen, not in an alert over a blank one")
+
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.httpError(statusCode: 503, message: "x", code: nil)) }
+        await app.session.retryRestoreIfNeeded()
+        XCTAssertEqual(app.session.launchProblem, "Не удалось выполнить действие. Повторите попытку позже.")
+
+        app.auth.state.withValue { $0.currentUserResult = .success(TestModels.me) }
+        await app.session.retryRestoreIfNeeded()
+        XCTAssertEqual(app.session.phase, .authenticated)
+        XCTAssertNil(app.session.launchProblem)
+    }
+
+    func testTheRetryPauseGrowsAndIsCapped() {
+        XCTAssertEqual(SessionStore.restoreRetryDelay(attempt: 1), 2)
+        XCTAssertEqual(SessionStore.restoreRetryDelay(attempt: 3), 8)
+        XCTAssertEqual(SessionStore.restoreRetryDelay(attempt: 20), 60)
+    }
+
+    /// An explicit sign-out also stops APNs for this device (as Android's Ruling U m2); a session
+    /// that ends by itself does not, and the next sign-in registers again.
+    func testAnExplicitSignOutUnregistersFromAPNs() async throws {
+        let unregistered = Locked(0)
+        let app = TestApp(unregisterForRemoteNotifications: { unregistered.withValue { $0 += 1 } })
+        await app.session.bootstrap()
+        _ = try await app.session.login(username: "qa", password: "password")
+
+        app.auth.state.withValue { $0.currentUserResult = .failure(APIError.unauthorized) }
+        app.container.realtime.dispatch(TestModels.event(#"{"type":"server_disconnect","reason":"x"}"#))
+        _ = await eventually { app.session.phase == .signedOut }
+        XCTAssertEqual(unregistered.value, 0, "an involuntary end keeps the registration")
+
+        app.auth.state.withValue { $0.currentUserResult = .success(TestModels.me) }
+        _ = try await app.session.login(username: "qa", password: "password")
+        await app.session.logout()
+        XCTAssertEqual(app.session.phase, .signedOut)
+        XCTAssertEqual(unregistered.value, 1)
+    }
 }
+

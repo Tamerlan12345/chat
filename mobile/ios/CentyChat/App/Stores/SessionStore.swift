@@ -74,6 +74,13 @@ public final class SessionStore: RealtimeEventHandling {
     /// Whether the server takes self-registrations (`allow_registration` of /settings/info);
     /// nil — not known yet (offline): the entry stays, the server still refuses if it is closed.
     public private(set) var registrationOpen: Bool?
+    /// Why the launch waits (no server answer, nobody remembered), shown with «Повторить».
+    public private(set) var launchProblem: String?
+
+    /// The pause before the next automatic try of a launch that waits.
+    nonisolated static func restoreRetryDelay(attempt: Int) -> Int {
+        2
+    }
 
     init(
         auth: any AuthRepository,

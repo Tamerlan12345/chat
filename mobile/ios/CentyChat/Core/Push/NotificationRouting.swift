@@ -59,22 +59,25 @@ final class NotificationRoutes {
 
     /// A tapped notification; false when it opens nothing.
     @discardableResult
-    func open(_ userInfo: [AnyHashable: Any]) -> Bool {
+    func open(_ userInfo: [AnyHashable: Any], account: Int64?) -> Bool {
         guard let conversation = NotificationTap.conversation(from: userInfo) else { return false }
-        open(conversation)
+        open(conversation, account: account)
         return true
     }
 
-    func open(_ conversation: ConversationKey) {
+    func open(_ conversation: ConversationKey, account: Int64?) {
         pending = conversation
         serial += 1
     }
 
-    /// The chat to open, once.
-    func take() -> ConversationKey? {
+    /// The chat to open for `signedIn`, once.
+    func take(signedIn: Int64?) -> ConversationKey? {
         defer { pending = nil }
         return pending
     }
+
+    /// The session ended.
+    func clear() {}
 }
 
 /// Whether the user lets the app show notifications.

@@ -465,7 +465,8 @@ struct TestApp {
     init(
         environment: ServerEnvironment = .test,
         pushTokens: (any PushTokenService)? = nil,
-        avatarLoader: AvatarImageLoader? = nil
+        avatarLoader: AvatarImageLoader? = nil,
+        unregisterForRemoteNotifications: @escaping @MainActor () -> Void = {}
     ) {
         server = FakeServerRepository()
         auth = FakeAuthRepository()
@@ -491,6 +492,7 @@ struct TestApp {
             peopleSource: peopleSource,
             peopleCache: peopleCache,
             pushTokenService: pushTokens,
+            unregisterForRemoteNotifications: unregisterForRemoteNotifications,
             avatarLoader: avatarLoader,
             deliveryStore: deliveryStore,
             uploadStore: uploadStore,

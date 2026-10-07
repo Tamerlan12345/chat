@@ -86,7 +86,7 @@ final class NotificationPresentationDelegate: NSObject, UNUserNotificationCenter
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let conversation = NotificationTap.conversation(from: response.notification.request.content.userInfo) else { return }
         await MainActor.run {
-            PushRouter.shared.routes?.open(conversation)
+            PushRouter.shared.routes?.open(conversation, account: nil)
         }
     }
 }
