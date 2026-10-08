@@ -3,6 +3,7 @@ package com.openmychat.mobile.data.model
 import com.openmychat.mobile.data.serializer.BooleanIntSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 enum class ConversationType(val value: String) {
@@ -127,8 +128,63 @@ data class Message(
     @SerialName("file_original_name")
     val fileOriginalName: String? = null,
 
+    /** Размеры картинки-вложения, посчитанные сервером (null — не картинка или неизвестно). */
+    @SerialName("file_width")
+    val fileWidth: Int? = null,
+
+    @SerialName("file_height")
+    val fileHeight: Int? = null,
+
     @SerialName("delivery_status")
-    val deliveryStatus: DeliveryStatus? = null
+    val deliveryStatus: DeliveryStatus? = null,
+
+    /** Idempotency key chosen by the sending client; null for messages sent without one. */
+    @SerialName("client_msg_id")
+    val clientMsgId: String? = null,
+
+    /** Только в результатах `GET /api/messages/search`: имя канала сообщения. */
+    @SerialName("channel_name")
+    val channelName: String? = null,
+
+    /** Только локально: отправка ещё не подтверждена сервером ([SendState]); у записей сервера — SENT. */
+    @Transient
+    val sendState: SendState = SendState.SENT,
+
+    /** Только локально: файл, выбранный на этом устройстве, пока эхо сервера не заменило запись. */
+    @Transient
+    val upload: LocalUpload? = null,
+
+    /** Только локально: почему своё сообщение не отправлено (под пузырём «Не отправлено: …»). */
+    @Transient
+    val failureReason: String? = null
+)
+
+/** Состояние отправки своего сообщения на этом устройстве (delivery-state.md §3.4). */
+enum class SendState {
+    /** В очереди: нет связи, уйдёт само после переподключения. */
+    QUEUED,
+
+    /** Кадр ушёл, ждём эхо сервера. */
+    SENDING,
+
+    /** Не отправлено: «Повторить» / «Удалить». */
+    FAILED,
+
+    /** Подтверждено сервером (или пришло от сервера). */
+    SENT
+}
+
+/** One page of `GET /api/sync`. [nextCursor] is opaque and must be sent back unchanged. */
+@Serializable
+data class SyncPage(
+    @SerialName("messages")
+    val messages: List<Message>,
+
+    @SerialName("next_cursor")
+    val nextCursor: String,
+
+    @SerialName("has_more")
+    val hasMore: Boolean
 )
 
 @Serializable

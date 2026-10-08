@@ -1,0 +1,4 @@
+{
+  "error": "Недопустимый client_msg_id: строка 1–64 символа из A–Z, a–z, 0–9, «_» и «-»",
+  "code": "INVALID_CLIENT_MSG_ID"
+}

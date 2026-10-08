@@ -40,3 +40,17 @@ export function greetingName(fullName) {
   const { firstName } = parseFullName(fullName);
   return startsUppercase(firstName) ? firstName : parts.join(' ');
 }
+
+// Что можно подставить в <img src> аватара (задача 20). Сервер отдаёт
+// настольному клиенту фото, как и раньше, строкой data URL. Другим клиентам
+// он присылает адрес /api/users/<id>/avatar?v=… — <img> не умеет отправить с
+// ним токен, и запрос заведомо получил бы 401: тогда сразу инициалы.
+// Прочие схемы (javascript:, data: не с картинкой) — тоже инициалы.
+const DATA_IMAGE_RE = /^data:image\/(png|jpe?g|gif|webp);base64,/i;
+const LOADABLE_RE = /^(https?:|blob:)/i;
+
+export function avatarSrc(src) {
+  if (typeof src !== 'string' || !src) return null;
+  if (DATA_IMAGE_RE.test(src) || LOADABLE_RE.test(src)) return src;
+  return null;
+}

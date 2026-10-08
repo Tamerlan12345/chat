@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "apns-topic": "com.example.centychat",
+    "apns-push-type": "background",
+    "apns-priority": "5",
+    "apns-expiration": "1791018000",
+    "apns-collapse-id": "r-direct-2"
+  },
+  "payload": {
+    "aps": {
+      "content-available": 1
+    },
+    "type": "read",
+    "conversationType": "direct",
+    "targetId": 2
+  }
+}

@@ -39,15 +39,15 @@ public final class AudioRelayEngine: @unchecked Sendable {
         var data = Data(capacity: frameSizeBytes)
         
         // 4 байта targetUserId (UInt32 Big-Endian)
-        var beTargetId = UInt32(targetUserId).bigEndian
-        data.append(UnsafeBufferPointer(start: &beTargetId, count: 1))
+        let beTargetId = UInt32(targetUserId).bigEndian
+        withUnsafeBytes(of: beTargetId) { data.append(contentsOf: $0) }
         
         // 1024 байта PCM: 512 сэмплов Int16 Big-Endian
         for sample in samples {
             let clamped = max(-1.0, min(1.0, sample))
             let int16Val = Int16(clamped * 32767.0)
-            var beSample = int16Val.bigEndian
-            data.append(UnsafeBufferPointer(start: &beSample, count: 1))
+            let beSample = int16Val.bigEndian
+            withUnsafeBytes(of: beSample) { data.append(contentsOf: $0) }
         }
         
         return data

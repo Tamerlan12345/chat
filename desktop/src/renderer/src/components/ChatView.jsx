@@ -9,6 +9,8 @@ import { formatBytes, uploadProblem, imageFrame } from '../lib/attachments.mjs';
 import { canEdit, canDelete } from '../lib/message-actions.mjs';
 import { loadImage } from '../lib/image-cache';
 import { acceptAttr, checkFileAgainstPolicy } from '../lib/file-policy.mjs';
+import { COPY } from '../lib/copy-ru.mjs';
+import { latestMessageId } from '../lib/multi-device.mjs';
 
 // Действующий список разрешённых расширений — на время сеанса приложения, не
 // на чат: спрашивать сервер заново при каждом открытии окна незачем. Сброс —
@@ -141,7 +143,8 @@ export default function ChatView({
     prevMessageCountRef.current = messages.length;
 
     if (activeChat && (isChatSwitch || wasNearBottomRef.current)) {
-      onMarkRead(activeChat.type, activeChat.id);
+      // При смене чата лента ещё прежняя — номер не передаётся, отметка уходит всегда.
+      onMarkRead(activeChat.type, activeChat.id, isChatSwitch ? undefined : latestMessageId(messages));
     }
   }, [messages, activeChat]);
 
@@ -350,7 +353,7 @@ export default function ChatView({
       // Сообщение в углу вместо alert(): модальное окно останавливало всё
       // приложение, включая приём сообщений, пока его не закроют.
       if (!res.ok) {
-        onNotice?.(res.status === 403 ? 'Нет доступа к этому файлу' : 'Не удалось скачать файл', suggestedName);
+        onNotice?.(res.status === 403 ? COPY['download.forbidden'] : COPY['download.failed'], suggestedName);
         return;
       }
       const blob = await res.blob();
@@ -363,7 +366,7 @@ export default function ChatView({
       link.remove();
       URL.revokeObjectURL(objectUrl);
     } catch {
-      onNotice?.('Не удалось скачать файл', 'Нет связи с сервером');
+      onNotice?.(COPY['download.no_network'], suggestedName);
     }
   };
 

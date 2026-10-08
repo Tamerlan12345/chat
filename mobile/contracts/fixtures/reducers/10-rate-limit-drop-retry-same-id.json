@@ -1,0 +1,230 @@
+{
+  "name": "10-rate-limit-drop-retry-same-id",
+  "description": "Кадр молча отброшен пределом частоты сервера: ответа нет → ack_timeout через 10 с → пауза 1 с → повтор с тем же client_msg_id → эхо. Таймаут второй попытки устарел.",
+  "covers": [
+    "T04",
+    "T13",
+    "T07",
+    "T15"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "enqueue",
+      "now": 1000,
+      "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+      "conversation": "channel:3",
+      "text": "Релиз мобильных клиентов — в пятницу.",
+      "msgType": "text",
+      "reply_to_id": null,
+      "metadata": null
+    },
+    {
+      "type": "ack_timeout",
+      "now": 11000,
+      "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+      "attempt": 1
+    },
+    {
+      "type": "tick",
+      "now": 12000
+    },
+    {
+      "type": "ws",
+      "now": 12100,
+      "frame": {
+        "type": "channel_message",
+        "message": {
+          "id": 41,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:12.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null,
+          "file_width": null,
+          "file_height": null,
+          "file_dominant_color": null
+        }
+      }
+    },
+    {
+      "type": "ws",
+      "now": 12101,
+      "frame": {
+        "type": "new_message",
+        "message": {
+          "id": 41,
+          "conversation_type": "channel",
+          "target_id": 3,
+          "sender_id": 2,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:12.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+          "sender_username": "alice",
+          "sender_name": "Алиса Тестова",
+          "sender_avatar": null,
+          "sender_department": null,
+          "file_original_name": null,
+          "file_width": null,
+          "file_height": null,
+          "file_dominant_color": null
+        }
+      }
+    },
+    {
+      "type": "ack_timeout",
+      "now": 22000,
+      "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+      "attempt": 2
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "clear_composer",
+        "conversation": "channel:3"
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 12000,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 22000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+          "attempt": 2
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [],
+    []
+  ],
+  "expectedState": {
+    "outbox": [],
+    "messages": {
+      "channel:3": [
+        {
+          "id": 41,
+          "client_msg_id": "a0000011-0000-4000-8000-000000000011",
+          "sender_id": 2,
+          "text": "Релиз мобильных клиентов — в пятницу.",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:12.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "wake_at": null
+  }
+}

@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { getDatabase } = require('../db');
+const { getDatabase, rotateSyncEpoch } = require('../db');
 const { identity } = require('../db/identity');
 const config = require('../config');
 const { DatabaseSync, constants: SQLITE } = require('node:sqlite');
@@ -220,6 +220,8 @@ class DbStudioService {
 
     // SQLite online backup via VACUUM INTO
     db.prepare(`VACUUM INTO ?`).run(backupFilePath);
+    // Своя эпоха синхронизации у копии — см. db/index.js rotateSyncEpoch.
+    rotateSyncEpoch(backupFilePath);
 
     const size = fs.statSync(backupFilePath).size;
 

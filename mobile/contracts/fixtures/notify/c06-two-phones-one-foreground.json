@@ -1,0 +1,38 @@
+{
+  "name": "c06-two-phones-one-foreground",
+  "description": "Два телефона: один на переднем плане звонит по кадру, второй (без сокета) будит push.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "p1",
+        "deviceId": "android-aaaa",
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-aaaa"
+      },
+      {
+        "id": "ios-bbbb"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "ios-bbbb"
+    ],
+    "ring": [
+      "p1"
+    ],
+    "quiet": []
+  }
+}

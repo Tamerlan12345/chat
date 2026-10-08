@@ -1,0 +1,33 @@
+{
+  "name": "c04-own-call",
+  "description": "Свой вызов (вызывающий = вызываемый) — ни одно своё устройство не звонит.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 2
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": "own",
+    "push": [],
+    "ring": [],
+    "quiet": [
+      "desk"
+    ]
+  }
+}

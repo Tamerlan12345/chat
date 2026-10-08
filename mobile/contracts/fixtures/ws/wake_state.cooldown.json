@@ -1,0 +1,6 @@
+{
+  "type": "wake_state",
+  "targetUserId": 3,
+  "at": 1790931600000,
+  "retryAt": 1790931660000
+}

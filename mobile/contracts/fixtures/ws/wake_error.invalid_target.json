@@ -1,0 +1,6 @@
+{
+  "type": "wake_error",
+  "code": "invalid_target",
+  "targetUserId": 2,
+  "message": "Разбудить можно только коллегу"
+}

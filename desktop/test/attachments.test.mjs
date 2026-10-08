@@ -11,7 +11,8 @@ test('размер файла по-русски', () => {
 
 test('файл больше 100 МБ отсекается до загрузки', () => {
   assert.strictEqual(uploadProblem({ size: MAX_UPLOAD_BYTES }), null);
-  assert.match(uploadProblem({ size: MAX_UPLOAD_BYTES + 1 }), /Больше 100 МБ/);
+  // Текст — как у сервера (413) и телефонов: copy-ru upload.too_big.
+  assert.strictEqual(uploadProblem({ size: MAX_UPLOAD_BYTES + 1 }), 'Файл больше 100 МБ — такой файл загрузить нельзя');
   assert.match(uploadProblem({ size: 0 }), /пустой/);
 });
 

@@ -71,7 +71,7 @@ public struct DirectConversation: Identifiable, Codable, Sendable, Equatable, Ha
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.userId = try container.decode(Int64.self, forKey: .userId)
         self.username = try container.decodeIfPresent(String.self, forKey: .username)
-        self.fullName = try container.decodeIfPresent(String.self, forKey: .fullName) ?? "Пользователь"
+        self.fullName = try container.decodeIfPresent(String.self, forKey: .fullName) ?? String(localized: "Пользователь")
         self.avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
         self.status = try container.decodeIfPresent(UserStatus.self, forKey: .status) ?? .offline
         self.customStatus = try container.decodeIfPresent(String.self, forKey: .customStatus)

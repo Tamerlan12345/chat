@@ -51,15 +51,109 @@ final class AudioRelayTests: XCTestCase {
         let secondScheduled = scheduler.scheduleFrame(currentTime: currentTime)
         XCTAssertEqual(secondScheduled, firstScheduled + 0.032, accuracy: 0.001)
         
-        // Симулируем накопление задержки свыше 250 мс
-        // Допустим, мы вызываем scheduleFrame при текущем времени 1000.0, но очередь убежала на +0.300с
-        let futureTime: TimeInterval = currentTime
-        for _ in 0..<15 {
-            _ = scheduler.scheduleFrame(currentTime: futureTime)
+        // Заполняем очередь до границы в 250 мс.
+        for _ in 0..<4 {
+            _ = scheduler.scheduleFrame(currentTime: currentTime)
         }
-        
-        // Следующий вызов должен заметить превышение 250мс и сброситься к 60мс
+
+        // Следующий вызов должен заметить превышение 250мс и сброситься к 60мс.
         let resetScheduled = scheduler.scheduleFrame(currentTime: currentTime)
         XCTAssertEqual(resetScheduled, currentTime + 0.06, accuracy: 0.001)
+    }
+
+    func testCaptureNormalizerUsesTheCurrentBufferSampleRate() {
+        let samples: [Float] = [0, 1, 0, -1]
+
+        let builtInRoute = AudioCaptureNormalizer.normalize(
+            samples,
+            bufferSampleRate: 16_000
+        )
+        let bluetoothRoute = AudioCaptureNormalizer.normalize(
+            samples,
+            bufferSampleRate: 8_000
+        )
+
+        XCTAssertEqual(builtInRoute, [0, 1, 0, -1])
+        XCTAssertEqual(bluetoothRoute, [0, 0.5, 1, 0.5, 0, -0.5, -1, -1])
+    }
+}
+
+@MainActor
+final class WebSocketAudioStreamTests: XCTestCase {
+    func testIncomingAudioDropsOldestFramesUnderBackpressure() async {
+        let client = WebSocketClient()
+        let stream = await client.incomingAudio
+
+        for senderId in 1...9 {
+            await client.receiveIncomingAudioFrame(makeAudioFrame(senderId: Int64(senderId)))
+        }
+
+        var iterator = stream.makeAsyncIterator()
+        var receivedSenderIDs: [Int64] = []
+        for _ in 0..<8 {
+            guard let frame = await iterator.next() else {
+                return XCTFail("The audio stream ended before its bounded buffer was drained")
+            }
+            receivedSenderIDs.append(frame.senderId)
+        }
+
+        XCTAssertEqual(receivedSenderIDs, Array(2...9).map(Int64.init))
+    }
+
+    func testReplacingIncomingAudioSubscriberFinishesOldStreamAndKeepsNewStreamLive() async {
+        let client = WebSocketClient()
+        let firstStream = await client.incomingAudio
+        let firstStreamEnded = expectation(description: "first stream ended")
+
+        Task { @MainActor in
+            var iterator = firstStream.makeAsyncIterator()
+            let finishedFrame = await iterator.next()
+            XCTAssertNil(finishedFrame)
+            firstStreamEnded.fulfill()
+        }
+        await Task.yield()
+
+        let secondStream = await client.incomingAudio
+        await fulfillment(of: [firstStreamEnded], timeout: 1)
+        await Task.yield()
+
+        let secondStreamReceivedFrame = expectation(description: "second stream received a frame")
+        await client.receiveIncomingAudioFrame(makeAudioFrame(senderId: 42))
+        Task { @MainActor in
+            var iterator = secondStream.makeAsyncIterator()
+            let receivedFrame = await iterator.next()
+            XCTAssertEqual(receivedFrame?.senderId, 42)
+            secondStreamReceivedFrame.fulfill()
+        }
+
+        await fulfillment(of: [secondStreamReceivedFrame], timeout: 1)
+    }
+
+    func testDisconnectFinishesIncomingAudioStream() async {
+        let client = WebSocketClient()
+        let stream = await client.incomingAudio
+        let streamEnded = expectation(description: "audio stream ended")
+
+        Task { @MainActor in
+            var iterator = stream.makeAsyncIterator()
+            let finishedFrame = await iterator.next()
+            XCTAssertNil(finishedFrame)
+            streamEnded.fulfill()
+        }
+        await Task.yield()
+
+        await client.disconnect()
+
+        await fulfillment(of: [streamEnded], timeout: 1)
+    }
+
+    private func makeAudioFrame(senderId: Int64) -> Data {
+        guard let frame = AudioRelayEngine.encodeFrame(
+            samples: [Float](repeating: 0.5, count: AudioRelayEngine.samplesPerFrame),
+            targetUserId: senderId
+        ) else {
+            fatalError("The non-silent test fixture must encode")
+        }
+        return frame
     }
 }

@@ -4,7 +4,11 @@ import com.openmychat.mobile.core.audio.SilenceGater
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.encodeToString
@@ -21,7 +25,10 @@ import kotlin.random.Random
 
 class WebSocketClient(
     private val sessionManager: SessionManager,
-    private val okHttpClient: OkHttpClient? = null
+    private val okHttpClient: OkHttpClient? = null,
+    private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
+    /** Что передать в auth кроме токена: в фоне ли приложение и какой чат открыт (multi-device.md §3). */
+    private val authContext: AuthContext = AuthContext()
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -40,260 +47,230 @@ class WebSocketClient(
     private var reconnectJob: Job? = null
 
     private val isConnected = AtomicBoolean(false)
+    private val isConnecting = AtomicBoolean(false)
     private val isManuallyClosed = AtomicBoolean(false)
     private var reconnectAttempts = 0
 
-    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64)
+    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 256)
     val events: SharedFlow<WsEvent> = _events.asSharedFlow()
+
+    /**
+     * Voice frames (~31/s during a call) have their own lossy flow, so they can never fill the chat
+     * event buffer and make tryEmit drop messages, typing or call signalling.
+     */
+    private val _audioFrames = MutableSharedFlow<WsEvent.AudioFrameReceived>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val audioFrames: SharedFlow<WsEvent.AudioFrameReceived> = _audioFrames.asSharedFlow()
+
+    /**
+     * Every text frame exactly as the server sent it, in order, plus a synthetic `socket_closed`
+     * whenever a socket goes away — the delivery engine's input (delivery-state.md §4). Nothing is
+     * deduplicated here: the engine merges repeated frames itself.
+     */
+    private val _deliveryFrames = MutableSharedFlow<JsonObject>(extraBufferCapacity = 1024)
+    val deliveryFrames: SharedFlow<JsonObject> = _deliveryFrames.asSharedFlow()
+
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    /** Token the server refused (auth_error); reconnecting with it again would only loop. */
+    @Volatile private var rejectedToken: String? = null
+    @Volatile private var authenticatingToken: String? = null
+
+    /** The server sends new_message and direct_message/channel_message for the same message. */
+    private val recentMessageIds = object : LinkedHashMap<Long, Unit>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Unit>?): Boolean = size > 512
+    }
 
     fun connect(coroutineScope: CoroutineScope) {
         scope = coroutineScope
+        val token = sessionManager.token
+        if (token != null && token == rejectedToken) return
+        rejectedToken = null
         isManuallyClosed.set(false)
+        if (isConnected.get() || !isConnecting.compareAndSet(false, true)) return
         establishConnection()
     }
 
     private fun establishConnection() {
         val token = sessionManager.token
         if (token.isNullOrBlank()) {
+            isConnecting.set(false)
+            _connectionState.value = ConnectionState.Disconnected
             return
         }
 
-        val endpoint = sessionManager.validateServerEndpoint(sessionManager.serverUrl).getOrNull() ?: return
-        if (!endpoint.isSecure) return
+        val endpoint = sessionManager.serverEndpoint
+        if (!endpoint.isSecure) {
+            isConnecting.set(false)
+            _connectionState.value = ConnectionState.Disconnected
+            return
+        }
+        authenticatingToken = token
+        // During a refusal streak keep showing the reason instead of flickering to "connecting".
+        if (_connectionState.value !is ConnectionState.Retrying) {
+            _connectionState.value = ConnectionState.Connecting
+        }
 
-        val wsUrl = endpoint.webSocketUrl
+        // Аватары ссылкой и в событиях WebSocket (sender_avatar, профиль в auth_success).
+        val wsUrl = AvatarOptIn.webSocketUrl(endpoint.webSocketUrl)
         val request = Request.Builder()
             .url(wsUrl)
             .header("User-Agent", "CentyChat-Android/1.0.0")
             .build()
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        val listener = object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                if (ws !== webSocket) return
                 isConnected.set(true)
-                reconnectAttempts = 0
+                isConnecting.set(false)
+                // reconnectAttempts is reset only on auth_success: the server refuses sessions
+                // (TOO_MANY_SESSIONS, RATE_LIMITED) on sockets that did open.
                 // Authenticate immediately upon connection
                 sendAuth(token)
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
-                handleTextMessage(text)
+                if (ws === webSocket) handleTextMessage(text)
             }
 
             override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                handleBinaryMessage(bytes)
+                if (ws === webSocket) handleBinaryMessage(bytes)
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                if (ws !== webSocket) return
                 isConnected.set(false)
+                isConnecting.set(false)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                isConnected.set(false)
-                if (!isManuallyClosed.get()) {
-                    scheduleReconnect()
-                }
+                // Callbacks of a socket we already replaced or closed ourselves are ignored.
+                if (ws !== webSocket) return
+                onSocketLost()
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                isConnected.set(false)
-                if (!isManuallyClosed.get()) {
-                    scheduleReconnect()
-                }
+                if (ws !== webSocket) return
+                onSocketLost()
             }
-        })
+        }
+        webSocket = webSocketFactory?.invoke(request, listener) ?: client.newWebSocket(request, listener)
     }
 
-    private fun scheduleReconnect() {
+    private fun onSocketLost() {
+        webSocket = null
+        _deliveryFrames.tryEmit(SOCKET_CLOSED_FRAME)
+        isConnected.set(false)
+        isConnecting.set(false)
+        if (!isManuallyClosed.get()) {
+            _connectionState.value = ConnectionState.Connecting
+            scheduleReconnect()
+        } else if (_connectionState.value !is ConnectionState.Unauthorized) {
+            _connectionState.value = ConnectionState.Disconnected
+        }
+    }
+
+    /** Closes the current socket without triggering the listener-driven reconnect. */
+    private fun closeCurrentSocket(reason: String) {
+        val ws = webSocket
+        if (ws != null) _deliveryFrames.tryEmit(SOCKET_CLOSED_FRAME)
+        webSocket = null
+        isConnected.set(false)
+        isConnecting.set(false)
+        ws?.close(1000, reason)
+    }
+
+    private fun handleAuthError(code: String, message: String) {
+        when (code) {
+            // The token itself is not acceptable: stop until the session changes (new login, refresh,
+            // password change). The app verifies the session over HTTP and signs out on 401.
+            "INVALID_TOKEN", "MUST_CHANGE_PASSWORD" -> {
+                rejectedToken = authenticatingToken
+                isManuallyClosed.set(true)
+                reconnectJob?.cancel()
+                closeCurrentSocket("Authentication rejected")
+                _connectionState.value = ConnectionState.Unauthorized(code, message)
+                _events.tryEmit(WsEvent.AuthError(code, message))
+            }
+            // Too many sessions / rate limited / unknown: transient, retry with growing delays.
+            else -> {
+                closeCurrentSocket("Authentication deferred")
+                val alreadyReported = (_connectionState.value as? ConnectionState.Retrying)?.code == code
+                _connectionState.value = ConnectionState.Retrying(code, message)
+                if (!alreadyReported) _events.tryEmit(WsEvent.AuthError(code, message))
+                scheduleReconnect(
+                    minDelayMs = if (code == "TOO_MANY_SESSIONS") SESSION_LIMIT_MIN_DELAY_MS else REFUSAL_MIN_DELAY_MS,
+                    maxDelayMs = REFUSAL_MAX_DELAY_MS
+                )
+            }
+        }
+    }
+
+    private fun scheduleReconnect(minDelayMs: Long = 1_000L, maxDelayMs: Long = 30_000L) {
         if (isManuallyClosed.get()) return
         val currentScope = scope ?: return
 
         reconnectJob?.cancel()
-        reconnectJob = currentScope.launch(Dispatchers.IO) {
+        reconnectJob = currentScope.launch {
             reconnectAttempts++
-            // Exponential backoff: 1s, 2s, 4s... max 30s with +-20% jitter
-            val baseDelay = min(30000L, (1000L * (1L shl (reconnectAttempts.coerceAtMost(5) - 1))))
+            // Exponential backoff from minDelayMs (x2 per attempt) up to maxDelayMs, +-20% jitter.
+            val baseDelay = min(maxDelayMs, minDelayMs * (1L shl (reconnectAttempts.coerceAtMost(6) - 1)))
             val jitter = (baseDelay * 0.2f * (Random.nextFloat() * 2f - 1f)).toLong()
             val totalDelay = (baseDelay + jitter).coerceAtLeast(500L)
 
             delay(totalDelay)
-            if (!isManuallyClosed.get() && !isConnected.get()) {
+            if (!isManuallyClosed.get() && !isConnected.get() && isConnecting.compareAndSet(false, true)) {
                 establishConnection()
             }
         }
     }
 
     private fun sendAuth(token: String) {
-        val authPayload = buildJsonObject {
-            put("type", "auth")
-            put("token", token)
-        }
-        sendJson(authPayload.toString())
+        sendJson(authFrame(token, runCatching { sessionManager.deviceId }.getOrNull(), authContext.snapshot()).toString())
     }
 
     private fun handleTextMessage(text: String) {
+        val raw = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull()
         try {
-            val root = json.parseToJsonElement(text).jsonObject
-            val type = root["type"]?.jsonPrimitive?.content ?: return
-
-            when (type) {
-                "auth_success" -> {
-                    val userObj = root["user"]
-                    if (userObj != null) {
-                        val user = json.decodeFromJsonElement<User>(userObj)
-                        sessionManager.currentUser = user
-                        _events.tryEmit(WsEvent.AuthSuccess(user))
-                    }
+            val event = (WsEventParser.parse(text) as? WsFrame.Event)?.event ?: return
+            when (event) {
+                is WsEvent.AuthSuccess -> {
+                    sessionManager.currentUser = event.user
+                    reconnectAttempts = 0
+                    _connectionState.value = ConnectionState.Connected
+                    _events.tryEmit(event)
                 }
-                "auth_error" -> {
-                    val code = root["code"]?.jsonPrimitive?.content ?: "UNKNOWN"
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Auth error"
-                    if (code == "MUST_CHANGE_PASSWORD") {
+                is WsEvent.AuthError -> {
+                    if (event.code == "MUST_CHANGE_PASSWORD") {
                         sessionManager.mustChangePassword = true
                     }
-                    _events.tryEmit(WsEvent.AuthError(code, message))
+                    handleAuthError(event.code, event.message)
                 }
-                "wake_state" -> {
-                    val targetUserId = root["targetUserId"]?.jsonPrimitive?.longOrNull
-                    val retryAt = root["retryAt"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.WakeState(targetUserId, retryAt))
-                }
-                "server_disconnect" -> {
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Disconnected by server"
-                    _events.tryEmit(WsEvent.ServerDisconnect(reason))
-                }
-                "new_message", "direct_message", "channel_message" -> {
-                    val messageObj = root["message"]
-                    if (messageObj != null) {
-                        val message = json.decodeFromJsonElement<Message>(messageObj)
-                        _events.tryEmit(WsEvent.NewMessage(message))
+                is WsEvent.NewMessage -> {
+                    val firstDelivery = synchronized(recentMessageIds) {
+                        recentMessageIds.put(event.message.id, Unit) == null
                     }
+                    if (firstDelivery) _events.tryEmit(event)
                 }
-                "message_status_updated" -> {
-                    val messageId = root["messageId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val status = root["status"]?.jsonPrimitive?.content ?: "delivered"
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val timestamp = root["timestamp"]?.jsonPrimitive?.content ?: ""
-                    _events.tryEmit(WsEvent.MessageStatusUpdated(messageId, status, userId, timestamp))
-                }
-                "messages_read" -> {
-                    val byUserId = root["byUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val messageIds = root["messageIds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull } ?: emptyList()
-                    _events.tryEmit(WsEvent.MessagesRead(byUserId, messageIds))
-                }
-                "message_updated" -> {
-                    val messageObj = root["message"]?.jsonObject
-                    if (messageObj != null) {
-                        val id = messageObj["id"]?.jsonPrimitive?.longOrNull ?: 0L
-                        val newText = messageObj["text"]?.jsonPrimitive?.content ?: ""
-                        val updatedAt = messageObj["updated_at"]?.jsonPrimitive?.content ?: ""
-                        _events.tryEmit(WsEvent.MessageUpdated(id, newText, updatedAt))
-                    }
-                }
-                "message_deleted" -> {
-                    val messageId = root["messageId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val conversationType = root["conversationType"]?.jsonPrimitive?.content ?: "direct"
-                    val targetId = root["targetId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.MessageDeleted(messageId, conversationType, targetId))
-                }
-                "user_typing" -> {
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val userName = root["userName"]?.jsonPrimitive?.content ?: ""
-                    val conversationType = root["conversationType"]?.jsonPrimitive?.content ?: "direct"
-                    val targetId = root["targetId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val isTyping = root["isTyping"]?.jsonPrimitive?.booleanOrNull ?: false
-                    _events.tryEmit(WsEvent.UserTyping(userId, userName, conversationType, targetId, isTyping))
-                }
-                "user_status_changed" -> {
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull
-                        ?: root["user_id"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val statusStr = root["status"]?.jsonPrimitive?.content
-                    val customStatus = root["customStatus"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.UserStatusChanged(userId, UserStatus.fromValue(statusStr), customStatus))
-                }
-                "channel_created" -> {
-                    val channelObj = root["channel"]
-                    if (channelObj != null) {
-                        val channel = json.decodeFromJsonElement<Channel>(channelObj)
-                        _events.tryEmit(WsEvent.ChannelCreated(channel))
-                    }
-                }
-                "channel_deleted" -> {
-                    val channelId = root["channelId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    _events.tryEmit(WsEvent.ChannelDeleted(channelId))
-                }
-                "new_announcement" -> {
-                    val annObj = root["announcement"]
-                    if (annObj != null) {
-                        val announcement = json.decodeFromJsonElement<Announcement>(annObj)
-                        _events.tryEmit(WsEvent.NewAnnouncement(announcement))
-                    }
-                }
-                "announcement_acknowledged" -> {
-                    val annId = root["announcementId"]?.jsonPrimitive?.content ?: ""
-                    val userId = root["userId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val userName = root["userName"]?.jsonPrimitive?.content ?: ""
-                    _events.tryEmit(WsEvent.AnnouncementAcknowledged(annId, userId, userName))
-                }
-                "call_offer" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: "Коллега"
-                    _events.tryEmit(WsEvent.CallOffer(target, sender, senderName))
-                }
-                "call_answer" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: "Коллега"
-                    _events.tryEmit(WsEvent.CallAnswer(target, sender, senderName))
-                }
-                "call_rejected" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: ""
-                    val reason = root["reason"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.CallRejected(target, sender, senderName, reason))
-                }
-                "call_end" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val sender = root["senderId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val senderName = root["senderName"]?.jsonPrimitive?.content ?: ""
-                    val reason = root["reason"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.CallEnd(target, sender, senderName, reason))
-                }
-                "call_denied" -> {
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Звонок запрещен"
-                    _events.tryEmit(WsEvent.CallDenied(reason))
-                }
-                "call_unavailable" -> {
-                    val target = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val reason = root["reason"]?.jsonPrimitive?.content ?: "Абонент недоступен"
-                    _events.tryEmit(WsEvent.CallUnavailable(target, reason))
-                }
-                "wake_ring" -> {
-                    val fromUserId = root["fromUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val fromName = root["fromName"]?.jsonPrimitive?.content ?: "Коллега"
-                    val at = root["at"]?.jsonPrimitive?.longOrNull ?: System.currentTimeMillis()
-                    _events.tryEmit(WsEvent.WakeRing(fromUserId, fromName, at))
-                }
-                "wake_sent" -> {
-                    val targetUserId = root["targetUserId"]?.jsonPrimitive?.longOrNull ?: 0L
-                    val at = root["at"]?.jsonPrimitive?.longOrNull ?: System.currentTimeMillis()
-                    val retryAt = root["retryAt"]?.jsonPrimitive?.longOrNull ?: (at + 60000L)
-                    _events.tryEmit(WsEvent.WakeSent(targetUserId, at, retryAt))
-                }
-                "wake_error" -> {
-                    val code = root["code"]?.jsonPrimitive?.content ?: "error"
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Не удалось отправить побудку"
-                    _events.tryEmit(WsEvent.WakeError(code, message))
-                }
-                "error" -> {
-                    val context = root["context"]?.jsonPrimitive?.content
-                    val message = root["message"]?.jsonPrimitive?.content ?: "Server error"
-                    val origText = root["text"]?.jsonPrimitive?.content
-                    _events.tryEmit(WsEvent.GenericError(context, message, origText))
-                }
+                else -> _events.tryEmit(event)
             }
         } catch (_: Exception) {}
+        // After the typed handling: an auth_success frame finds the session user already set.
+        if (raw != null) _deliveryFrames.tryEmit(raw)
+    }
+
+    /** Writes a frame built by the delivery engine; false when there is no open socket. */
+    fun sendFrame(frame: JsonObject): Boolean = sendJson(frame.toString())
+
+    /**
+     * Drops the current socket so it reconnects: the engine lost data it could not store (§5), and
+     * the new socket's sync chain reads it again.
+     */
+    fun restart() {
+        webSocket?.cancel()
     }
 
     private fun handleBinaryMessage(bytes: ByteString) {
@@ -308,59 +285,16 @@ class WebSocketClient(
             samples[i] = buffer.short
         }
 
-        _events.tryEmit(WsEvent.AudioFrameReceived(senderId, samples))
+        _audioFrames.tryEmit(WsEvent.AudioFrameReceived(senderId, samples))
     }
 
     private fun sendJson(jsonString: String): Boolean {
         return webSocket?.send(jsonString) ?: false
     }
 
-    fun sendTextMessage(
-        conversationType: ConversationType,
-        targetId: Long,
-        text: String,
-        replyToId: Long? = null,
-        metadata: MessageMetadata? = null
-    ): Boolean {
-        val payload = buildJsonObject {
-            put("type", "send_message")
-            put("conversationType", conversationType.value)
-            put("targetId", targetId)
-            put("text", text)
-            put("msgType", "text")
-            if (replyToId != null) put("replyToId", replyToId)
-            if (metadata != null) {
-                put("metadata", json.encodeToJsonElement(metadata))
-            }
-        }
-        return sendJson(payload.toString())
-    }
-
-    fun editMessage(messageId: Long, text: String): Boolean {
-        val payload = buildJsonObject {
-            put("type", "edit_message")
-            put("messageId", messageId)
-            put("text", text)
-        }
-        return sendJson(payload.toString())
-    }
-
-    fun deleteMessage(messageId: Long): Boolean {
-        val payload = buildJsonObject {
-            put("type", "delete_message")
-            put("messageId", messageId)
-        }
-        return sendJson(payload.toString())
-    }
-
-    fun markRead(conversationType: ConversationType, targetId: Long): Boolean {
-        val payload = buildJsonObject {
-            put("type", "mark_read")
-            put("conversationType", conversationType.value)
-            put("targetId", targetId)
-        }
-        return sendJson(payload.toString())
-    }
+    /** «Смотрю этот чат» (null — ни один): сервер не уведомляет о нём ни одно устройство сотрудника. */
+    fun sendViewing(conversationType: ConversationType?, targetId: Long?): Boolean =
+        sendJson(viewingFrame(conversationType, targetId).toString())
 
     fun sendTyping(conversationType: ConversationType, targetId: Long, isTyping: Boolean): Boolean {
         val payload = buildJsonObject {
@@ -372,20 +306,26 @@ class WebSocketClient(
         return sendJson(payload.toString())
     }
 
-    fun sendPresence(state: String, customStatus: String?): Boolean {
+    /**
+     * Сигнал системы о присутствии: «online» или «away». Без [includeCustomStatus] поле
+     * customStatus не отправляется вовсе — сервер считает null командой стереть свой статус.
+     */
+    fun sendPresence(state: String, customStatus: String? = null, includeCustomStatus: Boolean = false): Boolean {
         val payload = buildJsonObject {
             put("type", "presence")
             put("state", state)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            if (includeCustomStatus) {
+                if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
+            }
         }
         return sendJson(payload.toString())
     }
 
-    fun setDnd(enabled: Boolean, customStatus: String? = null): Boolean {
+    /** «Не беспокоить» поверх присутствия; свой статус не трогает. */
+    fun setDnd(enabled: Boolean): Boolean {
         val payload = buildJsonObject {
             put("type", "set_dnd")
             put("enabled", enabled)
-            if (customStatus != null) put("customStatus", customStatus) else put("customStatus", JsonNull)
         }
         return sendJson(payload.toString())
     }
@@ -450,8 +390,47 @@ class WebSocketClient(
         isManuallyClosed.set(true)
         reconnectJob?.cancel()
         reconnectJob = null
-        webSocket?.close(1000, "Normal closure")
-        webSocket = null
-        isConnected.set(false)
+        closeCurrentSocket("Normal closure")
+        _connectionState.value = ConnectionState.Disconnected
+    }
+
+    companion object {
+        private val DEVICE_ID = Regex("^[A-Za-z0-9._:-]{1,128}$")
+
+        /**
+         * Кадр auth (multi-device.md §3): device_id — тот же, что в knock и регистрации push, чтобы
+         * сервер связал сокет с устройством; в фоне — presence "away"; открытый чат — viewing.
+         */
+        fun authFrame(token: String, deviceId: String?, state: AuthContext.Snapshot): JsonObject = buildJsonObject {
+            put("type", "auth")
+            put("token", token)
+            if (deviceId != null && DEVICE_ID.matches(deviceId)) put("device_id", deviceId)
+            put("platform", "android")
+            if (state.background) {
+                put("presence", "away")
+            } else if (state.viewing != null) {
+                put("viewing", buildJsonObject {
+                    put("conversationType", state.viewing.first.value)
+                    put("targetId", state.viewing.second)
+                })
+            }
+        }
+
+        fun viewingFrame(conversationType: ConversationType?, targetId: Long?): JsonObject = buildJsonObject {
+            put("type", "viewing")
+            if (conversationType == null || targetId == null) {
+                put("conversationType", JsonNull)
+            } else {
+                put("conversationType", conversationType.value)
+                put("targetId", targetId)
+            }
+        }
+
+        /** A socket went away, whatever the reason (DeliveryLink.SOCKET_CLOSED). */
+        private val SOCKET_CLOSED_FRAME = buildJsonObject { put("type", "socket_closed") }
+
+        private const val SESSION_LIMIT_MIN_DELAY_MS = 10_000L
+        private const val REFUSAL_MIN_DELAY_MS = 2_000L
+        private const val REFUSAL_MAX_DELAY_MS = 60_000L
     }
 }

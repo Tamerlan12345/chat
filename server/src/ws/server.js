@@ -7,6 +7,9 @@ const AuditService = require('../services/audit.service');
 const { isRateLimited, registerFailure } = require('../services/rate-limiter');
 const { getClientIp, isIpAllowed, rateLimitIpKey } = require('../services/ip-access.service');
 const config = require('../config');
+const PushService = require('../push/push.service');
+const NotifyDecision = require('../push/notify-decision');
+const Avatars = require('../media/avatars');
 
 // Самое крупное законное сообщение — файл до 10 МБ, переданный на удалённый
 // рабочий стол в base64 (около 13,5 МБ). Без предела библиотека принимает до
@@ -43,6 +46,24 @@ const LARGE_FRAME_ALLOWED_TYPE_RE = /^(rd_[a-zA-Z0-9_]+|ice_candidate|call_[a-zA
 // что человека нет.
 const SYSTEM_PRESENCE = new Set(['online', 'away']);
 const CUSTOM_STATUS_MAX = 200;
+// Устройство сокета (multi-device.md §3): необязательные device_id и platform
+// кадра auth. device_id — тот же, что в /auth/knock и /devices/push-token: по
+// нему сокет телефона узнаётся среди устройств с push. Недопустимое значение
+// не ошибка — сокет просто остаётся «без устройства», как у старых клиентов.
+const DEVICE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const CLIENT_PLATFORMS = new Set(['desktop', 'android', 'ios', 'web']);
+const MOBILE_PLATFORMS = new Set(['android', 'ios']);
+// Сколько переписок на сотрудника помнить «уходил push» (для тихого read).
+const PUSHED_CHATS_MAX = 100;
+
+// Кадр viewing (или поле viewing кадра auth) → { conversationType, targetId }
+// или null. Всё недопустимое — null («ни один чат»), а не «оставить прежнее».
+function parseViewing(v) {
+  if (!v || typeof v !== 'object') return null;
+  const targetId = Number(v.targetId);
+  if ((v.conversationType !== 'direct' && v.conversationType !== 'channel') || !Number.isInteger(targetId) || targetId <= 0) return null;
+  return { conversationType: v.conversationType, targetId };
+}
 
 // Побудка собеседника: сигнал уходит сразу, следующий — не раньше чем через
 // минуту. Пауза общая на отправителя, а не на пару: иначе можно было бы по
@@ -84,7 +105,9 @@ const RATE_LIMITS = {
   channel_message: [10, 1000],
   edit_message: [10, 1000],
   delete_message: [10, 1000],
+  cancel_message: [10, 1000],
   mark_read: [20, 1000],
+  viewing: [20, 1000],
   call_offer: [3, 10000],
   rd_request: [3, 30000],
   wake_send: [20, 10000],
@@ -124,17 +147,107 @@ function conversationRecipients(message) {
 }
 
 function allowRate(ws, key) {
+  return checkRate(ws, key).allowed;
+}
+
+// Предел частоты с ответом: allowed — пропустить кадр; иначе retryAfterMs —
+// через сколько откроется окно (для кадра error RATE_LIMITED, G2).
+function checkRate(ws, key) {
   const [limit, windowMs] = RATE_LIMITS[key] || RATE_LIMITS['*'];
   if (!ws.rate) ws.rate = new Map();
   const now = Date.now();
   const bucket = ws.rate.get(key);
   if (!bucket || now - bucket.start >= windowMs) {
     ws.rate.set(key, { start: now, count: 1 });
-    return true;
+    return { allowed: true, retryAfterMs: 0 };
   }
   bucket.count += 1;
-  return bucket.count <= limit;
+  if (bucket.count <= limit) return { allowed: true, retryAfterMs: 0 };
+  return { allowed: false, retryAfterMs: Math.max(1, bucket.start + windowMs - now) };
 }
+
+// ── Очередь кадров сокета (G1) ──────────────────────────────────────────────
+// Кадры переписки одного сокета обрабатываются строго по очереди: обработчик
+// отправки ждёт базу учётных записей и проверку файла, и без очереди два
+// сообщения подряд сохранялись в обратном порядке. Очередь своя у каждого
+// сокета — медленный кадр одного не задерживает остальных. Звонки, удалённый
+// стол, «печатает…», присутствие и auth идут мимо очереди, как раньше: их
+// порядок относительно сообщений не важен, а задержка заметна.
+const SEND_TYPES = new Set(['send_message', 'direct_message', 'channel_message']);
+const SERIAL_TYPES = new Set([...SEND_TYPES, 'edit_message', 'delete_message', 'cancel_message', 'mark_read']);
+// Кадры, на которые клиент ждёт ответа: отказ пределом частоты или
+// переполненной очередью им сообщается кадром error RATE_LIMITED (G2).
+// Остальные (mark_read, typing, presence…) по-прежнему отбрасываются молча.
+const ACK_TYPES = new Set([...SEND_TYPES, 'edit_message', 'delete_message', 'cancel_message']);
+
+// Сколько кадров переписки может ждать в очереди одного сокета. Предел
+// частоты пропускает в неё до ~60 кадров/с; очередь растёт, только если
+// обработка медленнее. Сверх предела — отказ RATE_LIMITED, а не память.
+function maxQueuedFrames() {
+  const value = Number(process.env.WS_MAX_QUEUED_FRAMES);
+  return Number.isInteger(value) && value > 0 ? value : 100;
+}
+const QUEUE_FULL_RETRY_MS = 1000;
+
+// Обработчик, который не ответил за это время (зависла внешняя база),
+// перестаёт держать очередь сокета: следующий кадр идёт дальше.
+function frameTimeoutMs() {
+  const value = Number(process.env.WS_FRAME_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 30000;
+}
+
+// Ответы RATE_LIMITED сами ограничены: не больше REPLY_BUDGET за секунду на
+// сокет и не тогда, когда клиент не читает свой сокет (bufferedAmount) —
+// иначе поток отброшенных кадров превращался бы в поток ответов, копящихся в
+// памяти сервера. Без ответа клиент узнаёт об отказе по таймауту, как раньше.
+const REPLY_BUDGET = 10;
+const REPLY_WINDOW_MS = 1000;
+const MAX_BUFFERED_FOR_REPLY = 1024 * 1024;
+
+function takeReplyBudget(ws) {
+  const now = Date.now();
+  if (!ws.replyBudget || now - ws.replyBudget.start >= REPLY_WINDOW_MS) ws.replyBudget = { start: now, count: 0 };
+  ws.replyBudget.count += 1;
+  return ws.replyBudget.count <= REPLY_BUDGET && (ws.bufferedAmount || 0) <= MAX_BUFFERED_FOR_REPLY;
+}
+
+function safeSend(ws, payload) {
+  try {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  } catch {
+    /* сокет уже закрыт */
+  }
+}
+
+// Поля, по которым клиент находит в своей очереди запрос, на который пришёл
+// отказ: client_msg_id отправки/отзыва (только допустимый — недопустимое
+// значение обратно не отражается) или messageId правки/удаления.
+function correlation(type, msg) {
+  const out = {};
+  if (SEND_TYPES.has(type) || type === 'cancel_message') {
+    if (typeof msg.client_msg_id === 'string' && MessageService.CLIENT_MSG_ID_RE.test(msg.client_msg_id)) {
+      out.client_msg_id = msg.client_msg_id;
+    }
+  } else if (type === 'edit_message' || type === 'delete_message') {
+    const id = Number(msg.messageId);
+    if (Number.isInteger(id) && id > 0) out.messageId = id;
+  }
+  return out;
+}
+
+// Кадр error в ответ на запрос. message (и text отправки/правки) — как
+// раньше, их читает настольный клиент; code, retryable и поля корреляции —
+// дополнение для мобильных клиентов (delivery-state.md).
+function errorFrame(type, msg, { message, code, retryable }, extra = {}) {
+  const context = SEND_TYPES.has(type) ? 'send_message' : type;
+  const frame = { type: 'error', context, message };
+  if ((SEND_TYPES.has(type) || type === 'edit_message') && typeof msg.text === 'string') frame.text = msg.text;
+  frame.code = code;
+  frame.retryable = retryable;
+  return { ...frame, ...correlation(type, msg), ...extra };
+}
+
+const RATE_LIMITED_MESSAGE = 'Слишком много запросов — повторите чуть позже';
 
 // Браузерная страница с чужого сайта может открыть соединение к серверу от
 // имени пользователя. Токен в cookie не хранится, поэтому вреда сейчас нет,
@@ -158,6 +271,14 @@ function originAllowed(req) {
 
 // Вызов, на который так и не ответили, перестаёт давать право «ответить».
 const CALL_OFFER_TTL_MS = 2 * 60 * 1000;
+// Сколько помнить вызов через push, закончившийся до подключения вызываемого:
+// разбуженный телефон при входе получает call_end и сразу гасит экран звонка.
+const ENDED_PUSH_OFFER_TTL_MS = 60 * 1000;
+const NOT_ONLINE_REASON = 'Сотрудник сейчас не в сети';
+// Окно звонка через push (как срок уведомления у поставщика): пока оно не
+// закончилось, уход последнего сокета вызываемого не снимает вызов — его
+// телефон ещё может проснуться от push и ответить.
+const CALL_RING_MS = require('../push/payload').CALL_TTL_SECONDS * 1000;
 
 // Сообщения, которыми оператор управляет чужим компьютером. При доступе
 // «только просмотр» сервер их не пропускает: полагаться на то, что клиент
@@ -184,23 +305,160 @@ class WsServer {
     // Кто с кем сейчас разговаривает. Только эти пары могут обмениваться
     // звуком — см. relayAudioFrame.
     this.activeCalls = new Map(); // userId -> userId
-    // Кто кому звонит и ещё не получил ответа: callerId -> { targetId, at }.
+    // Кто кому звонит и ещё не получил ответа:
+    // callerId -> { targetId, at, seq, ws } — ws: сокет, с которого звонят.
     this.pendingOffers = new Map();
+    // Номер вызова (задача 20): растёт с каждым вызовом. По нему push-очередь
+    // отличает вызов, ради которого шла доставка, от нового вызова той же пары
+    // — время вызова (at) у двух вызовов может совпасть до миллисекунды.
+    this.offerSeq = 0;
+    // Какие сокеты участвуют в разговоре (задача 20): userId -> { ws, peerId,
+    // role: 'caller' | 'callee' }. Звук принимается только с этих сокетов и
+    // уходит только на них — у сотрудника может быть несколько устройств, но
+    // разговаривает одно: то, с которого звонили, и то, которым ответили.
+    this.callBindings = new Map();
     // «Не беспокоить» переживает переподключение: переход ноутбука в сон не
-    // должен молча снимать режим.
+    // должен молча снимать режим. Одно на сотрудника — общее для всех его
+    // устройств (multi-device.md §2).
     this.dndUsers = new Set();
-    // Последний сигнал системы о присутствии: что показать, когда режим
-    // «Не беспокоить» выключат.
-    this.presence = new Map(); // userId -> 'online' | 'away'
+    // Присутствие — у каждого СОКЕТА своё (ws.presenceState: 'online' |
+    // 'away'), итог по сотруднику — aggregatePresence(): «в сети», если хоть
+    // одно устройство на переднем плане. Раньше было одно значение на
+    // сотрудника, и телефон, ушедший в фон, делал «отошёл» человека, который
+    // печатает за компьютером. Там же ws.viewing — открытый на переднем плане
+    // чат (кадр viewing), ws.deviceId / ws.clientPlatform — из кадра auth.
+    this.socketSeq = 0;
+    // По каким перепискам сотруднику уходил push о сообщении после последнего
+    // прочтения: userId -> Set('direct:5', 'channel:7'). Прочтение снимает
+    // показанные уведомления тихим push «read» — только там, где их было что
+    // снимать (multi-device.md §6). В памяти: после перезапуска — без снятия.
+    this.pushedChats = new Map();
     // Последняя побудка каждого отправителя: fromId -> { toId, at }.
     this.lastWake = new Map();
     this.wakeInFlight = new Set();
     this.socketsPerIp = new Map(); // ip -> число соединений
+    // Push-уведомления (задача 18) идут только тем, у кого нет ни одного
+    // сокета и не включено «Не беспокоить»: очередь перепроверяет это перед
+    // доставкой — получатель мог подключиться, пока задание ждало.
+    // Вызовы через push, закончившиеся до подключения вызываемого:
+    // calleeId -> Map(callerId -> { at, reason, senderName, delivered }).
+    this.endedPushOffers = new Map();
+    // Вызовы, которые ещё проверяются (сеанс вызывающего, устройства для push):
+    // "callerId>targetId" -> { cancelled }. Сброс или новый вызов той же пары
+    // во время проверки отменяет её — вызов не встаёт задним числом.
+    this.offerAttempts = new Map();
+    PushService.attachPresence({
+      // Для звонков: каким устройствам вызываемого нужен push — тем же
+      // решением, что при вызове (decideCallNotification), с сокетами на
+      // момент проверки.
+      callPushTargets: (userId, callerId, devices) => this.callDecision(Number(userId), Number(callerId), devices).push,
+      isDnd: (userId) => this.dndUsers.has(Number(userId)),
+      // Для сообщений и «read»: какие устройства получают push — тем же
+      // решением, что и при рассылке (notify-decision.js), с сокетами на
+      // момент проверки. Очередь зовёт это перед каждой попыткой доставки.
+      messagePushTargets: (userId, payload, devices) => this.messagePushTargets(Number(userId), payload, devices),
+      readPushTargets: (userId, devices) => this.readPushTargets(Number(userId), devices),
+      messageJobCurrent: (userId, payload, stamp) => this.messageJobCurrent(Number(userId), payload, stamp),
+      // Жив ли вызов, ради которого шлётся уведомление: снятый вызов не будит телефон.
+      callOffer: (callerId, calleeId) => {
+        const offer = this.pendingOffers.get(Number(callerId));
+        return offer && offer.viaPush && offer.targetId === Number(calleeId) && this.hasPendingOffer(Number(callerId), Number(calleeId))
+          ? { at: offer.at, seq: offer.seq }
+          : null;
+      },
+      callUndeliverable: (callerId, calleeId, offerSeq) => this.pushCallUndeliverable(Number(callerId), Number(calleeId), offerSeq)
+    });
   }
 
+  // Итог присутствия по всем сокетам сотрудника: 'online' — хоть один на
+  // переднем плане (новый сокет входит «в сети»); 'away' — все в фоне или
+  // простаивают; 'offline' — сокетов нет.
+  aggregatePresence(userId) {
+    const sockets = this.userSockets.get(Number(userId));
+    if (!sockets || !sockets.size) return 'offline';
+    for (const ws of sockets) if (ws.presenceState !== 'away') return 'online';
+    return 'away';
+  }
+
+  // «Не беспокоить» — поверх итога. Без сокетов — 'online', как и раньше:
+  // уход последнего сокета рассылает 'offline' отдельно.
   effectiveStatus(userId) {
     if (this.dndUsers.has(userId)) return 'dnd';
-    return this.presence.get(userId) || 'online';
+    return this.aggregatePresence(userId) === 'away' ? 'away' : 'online';
+  }
+
+  // Сокеты сотрудника в форме входа notify-decision.js.
+  decisionSockets(userId) {
+    const result = [];
+    for (const ws of this.userSockets.get(Number(userId)) || []) {
+      result.push({
+        id: ws.socketId,
+        deviceId: ws.deviceId || null,
+        presence: ws.presenceState === 'away' ? 'away' : 'online',
+        viewing: ws.viewing || null
+      });
+    }
+    return result;
+  }
+
+  // Сообщение в форме входа решения из полезной нагрузки push: targetId там —
+  // переписка с точки зрения получателя (в личной это автор).
+  static decisionMessageFromPayload(userId, payload) {
+    return payload.conversationType === 'channel'
+      ? { conversationType: 'channel', targetId: Number(payload.targetId), senderId: 0 }
+      : { conversationType: 'direct', targetId: Number(userId), senderId: Number(payload.targetId) };
+  }
+
+  // Какие из устройств с push (devices: [{ id }]) получают уведомление о
+  // сообщении — сейчас, с текущими сокетами, «Не беспокоить» и viewing.
+  messagePushTargets(userId, payload, devices) {
+    return NotifyDecision.decideMessageNotification({
+      recipientId: userId,
+      dnd: this.dndUsers.has(userId),
+      message: WsServer.decisionMessageFromPayload(userId, payload),
+      sockets: this.decisionSockets(userId),
+      pushDevices: devices
+    }).push;
+  }
+
+  // Решение о звонке (multi-device.md §5, push.md §3) с сокетами вызываемого сейчас.
+  // devices — устройства, которые будит звонок; без них — по таблице токенов.
+  callDecision(userId, callerId, devices = PushService.callDevicesSync(userId)) {
+    return NotifyDecision.decideCallNotification({
+      recipientId: userId,
+      dnd: this.dndUsers.has(userId),
+      call: { callerId },
+      sockets: this.decisionSockets(userId),
+      pushDevices: devices
+    });
+  }
+
+  readPushTargets(userId, devices) {
+    return NotifyDecision.decideReadDismissal({ sockets: this.decisionSockets(userId), pushDevices: devices }).push;
+  }
+
+  // Задание push о сообщении ещё актуально: после него переписку не читали.
+  // stamp — отметка pushedChats на момент постановки (pushMessage); чтение
+  // удаляет отметку, и запоздалый повтор не приходит после тихого «read».
+  messageJobCurrent(userId, payload, stamp) {
+    if (stamp === undefined || stamp === null) return true;
+    const key = `${payload.conversationType}:${payload.targetId}`;
+    return this.pushedChats.get(userId)?.get(key) === stamp;
+  }
+
+  // Забыть, о каких переписках сотруднику уходил push: выход из канала
+  // (chatKey) или отключение сотрудника (всё).
+  forgetPushedChats(userId, chatKey = null) {
+    const map = this.pushedChats.get(Number(userId));
+    if (!map) return;
+    if (chatKey) map.delete(chatKey);
+    else map.clear();
+    if (!map.size) this.pushedChats.delete(Number(userId));
+  }
+
+  // Переписки больше нет (канал удалён) — забыть её у всех.
+  forgetPushedChatForAll(chatKey) {
+    for (const userId of [...this.pushedChats.keys()]) this.forgetPushedChats(userId, chatKey);
   }
 
   async publishStatus(user, previous = null) {
@@ -251,7 +509,10 @@ class WsServer {
     } finally {
       this.wakeInFlight.delete(sender.id);
     }
-    if (!target || target.is_active === 0 || target.is_active === false) {
+    // Блокировка в любую сторону закрывает и «Побудку» (registration.md §4).
+    // Ответ тот же, что для несуществующего адреса, — блокировку он не выдаёт.
+    if (!target || target.is_active === 0 || target.is_active === false ||
+        require('../services/safety.service').isBlockedEitherWay(sender.id, targetId)) {
       return reply({ type: 'wake_error', code: 'invalid_target', targetUserId: targetId, message: 'Разбудить можно только коллегу' });
     }
     if (this.wakeRetryAt(sender.id) > Date.now()) {
@@ -300,11 +561,25 @@ class WsServer {
     });
 
     this.wss.on('connection', (ws, req) => {
+      // Аватары ссылкой (задача 20): сокету, подключившемуся с ?avatars=url,
+      // в каждом текстовом кадре с полем фото data URL заменяется адресом,
+      // старая ссылка — null. Обёртка на самом send — так её не обходит ни
+      // одна рассылка. Остальным сокетам — прежняя форма.
+      if (Avatars.socketWantsAvatarUrls(req)) {
+        const rawSend = ws.send.bind(ws);
+        ws.send = (data, ...rest) => rawSend(typeof data === 'string' ? Avatars.shapeFrame(data) : data, ...rest);
+      }
       ws.remoteIp = getClientIp(req) || '127.0.0.1';
       ws.ipKey = rateLimitIpKey(ws.remoteIp);
       this.socketsPerIp.set(ws.ipKey, (this.socketsPerIp.get(ws.ipKey) || 0) + 1);
       ws.isAlive = true;
       ws.connectedAt = new Date().toISOString();
+      this.socketSeq += 1;
+      ws.socketId = `s${this.socketSeq}`;
+      ws.presenceState = 'online';
+      ws.viewing = null;
+      ws.deviceId = null;
+      ws.clientPlatform = null;
 
       // Соединение, которое так и не представилось, закрывается. Иначе
       // открытый анонимный сокет — бесплатное место в памяти сервера на сколько
@@ -372,18 +647,21 @@ class WsServer {
           return;
         }
         const rateKey = RATE_LIMITS[data.type] ? data.type : '*';
-        if (!allowRate(ws, rateKey)) return;
-        // Обработчик обращается к двум базам и потому асинхронен. Отказ
-        // обещания без перехвата завершает процесс Node — одно кривое
-        // сообщение роняло бы сервер для всех.
-        Promise.resolve(this.handleMessage(ws, data)).catch((err) => {
-          console.error('[WS Error] Обработка сообщения не удалась:', err.message);
-          try {
-            ws.send(JSON.stringify({ type: 'error', message: 'Ошибка обработки запроса' }));
-          } catch {
-            /* сокет уже закрыт */
-          }
-        });
+        const rate = checkRate(ws, rateKey);
+        if (!rate.allowed) {
+          // Кадр по-прежнему отбрасывается; клиенту, который ждёт ответа,
+          // говорится, когда повторить (G2). Отброшенный viewing (ответа на
+          // него нет) снимает прежнее значение: лучше лишнее уведомление, чем
+          // молча заглушённый чат, который человек уже закрыл.
+          if (data.type === 'viewing') ws.viewing = null;
+          this.replyRateLimited(ws, data, rate.retryAfterMs);
+          return;
+        }
+        if (authenticated && SERIAL_TYPES.has(data.type)) {
+          this.enqueueFrame(ws, data);
+          return;
+        }
+        this.runFrame(ws, data);
       });
 
       ws.on('close', () => {
@@ -404,16 +682,22 @@ class WsServer {
     // Heartbeat to detect dead connections. unref'd so it never becomes the
     // only reason the process stays alive — otherwise Node cannot exit after
     // the server closes, which is what a test run does.
+    // Телефоны теряют сеть без закрытия сокета чаще компьютеров, а «зомби»
+    // телефона, считающийся «в сети», отнимает у него push. Поэтому их сокеты
+    // проверяются каждые 15 с, остальные — каждые 30 с, как раньше.
+    let tick = 0;
     this.heartbeat = setInterval(() => {
       if (!this.wss) return;
+      tick += 1;
       this.wss.clients.forEach((ws) => {
+        if (!MOBILE_PLATFORMS.has(ws.clientPlatform) && tick % 2) return;
         if (!ws.isAlive) {
           return ws.terminate();
         }
         ws.isAlive = false;
         ws.ping();
       });
-    }, 30000);
+    }, 15000);
     this.heartbeat.unref();
 
     // Токен, которым соединение вошло, мог быть отозван: смена пароля, роли,
@@ -428,23 +712,79 @@ class WsServer {
     console.log('[WS Server] Realtime WebSocket gateway ready at /ws');
   }
 
+  replyRateLimited(ws, data, retryAfterMs) {
+    if (!ACK_TYPES.has(data.type) || !takeReplyBudget(ws)) return;
+    safeSend(ws, errorFrame(data.type, data, { message: RATE_LIMITED_MESSAGE, code: 'RATE_LIMITED', retryable: true }, { retry_after_ms: retryAfterMs }));
+  }
+
+  // Кадр переписки встаёт в очередь своего сокета (G1). Пользователь
+  // запоминается на момент получения: кадр, пришедший до обычного закрытия
+  // сокета, обрабатывается (настольный клиент мог отправить сообщение и сразу
+  // закрыться); отозванный сокет (revokeSocket) свои кадры теряет.
+  enqueueFrame(ws, data) {
+    if (!ws.lane) ws.lane = { tail: Promise.resolve(), pending: 0 };
+    const lane = ws.lane;
+    if (lane.pending >= maxQueuedFrames()) {
+      this.replyRateLimited(ws, data, QUEUE_FULL_RETRY_MS);
+      return;
+    }
+    lane.pending += 1;
+    const userAtArrival = this.socketUser.get(ws) || null;
+    const run = () => this.runFrame(ws, data, userAtArrival, { timeout: true }).finally(() => { lane.pending -= 1; });
+    lane.tail = lane.tail.then(run, run);
+  }
+
+  // Обработчик обращается к двум базам и потому асинхронен. Отказ обещания без
+  // перехвата завершает процесс Node — одно кривое сообщение роняло бы сервер
+  // для всех. Зависший обработчик держит очередь сокета не дольше
+  // frameTimeoutMs — таймер заводится только у кадров очереди (timeout):
+  // кадру вне очереди (rd_*, ICE, присутствие) держать нечего, и таймер на
+  // каждый такой кадр был бы лишней работой и ложным предупреждением.
+  runFrame(ws, data, userAtArrival = null, { timeout: withTimeout = false } = {}) {
+    if (ws.revoked) return Promise.resolve();
+    const work = Promise.resolve()
+      .then(() => this.handleMessage(ws, data, userAtArrival))
+      .catch((err) => {
+        console.error('[WS Error] Обработка сообщения не удалась:', err.message);
+        const frame = ACK_TYPES.has(data.type)
+          ? errorFrame(data.type, data, { message: 'Ошибка обработки запроса', code: 'INTERNAL_ERROR', retryable: true })
+          : { type: 'error', message: 'Ошибка обработки запроса' };
+        safeSend(ws, frame);
+      });
+    if (!withTimeout) return work;
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[WS] кадр ${String(data.type).slice(0, 40)} обрабатывается дольше ${frameTimeoutMs()} мс — очередь сокета идёт дальше`);
+        resolve();
+      }, frameTimeoutMs());
+      timer.unref?.();
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+  }
+
   // Кадр звука: 4 байта — кому, дальше сам звук. Пересылается только между
   // участниками разговора, который обе стороны подтвердили: иначе любой
   // авторизованный пользователь мог бы вещать кому угодно.
+  // Звук принимается только с сокета, участвующего в разговоре (с которого
+  // звонили или которым ответили), и уходит только на сокет собеседника,
+  // участвующий в разговоре: другие устройства тех же сотрудников его не
+  // слышат и вещать в разговор не могут (задача 20).
   relayAudioFrame(ws, raw) {
     const sender = this.socketUser.get(ws);
     if (!sender || raw.length < 5) return;
 
     const targetUserId = raw.readUInt32BE(0);
     if (this.activeCalls.get(sender.id) !== targetUserId) return;
+    const own = this.callBindings.get(sender.id);
+    const peer = this.callBindings.get(targetUserId);
+    if (!own || own.ws !== ws || own.peerId !== targetUserId || !peer || peer.peerId !== sender.id) return;
 
     const out = Buffer.allocUnsafe(raw.length);
     out.writeUInt32BE(sender.id, 0);
     raw.copy(out, 4, 4);
 
-    for (const socket of this.userSockets.get(targetUserId) || []) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(out, { binary: true });
-    }
+    if (peer.ws.readyState === WebSocket.OPEN) peer.ws.send(out, { binary: true });
   }
 
   setCallPair(a, b) {
@@ -459,7 +799,54 @@ class WsServer {
   clearCallPair(a) {
     const b = this.activeCalls.get(a);
     this.activeCalls.delete(a);
-    if (b !== undefined && this.activeCalls.get(b) === a) this.activeCalls.delete(b);
+    this.callBindings.delete(a);
+    if (b !== undefined && this.activeCalls.get(b) === a) {
+      this.activeCalls.delete(b);
+      this.callBindings.delete(b);
+    }
+  }
+
+  // Сокеты разговора: вызывающего — тот, с которого звонили; вызываемого —
+  // тот, которым ответили.
+  bindCall(callerId, callerWs, calleeId, calleeWs) {
+    this.callBindings.set(callerId, { ws: callerWs, peerId: calleeId, role: 'caller' });
+    this.callBindings.set(calleeId, { ws: calleeWs, peerId: callerId, role: 'callee' });
+  }
+
+  // Новый номер вызова.
+  nextOfferSeq() {
+    this.offerSeq += 1;
+    return this.offerSeq;
+  }
+
+  // Сокет ушёл. Разговор, в котором он участвовал, окончен, даже если у
+  // сотрудника остались другие устройства: звук шёл только через этот сокет.
+  // То же — с вызовом, который шёл с этого сокета. Входящие вызовы
+  // снимаются, только когда у сотрудника не осталось ни одного сокета:
+  // ответить может любое его устройство.
+  endCallsOfSocket(user, ws, lastSocket) {
+    const peer = this.activeCalls.get(user.id);
+    if (peer !== undefined && (lastSocket || this.callBindings.get(user.id)?.ws === ws)) {
+      this.clearCallPair(user.id);
+      this.sendToUser(peer, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    const outgoing = this.pendingOffers.get(user.id);
+    if (outgoing && (lastSocket || outgoing.ws === ws)) {
+      this.rememberEndedPushOffer(user.id, 'connection_lost');
+      this.pendingOffers.delete(user.id);
+      this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+    }
+    if (!lastSocket) return;
+    const now = Date.now();
+    for (const [callerId, offer] of this.pendingOffers) {
+      // Вызов с push в окне звонка остаётся: телефон, который будит push,
+      // ещё может проснуться и ответить (компьютер закрыли, пока звонило).
+      if (offer.targetId === user.id && offer.viaPush && now - offer.at < CALL_RING_MS) continue;
+      if (offer.targetId === user.id) {
+        this.pendingOffers.delete(callerId);
+        this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
+      }
+    }
   }
 
   hasPendingOffer(callerId, targetId) {
@@ -481,7 +868,7 @@ class WsServer {
     return false;
   }
 
-  async handleMessage(ws, msg) {
+  async handleMessage(ws, msg, userAtArrival = null) {
     const { type } = msg;
 
     // 1. Authentication
@@ -523,7 +910,16 @@ class WsServer {
         return ws.send(JSON.stringify({ type: 'auth_error', message: 'Требуется смена пароля перед продолжением работы', code: 'MUST_CHANGE_PASSWORD' }));
       }
 
-      if ((this.userSockets.get(user.id)?.size || 0) >= MAX_SOCKETS_PER_USER && !this.userSockets.get(user.id)?.has(ws)) {
+      // Прежние сокеты ЭТОГО ЖЕ устройства (тот же device_id) — «зомби»:
+      // телефон потерял сеть, а сервер ещё до минуты считает старый сокет
+      // живым. Он вытесняется: иначе устройство выглядело бы «в сети» (без
+      // push), а его старый viewing глушил бы все устройства сотрудника.
+      const deviceId = typeof msg.device_id === 'string' && DEVICE_ID_RE.test(msg.device_id) ? msg.device_id : null;
+      const superseded = deviceId
+        ? [...(this.userSockets.get(user.id) || [])].filter((s) => s !== ws && s.deviceId === deviceId)
+        : [];
+      const occupied = (this.userSockets.get(user.id)?.size || 0) - superseded.length;
+      if (occupied >= MAX_SOCKETS_PER_USER && !this.userSockets.get(user.id)?.has(ws)) {
         return ws.send(JSON.stringify({ type: 'auth_error', code: 'TOO_MANY_SESSIONS', message: 'Слишком много открытых окон. Закройте лишние.' }));
       }
 
@@ -531,6 +927,26 @@ class WsServer {
       // оставлять его в списках прежнего владельца.
       if (this.socketUser.has(ws)) this.unbindSocket(ws);
       ws.authToken = msg.token;
+      // Только что подключился — на переднем плане, если клиент не сказал
+      // иначе (телефон, переподключившийся в фоне, шлёт presence: 'away' прямо
+      // в auth); открытого чата сервер ещё не знает. Устройство — из
+      // необязательных полей auth.
+      ws.presenceState = msg.presence === 'away' ? 'away' : 'online';
+      // Открытый чат можно сообщить прямо в auth — без окна, когда сервер
+      // уже шлёт сообщения, а viewing ещё не пришёл.
+      ws.viewing = ws.presenceState === 'online' ? parseViewing(msg.viewing) : null;
+      ws.deviceId = deviceId;
+      ws.clientPlatform = CLIENT_PLATFORMS.has(msg.platform) ? msg.platform : null;
+
+      // Вытесненный сокет сразу перестаёт что-либо значить (away, без
+      // viewing) и обрывается; его закрытие обычным путём (handleDisconnect)
+      // освобождает место и пересчитывает итог присутствия.
+      for (const old of superseded) {
+        old.presenceState = 'away';
+        old.viewing = null;
+        old.superseded = true;
+        try { old.terminate(); } catch {}
+      }
 
       clearTimeout(ws.authTimer);
       this.socketUser.set(ws, user);
@@ -544,15 +960,22 @@ class WsServer {
       // живой токен не должен сажать адрес атакующего в «знакомые» (I-2).
       require('../services/trusted-sources.service').recordAsync(user.id, ws.ipKey || rateLimitIpKey(ws.remoteIp), { allowCreate: false });
 
-      // Только что подключился — значит, за компьютером. «Не беспокоить»,
-      // включённое раньше, остаётся.
-      this.presence.set(user.id, 'online');
+      // Новый сокет «в сети» поднимает итог сотрудника (хоть один на переднем
+      // плане). «Не беспокоить», включённое раньше, остаётся.
       const status = this.effectiveStatus(user.id);
       user.status = status;
       await UserService.updateStatus(user.id, status);
 
       ws.send(JSON.stringify({ type: 'auth_success', user }));
       ws.send(JSON.stringify(this.wakeStateFor(user.id)));
+
+      // Телефон, разбуженный push-уведомлением о звонке, получает ждущий вызов
+      // по сокету — тем же кадром call_offer, что и при звонке онлайн.
+      this.replayPushedOffers(ws, user.id);
+
+      // Получатель снова на связи: всё, что пришло ему, пока его не было,
+      // теперь доставлено — и авторы, кто в сети, узнают об этом сразу.
+      this.announcePendingDeliveries(user.id);
 
       // Broadcast online status to all connected clients
       this.broadcast({
@@ -567,14 +990,16 @@ class WsServer {
       return;
     }
 
-    const currentUser = this.socketUser.get(ws);
+    const currentUser = this.socketUser.get(ws)
+      || (userAtArrival && !ws.revoked && ws.readyState !== WebSocket.OPEN ? userAtArrival : null);
     if (!currentUser) {
-      return ws.send(JSON.stringify({ type: 'error', message: 'Необходима авторизация' }));
+      return safeSend(ws, { type: 'error', message: 'Необходима авторизация' });
     }
 
     // 2. Chat messaging
     if (type === 'send_message' || type === 'direct_message' || type === 'channel_message') {
       let { conversationType, targetId, text, msgType, replyToId, metadata, recipient_id, channel_id } = msg;
+      const clientMsgId = msg.client_msg_id;
 
       if (!conversationType) {
         if (type === 'channel_message' || channel_id) conversationType = 'channel';
@@ -585,45 +1010,36 @@ class WsServer {
       }
 
       let savedMsg;
+      let duplicate = false;
       try {
-        savedMsg = await MessageService.sendMessage({
+        ({ message: savedMsg, duplicate } = await MessageService.sendMessageIdempotent({
           conversationType,
           targetId: Number(targetId),
           senderId: currentUser.id,
           text,
           type: msgType || 'text',
           replyToId: replyToId ? Number(replyToId) : null,
-          metadata
-        });
+          metadata,
+          clientMsgId,
+          senderProfile: currentUser
+        }));
       } catch (err) {
-        const message = err.message === 'NOT_CHANNEL_MEMBER' ? 'Вы не участник этого канала' : err.message;
         // Текст возвращается клиенту: поле ввода у него уже очищено, и без
-        // этого сообщение пропало бы без следа.
-        return ws.send(JSON.stringify({ type: 'error', context: 'send_message', message, text }));
+        // этого сообщение пропало бы без следа. client_msg_id — чтобы клиент
+        // нашёл в своей очереди, какая именно отправка не удалась; недопустимое
+        // значение обратно не отражается. code и retryable — повторять ли (G3).
+        return safeSend(ws, errorFrame('send_message', { text, client_msg_id: clientMsgId }, MessageService.describeError(err)));
       }
 
-      if (conversationType === 'channel') {
-        for (const memberId of MessageService.getChannelMemberIds(targetId)) {
-          this.sendToUser(memberId, { type: 'channel_message', message: savedMsg });
-          this.sendToUser(memberId, { type: 'new_message', message: savedMsg });
-        }
-      } else {
-        for (const userId of [targetId, currentUser.id]) {
-          this.sendToUser(userId, { type: 'direct_message', message: savedMsg });
-          this.sendToUser(userId, { type: 'new_message', message: savedMsg });
-        }
-
-        // Получатель на связи — отметка о доставке ставится сразу.
-        if (this.isUserOnline(targetId)) {
-          const now = MessageService.markDelivered(savedMsg.id, targetId);
-          this.sendToUser(currentUser.id, {
-            type: 'message_status_updated',
-            messageId: savedMsg.id,
-            status: 'delivered',
-            userId: targetId,
-            timestamp: now
-          });
-        }
+      // Сообщение уже сохранено: что бы ни случилось с рассылкой, автор
+      // получает подтверждение, а не ошибку (G3).
+      try {
+        this.publishNewMessage(savedMsg, { duplicate });
+      } catch (err) {
+        console.error('[WS Error] рассылка сохранённого сообщения не удалась:', err.message);
+        const specific = savedMsg.conversation_type === 'channel' ? 'channel_message' : 'direct_message';
+        this.sendToUser(currentUser.id, { type: specific, message: savedMsg });
+        this.sendToUser(currentUser.id, { type: 'new_message', message: savedMsg });
       }
       return;
     }
@@ -636,11 +1052,22 @@ class WsServer {
           actorId: currentUser.id,
           text: msg.text
         });
+        // Пока правка дочитывала сообщение (медленная база), его могло удалить
+        // параллельное удаление и уже разослать надгробие. message_updated
+        // после надгробия вернул бы клиентам текст удалённого сообщения:
+        // удаление побеждает, автору правки — тот же отказ, что и при правке
+        // уже удалённого.
+        if (MessageService.isGoneOrDeleted(updated?.id)) {
+          safeSend(ws, errorFrame('edit_message', msg, MessageService.describeError(
+            Object.assign(new Error('Сообщение удалено'), { code: 'MESSAGE_DELETED' })
+          )));
+          return;
+        }
         for (const userId of conversationRecipients(updated)) {
           this.sendToUser(userId, { type: 'message_updated', message: updated });
         }
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', context: 'edit_message', message: err.message }));
+        safeSend(ws, errorFrame('edit_message', msg, MessageService.describeError(err)));
       }
       return;
     }
@@ -655,7 +1082,7 @@ class WsServer {
           actorId: currentUser.id,
           isSuperAdmin: isSuperAdminUser
         });
-        if (isSuperAdminUser && deleted.sender_id !== currentUser.id) {
+        if (isSuperAdminUser && !deleted.alreadyDeleted && deleted.sender_id !== currentUser.id) {
           AuditService.log({
             userId: currentUser.id,
             action: 'message_deleted_by_admin',
@@ -668,16 +1095,27 @@ class WsServer {
             }
           });
         }
-        for (const userId of conversationRecipients(deleted)) {
-          this.sendToUser(userId, {
-            type: 'message_deleted',
-            messageId: deleted.id,
-            conversationType: deleted.conversation_type,
-            targetId: deleted.target_id
-          });
-        }
+        this.publishDeleted(ws, deleted);
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', context: 'delete_message', message: err.message }));
+        safeSend(ws, errorFrame('delete_message', msg, MessageService.describeError(err)));
+      }
+      return;
+    }
+
+    // 2d. Отзыв отправки по ключу (G9): «если этот client_msg_id придёт — не
+    // сохраняй; если уже сохранён — удали». Ответ — message_cancelled этому
+    // сокету; удаление, если было, рассылается обычным message_deleted.
+    if (type === 'cancel_message') {
+      try {
+        const { messageId, deleted } = await MessageService.cancelClientMessage({
+          senderId: currentUser.id,
+          clientMsgId: msg.client_msg_id
+        });
+        if (deleted) this.publishDeleted(ws, deleted);
+        safeSend(ws, { type: 'message_cancelled', client_msg_id: msg.client_msg_id, messageId });
+      } catch (err) {
+        const extra = Number.isInteger(err.messageId) ? { messageId: err.messageId } : {};
+        safeSend(ws, errorFrame('cancel_message', msg, MessageService.describeError(err), extra));
       }
       return;
     }
@@ -699,6 +1137,24 @@ class WsServer {
           messageIds: res.messageIds
         });
       }
+      // Прочитано на одном устройстве — прочитано у сотрудника: остальным его
+      // сокетам conversation_read (снять непрочитанное и уведомления), тем же
+      // правилом «только когда что-то прочитано».
+      const read = conversationType === 'direct' ? Boolean(res.messageIds?.length) : Boolean(res.changed);
+      if (read) this.publishConversationRead(ws, currentUser.id, conversationType, targetId, res);
+      return;
+    }
+
+    // 3b. Какой чат открыт на этом устройстве на переднем плане (multi-device.md
+    //     §4): { conversationType, targetId } или conversationType: null —
+    //     ни один. Пока сокет «в сети» и смотрит чат, о новых сообщениях в нём
+    //     не уведомляется ни одно устройство сотрудника. Недопустимый кадр не
+    //     меняет ничего.
+    if (type === 'viewing') {
+      // Недопустимый кадр — «ни один чат»: ошибка клиента не должна глушить
+      // уведомления. На сокете в фоне viewing не запоминается.
+      const viewing = parseViewing(msg);
+      ws.viewing = ws.presenceState === 'away' ? null : viewing;
       return;
     }
 
@@ -725,6 +1181,9 @@ class WsServer {
           if (memberId !== currentUser.id) this.sendToUser(memberId, payload);
         }
       } else if (targetId !== currentUser.id) {
+        // Блокировка (в любую сторону) глушит и «печатает…»: заблокированный
+        // не должен знать, что его читают, а блокировщик — видеть его.
+        if (require('../services/safety.service').isBlockedEitherWay(currentUser.id, targetId)) return;
         this.sendToUser(targetId, payload);
       }
       return;
@@ -737,7 +1196,10 @@ class WsServer {
     //    никак.
     if (type === 'presence' || type === 'set_dnd' || type === 'set_status' || type === 'status_update') {
       if (msg.customStatus !== undefined) {
-        currentUser.custom_status = msg.customStatus === null ? null : String(msg.customStatus).slice(0, CUSTOM_STATUS_MAX);
+        // Текст статуса — у сотрудника, а не у сокета: всем его соединениям.
+        const custom = msg.customStatus === null ? null : String(msg.customStatus).slice(0, CUSTOM_STATUS_MAX);
+        currentUser.custom_status = custom;
+        for (const u of this.socketsOf(currentUser.id)) u.custom_status = custom;
       }
 
       const previous = this.effectiveStatus(currentUser.id);
@@ -749,7 +1211,10 @@ class WsServer {
       } else {
         const state = String(type === 'presence' ? msg.state : msg.status || '');
         if (!SYSTEM_PRESENCE.has(state)) return;
-        this.presence.set(currentUser.id, state);
+        // Сигнал ЭТОГО устройства. Ушло в фон или простаивает — открытый на
+        // нём чат больше не «смотрят»: вернувшись, клиент пришлёт viewing снова.
+        ws.presenceState = state;
+        if (state === 'away') ws.viewing = null;
       }
 
       await this.publishStatus(currentUser, customChanged ? null : previous);
@@ -768,52 +1233,104 @@ class WsServer {
       // rejecting stay open so a call already in progress can always be
       // ended, whatever the caller's role became meanwhile.
       if (type === 'call_offer') {
-        const fresh = await this.freshUser(ws);
-        if (!fresh) return;
-        if (!fresh.permissions?.can_call) {
-          ws.send(JSON.stringify({
-            type: 'call_denied',
-            reason: 'Звонки не разрешены для вашей роли. Обратитесь к администратору.'
-          }));
-          return;
+        // Проверки ниже ждут базу. Вызывающий за это время мог сбросить вызов
+        // (call_end обработан раньше, чем вызов встал) или отключиться — тогда
+        // вызов не встаёт и телефон не будится (задача 19).
+        const attempt = this.beginOfferAttempt(currentUser.id, targetUserId);
+        const abandoned = () => this.offerAttemptAbandoned(ws, attempt);
+        try {
+          const fresh = await this.freshUser(ws);
+          if (!fresh || abandoned()) return;
+          if (!fresh.permissions?.can_call) {
+            ws.send(JSON.stringify({
+              type: 'call_denied',
+              reason: 'Звонки не разрешены для вашей роли. Обратитесь к администратору.'
+            }));
+            return;
+          }
+          // Блокировка в любую сторону закрывает звонки (registration.md §4):
+          // ни кадра call_offer, ни push о звонке. Ответ — как для сотрудника
+          // не в сети, блокировку он не выдаёт (и «Не беспокоить» тоже).
+          if (require('../services/safety.service').isBlockedEitherWay(currentUser.id, targetUserId)) {
+            safeSend(ws, { type: 'call_unavailable', targetUserId, reason: NOT_ONLINE_REASON });
+            return;
+          }
+          // «Не беспокоить» — значит не звонить: раньше вызов проходил, и один
+          // сотрудник мог звонить коллеге без остановки.
+          if (this.dndUsers.has(targetUserId)) {
+            ws.send(JSON.stringify({
+              type: 'call_unavailable',
+              targetUserId,
+              reason: 'У сотрудника включено «Не беспокоить»'
+            }));
+            return;
+          }
+          // Кому звонить — по тому же правилу, что уведомления о сообщениях
+          // (multi-device.md §5): кадр call_offer — всем сокетам вызываемого,
+          // push — его устройствам без сокета на переднем плане, даже если
+          // другие устройства на связи (компьютер простаивает, телефон в
+          // кармане). Не звонит ни один сокет и будить нечего — call_unavailable.
+          if (!(await this.placeOffer(currentUser, targetUserId, msg, abandoned, ws))) return;
+        } finally {
+          this.endOfferAttempt(attempt);
         }
-        // «Не беспокоить» — значит не звонить: раньше вызов проходил, и один
-        // сотрудник мог звонить коллеге без остановки.
-        if (this.dndUsers.has(targetUserId)) {
-          ws.send(JSON.stringify({
-            type: 'call_unavailable',
-            targetUserId,
-            reason: 'У сотрудника включено «Не беспокоить»'
-          }));
-          return;
-        }
-        // Nobody is at the other end — tell the caller instead of ringing out.
-        if (!this.userSockets.get(targetUserId)?.size) {
-          ws.send(JSON.stringify({
-            type: 'call_unavailable',
-            targetUserId,
-            reason: 'Сотрудник сейчас не в сети'
-          }));
-          return;
-        }
-        this.pendingOffers.set(currentUser.id, { targetId: targetUserId, at: Date.now() });
       }
 
       // Разговор начинается, только когда вызываемый отвечает на настоящий
       // вызов. Раньше «ответ» принимался от кого угодно и переписывал пару —
       // посторонний мог перехватить звук чужого разговора.
       if (type === 'call_answer') {
-        if (!this.hasPendingOffer(targetUserId, currentUser.id)) return;
+        // Ответ в уже начатом разговоре. С того же сокета (CallKit и экран
+        // приложения) — ничего не меняет: не пересылается и не получает
+        // call_end, иначе второй ответ обрывал бы только что начатый разговор.
+        // С другого устройства того же сотрудника — call_end
+        // «answered_elsewhere»: разговаривает только одно устройство (задача 20).
+        if (this.activeCalls.get(currentUser.id) === targetUserId && !this.hasPendingOffer(targetUserId, currentUser.id)) {
+          const binding = this.callBindings.get(currentUser.id);
+          if (binding && binding.ws !== ws) safeSend(ws, this.callEndFrame(targetUserId, 'answered_elsewhere'));
+          return;
+        }
+        // Ответ на вызов, которого уже нет (сброшен, истёк, не дождался
+        // подключения разбуженного телефона): отвечающему — call_end, чтобы он
+        // не держал экран разговора, в котором никого нет.
+        if (!this.hasPendingOffer(targetUserId, currentUser.id)) {
+          const ended = this.endedPushOffers.get(currentUser.id)?.get(targetUserId);
+          safeSend(ws, this.callEndFrame(targetUserId, ended?.reason || 'no_call', ended?.senderName));
+          return;
+        }
+        const offer = this.pendingOffers.get(targetUserId);
+        // Телефон, который будит push, может войти уже после ответа здесь:
+        // запомнить, чтобы он сразу погасил экран звонка (answered_elsewhere).
+        this.rememberEndedPushOffer(targetUserId, 'answered_elsewhere');
         this.pendingOffers.delete(targetUserId);
         this.setCallPair(currentUser.id, targetUserId);
+        const callerWs = offer.ws && this.socketUser.has(offer.ws) ? offer.ws : this.userSockets.get(targetUserId)?.values().next().value;
+        this.bindCall(targetUserId, callerWs, currentUser.id, ws);
+        // Остальные устройства вызываемого перестают звонить.
+        const ended = this.callEndFrame(targetUserId, 'answered_elsewhere');
+        for (const other of this.userSockets.get(currentUser.id) || []) {
+          if (other !== ws) safeSend(other, ended);
+        }
+      }
+
+      // Во время разговора отказ, сброс и кандидаты соединения принимаются
+      // только с сокета разговора: «Отклонить» на компьютере, когда ответили
+      // с телефона, не обрывает разговор (задача 20).
+      if (type === 'call_rejected' || type === 'call_end' || type === 'ice_candidate') {
+        const binding = this.callBindings.get(currentUser.id);
+        if (this.activeCalls.get(currentUser.id) === targetUserId && binding && binding.ws !== ws) return;
       }
 
       // Отказ и завершение касаются только разговора с тем, кому адресованы.
       // Занятый сотрудник автоматически отказывает третьему — и этот отказ
       // обрывал звук его текущего разговора.
       if (type === 'call_rejected' || type === 'call_end') {
+        this.cancelOfferAttempt(currentUser.id, targetUserId);
         if (this.hasPendingOffer(targetUserId, currentUser.id)) this.pendingOffers.delete(targetUserId);
-        if (this.pendingOffers.get(currentUser.id)?.targetId === targetUserId) this.pendingOffers.delete(currentUser.id);
+        if (this.pendingOffers.get(currentUser.id)?.targetId === targetUserId) {
+          this.rememberEndedPushOffer(currentUser.id, 'cancelled');
+          this.pendingOffers.delete(currentUser.id);
+        }
         if (this.activeCalls.get(currentUser.id) === targetUserId) this.clearCallPair(currentUser.id);
       }
 
@@ -1117,28 +1634,27 @@ class WsServer {
   }
 
   async handleDisconnect(ws) {
+    const leaving = this.socketUser.get(ws);
+    const previous = leaving ? this.effectiveStatus(leaving.id) : null;
     const unbound = this.unbindSocket(ws);
-    if (!unbound || !unbound.lastSocket) return;
+    if (!unbound) return;
+    // Сокет разговора или вызова уходит — разговор окончен, даже если у
+    // сотрудника остались другие устройства (задача 20).
+    if (!unbound.lastSocket) {
+      this.endCallsOfSocket(unbound.user, ws, false);
+      // Ушло единственное устройство на переднем плане — итог мог стать
+      // «отошёл». Рассылка — только если итог действительно сменился.
+      const remaining = this.socketsOf(unbound.user.id)[0] || unbound.user;
+      await this.publishStatus(remaining, previous).catch((err) =>
+        console.warn('[WS] не удалось обновить статус после отключения устройства:', err.message)
+      );
+      return;
+    }
     const { user } = unbound;
 
     // Оборвалась связь — разговор окончен, и собеседник должен об этом
     // узнать: иначе у него идёт таймер разговора, в котором никто не говорит.
-    const peer = this.activeCalls.get(user.id);
-    if (peer !== undefined) {
-      this.clearCallPair(user.id);
-      this.sendToUser(peer, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-    }
-    const outgoing = this.pendingOffers.get(user.id);
-    if (outgoing) {
-      this.pendingOffers.delete(user.id);
-      this.sendToUser(outgoing.targetId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-    }
-    for (const [callerId, offer] of this.pendingOffers) {
-      if (offer.targetId === user.id) {
-        this.pendingOffers.delete(callerId);
-        this.sendToUser(callerId, { type: 'call_end', senderId: user.id, senderName: user.full_name, reason: 'connection_lost' });
-      }
-    }
+    this.endCallsOfSocket(user, ws, true);
 
     // Сеанс удалённого доступа без одного из участников продолжаться не
     // должен: ни трансляция экрана, ни включённый ввод у второго.
@@ -1154,7 +1670,6 @@ class WsServer {
     }
 
     // Mark user as offline
-    this.presence.delete(user.id);
     await UserService.updateStatus(user.id, 'offline').catch((err) =>
       console.warn('[WS] не удалось отметить уход:', err.message)
     );
@@ -1167,9 +1682,387 @@ class WsServer {
     console.log(`[WS] User disconnected: ${user.full_name} (#${user.id})`);
   }
 
+  /**
+   * Надгробие участникам переписки; updated_at — время удаления (G8). Повтор
+   * удаления уже удалённого (alreadyDeleted) — подтверждение только этому
+   * сокету: остальные надгробие уже получили (G4).
+   */
+  publishDeleted(ws, deleted) {
+    const frame = {
+      type: 'message_deleted',
+      messageId: deleted.id,
+      conversationType: deleted.conversation_type,
+      targetId: deleted.target_id,
+      updated_at: deleted.updated_at
+    };
+    if (deleted.alreadyDeleted) {
+      safeSend(ws, frame);
+      return;
+    }
+    for (const userId of conversationRecipients(deleted)) this.sendToUser(userId, frame);
+  }
+
   isUserOnline(userId) {
     const sockets = this.userSockets.get(Number(userId));
     return Boolean(sockets && sockets.size > 0);
+  }
+
+  /**
+   * Рассылка только что сохранённого сообщения — одна для WS и REST:
+   * direct_message/channel_message и следом new_message каждому участнику;
+   * для личного — отметка «доставлено», если получатель на связи.
+   *
+   * Повтор отправки (тот же client_msg_id) — не новое сообщение: эхо уходит
+   * только сокетам самого автора как подтверждение, получатели второй раз
+   * его не получают (настольный клиент показал бы уведомление повторно).
+   */
+  publishNewMessage(message, { duplicate = false } = {}) {
+    const specific = message.conversation_type === 'channel' ? 'channel_message' : 'direct_message';
+    const senderId = Number(message.sender_id);
+    let recipients;
+    if (duplicate) recipients = [senderId];
+    else if (message.conversation_type === 'channel') recipients = MessageService.getChannelMemberIds(message.target_id);
+    else recipients = [Number(message.target_id), senderId];
+
+    // Каждому сокету — признак notify: показывать ли баннер (решение
+    // notify-decision.js, multi-device.md §5). Своё эхо и повтор — без баннера.
+    const userIds = [...new Set(recipients.map(Number))];
+    const decisions = duplicate ? new Map() : this.messageDecisions(message, userIds);
+    const toPush = [];
+    for (const userId of userIds) {
+      const decision = decisions.get(userId) || null;
+      const banner = new Set(decision ? decision.banner : []);
+      for (const ws of this.userSockets.get(userId) || []) {
+        if (ws.readyState !== WebSocket.OPEN) continue;
+        const notify = banner.has(ws.socketId);
+        ws.send(JSON.stringify({ type: specific, message, notify }));
+        ws.send(JSON.stringify({ type: 'new_message', message, notify }));
+      }
+      // В очередь — только тем, у кого есть кому слать push: участник
+      // большого канала, сидящий в приложении, заданий не порождает.
+      if (decision && decision.push.length && userId !== senderId) toPush.push(userId);
+    }
+
+    if (!duplicate && message.conversation_type === 'direct') this.markDeliveredIfOnline(message);
+    if (toPush.length) this.pushMessage(message, toPush);
+  }
+
+  /**
+   * Решения по сообщению для всех получателей: userId -> решение
+   * notify-decision. Устройства с push читаются ОДНИМ запросом на сообщение и
+   * только для тех, кого не исключили «своё», «Не беспокоить» и «чат открыт».
+   * Сбой решения — не тишина: уведомить, как до этого правила (баннер всем
+   * сокетам и push), с предупреждением в журнал.
+   */
+  messageDecisions(message, userIds) {
+    const msg = { conversationType: message.conversation_type, targetId: Number(message.target_id), senderId: Number(message.sender_id) };
+    const result = new Map();
+    const needDevices = [];
+    const prepared = new Map();
+    for (const userId of userIds) {
+      try {
+        const input = { recipientId: userId, dnd: this.dndUsers.has(userId), message: msg, sockets: this.decisionSockets(userId), pushDevices: [] };
+        const first = NotifyDecision.decideMessageNotification(input);
+        prepared.set(userId, input);
+        if (first.reason !== null) result.set(userId, first);
+        else needDevices.push(userId);
+      } catch (err) {
+        result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      }
+    }
+    let devices = new Map();
+    try {
+      devices = needDevices.length ? PushService.messageDevicesFor(needDevices) : devices;
+    } catch (err) {
+      console.warn('[WS] устройства для push не прочитаны:', err.message);
+      for (const userId of needDevices) result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      return result;
+    }
+    for (const userId of needDevices) {
+      try {
+        result.set(userId, NotifyDecision.decideMessageNotification({ ...prepared.get(userId), pushDevices: devices.get(userId) || [] }));
+      } catch (err) {
+        result.set(userId, this.fallbackDecision(userId, msg.senderId, err));
+      }
+    }
+    return result;
+  }
+
+  fallbackDecision(userId, senderId, err) {
+    console.warn('[WS] решение об уведомлении не принято — уведомляем:', err.message);
+    const ids = [...(this.userSockets.get(userId) || [])].map((s) => s.socketId);
+    if (userId === senderId) return { reason: 'own', push: [], banner: [], quiet: ids };
+    return { reason: null, push: ['*'], banner: ids, quiet: [] };
+  }
+
+  // Push-уведомление (только id) получателям, которых решение не исключило
+  // (не автор, без «Не беспокоить», чат не открыт ни на одном устройстве).
+  // Какие устройства получат push, очередь PushService решает тем же правилом
+  // перед каждой попыткой. Рассылка доставки не ждёт и не падает из-за неё.
+  pushMessage(message, userIds) {
+    try {
+      if (!PushService.enabled) return;
+      // pushedChats: userId -> Map(ключ переписки -> отметка), не больше
+      // PUSHED_CHATS_MAX на сотрудника (самая давняя вытесняется). Отметка
+      // живёт до прочтения переписки — по ней очередь узнаёт устаревшие задания.
+      const stamps = new Map();
+      for (const userId of userIds) {
+        const chat = NotifyDecision.chatOf({ conversationType: message.conversation_type, targetId: message.target_id, senderId: message.sender_id }, userId);
+        const key = `${chat.conversationType}:${chat.targetId}`;
+        if (!this.pushedChats.has(userId)) this.pushedChats.set(userId, new Map());
+        const map = this.pushedChats.get(userId);
+        let stamp = map.get(key);
+        if (stamp === undefined) {
+          this.pushStampSeq = (this.pushStampSeq || 0) + 1;
+          stamp = this.pushStampSeq;
+        }
+        map.delete(key);
+        map.set(key, stamp);
+        while (map.size > PUSHED_CHATS_MAX) map.delete(map.keys().next().value);
+        stamps.set(userId, stamp);
+      }
+      PushService.notifyMessage(message, userIds, stamps);
+    } catch (err) {
+      console.warn('[Push] постановка уведомлений не удалась:', err.message);
+    }
+  }
+
+  /**
+   * Прочитано на одном устройстве (multi-device.md §6): остальным сокетам
+   * читателя — conversation_read; устройствам, которым уходил push о сообщении
+   * этой переписки и у которых нет сокета на переднем плане, — тихий push
+   * «read», чтобы снять показанное уведомление (как получится: iOS тихие
+   * push не гарантирует).
+   */
+  publishConversationRead(ws, userId, conversationType, targetId, res) {
+    const frame = {
+      type: 'conversation_read',
+      conversationType,
+      targetId,
+      byUserId: userId,
+      at: new Date().toISOString()
+    };
+    if (conversationType === 'direct') frame.messageIds = res.messageIds;
+    else frame.lastReadId = res.lastReadId;
+    const payload = JSON.stringify(frame);
+    for (const other of this.userSockets.get(userId) || []) {
+      if (other !== ws && other.readyState === WebSocket.OPEN) other.send(payload);
+    }
+    const key = `${conversationType}:${targetId}`;
+    if (!this.pushedChats.get(userId)?.has(key)) return;
+    this.forgetPushedChats(userId, key);
+    try {
+      PushService.notifyRead(userId, { conversationType, targetId });
+    } catch (err) {
+      console.warn('[Push] постановка «read» не удалась:', err.message);
+    }
+  }
+
+  // Вызов встаёт (pendingOffers, 2 минуты) и возвращает true, если вызываемому
+  // есть чем позвонить (decideCallNotification): сокет, который звонит, или
+  // устройство с живым токеном, которое будит push о звонке (FCM на Android,
+  // PushKit VoIP на iOS). Вызов с push помнит свой кадр call_offer: телефон,
+  // разбуженный push, получает его при входе (replayPushedOffers). Иначе —
+  // вызывающему call_unavailable, false. abandoned() — вызывающий сбросил вызов
+  // или отключился, пока шла проверка: false без ответа — ни вызова, ни push.
+  async placeOffer(caller, targetUserId, msg, abandoned = () => false, callerWs = null) {
+    let devices = [];
+    try {
+      devices = await PushService.callDevices(targetUserId);
+    } catch (err) {
+      console.warn('[Push] проверка устройств для звонка не удалась:', err.message);
+    }
+    if (abandoned()) return false;
+    const decision = this.callDecision(targetUserId, caller.id, devices);
+    if (decision.reason) {
+      safeSend(callerWs, { type: 'call_unavailable', targetUserId, reason: NOT_ONLINE_REASON });
+      return false;
+    }
+    const at = Date.now();
+    const seq = this.nextOfferSeq();
+    const offer = { targetId: targetUserId, at, seq, ws: callerWs };
+    if (decision.push.length) {
+      offer.viaPush = true;
+      // Устройства, которые будит push, на момент вызова: если поставщик отклонит
+      // токен и тот удалится, сокет этого устройства в фоне всё равно не звонит
+      // сам (иначе call_unavailable не придёт, а вызов повиснет).
+      offer.devices = devices;
+      offer.frame = { ...msg, targetUserId, senderId: caller.id, senderName: caller.full_name };
+      this.endedPushOffers.get(targetUserId)?.delete(caller.id);
+    }
+    this.pendingOffers.set(caller.id, offer);
+    if (offer.viaPush) PushService.notifyCall({ calleeId: targetUserId, callerId: caller.id, offerAt: at, offerSeq: seq });
+    return true;
+  }
+
+  callEndFrame(callerId, reason, senderName = null) {
+    const name = senderName || this.socketsOf(callerId)[0]?.full_name || null;
+    return { type: 'call_end', senderId: callerId, ...(name ? { senderName: name } : {}), reason };
+  }
+
+  // Проверка вызова (call_offer ждёт базу): начало, отмена, конец.
+  beginOfferAttempt(callerId, targetId) {
+    const key = `${callerId}>${targetId}`;
+    const previous = this.offerAttempts.get(key);
+    if (previous) previous.cancelled = true; // новый вызов той же пары вытесняет прежний
+    const attempt = { key, cancelled: false };
+    this.offerAttempts.set(key, attempt);
+    return attempt;
+  }
+
+  cancelOfferAttempt(callerId, targetId) {
+    const attempt = this.offerAttempts.get(`${callerId}>${targetId}`);
+    if (attempt) attempt.cancelled = true;
+  }
+
+  endOfferAttempt(attempt) {
+    if (this.offerAttempts.get(attempt.key) === attempt) this.offerAttempts.delete(attempt.key);
+  }
+
+  offerAttemptAbandoned(ws, attempt) {
+    return attempt.cancelled || Boolean(ws.revoked) || !this.socketUser.has(ws);
+  }
+
+  // Блокировка (POST /api/blocks): вызовы между парой, которые уже звонят или
+  // проверяются, снимаются в обе стороны. Вызываемому — call_end (сокеты
+  // перестают звонить; телефон, разбуженный push, получит его при входе вместо
+  // call_offer), вызывающему — call_unavailable с обычной причиной: ответ
+  // блокировку не выдаёт. Снятый вызов не будит телефон: очередь push
+  // проверяет pendingOffers перед каждой попыткой (callOffer).
+  endCallsBetween(a, b) {
+    const pair = [[Number(a), Number(b)], [Number(b), Number(a)]];
+    for (const [callerId, calleeId] of pair) {
+      const attemptKey = `${callerId}>${calleeId}`;
+      const checking = this.offerAttempts.get(attemptKey);
+      if (checking && !checking.cancelled) {
+        checking.cancelled = true;
+        this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+      }
+      const offer = this.pendingOffers.get(callerId);
+      if (!offer || offer.targetId !== calleeId) continue;
+      this.rememberEndedPushOffer(callerId, 'unavailable');
+      this.pendingOffers.delete(callerId);
+      this.sendToUser(calleeId, this.callEndFrame(callerId, 'unavailable', offer.frame?.senderName));
+      this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+    }
+  }
+
+  // Вызов с push закончился: запомнить ненадолго, чтобы телефон, разбуженный
+  // push и вошедший позже, сразу погасил экран звонка. Сокеты, которые уже на
+  // связи, узнают о конце сами (call_end, answered_elsewhere) — запись им не
+  // повторяется: delivered — ключи устройств (device_id; без него — один общий
+  // ключ), получивших call_end. calleeConnecting — вызываемый как раз входит,
+  // и запись нужна, чтобы этот вход получил call_end.
+  rememberEndedPushOffer(callerId, reason, { calleeConnecting = false } = {}) {
+    const offer = this.pendingOffers.get(callerId);
+    if (!offer || !offer.viaPush) return;
+    const delivered = new Set();
+    if (!calleeConnecting) for (const s of this.userSockets.get(offer.targetId) || []) delivered.add(WsServer.callDeviceKey(s));
+    const now = Date.now();
+    let byCaller = this.endedPushOffers.get(offer.targetId);
+    if (!byCaller) {
+      byCaller = new Map();
+      this.endedPushOffers.set(offer.targetId, byCaller);
+    }
+    byCaller.set(callerId, { at: now, reason, senderName: offer.frame?.senderName || null, delivered });
+    for (const [calleeId, map] of this.endedPushOffers) {
+      for (const [id, entry] of map) if (now - entry.at > ENDED_PUSH_OFFER_TTL_MS) map.delete(id);
+      if (!map.size) this.endedPushOffers.delete(calleeId);
+    }
+  }
+
+  // Очередь push не разбудила ни одно устройство вызываемого: вызывающему —
+  // call_unavailable, как если бы push не было, вызов снимается. offerSeq —
+  // номер вызова, ради которого шли уведомления: запоздалый провал прежнего
+  // вызова не снимает новый вызов той же пары (время вызова у них может
+  // совпасть, номер — нет).
+  // Звонит хоть один сокет вызываемого (на переднем плане или в фоне на
+  // устройстве без push) — вызов идёт и без push.
+  pushCallUndeliverable(callerId, calleeId, offerSeq) {
+    const offer = this.pendingOffers.get(callerId);
+    if (!offer || !offer.viaPush || offer.targetId !== calleeId) return;
+    if (offerSeq !== undefined && offer.seq !== offerSeq) return;
+    if (this.callDecision(calleeId, callerId, offer.devices).ring.length) return;
+    this.rememberEndedPushOffer(callerId, 'unavailable');
+    this.pendingOffers.delete(callerId);
+    // Сокеты в фоне получили кадр вызова — снять его.
+    this.sendToUser(calleeId, this.callEndFrame(callerId, 'unavailable', offer.frame?.senderName));
+    this.sendToUser(callerId, { type: 'call_unavailable', targetUserId: calleeId, reason: NOT_ONLINE_REASON });
+  }
+
+  // Ключ устройства для памяти о закончившемся вызове: device_id или один общий
+  // ключ для сокетов без него (настольный клиент, старые сборки).
+  static callDeviceKey(ws) {
+    return ws.deviceId ? 'd:' + ws.deviceId : '-';
+  }
+
+  // При входе вызываемого: ждущие вызовы через push — тем же кадром
+  // call_offer; закончившиеся до входа (сброшен, истёк, не разбудили) — call_end.
+  // call_end уходит один раз — первому вошедшему сокету: повторный вход
+  // (сокет телефона в фоне переподключается) его не повторяет. Запись живёт
+  // до конца своей минуты ради опоздавшего call_answer — он узнаёт причину.
+  replayPushedOffers(ws, userId) {
+    for (const [callerId, offer] of [...this.pendingOffers]) {
+      if (!offer.viaPush || offer.targetId !== userId) continue;
+      if (this.hasPendingOffer(callerId, userId)) {
+        safeSend(ws, offer.frame);
+      } else {
+        this.rememberEndedPushOffer(callerId, 'timeout', { calleeConnecting: true });
+        this.pendingOffers.delete(callerId);
+      }
+    }
+    const now = Date.now();
+    const key = WsServer.callDeviceKey(ws);
+    for (const [callerId, entry] of this.endedPushOffers.get(userId) || []) {
+      if (entry.delivered.has(key) || now - entry.at > ENDED_PUSH_OFFER_TTL_MS || this.pendingOffers.get(callerId)?.targetId === userId) continue;
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      entry.delivered.add(key);
+      // Разговор с этим вызывающим идёт на другом устройстве — ниже answered_elsewhere.
+      if (this.activeCalls.get(userId) === callerId) continue;
+      safeSend(ws, this.callEndFrame(callerId, entry.reason, entry.senderName));
+    }
+    // Сотрудник уже разговаривает с другого устройства — вошедшее (например,
+    // второй телефон, разбуженный тем же push) гасит экран звонка.
+    const binding = this.callBindings.get(userId);
+    if (binding && binding.role === 'callee' && binding.ws !== ws && this.activeCalls.get(userId) === binding.peerId) {
+      safeSend(ws, this.callEndFrame(binding.peerId, 'answered_elsewhere'));
+    }
+  }
+
+  // Получатель личного сообщения на связи — «доставлено» ставится сразу.
+  markDeliveredIfOnline(message) {
+    const recipientId = Number(message.target_id);
+    if (!this.isUserOnline(recipientId)) return;
+    const now = MessageService.markDelivered(message.id, recipientId);
+    this.sendToUser(Number(message.sender_id), {
+      type: 'message_status_updated',
+      messageId: message.id,
+      status: 'delivered',
+      userId: recipientId,
+      timestamp: now
+    });
+  }
+
+  // S3: при входе получателя — его недоставленные личные сообщения
+  // становятся доставленными, авторам уходит тот же message_status_updated,
+  // что и при отправке получателю в сети (по кадру на сообщение).
+  announcePendingDeliveries(recipientId) {
+    let result;
+    try {
+      result = MessageService.markPendingDelivered(recipientId);
+    } catch (err) {
+      console.warn('[WS] отметка доставки при входе не удалась:', err.message);
+      return;
+    }
+    for (const { messageId, senderId } of result.delivered) {
+      this.sendToUser(senderId, {
+        type: 'message_status_updated',
+        messageId,
+        status: 'delivered',
+        userId: Number(recipientId),
+        timestamp: result.timestamp
+      });
+    }
   }
 
   sendToUser(userId, data) {

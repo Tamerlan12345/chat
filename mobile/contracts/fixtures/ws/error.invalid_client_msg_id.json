@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "context": "send_message",
+  "message": "Недопустимый client_msg_id: строка 1–64 символа из A–Z, a–z, 0–9, «_» и «-»",
+  "text": "Ключ с пробелом",
+  "code": "INVALID_CLIENT_MSG_ID",
+  "retryable": false
+}

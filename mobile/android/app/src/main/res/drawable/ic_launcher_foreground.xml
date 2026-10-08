@@ -2,9 +2,10 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:viewportWidth="880"
+    android:viewportHeight="880">
+    <!-- Official CentyChat C, centred in the adaptive icon safe area. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,34h48c2.2,0 4,1.8 4,4v28c0,2.2 -1.8,4 -4,4H42l-12,12V38c0,-2.2 1.8,-4 4,-4z" />
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M619.8,190H469.8A140,140 0,0 0,329.8,330V550A140,140 0,0 0,469.8,690H619.8V621H469.8A71,71 0,0 1,398.8,550V330A71,71 0,0 1,469.8,259H619.8Z" />
 </vector>

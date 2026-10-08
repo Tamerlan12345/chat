@@ -246,6 +246,62 @@ test('поиск: % и _ ищутся буквально, длинная стр�
   assert.ok(limited, 'после 30 поисков в минуту — 429');
 });
 
+// SQLite LIKE сравнивает без учёта регистра только ASCII: «отчёт» не находил
+// «Отчёт». Мобильный поиск (задача 21) ищет кириллицей — регистр и «ё» не
+// должны мешать, а % и _ по-прежнему буквальные.
+test('поиск: кириллица без учёта регистра, «ё» равна «е», шаблонные символы буквальны', async () => {
+  const bobId = people.w4_bob.id;
+  const send = (text) => api('POST', `/api/messages/direct/${bobId}`, { token: people.w4_carol.token, ip: '198.51.100.8', body: { text } });
+  assert.strictEqual((await send('Квартальный ОТЧЁТ по Ёлкам готов')).status, 201);
+  assert.strictEqual((await send('Скидка 50% для отдела')).status, 201);
+  const search = async (q) => {
+    const res = await api('GET', `/api/messages/search?q=${encodeURIComponent(q)}`, { token: people.w4_carol.token, ip: '198.51.100.8' });
+    assert.strictEqual(res.status, 200, res.text);
+    return res.json.map((m) => m.text);
+  };
+  assert.deepStrictEqual(await search('отчёт'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('КВАРТАЛЬНЫЙ'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('отчет по елкам'), ['Квартальный ОТЧЁТ по Ёлкам готов']);
+  assert.deepStrictEqual(await search('СКИДКА 50%'), ['Скидка 50% для отдела']);
+  assert.deepStrictEqual(await search('50_'), [], '_ по-прежнему не шаблон');
+});
+
+// Свёртка — только для строк, видимых сотруднику: на синхронном node:sqlite
+// редкий запрос иначе сворачивал бы текст всей таблицы.
+test('поиск: fold_text вызывается только для видимых сотруднику сообщений', async () => {
+  const { foldText } = require('../src/db');
+  const bobToken = people.w4_bob.token;
+  // Переписка Алисы с админом не видна Бобу — её текст сворачивать незачем.
+  for (let i = 0; i < 5; i++) {
+    const res = await api('POST', `/api/messages/direct/${people.admin.id}`, { token: people.w4_alice.token, ip: '198.51.100.9', body: { text: `Чужая переписка ${i}` } });
+    assert.strictEqual(res.status, 201, res.text);
+  }
+  const visible = chat.prepare(`
+    SELECT COUNT(*) AS n FROM messages m
+    WHERE m.is_deleted = 0 AND (
+      (m.conversation_type = 'channel' AND m.target_id IN (SELECT channel_id FROM channel_members WHERE user_id = ?)) OR
+      (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?)))
+  `).get(people.w4_bob.id, people.w4_bob.id, people.w4_bob.id).n;
+  let calls = 0;
+  chat.function('fold_text', { deterministic: true }, (s) => { calls++; return foldText(s); });
+  try {
+    const res = await api('GET', `/api/messages/search?q=${encodeURIComponent('нигде-не-встречается')}`, { token: bobToken, ip: '198.51.100.9' });
+    assert.strictEqual(res.status, 200, res.text);
+  } finally {
+    chat.function('fold_text', { deterministic: true }, foldText);
+  }
+  assert.ok(calls <= visible, `свёрнуто ${calls} строк, видимых ${visible}`);
+});
+
+test('журнал переписки администратора: кириллица без учёта регистра', async () => {
+  const send = await api('POST', `/api/messages/direct/${people.w4_bob.id}`, { token: people.w4_carol.token, ip: '198.51.100.10', body: { text: 'Проверка ЖУРНАЛА администратора' } });
+  assert.strictEqual(send.status, 201, send.text);
+  const res = await api('GET', `/api/admin/audit/messages?q=${encodeURIComponent('журнала')}`, { token: people.admin.token, ip: '198.51.100.10' });
+  assert.strictEqual(res.status, 200, res.text);
+  const list = Array.isArray(res.json) ? res.json : res.json.messages || res.json.rows || [];
+  assert.ok(list.some((m) => m.text === 'Проверка ЖУРНАЛА администратора'), res.text.slice(0, 300));
+});
+
 // ── Регистрация (Р4-13, Р4-16) ─────────────────────────────────────────────
 
 test('регистрация: при 200 ожидающих заявках новая получает 429', async () => {

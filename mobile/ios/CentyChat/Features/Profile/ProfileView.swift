@@ -1,190 +1,343 @@
 import SwiftUI
 
-/// Экран профиля сотрудника с управлением статусом присутствия и функцией побудки
+/// «Профиль»: a native inset grouped list on the L1 plane — the header (avatar, name, job), the
+/// status as three chips with dots, «Побудка», contacts, security («Сменить пароль», «Выйти» in the
+/// danger text style), privacy, support and the account deletion.
 public struct ProfileView: View {
-    @Environment(AppState.self) private var appState
-    
+    @Environment(SessionStore.self) private var session
+    @Environment(ProfileStore.self) private var profile
+    @Environment(ConversationsStore.self) private var conversations
+    @Environment(AccountStore.self) private var account
+    @Environment(AppContainer.self) private var container
+
     @State private var showChangePasswordSheet: Bool = false
     @State private var showWakeColleagueSheet: Bool = false
+    @State private var showDeleteAccountSheet: Bool = false
     @State private var selectedStatus: UserStatus = .online
-    @State private var customStatusText: String = ""
-    
+    /// Unsent messages wait: the sign-out asks first (they would be deleted).
+    /// The sign-out question on screen, with the unsent count it showed (nil inside — unknown).
+    @State private var signOutQuestion: SignOutQuestion?
+
     public init() {}
-    
+
     public var body: some View {
         NavigationStack {
             List {
-                // Карточка пользователя
-                if let user = appState.currentUser {
+                if let user = session.currentUser {
                     Section {
-                        HStack(spacing: 16) {
-                            AvatarView(name: user.fullName, avatarUrl: user.avatarUrl, size: 70)
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(user.fullName)
-                                    .font(.title3.weight(.bold))
-                                
-                                Text(user.jobTitle ?? user.roleName ?? "Сотрудник")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                
-                                Text(user.departmentName ?? user.company ?? "")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 8)
+                        header(user)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 0, trailing: 0))
                     }
                 }
-                
-                // Статус присутствия
-                Section(header: Text("Статус присутствия")) {
-                    Picker("Статус", selection: $selectedStatus) {
-                        ForEach([UserStatus.online, UserStatus.away, UserStatus.dnd], id: \.self) { status in
-                            HStack {
-                                Circle().fill(status.color).frame(width: 8, height: 8)
-                                Text(status.displayName)
-                            }
-                            .tag(status)
-                        }
-                    }
-                    .onChange(of: selectedStatus) {
-                        Task { await updatePresenceStatus() }
-                    }
+
+                Section {
+                    StatusChips(selection: $selectedStatus)
+                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                } header: {
+                    sectionHeader("Статус")
                 }
-                
-                // Побудка (Wake Buzzer)
-                Section(header: Text("Привлечение внимания (Побудка)")) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Отправить сигнал коллеге")
+                .listRowBackground(CentyColors.card)
+                .onChange(of: selectedStatus) {
+                    Task { await profile.updatePresence(selectedStatus) }
+                }
+
+                Section {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Побудить коллегу")
                                 .font(.body)
-                            Text("Вызывает виброотклик и звуковой сигнал на устройстве коллеги")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(CentyColors.textStrong)
+                            Text("Сигнал и вибрация на устройстве коллеги")
+                                .font(.footnote)
+                                .foregroundStyle(CentyColors.textSecondary)
                         }
-                        
-                        Spacer()
-                        
-                        if appState.wakeCooldownRemaining > 0 {
-                            Text("\(appState.wakeCooldownRemaining) с")
+                        Spacer(minLength: 8)
+                        if profile.wakeCooldownRemaining > 0 {
+                            Text("\(profile.wakeCooldownRemaining) с")
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(CentyColors.textDim)
+                                .contentTransition(.numericText(value: Double(profile.wakeCooldownRemaining)))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color(uiColor: .tertiarySystemFill))
-                                .clipShape(Capsule())
+                                .background(Capsule().fill(CentyColors.sunken))
+                                .accessibilityLabel(Text("Можно через \(profile.wakeCooldownRemaining) с"))
                         } else {
                             Button("Выбрать") {
                                 showWakeColleagueSheet = true
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(CentyColors.primaryBlue)
+                            .buttonStyle(.borderless)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(CentyColors.accentText)
+                            .frame(minHeight: 44)
+                            .accessibilityHint(Text("Выбрать, кому отправить сигнал"))
                         }
                     }
+                } header: {
+                    sectionHeader("Побудка")
                 }
-                
-                // Контактная информация
-                if let user = appState.currentUser {
-                    Section(header: Text("Корпоративные реквизиты")) {
-                        if let email = user.email {
-                            LabeledContent("Email", value: email)
+                .listRowBackground(CentyColors.card)
+
+                if let user = session.currentUser {
+                    Section {
+                        if let email = user.email, !email.isEmpty {
+                            LabeledContent("Эл. почта", value: email)
                         }
-                        if let phone = user.phone {
+                        if let phone = user.phone, !phone.isEmpty {
                             LabeledContent("Телефон", value: phone)
                         }
-                        if let ext = user.extension {
+                        if let ext = user.extension, !ext.isEmpty {
                             LabeledContent("Внутренний номер", value: ext)
                         }
+                        if let company = user.company, !company.isEmpty {
+                            LabeledContent("Компания", value: company)
+                        }
                         if let uin = user.uin {
-                            LabeledContent("UIN", value: "\(uin)")
+                            LabeledContent("Идентификатор (UIN)", value: "\(uin)")
                         }
                         LabeledContent("Логин", value: user.username)
+                    } header: {
+                        sectionHeader("Корпоративные реквизиты")
                     }
+                    .listRowBackground(CentyColors.card)
+                    .foregroundStyle(CentyColors.textMain)
                 }
-                
-                // Безопасность
-                Section(header: Text("Безопасность")) {
-                    Button(action: {
+
+                Section {
+                    Button {
                         showChangePasswordSheet = true
-                    }) {
+                    } label: {
+                        Label("Сменить пароль", systemImage: "key")
+                            .foregroundStyle(CentyColors.textStrong)
+                    }
+                    NavigationLink {
+                        BlockedUsersView()
+                    } label: {
                         HStack {
-                            Image(systemName: "key.fill")
-                                .foregroundColor(CentyColors.primaryBlue)
-                            Text("Сменить пароль")
-                                .foregroundColor(.primary)
+                            Label("Заблокированные пользователи", systemImage: "hand.raised")
+                                .foregroundStyle(CentyColors.textStrong)
+                            Spacer()
+                            if !account.blocked.isEmpty {
+                                Text("\(account.blocked.count)")
+                                    .monospacedDigit()
+                                    .foregroundStyle(CentyColors.textDim)
+                            }
                         }
                     }
-                    
-                    Button(role: .destructive, action: {
-                        appState.logout()
-                    }) {
-                        HStack {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                            Text("Выйти из аккаунта")
+                    .accessibilityIdentifier("profile-blocked-users")
+                    if let supportURL = SupportContact.url(from: session.serverInfo.supportContact) {
+                        Link(destination: supportURL) {
+                            Label("Связаться с поддержкой", systemImage: "lifepreserver")
+                                .foregroundStyle(CentyColors.textStrong)
                         }
+                        .accessibilityIdentifier("profile-support")
                     }
+                } header: {
+                    sectionHeader("Безопасность и поддержка")
                 }
+                .listRowBackground(CentyColors.card)
+                .tint(CentyColors.accentText)
+
+                Section {
+                    Button(role: .destructive) {
+                        // Always asked (final review M3, `copy-ru.md` §1).
+                        signOutQuestion = SignOutQuestion(unsent: container.delivery.unsentCount)
+                    } label: {
+                        Label("Выйти из учётной записи", systemImage: "rectangle.portrait.and.arrow.right")
+                            .foregroundStyle(CentyColors.dangerText)
+                    }
+                    .accessibilityIdentifier("profile-sign-out")
+                    Button(role: .destructive) {
+                        showDeleteAccountSheet = true
+                    } label: {
+                        Label("Удалить учётную запись", systemImage: "trash")
+                            .foregroundStyle(CentyColors.dangerText)
+                    }
+                    .accessibilityIdentifier("profile-delete-account")
+                } footer: {
+                    Text("Удаление учётной записи необратимо.")
+                        .foregroundStyle(CentyColors.textDim)
+                }
+                .listRowBackground(CentyColors.card)
             }
             .listStyle(.insetGrouped)
+            .listSectionSpacing(24)
+            .scrollContentBackground(.hidden)
+            .background(CentyColors.list)
+            .accessibilityIdentifier("profile-list")
             .navigationTitle("Профиль")
+            .connectionBanner()
             .onAppear {
-                if let user = appState.currentUser {
+                if let user = session.currentUser {
                     selectedStatus = user.status
                 }
             }
+            .alert(
+                AppCopy.signOutTitle,
+                isPresented: Binding(get: { signOutQuestion != nil }, set: { if !$0 { signOutQuestion = nil } }),
+                presenting: signOutQuestion
+            ) { asked in
+                Button("Отмена", role: .cancel) { signOutQuestion = nil }
+                Button(AppCopy.signOutConfirm, role: .destructive) { confirmSignOut(asked) }
+            } message: { asked in
+                Text(verbatim: SignOutPrompt.message(unsent: asked.unsent))
+            }
             .sheet(isPresented: $showChangePasswordSheet) {
                 ChangePasswordModalView(isMandatory: false)
+            }
+            .sheet(isPresented: $showDeleteAccountSheet) {
+                DeleteAccountView()
             }
             .sheet(isPresented: $showWakeColleagueSheet) {
                 wakeColleaguePickerSheet
             }
         }
     }
-    
+
+    /// The count the user agreed to is the count deleted: if more became unsent while the question
+    /// was open, it is asked again with the new count.
+    private func confirmSignOut(_ asked: SignOutQuestion) {
+        signOutQuestion = nil
+        let now = container.delivery.unsentCount
+        if SignOutPrompt.needsAnotherLook(shown: asked.unsent, now: now) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                signOutQuestion = SignOutQuestion(unsent: now)
+            }
+            return
+        }
+        Task { await session.logout() }
+    }
+
+    private func header(_ user: User) -> some View {
+        HStack(spacing: 16) {
+            AvatarView(name: user.fullName, avatarUrl: user.avatarUrl, status: selectedStatus, size: 64, ringColor: CentyColors.list)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(user.fullName)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(CentyColors.textStrong)
+                    .accessibilityAddTraits(.isHeader)
+                Text(user.jobTitle ?? user.roleName ?? String(localized: "Сотрудник"))
+                    .font(.subheadline)
+                    .foregroundStyle(CentyColors.textSecondary)
+                if let department = user.departmentName {
+                    Text(department)
+                        .font(.footnote)
+                        .foregroundStyle(CentyColors.textDim)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(CentyColors.textDim)
+            .textCase(nil)
+    }
+
     // MARK: - Wake Colleague Picker
-    
+
     private var wakeColleaguePickerSheet: some View {
         NavigationStack {
-            List(appState.users.filter { $0.id != appState.currentUser?.id }) { colleague in
-                Button(action: {
+            List(conversations.users.filter { $0.id != session.currentUser?.id }) { colleague in
+                Button {
                     showWakeColleagueSheet = false
                     Task {
-                        await appState.sendWake(targetUserId: colleague.id)
+                        await profile.sendWake(targetUserId: colleague.id)
                     }
-                }) {
+                } label: {
                     HStack(spacing: 12) {
                         AvatarView(name: colleague.fullName, avatarUrl: colleague.avatarUrl, status: colleague.status, size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(colleague.fullName)
                                 .font(.headline)
-                            Text(colleague.jobTitle ?? colleague.departmentName ?? "")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(CentyColors.textStrong)
+                            if let subtitle = colleague.jobTitle ?? colleague.departmentName {
+                                Text(subtitle)
+                                    .font(.subheadline)
+                                    .foregroundStyle(CentyColors.textSecondary)
+                                    .lineLimit(1)
+                            }
                         }
                         Spacer()
-                        Image(systemName: "bell.badge.fill")
-                            .foregroundColor(CentyColors.primaryBlue)
+                        Image(systemName: "bell.badge")
+                            .foregroundStyle(CentyColors.accentText)
+                            .accessibilityHidden(true)
                     }
+                    .frame(minHeight: 52)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .listRowBackground(CentyColors.card)
+                .accessibilityHint(Text("Отправить сигнал"))
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(CentyColors.list)
             .navigationTitle("Кому отправить сигнал")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { showWakeColleagueSheet = false }
                 }
             }
         }
     }
-    
-    private func updatePresenceStatus() async {
-        appState.currentUser?.status = selectedStatus
-        if selectedStatus == .dnd {
-            await WebSocketClient.shared.send(clientMessage: .setDnd(enabled: true, customStatus: nil))
-        } else {
-            await WebSocketClient.shared.send(clientMessage: .presence(state: selectedStatus.rawValue, customStatus: nil))
+}
+
+/// «В сети · Отошёл · Не беспокоить» as chips with their dot; the selected one is `primary-soft`.
+private struct StatusChips: View {
+    @Binding var selection: UserStatus
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        layout {
+            ForEach([UserStatus.online, .away, .dnd], id: \.self) { status in
+                Button {
+                    selection = status
+                    CentyHaptics.light()
+                } label: {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 8, height: 8)
+                        Text(status.displayName)
+                            .font(.subheadline.weight(selection == status ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                    .foregroundStyle(selection == status ? CentyColors.accentText : CentyColors.textSecondary)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 36)
+                    .background(Capsule().fill(selection == status ? CentyColors.primarySoft : CentyColors.sunken))
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == status ? .isSelected : [])
+                .accessibilityIdentifier("profile-status-\(status.rawValue)")
+            }
         }
-        CentyHaptics.light()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Статус"))
     }
+}
+
+#if DEBUG
+#Preview("Профиль") {
+    ProfileView()
+        .previewEnvironment()
+}
+#endif
+
+/// The sign-out question with the unsent count it showed (nil — the store could not be read).
+private struct SignOutQuestion: Equatable {
+    let unsent: Int?
 }

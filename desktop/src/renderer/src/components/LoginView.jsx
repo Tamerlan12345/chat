@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
 import { BrandLockup, BRAND_C_PATH } from './BrandMark';
 import { postLoginWithRetry } from '../lib/login-retry.mjs';
+import { COPY, describeAuthFailure } from '../lib/copy-ru.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -45,13 +46,11 @@ async function readJson(res) {
   }
 }
 
+// Отказ сервера по-русски: по коду (заявка ждёт решения, отклонена,
+// регистрация закрыта) — общий для трёх клиентов текст, иначе текст сервера
+// или понятная замена (lib/copy-ru.mjs).
 function describeFailure(res, data, fallback) {
-  if (data && typeof data.error === 'string' && data.error) return data.error;
-  if (res.status === 403) return 'Доступ с этого адреса запрещён — обратитесь к администратору';
-  if (res.status === 404) return 'По этому адресу сервер CentyChat не отвечает';
-  if (res.status === 429) return 'Слишком много попыток — повторите через минуту';
-  if (res.status >= 500) return 'Сервер временно недоступен — повторите через минуту';
-  return fallback;
+  return describeAuthFailure(res.status, data, fallback);
 }
 
 export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
@@ -185,7 +184,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         url: `${cleanUrl}/api/auth/login`,
         body: { username: username.trim(), password },
         budgetMs: 45000,
-        onRetry: (attempt) => setRetryNote(`Сервер занят, повторяю вход… (попытка ${attempt})`),
+        onRetry: () => setRetryNote(COPY['login.busy_retrying']),
         shouldCancel: () => cancelRetryRef.current
       });
       setRetryNote('');
@@ -212,7 +211,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
       setRetryNote('');
       setError(
         err instanceof TypeError
-          ? 'Нет связи с сервером — проверьте сеть и повторите'
+          ? COPY['login.offline']
           : err.message || 'Не удалось подключиться к серверу'
       );
     } finally {
@@ -276,7 +275,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     } catch (err) {
       setError(
         err instanceof TypeError
-          ? 'Нет связи с сервером — проверьте сеть и повторите'
+          ? COPY['login.offline']
           : err.message || 'Ошибка регистрации пользователя'
       );
     } finally {
@@ -284,28 +283,25 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
   };
 
-  const companyName = serverInfo?.company_name || '';
   const allowRegistration = Boolean(serverInfo?.allow_registration);
 
   return (
     <div className="login-container">
       <div className="login-card login-card--split">
-        {/* Фирменная сторона: знак, название и компания. В узком окне она
+        {/* Фирменная сторона: знак и название. В узком окне она
             скрывается, и знак с названием переезжают в шапку формы. */}
         <aside className="login-brand">
           <svg className="login-brand-glyph" viewBox="0 0 880 880" aria-hidden="true" focusable="false">
             <path d={BRAND_C_PATH} />
           </svg>
+          {/* Только знак: ни строки компании, ни слогана (правило L). */}
           <BrandLockup size={40} className="login-brand-lockup" />
-          <p className="login-brand-lead">Корпоративный мессенджер для сотрудников</p>
-          {companyName && <p className="login-brand-company">{companyName}</p>}
         </aside>
 
         <div className="login-main">
           <div className="login-header">
             <div className="login-compact-brand">
               <BrandLockup size={36} />
-              {companyName && <p className="login-compact-company">{companyName}</p>}
             </div>
             <h1 className="login-title">
               {isRegister ? 'Регистрация сотрудника' : 'Вход в CentyChat'}
@@ -448,7 +444,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
                 className="btn btn-primary btn-block login-submit-btn"
                 disabled={loading || checkingServer}
               >
-                {retryNote ? 'Сервер занят, повторяю…' : loading ? 'Входим…' : 'Войти'}
+                {retryNote ? 'Повторяем вход…' : loading ? 'Входим…' : 'Войти'}
               </button>
             </form>
           ) : (

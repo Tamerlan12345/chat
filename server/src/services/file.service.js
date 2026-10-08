@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { getDatabase } = require('../db');
 const config = require('../config');
 const FilePolicyService = require('./file-policy.service');
+const Images = require('../media/images');
 
 // Хвост сигнатур в требованиях задачи — не длиннее 12 байт (RIFF....WEBP);
 // с запасом читаем немного больше.
@@ -61,14 +62,37 @@ class FileService {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(uploaderId, originalName, storedFilename, Number(size), mimeType, sha256, filePath, now);
 
+    // Размеры и цвет картинки (задача 20) — по сигнатуре, не по MIME. Не
+    // вышло (не картинка, слишком большая, битая) — вложение всё равно
+    // сохранено, просто без них.
+    let image = null;
+    if (Images.sniffImageType(headBytes)) {
+      image = await Images.probe(filePath).catch(() => null);
+      if (image) this.recordImageInfo(result.lastInsertRowid, image);
+    }
+
     return {
       id: result.lastInsertRowid,
       originalName,
       storedFilename,
       fileSize: Number(size),
       mimeType,
-      url: `/api/files/download/${result.lastInsertRowid}`
+      url: `/api/files/download/${result.lastInsertRowid}`,
+      width: image?.width ?? null,
+      height: image?.height ?? null,
+      dominantColor: image?.dominantColor ?? null
     };
+  }
+
+  // Заполняет размеры картинки один раз: уже записанные не перезаписываются.
+  static recordImageInfo(fileId, { width, height, dominantColor }) {
+    const w = Number(width);
+    const h = Number(height);
+    if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w <= 0 || h <= 0) return;
+    const color = /^#[0-9a-f]{6}$/.test(String(dominantColor || '')) ? dominantColor : null;
+    getDatabase()
+      .prepare('UPDATE files SET width = ?, height = ?, dominant_color = COALESCE(dominant_color, ?) WHERE id = ? AND width IS NULL')
+      .run(w, h, color, Number(fileId));
   }
 
   static getFileById(id) {

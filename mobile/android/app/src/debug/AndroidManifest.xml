@@ -1,4 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:networkSecurityConfig="@xml/debug_network_security_config" />
+    <application android:networkSecurityConfig="@xml/debug_network_security_config">
+        <!--
+          DEBUG BUILDS ONLY: the UI layer v2 component gallery, a test harness for states the data
+          layer cannot produce yet (failed send and retry, upload progress, empty states). Exported
+          so `adb shell am start -n com.openmychat.mobile/.debug.ComponentGalleryActivity` can open it.
+        -->
+        <activity
+            android:name=".debug.ComponentGalleryActivity"
+            android:exported="true"
+            android:label="Компоненты"
+            android:theme="@style/Theme.CentyChat"
+            android:windowSoftInputMode="adjustResize" />
+        <!--
+          DEBUG BUILDS ONLY: fixed registration steps for screenshots (the dev stand has no SMTP, so the
+          code and pending steps cannot be reached against it). Nothing is sent to any server.
+        -->
+        <activity
+            android:name=".debug.RegistrationPreviewActivity"
+            android:exported="true"
+            android:label="Регистрация (превью)"
+            android:theme="@style/Theme.CentyChat"
+            android:windowSoftInputMode="adjustResize" />
+    </application>
 </manifest>

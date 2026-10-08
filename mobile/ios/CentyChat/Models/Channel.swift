@@ -8,9 +8,9 @@ public enum ChannelType: String, Codable, Sendable, CaseIterable {
     
     public var displayName: String {
         switch self {
-        case .public: return "Публичный"
-        case .private: return "Приватный"
-        case .system: return "Системный"
+        case .public: return String(localized: "Публичный")
+        case .private: return String(localized: "Приватный")
+        case .system: return String(localized: "Системный")
         }
     }
 }

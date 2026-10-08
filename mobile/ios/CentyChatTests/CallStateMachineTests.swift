@@ -47,7 +47,7 @@ final class CallStateMachineTests: XCTestCase {
     func testIncomingCallRejection() {
         var session = CallSession(
             peerId: 7,
-            peerName: "Канат Ахметов",
+            peerName: "Канат Тестов",
             state: .ringing,
             direction: .incoming
         )

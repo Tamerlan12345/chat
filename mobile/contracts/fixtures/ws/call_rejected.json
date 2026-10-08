@@ -1,0 +1,7 @@
+{
+  "type": "call_rejected",
+  "targetUserId": 2,
+  "reason": "Занят на совещании",
+  "senderId": 3,
+  "senderName": "Боб Тестов"
+}

@@ -1,0 +1,9 @@
+{
+  "type": "error",
+  "context": "send_message",
+  "message": "Сообщение не может быть доставлено",
+  "text": "Через блокировку не дойдёт.",
+  "code": "DM_NOT_ALLOWED",
+  "retryable": false,
+  "client_msg_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+}

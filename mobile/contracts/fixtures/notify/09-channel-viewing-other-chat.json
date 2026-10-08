@@ -1,0 +1,48 @@
+{
+  "name": "09-channel-viewing-other-chat",
+  "description": "Сообщение в канал 7; компьютер открыт в канале 8, а iPhone на переднем плане в личном диалоге с id 7 (другой тип переписки) — баннер обоим, push нет.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "channel",
+      "targetId": 7,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "desk",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": {
+          "conversationType": "channel",
+          "targetId": 8
+        }
+      },
+      {
+        "id": "iphone",
+        "deviceId": "ios-91c2",
+        "presence": "online",
+        "viewing": {
+          "conversationType": "direct",
+          "targetId": 7
+        }
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "ios-91c2"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "banner": [
+      "desk",
+      "iphone"
+    ],
+    "quiet": []
+  }
+}

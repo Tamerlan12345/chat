@@ -8,7 +8,11 @@ public struct FileUploadResponse: Identifiable, Codable, Sendable {
     public let fileSize: Int64
     public let mimeType: String
     public let url: String
-    
+    /// Images only (T20): pixel size and the dominant colour for a placeholder.
+    public var width: Int?
+    public var height: Int?
+    public var dominantColor: String?
+
     enum CodingKeys: String, CodingKey {
         case id
         case originalName
@@ -16,7 +20,26 @@ public struct FileUploadResponse: Identifiable, Codable, Sendable {
         case fileSize
         case mimeType
         case url
+        case width
+        case height
+        case dominantColor
     }
+}
+
+/// `POST /api/devices/push-token` → `{ registered, push_enabled }` (`push.md` §2).
+public struct PushTokenRegisterResponse: Codable, Sendable, Equatable {
+    public let registered: Bool
+    public let pushEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case registered
+        case pushEnabled = "push_enabled"
+    }
+}
+
+/// `DELETE /api/devices/push-token` → `{ removed }`; someone else's token is also `false`.
+public struct PushTokenDeleteResponse: Codable, Sendable, Equatable {
+    public let removed: Bool
 }
 
 /// Действующая политика разрешенных файлов (GET /api/files/policy)

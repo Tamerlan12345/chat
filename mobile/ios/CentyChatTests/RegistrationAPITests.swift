@@ -1,0 +1,412 @@
+import Foundation
+import Security
+import XCTest
+@testable import CentyChat
+
+/// Registration, account deletion, reports and blocks against the scripted stub server
+/// (`RecordingURLProtocol`): request shapes, DTO decoding and error mapping.
+final class RegistrationAPITests: XCTestCase {
+    private let userJSON = #"{"id":7,"username":"newbie","full_name":"Новый Сотрудник","is_active":1,"must_change_password":0}"#
+
+    private func makeClient(
+        routes: [String: RecordingURLProtocol.StubResponse],
+        token: String? = nil,
+        savedUsername: String? = nil
+    ) -> (client: APIClient, keychain: KeychainManager, store: SeededKeychainItemStore) {
+        let store = SeededKeychainItemStore()
+        if let token { store.seed("auth_token", token) }
+        if let savedUsername { store.seed("saved_username", savedUsername) }
+        let keychain = KeychainManager(testStore: store)
+        RecordingURLProtocol.reset(routes: routes)
+        let client = APIClient(session: RecordingURLProtocol.session(), keychain: keychain, environment: .test)
+        return (client, keychain, store)
+    }
+
+    private func body(of request: RecordingURLProtocol.RecordedRequest) throws -> [String: Any] {
+        let data = try XCTUnwrap(request.body, "The request has no body")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func failure(_ error: any Error, _ context: AccountFailure.Context) -> AccountFailure {
+        AccountFailure(error, context: context, now: Date(timeIntervalSince1970: 1_000))
+    }
+
+    // MARK: - Request code
+
+    func testRequestRegistrationSendsTheContractBodyWithoutAuthorization() async throws {
+        let (client, _, _) = makeClient(routes: [
+            "/api/auth/register/request": .init(
+                status: 202,
+                body: #"{"status":"code_sent","registrationId":"reg-1","expiresInSec":600}"#
+            ),
+        ], token: "stale-token")
+
+        let challenge = try await client.requestRegistration(RegisterRequestBody(
+            email: "ivan@example.com", username: "ivan", displayName: "Иван Иванов", password: "Str0ng-Passw0rd"
+        ))
+
+        XCTAssertEqual(challenge, RegistrationChallenge(status: "code_sent", registrationId: "reg-1", expiresInSec: 600))
+        let request = try XCTUnwrap(RecordingURLProtocol.requests.last)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.url?.path, "/api/auth/register/request")
+        XCTAssertNil(request.headers["Authorization"], "Registration happens before any session")
+        let sent = try body(of: request)
+        XCTAssertEqual(sent["email"] as? String, "ivan@example.com")
+        XCTAssertEqual(sent["username"] as? String, "ivan")
+        XCTAssertEqual(sent["displayName"] as? String, "Иван Иванов")
+        XCTAssertEqual(sent["password"] as? String, "Str0ng-Passw0rd")
+    }
+
+    func testRequestRegistrationErrorsAreMapped() async {
+        let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
+            (.init(status: 400, body: #"{"error":"Пароль должен быть не короче 8 символов"}"#),
+             .invalidInput("Пароль должен быть не короче 8 символов")),
+            (.init(status: 409, body: #"{"error":"Логин уже занят"}"#), .conflict("Логин уже занят")),
+            (.init(status: 409, body: #"{"error":"x","code":"USERNAME_TAKEN"}"#),
+             .conflict("Этот логин уже занят. Выберите другой.")),
+            (.init(status: 503, body: #"{"error":"Не удалось отправить письмо","code":"EMAIL_SEND_FAILED"}"#), .mailSendFailed),
+            (.init(status: 429, headers: ["Retry-After": "30"], body: #"{"error":"Слишком часто"}"#),
+             .throttled(until: Date(timeIntervalSince1970: 1_030))),
+            (.init(status: 503, body: #"{"error":"Отправка почты не настроена"}"#), .mailNotConfigured),
+            (.init(status: 503, body: #"{"error":"busy","code":"PASSWORD_HASH_BUSY"}"#),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_005))),
+            (.init(status: 503, body: #"{"error":"Отправка почты не настроена","code":"EMAIL_NOT_CONFIGURED"}"#), .mailNotConfigured),
+            (.init(status: 403, body: #"{"error":"Регистрация сейчас закрыта. Обратитесь к администратору.","code":"REGISTRATION_DISABLED"}"#),
+             .registrationDisabled),
+            (.init(status: 500, body: "{}"), .unavailable),
+        ]
+        for (response, expected) in cases {
+            let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
+            do {
+                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
+                XCTFail("Status \(response.status) must fail")
+            } catch {
+                XCTAssertEqual(failure(error, .registrationRequest), expected, "Status \(response.status)")
+            }
+        }
+    }
+
+    func testNoConnectionIsReportedAsOffline() async {
+        // No route: the stub fails the connection.
+        let (client, _, _) = makeClient(routes: [:])
+        do {
+            _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
+            XCTFail("An unreachable server must fail")
+        } catch {
+            XCTAssertEqual(failure(error, .registrationRequest), .offline)
+        }
+    }
+
+    /// `503 {code: "BUSY"}` with `Retry-After` (busy password hasher, server `api/index.js`): a
+    /// short wait that honours the header, as on Android — not «почта не настроена», and not
+    /// «Слишком много попыток» either: the user did nothing wrong (`reg.busy`, copy-ru.md §5).
+    func testBusyServerIsAShortWaitThatHonoursRetryAfter() async {
+        let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
+            (.init(status: 503, headers: ["Retry-After": "7"],
+                   body: #"{"error":"Сервер сейчас занят. Повторите через несколько секунд.","code":"BUSY"}"#),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_007))),
+            (.init(status: 503, body: #"{"error":"Сервер сейчас занят.","code":"BUSY"}"#),
+             .serverBusy(until: Date(timeIntervalSince1970: 1_005))),
+        ]
+        for (response, expected) in cases {
+            let (client, _, _) = makeClient(routes: ["/api/auth/register/request": response])
+            do {
+                _ = try await client.requestRegistration(RegisterRequestBody(email: "a@b.example", username: "abc", displayName: "Аб", password: "12345678"))
+                XCTFail("BUSY must fail")
+            } catch {
+                let failure = failure(error, .registrationRequest)
+                XCTAssertEqual(failure, expected, "Retry-After \(response.headers["Retry-After"] ?? "absent")")
+                XCTAssertNotEqual(failure, .mailNotConfigured)
+            }
+        }
+    }
+
+    // MARK: - Verify
+
+    func testVerifySignedInDecodesTheSessionAndStoresTheToken() async throws {
+        let (client, keychain, _) = makeClient(routes: [
+            "/api/auth/register/verify": .init(status: 200, body: #"{"user":\#(userJSON),"token":"issued-token"}"#),
+        ])
+
+        let outcome = try await client.verifyRegistration(registrationId: "reg-1", code: "123456")
+
+        guard case .signedIn(let auth) = outcome else { return XCTFail("Expected a session, got \(outcome)") }
+        XCTAssertEqual(auth.user.username, "newbie")
+        XCTAssertEqual(auth.token, "issued-token")
+        XCTAssertEqual(keychain.authToken, "issued-token")
+        let request = try XCTUnwrap(RecordingURLProtocol.requests.last)
+        let sent = try body(of: request)
+        XCTAssertEqual(sent["registrationId"] as? String, "reg-1")
+        XCTAssertEqual(sent["code"] as? String, "123456")
+        XCTAssertNil(request.headers["Authorization"])
+    }
+
+    func testVerifyPendingStoresNoToken() async throws {
+        let (client, keychain, _) = makeClient(routes: [
+            "/api/auth/register/verify": .init(status: 202, body: #"{"status":"pending"}"#),
+        ])
+
+        let outcome = try await client.verifyRegistration(registrationId: "reg-1", code: "123456")
+
+        XCTAssertEqual(outcome, .pending)
+        XCTAssertNil(keychain.authToken)
+    }
+
+    func testVerifyWithAnUnknownBodyFailsToDecode() async {
+        let (client, keychain, _) = makeClient(routes: [
+            "/api/auth/register/verify": .init(status: 200, body: #"{"status":"weird"}"#),
+        ])
+        do {
+            _ = try await client.verifyRegistration(registrationId: "reg-1", code: "123456")
+            XCTFail("An answer without a session or a pending status is not a success")
+        } catch APIError.decodingError {
+            XCTAssertNil(keychain.authToken)
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+    }
+
+    func testVerifyErrorsAreMapped() async {
+        let cases: [(RecordingURLProtocol.StubResponse, AccountFailure)] = [
+            (.init(status: 400, body: #"{"error":"Неверный код"}"#), .wrongCode("Неверный код", attemptsLeft: nil)),
+            (.init(status: 400, body: #"{"error":"Неверный код","code":"CODE_INVALID","attemptsLeft":3}"#),
+             .wrongCode("Неверный код", attemptsLeft: 3)),
+            (.init(status: 410, body: #"{"error":"Код истёк","code":"CODE_EXPIRED"}"#), .codeExpired),
+            (.init(status: 400, body: #"{"error":"x","code":"CODE_EXPIRED"}"#), .codeExpired),
+            (.init(status: 429, headers: ["Retry-After": "20"], body: #"{"error":"Слишком много запросов"}"#),
+             .throttled(until: Date(timeIntervalSince1970: 1_020))),
+            (.init(status: 409, body: #"{"error":"Логин уже занят"}"#), .conflict("Логин уже занят")),
+            (.init(status: 409, body: #"{"error":"x","code":"EMAIL_TAKEN"}"#),
+             .conflict("На этот адрес почты уже подана заявка или есть учётная запись.")),
+            (.init(status: 403, body: #"{"error":"Регистрация сейчас закрыта. Обратитесь к администратору.","code":"REGISTRATION_DISABLED"}"#),
+             .registrationDisabled),
+        ]
+        for (response, expected) in cases {
+            let (client, _, _) = makeClient(routes: ["/api/auth/register/verify": response])
+            do {
+                _ = try await client.verifyRegistration(registrationId: "reg-1", code: "000000")
+                XCTFail("Status \(response.status) must fail")
+            } catch {
+                XCTAssertEqual(failure(error, .registrationVerify), expected, "Status \(response.status) \(response.body)")
+            }
+        }
+    }
+
+    // MARK: - Delete account
+
+    func testDeleteAccountSendsThePasswordAndWipesLocalCredentials() async throws {
+        let (client, keychain, store) = makeClient(
+            routes: ["/api/users/me": .init(status: 200, body: "")],
+            token: "session-token",
+            savedUsername: "ivan"
+        )
+        store.seed("device_secret", "device-secret")
+
+        try await client.deleteAccount(password: "Str0ng-Passw0rd")
+
+        let request = try XCTUnwrap(RecordingURLProtocol.requests.last)
+        XCTAssertEqual(request.method, "DELETE")
+        XCTAssertEqual(request.url?.path, "/api/users/me")
+        XCTAssertEqual(request.headers["Authorization"], "Bearer session-token")
+        XCTAssertEqual(try body(of: request)["password"] as? String, "Str0ng-Passw0rd")
+        XCTAssertNil(keychain.authToken)
+        XCTAssertNil(keychain.deviceSecret)
+        XCTAssertNil(keychain.savedUsername)
+    }
+
+    /// The server deleted the account; a Keychain item that cannot be deleted here must not turn
+    /// that into «deletion failed» (final review M4): the app still discards the gone account.
+    func testADeletedAccountIsReportedDeletedEvenWhenTheLocalWipeFails() async throws {
+        let store = SeededKeychainItemStore(failingDeletes: ["device_secret": errSecInteractionNotAllowed])
+        store.seed("auth_token", "session-token")
+        store.seed("device_secret", "device-secret")
+        let keychain = KeychainManager(testStore: store)
+        RecordingURLProtocol.reset(routes: ["/api/users/me": .init(status: 200, body: #"{"success":true}"#)])
+        let client = APIClient(session: RecordingURLProtocol.session(), keychain: keychain, environment: .test)
+
+        try await client.deleteAccount(password: "Str0ng-Passw0rd")
+
+        XCTAssertEqual(RecordingURLProtocol.requests.count, 1)
+    }
+
+    func testDeleteAccountAcceptsAJSONBody() async throws {
+        let (client, keychain, _) = makeClient(
+            routes: ["/api/users/me": .init(status: 200, body: #"{"success":true}"#)],
+            token: "session-token"
+        )
+        try await client.deleteAccount(password: "Str0ng-Passw0rd")
+        XCTAssertNil(keychain.authToken)
+    }
+
+    func testDeleteAccountWrongPasswordKeepsTheSession() async {
+        for status in [400, 401, 403] {
+            let (client, keychain, _) = makeClient(
+                routes: [
+                    "/api/users/me": .init(status: status, body: #"{"error":"Неверный пароль"}"#),
+                    "/api/auth/refresh": .init(status: 200, body: #"{"token":"refreshed"}"#),
+                ],
+                token: "session-token",
+                savedUsername: "ivan"
+            )
+            do {
+                try await client.deleteAccount(password: "wrong")
+                XCTFail("Status \(status) must fail")
+            } catch {
+                XCTAssertEqual(failure(error, .deleteAccount), .wrongPassword, "Status \(status)")
+            }
+            XCTAssertEqual(keychain.authToken, "session-token", "A refused password must not sign the user out (\(status))")
+            XCTAssertEqual(keychain.savedUsername, "ivan")
+            XCTAssertFalse(
+                RecordingURLProtocol.requests.contains { $0.url?.path == "/api/auth/refresh" },
+                "A refused password is not an expired session (\(status))"
+            )
+        }
+    }
+
+    // MARK: - Reports and blocks
+
+    func testReportPostsTheTargetReasonAndDetails() async throws {
+        let (client, _, _) = makeClient(
+            routes: ["/api/reports": .init(status: 201, body: #"{"id":1}"#)],
+            token: "session-token"
+        )
+
+        try await client.report(ReportBody(targetType: .message, targetId: 42, reason: "spam", details: "Реклама"))
+
+        let request = try XCTUnwrap(RecordingURLProtocol.requests.last)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.headers["Authorization"], "Bearer session-token")
+        let sent = try body(of: request)
+        XCTAssertEqual(sent["targetType"] as? String, "message")
+        XCTAssertEqual(sent["targetId"] as? Int, 42)
+        XCTAssertEqual(sent["reason"] as? String, "spam")
+        XCTAssertEqual(sent["details"] as? String, "Реклама")
+    }
+
+    func testReportWithoutDetailsOmitsTheKey() async throws {
+        let (client, _, _) = makeClient(
+            routes: ["/api/reports": .init(status: 201, body: "")],
+            token: "session-token"
+        )
+        try await client.report(ReportBody(targetType: .user, targetId: 9, reason: "abuse", details: nil))
+        let sent = try body(of: try XCTUnwrap(RecordingURLProtocol.requests.last))
+        XCTAssertEqual(sent["targetType"] as? String, "user")
+        XCTAssertNil(sent["details"])
+    }
+
+    func testBlockAndUnblockUseTheContractRoutes() async throws {
+        let (client, _, _) = makeClient(
+            routes: [
+                "/api/blocks": .init(status: 201, body: ""),
+                "/api/blocks/12": .init(status: 200, body: #"{"success":true}"#),
+            ],
+            token: "session-token"
+        )
+
+        try await client.blockUser(id: 12)
+        try await client.unblockUser(id: 12)
+
+        let requests = RecordingURLProtocol.requests
+        XCTAssertEqual(requests.map { $0.method ?? "" }, ["POST", "DELETE"])
+        XCTAssertEqual(requests.map { $0.url?.path ?? "" }, ["/api/blocks", "/api/blocks/12"])
+        XCTAssertEqual(try body(of: requests[0])["userId"] as? Int, 12)
+    }
+
+    func testBlockListDecodesArraysAndWrappedLists() async throws {
+        let shapes = [
+            #"[{"id":3,"full_name":"Данияр"},{"userId":4,"fullName":"Айгерим"}]"#,
+            #"{"blocks":[{"user_id":3,"full_name":"Данияр"},{"blocked_user_id":4,"username":"aigerim"}]}"#,
+        ]
+        for shape in shapes {
+            let (client, _, _) = makeClient(
+                routes: ["/api/blocks": .init(status: 200, body: shape)],
+                token: "session-token"
+            )
+            let list = try await client.getBlockedUsers()
+            XCTAssertEqual(list.map(\.id), [3, 4], shape)
+        }
+        let (client, _, _) = makeClient(routes: ["/api/blocks": .init(status: 200, body: "[]")], token: "session-token")
+        let empty = try await client.getBlockedUsers()
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    // MARK: - Login of an account that is not active yet
+
+    @MainActor
+    func testLoginMapsPendingAndRejectedAccounts() async {
+        let pending = LoginFailure(
+            APIError.httpError(statusCode: 403, message: "x", code: "ACCOUNT_PENDING"),
+            now: Date()
+        )
+        let rejected = LoginFailure(
+            APIError.httpError(statusCode: 403, message: "x", code: "ACCOUNT_REJECTED"),
+            now: Date()
+        )
+        let plain403 = LoginFailure(APIError.httpError(statusCode: 403, message: "x", code: nil), now: Date())
+
+        XCTAssertEqual(pending, .accountPending)
+        XCTAssertEqual(rejected, .accountRejected)
+        XCTAssertEqual(plain403, .invalidCredentials)
+        let pendingText = try? XCTUnwrap(pending.message(at: Date()))
+        XCTAssertTrue(pendingText?.contains("администратором") == true, pendingText ?? "")
+        XCTAssertNotEqual(pending.message(at: Date()), rejected.message(at: Date()))
+        XCTAssertNil(pending.retryDeadline)
+    }
+
+    func testLoginOfAPendingAccountOverTheWireShowsThePendingMessage() async throws {
+        let (client, keychain, _) = makeClient(routes: [
+            "/api/auth/login": .init(
+                status: 403,
+                body: #"{"error":"Заявка на рассмотрении","code":"ACCOUNT_PENDING"}"#
+            ),
+        ])
+        do {
+            _ = try await client.login(request: LoginRequest(username: "newbie", password: "pw"))
+            XCTFail("A pending account cannot sign in")
+        } catch {
+            XCTAssertEqual(LoginFailure(error, now: Date()), .accountPending)
+            XCTAssertNil(keychain.authToken)
+        }
+    }
+
+    // MARK: - Messages
+
+    func testFailureMessagesAreRussianAndHonest() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let failures: [AccountFailure] = [
+            .offline, .mailNotConfigured, .throttled(until: now.addingTimeInterval(10)),
+            .invalidInput(""), .conflict(""), .wrongCode("", attemptsLeft: nil), .wrongCode("Неверный код", attemptsLeft: 2),
+            .codeExpired, .mailSendFailed, .wrongPassword, .unavailable,
+        ]
+        for item in failures {
+            let text = item.message(at: now) ?? ""
+            XCTAssertTrue(text.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }, "\(item): \(text)")
+        }
+        XCTAssertTrue(AccountFailure.mailNotConfigured.message(at: now)?.contains("почта не настроена") == true)
+        XCTAssertNil(AccountFailure.throttled(until: now).message(at: now.addingTimeInterval(1)), "A finished wait shows nothing")
+        XCTAssertEqual(
+            AccountFailure.wrongCode("Неверный код", attemptsLeft: 3).message(at: now),
+            "Неверный код. Осталось попыток: 3."
+        )
+        XCTAssertEqual(AccountFailure.wrongCode("Неверный код.", attemptsLeft: nil).message(at: now), "Неверный код.")
+    }
+
+    func testServerMessagesAreCappedAndFlattened() {
+        let long = String(repeating: "очень ", count: 100)
+        let cleaned = AccountFailure.clean("  первая\n\nстрока  " + long)
+        XCTAssertLessThanOrEqual(cleaned.count, AccountFailure.messageLimit)
+        XCTAssertFalse(cleaned.contains("\n"))
+        XCTAssertTrue(cleaned.hasPrefix("первая строка"))
+    }
+
+    func testSupportContactBuildsOnlySafeLinks() {
+        XCTAssertEqual(SupportContact.url(from: "help@example.com")?.absoluteString, "mailto:help@example.com")
+        XCTAssertEqual(SupportContact.url(from: " https://example.com/help ")?.absoluteString, "https://example.com/help")
+        XCTAssertNil(SupportContact.url(from: nil))
+        XCTAssertNil(SupportContact.url(from: ""))
+        XCTAssertNil(SupportContact.url(from: "javascript:alert(1)"))
+        XCTAssertNil(SupportContact.url(from: "http://example.com"))
+        XCTAssertNil(SupportContact.url(from: "tel:+77001234567"))
+        XCTAssertNil(SupportContact.url(from: "not an address"))
+    }
+}

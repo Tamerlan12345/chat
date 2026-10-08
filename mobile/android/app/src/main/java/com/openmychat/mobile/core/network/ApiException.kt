@@ -3,8 +3,15 @@ package com.openmychat.mobile.core.network
 open class ApiException(
     val statusCode: Int,
     val errorCode: String? = null,
-    message: String
+    message: String,
+    /** Seconds from the `Retry-After` header (429/503), when the server sent one. */
+    val retryAfterSeconds: Long? = null,
+    /** `attemptsLeft` of a wrong registration code (`400 CODE_INVALID`), when the server sent it. */
+    val attemptsLeft: Int? = null
 ) : Exception(message)
+
+/** An answer read as is ([ApiClient.raw]); [status] 0 — the server could not be reached. */
+class RawResponse(val status: Int, val body: String, val retryAfterSeconds: Long?)
 
 class MustChangePasswordException(
     message: String = "Требуется обязательная смена пароля"

@@ -1,444 +1,498 @@
 package com.openmychat.mobile.features.chat
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.openmychat.mobile.core.util.DateTimeUtils
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.openmychat.mobile.R
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.data.model.ConversationType
-import com.openmychat.mobile.data.model.DeliveryStatus
 import com.openmychat.mobile.data.model.Message
+import com.openmychat.mobile.data.model.SendState
 import com.openmychat.mobile.data.model.UserStatus
-import com.openmychat.mobile.ui.components.CentyAvatar
-import com.openmychat.mobile.ui.theme.ReceivedBubbleDark
-import com.openmychat.mobile.ui.theme.ReceivedBubbleLight
-import com.openmychat.mobile.ui.theme.SentBubbleDark
-import com.openmychat.mobile.ui.theme.SentBubbleLight
+import com.openmychat.mobile.ui.components.CentyConfirmDialog
+import com.openmychat.mobile.ui.components.ChatSkeleton
+import com.openmychat.mobile.ui.components.ConnectionBanner
+import com.openmychat.mobile.ui.components.DeliveryMark
+import com.openmychat.mobile.ui.components.ErrorState
+import com.openmychat.mobile.ui.components.InlineNotice
+import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.components.MessageMenuHost
+import com.openmychat.mobile.ui.components.SharedKeys
+import com.openmychat.mobile.ui.components.rememberHaptics
+import com.openmychat.mobile.ui.components.rememberLift
+import com.openmychat.mobile.ui.components.rememberMessageMenuState
+import com.openmychat.mobile.ui.theme.CentyTheme
+import com.openmychat.mobile.ui.theme.CentyMotion
+import com.openmychat.mobile.ui.theme.LocalReduceMotion
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.openmychat.mobile.features.account.BlockConfirmDialog
+import com.openmychat.mobile.features.attachments.AttachmentChooserSheet
+import com.openmychat.mobile.features.attachments.AttachmentIntents
+import com.openmychat.mobile.features.attachments.ImageViewer
+import com.openmychat.mobile.features.attachments.MessageAttachment
+import com.openmychat.mobile.features.attachments.TransferState
+import com.openmychat.mobile.features.attachments.rememberAttachmentPickers
+import androidx.compose.ui.platform.LocalContext
+import com.openmychat.mobile.features.account.ReportSheet
+import com.openmychat.mobile.features.account.SafetyNotices
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Everything the chat screen can ask for; defaults keep previews and tests short. */
+interface ChatActions {
+    fun canEdit(message: Message): Boolean = false
+    fun canDelete(message: Message): Boolean = false
+    fun onBack() {}
+    fun onCall() {}
+
+    /** Тап по аватару и имени в заголовке личной переписки — карточка собеседника; null — нет карточки. */
+    val onOpenCard: (() -> Unit)? get() = null
+    fun onWake() {}
+    fun onRetry() {}
+
+    /**
+     * Send the composer text. [replyTo] is the reply draft («Ответить», swipe-to-reply); the send
+     * queue carries it to the server as `reply_to_id`.
+     */
+    fun onSend(text: String, replyTo: Message?) {}
+
+    /**
+     * Send, and clear the composer only once the message is stored: [onAccepted] runs then
+     * (delivery-state.md §7.4). Without a durable queue behind it, it is [onSend] at once.
+     */
+    fun onSubmit(text: String, replyTo: Message?, onAccepted: () -> Unit) {
+        onSend(text, replyTo)
+        onAccepted()
+    }
+    fun onTyping(active: Boolean) {}
+    fun onStartEdit(message: Message) {}
+    fun onCancelEdit() {}
+    fun onDelete(message: Message) {}
+
+    /** Queued / sending / failed for own messages, from the send queue; null = server state. */
+    fun localMark(message: Message): DeliveryMark? = null
+
+    /** «Повторить» on a failed send. */
+    fun onRetrySend(message: Message) {}
+
+    /** «Удалить» on an unsent message (queued, sending or failed), after the confirmation: it is never sent. */
+    fun onDiscardFailed(message: Message) {}
+
+    /** The reader reached the oldest loaded message: load the page before it (`beforeId`). */
+    fun onLoadOlder() {}
+
+    /** Someone else's delivered message may be reported. */
+    fun canReport(message: Message): Boolean = false
+    fun onReportMessage(message: Message) {}
+
+    /** Direct chat with someone else: the top bar's «⋮» offers report and block. */
+    val hasPersonMenu: Boolean get() = false
+    fun onReportPeer() {}
+    fun onBlockPeer() {}
+    fun onUnblockPeer() {}
+
+    /** Files can be sent here: the composer offers «Прикрепить». */
+    val canAttach: Boolean get() = false
+
+    /** A photo or document picked in the system picker (content URI). */
+    fun onAttach(uri: String) {}
+
+    /** The same, answering [replyTo] (the reply draft goes with the file as `reply_to_id`). */
+    fun onAttach(uri: String, replyTo: Message?) = onAttach(uri)
+
+    /** Tap on an attachment tile: an image opens in the viewer, a file downloads and opens. */
+    fun onOpenAttachment(message: Message) {}
+
+    /** «Отменить загрузку» on a file still going up. */
+    fun onCancelUpload(message: Message) {}
+
+    /** Download of an attachment; read in composition, so its progress redraws the tile. */
+    fun transfer(fileId: Long): TransferState? = null
+
+    /** The server thumbnail of an image attachment. */
+    fun thumbnailUrl(attachment: MessageAttachment): String? = null
+}
+
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
     title: String,
     avatarUrl: String? = null,
     status: String? = null,
+    showBackButton: Boolean = true,
     onNavigateBack: () -> Unit,
-    onStartCall: (peerId: Long, peerName: String) -> Unit
+    onStartCall: (peerId: Long, peerName: String) -> Unit,
+    onOpenCard: (() -> Unit)? = null
 ) {
-    val messages by viewModel.messages.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val typingUser by viewModel.typingUser.collectAsState()
     val wakeCooldown by viewModel.wakeCooldownSeconds.collectAsState()
     val editingMessage by viewModel.editingMessage.collectAsState()
+    val connection by viewModel.connectionState.collectAsState()
+    val livePeerStatus by viewModel.peerStatus.collectAsState()
+    val refreshFailed by viewModel.refreshFailed.collectAsState()
+    val focus by viewModel.focus.collectAsState()
+    val jumpUnavailable by viewModel.jumpUnavailable.collectAsState()
+    val composerLock by viewModel.composerLock.collectAsState()
+    val reportSheet by viewModel.reports.sheet.collectAsState()
+    // Kept as State: the actions read it during composition of each tile.
+    val transfers = viewModel.opener.transfers.collectAsState()
+    val viewerImage by viewModel.opener.viewer.collectAsState()
+    val context = LocalContext.current
+    val noApp = stringResource(R.string.attachment_no_app)
+    val jumpUnavailableText = stringResource(R.string.chat_jump_unavailable)
+    val snackbar = LocalSnackbarHostState.current
+    val haptics = rememberHaptics()
+    val scope = rememberCoroutineScope()
+    val wakeSent = stringResource(R.string.chat_wake_sent)
 
-    var inputText by remember { mutableStateOf("") }
+    // Nav3 gives each entry its own lifecycle: the chat counts as open only while it is resumed,
+    // not while it waits in the back stack under a call or behind another tab.
+    LifecycleResumeEffect(viewModel) {
+        viewModel.onVisibilityChanged(true)
+        onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+    }
+
+    // Отказ в файле, сбой загрузки или скачивания — по-русски, словами сервера.
+    LaunchedEffect(viewModel) {
+        viewModel.notices.collect { snackbar.showSnackbar(it) }
+    }
+    // Скачанный файл открывает другое приложение; если такого нет — сказать.
+    LaunchedEffect(viewModel) {
+        viewModel.opener.openRequests.collect { request ->
+            if (!AttachmentIntents.open(context, request)) snackbar.showSnackbar(noApp)
+        }
+    }
+
+    // Найденное сообщение слишком давнее: сказать, что показаны последние.
+    LaunchedEffect(jumpUnavailable) {
+        if (jumpUnavailable) snackbar.showSnackbar(jumpUnavailableText)
+    }
+
+    val isDirect = viewModel.conversationType == ConversationType.DIRECT
+    val actions = remember(viewModel, onOpenCard) {
+        object : ChatActions {
+            override val onOpenCard: (() -> Unit)? = onOpenCard
+            override fun canEdit(message: Message) = viewModel.canEditMessage(message)
+            override fun canDelete(message: Message) = viewModel.canDeleteMessage(message)
+            override fun onBack() = onNavigateBack()
+            override fun onCall() = onStartCall(viewModel.targetId, title)
+            override fun onWake() {
+                viewModel.sendWake()
+                haptics.confirm()
+                scope.launch { snackbar.showSnackbar(wakeSent) }
+            }
+            override fun onRetry() = viewModel.loadMessages()
+
+            // The reply id travels with the message (`reply_to_id`); the composer clears once it is stored.
+            override fun onSubmit(text: String, replyTo: Message?, onAccepted: () -> Unit) {
+                viewModel.send(text, replyTo, onAccepted)
+                viewModel.onTyping(false)
+            }
+            override fun onTyping(active: Boolean) = viewModel.onTyping(active)
+            override fun onStartEdit(message: Message) = viewModel.startEditing(message)
+            override fun onCancelEdit() = viewModel.cancelEditing()
+            override fun onDelete(message: Message) = viewModel.deleteMessage(message)
+            override fun localMark(message: Message) = sendStateMark(message)
+            override fun onRetrySend(message: Message) = viewModel.retrySend(message)
+            override fun onDiscardFailed(message: Message) = viewModel.cancelUnsent(message)
+            override fun onLoadOlder() = viewModel.loadOlder()
+            override fun canReport(message: Message) = viewModel.canReportMessage(message)
+            override fun onReportMessage(message: Message) = viewModel.reportMessage(message)
+            override val hasPersonMenu: Boolean = viewModel.blocks != null
+            override fun onReportPeer() = viewModel.reportPeer(title)
+            override fun onBlockPeer() = viewModel.block(title)
+            override fun onUnblockPeer() = viewModel.unblock()
+            override val canAttach: Boolean = viewModel.canAttach
+            override fun onAttach(uri: String) = viewModel.sendAttachment(uri)
+            override fun onAttach(uri: String, replyTo: Message?) = viewModel.sendAttachment(uri, replyTo)
+            override fun onOpenAttachment(message: Message) = viewModel.openAttachment(message)
+            override fun onCancelUpload(message: Message) = viewModel.cancelUpload(message)
+            override fun transfer(fileId: Long): TransferState? = transfers.value[fileId]
+            override fun thumbnailUrl(attachment: MessageAttachment) = viewModel.opener.thumbnailUrl(attachment)
+        }
+    }
+    viewModel.blocks?.let { SafetyNotices(it) }
+    reportSheet?.let { ReportSheet(viewModel.reports, it) }
+    viewerImage?.let { image ->
+        ImageViewer(
+            attachment = image,
+            thumbnailUrl = viewModel.opener.thumbnailUrl(image),
+            transfer = image.fileId?.let { transfers.value[it] },
+            onRetry = { viewModel.opener.retry(image) },
+            onDismiss = viewModel.opener::closeViewer
+        )
+    }
+
+    ChatContent(
+        title = title,
+        isDirect = isDirect,
+        uiState = uiState,
+        currentUserId = viewModel.currentUserId,
+        connectionState = connection,
+        actions = actions,
+        avatarUrl = avatarUrl,
+        peerStatus = if (isDirect) livePeerStatus ?: status?.let(UserStatus::fromValue) else null,
+        typingUser = typingUser,
+        wakeCooldown = wakeCooldown,
+        editingMessage = editingMessage,
+        showBackButton = showBackButton,
+        sharedKey = SharedKeys.conversation(isChannel = !isDirect, id = viewModel.targetId),
+        refreshFailed = refreshFailed,
+        focusMessageId = focus,
+        onFocusShown = viewModel::onFocusShown,
+        composerLock = composerLock
+    )
+}
+
+/**
+ * The chat, stateless. Planes: canvas (L2) under the history, the top bar lifts to L3 while history
+ * passes under it, the composer is L3 and glued to the keyboard. The list runs bottom-up
+ * (`reverseLayout`), so the newest message stays above the composer as the keyboard opens, and a
+ * drag down dismisses the keyboard interactively. New messages are followed only at the bottom;
+ * otherwise «↓ N новых» floats above the composer. A long press lifts the bubble over a scrim with
+ * its menu; a swipe toward the start answers it.
+ */
+@Composable
+fun ChatContent(
+    title: String,
+    isDirect: Boolean,
+    uiState: ChatUiState,
+    currentUserId: Long,
+    connectionState: ConnectionState,
+    actions: ChatActions,
+    modifier: Modifier = Modifier,
+    avatarUrl: String? = null,
+    peerStatus: UserStatus? = null,
+    typingUser: String? = null,
+    wakeCooldown: Int = 0,
+    editingMessage: Message? = null,
+    showBackButton: Boolean = true,
+    /** Ties the header's avatar and name to the inbox row for the shared-element transition. */
+    sharedKey: String? = null,
+    /** A cached history is shown but the server could not refresh it. */
+    refreshFailed: Boolean = false,
+    /** Прокрутить к этому сообщению и подсветить его (переход из поиска). */
+    focusMessageId: Long? = null,
+    onFocusShown: () -> Unit = {},
+    /** The composer is closed: the peer is blocked or the server refuses delivery. */
+    composerLock: ComposerLock = ComposerLock.NONE
+) {
+    val tokens = CentyTheme.tokens
+    var pendingDelete by remember { mutableStateOf<Message?>(null) }
+    var confirmBlock by rememberSaveable { mutableStateOf(false) }
+    var replyToId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var choosingAttachment by rememberSaveable { mutableStateOf(false) }
+    val messages = (uiState as? ChatUiState.Content)?.messages.orEmpty()
+    val replyTo = replyToId?.let { id -> messages.firstOrNull { it.id == id && !it.isDeleted } }
+    // A picked file answers the reply draft too, and takes it.
+    val currentReply by rememberUpdatedState(replyTo)
+    val pickers = rememberAttachmentPickers { uri ->
+        actions.onAttach(uri.toString(), currentReply)
+        replyToId = null
+    }
+    val menuState = rememberMessageMenuState()
+    val landing = rememberLandingState()
+    // The history composes two frames after the screen: the chat is still invisible then (the
+    // fade-through starts after 90 ms), and the transition's first frame stays light.
+    // With reduce motion there is no fade to hide behind, so the history shows in the first frame.
+    val reduce = LocalReduceMotion.current
+    var historyReady by remember { mutableStateOf(reduce) }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        withFrameNanos { }
+        historyReady = true
+    }
+    // Ids on screen the first time the history showed (an empty chat counts): those stay still,
+    // everything after animates in, including the first message of a new chat.
+    val baseline = remember { HashSet<Long>() }
+    val baselineTaken = remember { BooleanArray(1) }
+    if (!baselineTaken[0] && uiState is ChatUiState.Content) {
+        uiState.messages.mapTo(baseline) { it.id }
+        baselineTaken[0] = true
+    }
     val listState = rememberLazyListState()
+    // History passes under the bar whenever there is older content above the viewport.
+    val scrolledUnder by remember { derivedStateOf { listState.canScrollForward } }
+    val lift = rememberLift(scrolledUnder && uiState is ChatUiState.Content)
 
-    // Sync input text when editing message changes
-    LaunchedEffect(editingMessage) {
-        if (editingMessage != null) {
-            inputText = editingMessage?.text ?: ""
-        }
-    }
-
-    // Scroll to bottom when messages count changes
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
-        }
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CentyAvatar(
-                            name = title,
-                            avatarUrl = avatarUrl,
-                            status = if (viewModel.conversationType == ConversationType.DIRECT) UserStatus.fromValue(status) else null,
-                            size = 36.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (viewModel.conversationType == ConversationType.DIRECT && !status.isNullOrBlank()) {
-                                Text(
-                                    text = status.replaceFirstChar { it.uppercase() },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад"
-                        )
-                    }
-                },
-                actions = {
-                    if (viewModel.conversationType == ConversationType.DIRECT) {
-                        // Wake Buzzer button
-                        IconButton(
-                            onClick = { viewModel.sendWake() },
-                            enabled = wakeCooldown == 0
-                        ) {
-                            if (wakeCooldown > 0) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "${wakeCooldown}s",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = "Побудка",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
-                        // Call button
-                        IconButton(onClick = { onStartCall(viewModel.targetId, title) }) {
-                            Icon(
-                                imageVector = Icons.Default.Call,
-                                contentDescription = "Позвонить",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+    MessageMenuHost(menuState, modifier) {
+      Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = tokens.canvas,
+            // The composer takes the navigation bar and keyboard insets itself, so its surface runs
+            // to the bottom edge and rises with the keyboard frame by frame.
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = {
+                ChatTopBar(
+                    title = title,
+                    avatarUrl = avatarUrl,
+                    isDirect = isDirect,
+                    peerStatus = peerStatus,
+                    typingUser = typingUser,
+                    wakeCooldown = wakeCooldown,
+                    showBackButton = showBackButton,
+                    actions = actions,
+                    lift = lift,
+                    sharedKey = sharedKey,
+                    peerBlocked = composerLock == ComposerLock.BLOCKED_BY_ME,
+                    onRequestBlock = { confirmBlock = true }
                 )
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-        ) {
-            // Message List
-            LazyColumn(
-                state = listState,
+            }
+        ) { innerPadding ->
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding)
             ) {
-                items(messages, key = { it.id }) { message ->
-                    val isOwn = message.senderId == viewModel.currentUserId
-                    MessageBubble(
-                        message = message,
-                        isOwn = isOwn,
-                        canEdit = viewModel.canEditMessage(message),
-                        canDelete = viewModel.canDeleteMessage(message),
-                        onEdit = { viewModel.startEditing(message) },
-                        onDelete = { viewModel.deleteMessage(message) }
+                ConnectionBanner(connectionState)
+                AnimatedVisibility(visible = refreshFailed && uiState is ChatUiState.Content) {
+                    InlineNotice(
+                        text = stringResource(R.string.chat_refresh_failed),
+                        actionLabel = stringResource(R.string.action_retry),
+                        onAction = actions::onRetry,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).testTag("refresh-failed")
                     )
                 }
-            }
-
-            // Typing indicator
-            if (typingUser != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "$typingUser печатает…",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            // Edit banner if in edit mode
-            if (editingMessage != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (uiState) {
+                        is ChatUiState.Loading -> DelayedSkeleton()
+                        is ChatUiState.Error -> ErrorState(
+                            title = stringResource(R.string.chat_error),
+                            onRetry = actions::onRetry
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Редактирование сообщения",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            viewModel.cancelEditing()
-                            inputText = ""
-                        },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Отмена"
-                        )
+                        is ChatUiState.Content -> if (uiState.messages.isEmpty() && typingUser == null) {
+                            ChatEmptyState(composerLock)
+                        } else if (historyReady) {
+                            MessageList(
+                                listState = listState,
+                                messages = uiState.messages,
+                                currentUserId = currentUserId,
+                                showSenderNames = !isDirect,
+                                typingLabel = typingUser?.let {
+                                    if (isDirect) stringResource(R.string.chat_typing_bubble) else stringResource(R.string.chat_typing_named, it)
+                                },
+                                actions = actions,
+                                menuState = menuState,
+                                landing = landing,
+                                baseline = baseline,
+                                onReply = { message ->
+                                    actions.onCancelEdit()
+                                    replyToId = message.id
+                                },
+                                onEdit = { message ->
+                                    replyToId = null
+                                    actions.onStartEdit(message)
+                                },
+                                onRequestDelete = { pendingDelete = it },
+                                focusMessageId = focusMessageId,
+                                onFocusShown = onFocusShown
+                            )
+                        }
                     }
                 }
-            }
-
-            // Bottom Input Bar with imePadding for soft keyboard
-            Surface(
-                tonalElevation = 2.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = inputText,
-                        onValueChange = {
-                            inputText = it
-                            viewModel.onTyping(it.isNotBlank())
-                        },
-                        placeholder = { Text("Сообщение…") },
-                        maxLines = 4,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp),
-                        shape = RoundedCornerShape(24.dp)
-                    )
-
-                    FloatingActionButton(
-                        onClick = {
-                            if (inputText.isNotBlank()) {
-                                viewModel.sendMessage(inputText)
-                                inputText = ""
-                                viewModel.onTyping(false)
-                            }
-                        },
-                        shape = CircleShape,
-                        modifier = Modifier.size(48.dp),
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ) {
-                        Icon(
-                            imageVector = if (editingMessage != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Отправить",
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                ChatComposer(
+                    enabled = composerLock == ComposerLock.NONE || editingMessage != null,
+                    lockBanner = {
+                        AnimatedVisibility(visible = composerLock != ComposerLock.NONE) {
+                            ComposerLockBanner(composerLock, onUnblock = actions::onUnblockPeer)
+                        }
+                    },
+                    editingMessage = editingMessage,
+                    replyTo = replyTo,
+                    replyToIsOwn = replyTo?.senderId == currentUserId,
+                    onCancelReply = { replyToId = null },
+                    onSent = { replyToId = null },
+                    actions = actions,
+                    landing = landing,
+                    onAttach = if (actions.canAttach) {
+                        { choosingAttachment = true }
+                    } else null
+                )
             }
         }
+        LandingOverlay(landing)
+      }
+    }
+
+    if (choosingAttachment) {
+        AttachmentChooserSheet(
+            onPhoto = {
+                choosingAttachment = false
+                pickers.pickPhoto()
+            },
+            onFile = {
+                choosingAttachment = false
+                pickers.pickFile()
+            },
+            onDismiss = { choosingAttachment = false }
+        )
+    }
+
+    if (confirmBlock) {
+        BlockConfirmDialog(
+            name = title,
+            onConfirm = {
+                confirmBlock = false
+                actions.onBlockPeer()
+            },
+            onDismiss = { confirmBlock = false }
+        )
+    }
+
+    pendingDelete?.let { message ->
+        // An unsent message is cancelled (never sent later); a sent one is deleted for everyone.
+        val unsent = message.sendState != SendState.SENT
+        CentyConfirmDialog(
+            title = stringResource(R.string.chat_delete_title),
+            message = stringResource(if (unsent) R.string.chat_discard_message else R.string.chat_delete_message),
+            confirmText = stringResource(R.string.action_delete),
+            isDestructive = true,
+            confirmTestTag = "confirm-delete",
+            onConfirm = {
+                pendingDelete = null
+                if (unsent) actions.onDiscardFailed(message) else actions.onDelete(message)
+            },
+            onDismiss = { pendingDelete = null }
+        )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Loading: nothing for the first 300 ms (a cached or fast history replaces it without a flash), then
+ * the skeleton fades in.
+ */
 @Composable
-fun MessageBubble(
-    message: Message,
-    isOwn: Boolean,
-    canEdit: Boolean,
-    canDelete: Boolean,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
-    val isDark = MaterialTheme.colorScheme.background.red < 0.5f
-
-    val bubbleColor = when {
-        isOwn && isDark -> SentBubbleDark
-        isOwn -> SentBubbleLight
-        isDark -> ReceivedBubbleDark
-        else -> ReceivedBubbleLight
+private fun DelayedSkeleton() {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(300)
+        shown = true
     }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        contentAlignment = if (isOwn) Alignment.CenterEnd else Alignment.CenterStart
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isOwn) 16.dp else 4.dp,
-                        bottomEnd = if (isOwn) 4.dp else 16.dp
-                    )
-                )
-                .background(bubbleColor)
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = { menuExpanded = true }
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            if (!isOwn && message.senderName.isNotBlank()) {
-                Text(
-                    text = message.senderName,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-            }
-
-            Text(
-                text = message.text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.align(Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (!message.updatedAt.isNullOrBlank()) {
-                    Text(
-                        text = "ред.",
-                        fontSize = 10.sp,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                }
-
-                Text(
-                    text = DateTimeUtils.formatTime(message.createdAt),
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (isOwn) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    when (message.deliveryStatus) {
-                        DeliveryStatus.READ -> {
-                            Icon(
-                                imageVector = Icons.Default.DoneAll,
-                                contentDescription = "Прочитано",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        DeliveryStatus.DELIVERED -> {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Доставлено",
-                                tint = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        null -> {
-                            Icon(
-                                imageVector = Icons.Default.Schedule,
-                                contentDescription = "Отправка",
-                                tint = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Копировать") },
-                    onClick = {
-                        clipboardManager.setText(AnnotatedString(message.text))
-                        menuExpanded = false
-                    },
-                    leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) }
-                )
-
-                if (canEdit) {
-                    DropdownMenuItem(
-                        text = { Text("Изменить") },
-                        onClick = {
-                            menuExpanded = false
-                            onEdit()
-                        },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
-                    )
-                }
-
-                if (canDelete) {
-                    DropdownMenuItem(
-                        text = { Text("Удалить", color = MaterialTheme.colorScheme.error) },
-                        onClick = {
-                            menuExpanded = false
-                            onDelete()
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    )
-                }
-            }
-        }
-    }
+    AnimatedVisibility(visible = shown, enter = fadeIn(CentyMotion.base())) { ChatSkeleton() }
 }

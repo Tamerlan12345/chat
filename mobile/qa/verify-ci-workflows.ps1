@@ -40,6 +40,7 @@ Require-WorkflowContract -Path (Join-Path $workflowRoot 'mobile-ios.yml') -Requi
     'CentyChat',
     'iPhone 16',
     'CODE_SIGNING_ALLOWED=NO',
+    'mobile/qa/verify-ios-privacy-manifest\.ps1',
     'actions/upload-artifact@',
     'xcresult'
 )

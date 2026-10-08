@@ -2,12 +2,63 @@ import Foundation
 
 // MARK: - Client to Server WebSocket Messages
 
+/// The device fields of the `auth` frame (`multi-device.md` §3). All optional on the wire.
+public struct AuthHandshake: Sendable, Equatable {
+    /// Same id as in `/api/auth/knock` and the push-token registration; omitted when invalid.
+    public var deviceId: String?
+    public var platform: String
+    /// `away` when the socket connects in the background.
+    public var presence: PresenceState
+    /// The chat open in the foreground; never sent while away.
+    public var viewing: ConversationKey?
+
+    public init(deviceId: String? = nil, platform: String = "ios", presence: PresenceState = .online, viewing: ConversationKey? = nil) {
+        self.deviceId = deviceId
+        self.platform = platform
+        self.presence = presence
+        self.viewing = viewing
+    }
+
+    /// `[A-Za-z0-9._:-]{1,128}`.
+    public static func isValidDeviceId(_ id: String) -> Bool {
+        guard (1...128).contains(id.count) else { return false }
+        return id.unicodeScalars.allSatisfy { scalar in
+            switch scalar {
+            case "A"..."Z", "a"..."z", "0"..."9", ".", "_", ":", "-": return true
+            default: return false
+            }
+        }
+    }
+
+    var fields: [String: Any] {
+        var dict: [String: Any] = ["platform": platform, "presence": presence.rawValue]
+        if let deviceId, Self.isValidDeviceId(deviceId) {
+            dict["device_id"] = deviceId
+        }
+        if presence == .online, let viewing {
+            dict["viewing"] = ["conversationType": viewing.type.rawValue, "targetId": viewing.targetId]
+        }
+        return dict
+    }
+}
+
+/// The automatic presence of this socket: the only two values a client sends (`presence` frame).
+public enum PresenceState: String, Sendable, Equatable {
+    case online
+    case away
+}
+
 public enum WSClientMessage: Sendable {
-    case auth(token: String)
-    case sendMessage(conversationType: ConversationType, targetId: Int64, text: String, msgType: MessageType = .text, replyToId: Int64? = nil, metadata: MessageMetadata? = nil)
-    case editMessage(messageId: Int64, text: String)
+    /// Older call sites send only the token; the realtime client adds the device fields.
+    case auth(token: String, handshake: AuthHandshake? = nil)
+    /// `viewing {conversationType, targetId}`; nil — no chat open (`conversationType: null`).
+    case viewing(ConversationKey?)
+    /// Presence with the custom status always present: nil clears it (`customStatus: null`).
+    case presenceWithCustomStatus(state: PresenceState, customStatus: String?)
+    // Messages, edits, deletions of one's own messages and read receipts are written only by the
+    // delivery engine (`DeliveryEngine`, raw contract frames). This one remains for a moderator
+    // deleting someone else's message, which the delivery model does not cover.
     case deleteMessage(messageId: Int64)
-    case markRead(conversationType: ConversationType, targetId: Int64)
     case typing(conversationType: ConversationType, targetId: Int64, isTyping: Bool)
     case presence(state: String, customStatus: String?)
     case setDnd(enabled: Bool, customStatus: String?)
@@ -22,38 +73,25 @@ public enum WSClientMessage: Sendable {
         var dict: [String: Any] = [:]
         
         switch self {
-        case .auth(let token):
-            dict = ["type": "auth", "token": token]
-            
-        case .sendMessage(let convType, let targetId, let text, let msgType, let replyToId, let metadata):
-            dict = [
-                "type": "send_message",
-                "conversationType": convType.rawValue,
-                "targetId": targetId,
-                "text": text,
-                "msgType": msgType.rawValue
-            ]
-            if let replyToId = replyToId {
-                dict["replyToId"] = replyToId
+        case .auth(let token, let handshake):
+            dict = handshake?.fields ?? [:]
+            dict["type"] = "auth"
+            dict["token"] = token
+
+        case .viewing(let conversation):
+            dict = ["type": "viewing"]
+            if let conversation {
+                dict["conversationType"] = conversation.type.rawValue
+                dict["targetId"] = conversation.targetId
+            } else {
+                dict["conversationType"] = NSNull()
             }
-            if let metadata = metadata {
-                var metaDict: [String: Any] = [:]
-                if let fId = metadata.fileId { metaDict["file_id"] = fId }
-                if let fName = metadata.fileName { metaDict["file_name"] = fName }
-                if let fSize = metadata.fileSize { metaDict["size"] = fSize }
-                if let fMime = metadata.mimeType { metaDict["mime_type"] = fMime }
-                if let fUrl = metadata.url { metaDict["url"] = fUrl }
-                dict["metadata"] = metaDict
-            }
-            
-        case .editMessage(let messageId, let text):
-            dict = ["type": "edit_message", "messageId": messageId, "text": text]
-            
+
+        case .presenceWithCustomStatus(let state, let customStatus):
+            dict = ["type": "presence", "state": state.rawValue, "customStatus": customStatus.map { $0 as Any } ?? NSNull()]
+
         case .deleteMessage(let messageId):
             dict = ["type": "delete_message", "messageId": messageId]
-            
-        case .markRead(let convType, let targetId):
-            dict = ["type": "mark_read", "conversationType": convType.rawValue, "targetId": targetId]
             
         case .typing(let convType, let targetId, let isTyping):
             dict = ["type": "typing", "conversationType": convType.rawValue, "targetId": targetId, "isTyping": isTyping]
@@ -108,7 +146,12 @@ public enum WSServerEvent: Sendable {
     case authError(code: String, message: String)
     case wakeState(targetUserId: Int64?, at: Int64?, retryAt: Int64)
     case serverDisconnect(reason: String)
-    case newMessage(message: Message)
+    /// `notify`: show a banner / local notification on this socket (`multi-device.md` §5); nil — an older server.
+    case newMessage(message: Message, notify: Bool?)
+    /// Read on another device of mine: zero the unread counter, dismiss its notifications.
+    case conversationRead(conversation: ConversationKey, byUserId: Int64, messageIds: [Int64], lastReadId: Int64?)
+    /// The author cancelled an unsent message (`cancel_message`); `messageId` when it was stored.
+    case messageCancelled(clientMsgId: String, messageId: Int64?)
     case messageStatusUpdated(messageId: Int64, status: DeliveryStatus, userId: Int64?, timestamp: String?)
     case messagesRead(byUserId: Int64, messageIds: [Int64])
     case messageUpdated(messageId: Int64, text: String, updatedAt: Date?)
@@ -124,9 +167,12 @@ public enum WSServerEvent: Sendable {
     case callOffer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callAnswer(targetUserId: Int64, senderId: Int64, senderName: String)
     case callRejected(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
-    case callEnd(targetUserId: Int64, senderId: Int64, senderName: String, reason: String?)
+    /// `targetUserId` is absent when the server ends a call because a peer's connection dropped.
+    case callEnd(targetUserId: Int64?, senderId: Int64, senderName: String, reason: String?)
     case callDenied(reason: String)
     case callUnavailable(targetUserId: Int64, reason: String)
+    /// Relayed WebRTC signalling. Calls use the server audio relay, so it is parsed and ignored.
+    case iceCandidate(targetUserId: Int64, senderId: Int64, senderName: String)
     case wakeRing(fromUserId: Int64, fromName: String, at: Int64)
     case wakeSent(targetUserId: Int64, at: Int64, retryAt: Int64)
     case wakeError(code: String, message: String?)
@@ -152,7 +198,7 @@ public enum WSServerEvent: Sendable {
             
         case "auth_error":
             let code = json["code"] as? String ?? "UNKNOWN"
-            let message = json["message"] as? String ?? "Ошибка авторизации"
+            let message = json["message"] as? String ?? String(localized: "Ошибка авторизации")
             return .authError(code: code, message: message)
             
         case "wake_state":
@@ -162,17 +208,35 @@ public enum WSServerEvent: Sendable {
             return .wakeState(targetUserId: targetUserId, at: at, retryAt: retryAt)
             
         case "server_disconnect":
-            let reason = json["reason"] as? String ?? "Отключено сервером"
+            let reason = json["reason"] as? String ?? String(localized: "Отключено сервером")
             return .serverDisconnect(reason: reason)
             
         case "new_message", "direct_message", "channel_message":
             if let msgDict = json["message"],
                let msgData = try? JSONSerialization.data(withJSONObject: msgDict),
                let msg = try? decoder.decode(Message.self, from: msgData) {
-                return .newMessage(message: msg)
+                return .newMessage(message: msg, notify: json["notify"] as? Bool)
             }
             return nil
             
+        case "conversation_read":
+            guard let convStr = json["conversationType"] as? String,
+                  let conv = ConversationType(rawValue: convStr),
+                  let tId = (json["targetId"] as? NSNumber)?.int64Value else { return nil }
+            let byUser = (json["byUserId"] as? NSNumber)?.int64Value ?? 0
+            let ids = (json["messageIds"] as? [NSNumber])?.map { $0.int64Value } ?? []
+            let lastReadId = (json["lastReadId"] as? NSNumber)?.int64Value
+            return .conversationRead(
+                conversation: ConversationKey(type: conv, targetId: tId),
+                byUserId: byUser,
+                messageIds: ids,
+                lastReadId: lastReadId
+            )
+
+        case "message_cancelled":
+            guard let clientMsgId = json["client_msg_id"] as? String else { return nil }
+            return .messageCancelled(clientMsgId: clientMsgId, messageId: (json["messageId"] as? NSNumber)?.int64Value)
+
         case "message_status_updated":
             guard let mId = (json["messageId"] as? NSNumber)?.int64Value,
                   let statusStr = json["status"] as? String,
@@ -281,21 +345,27 @@ public enum WSServerEvent: Sendable {
             return .callRejected(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_end":
-            guard let tId = (json["targetUserId"] as? NSNumber)?.int64Value,
-                  let sId = (json["senderId"] as? NSNumber)?.int64Value,
-                  let sName = json["senderName"] as? String else { return nil }
+            guard let sId = (json["senderId"] as? NSNumber)?.int64Value else { return nil }
+            let tId = (json["targetUserId"] as? NSNumber)?.int64Value
+            let sName = json["senderName"] as? String ?? ""
             let reason = json["reason"] as? String
             return .callEnd(targetUserId: tId, senderId: sId, senderName: sName, reason: reason)
             
         case "call_denied":
-            let reason = json["reason"] as? String ?? "Звонок запрещен политикой"
+            let reason = json["reason"] as? String ?? String(localized: "Звонок запрещен политикой")
             return .callDenied(reason: reason)
             
         case "call_unavailable":
             let tId = (json["targetUserId"] as? NSNumber)?.int64Value ?? 0
-            let reason = json["reason"] as? String ?? "Собеседник недоступен"
+            let reason = json["reason"] as? String ?? String(localized: "Собеседник недоступен")
             return .callUnavailable(targetUserId: tId, reason: reason)
             
+        case "ice_candidate":
+            guard let tId = (json["targetUserId"] as? NSNumber)?.int64Value,
+                  let sId = (json["senderId"] as? NSNumber)?.int64Value else { return nil }
+            let sName = json["senderName"] as? String ?? ""
+            return .iceCandidate(targetUserId: tId, senderId: sId, senderName: sName)
+
         case "wake_ring":
             guard let fId = (json["fromUserId"] as? NSNumber)?.int64Value,
                   let fName = json["fromName"] as? String else { return nil }

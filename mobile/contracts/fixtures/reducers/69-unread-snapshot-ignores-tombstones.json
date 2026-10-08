@@ -1,0 +1,107 @@
+{
+  "name": "69-unread-snapshot-ignores-tombstones",
+  "description": "Задача 18: досчёт снимка непрочитанного по last_message_ids (G7) не считает надгробия: удалённое чужое сообщение новее снимка читать нечего. Счёт сервера (counts) по-прежнему берётся как есть.",
+  "covers": [
+    "T53",
+    "T30"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "channel:5": [
+        {
+          "id": 400,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Старое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 401,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:05.000Z",
+          "is_deleted": 1,
+          "status": null
+        },
+        {
+          "id": 402,
+          "client_msg_id": null,
+          "sender_id": 4,
+          "text": "Новое",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "direct:3": [
+        {
+          "id": 500,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": "2026-10-02T09:00:06.000Z",
+          "is_deleted": 1,
+          "status": null
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "unread_snapshot",
+      "now": 1000,
+      "counts": {
+        "channel:5": 2,
+        "direct:3": 0
+      },
+      "last_message_ids": {
+        "channel:5": 400,
+        "direct:3": 499
+      }
+    }
+  ],
+  "expectedEffects": [
+    []
+  ],
+  "expectedState": {
+    "unread": {
+      "channel:5": 3
+    }
+  }
+}

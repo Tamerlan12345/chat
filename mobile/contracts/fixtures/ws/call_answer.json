@@ -1,0 +1,6 @@
+{
+  "type": "call_answer",
+  "targetUserId": 2,
+  "senderId": 3,
+  "senderName": "Боб Тестов"
+}

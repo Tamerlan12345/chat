@@ -49,6 +49,14 @@ export function errorMessageFrom(data, status, fallback) {
   return fallback;
 }
 
+// Отказ сервера: русский текст для человека и код ответа для логики
+// (например, по 404 перечитать устаревший список).
+export function httpError(message, status) {
+  const err = new Error(message);
+  if (status !== undefined) err.status = status;
+  return err;
+}
+
 // Тело отказа бывает и не JSON (например, «Бэкап не найден» простым текстом).
 export async function readError(res, fallback) {
   let data = null;

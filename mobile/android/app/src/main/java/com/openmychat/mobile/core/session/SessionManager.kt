@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import android.content.pm.ApplicationInfo
+import com.openmychat.mobile.core.config.ServerConfig
 import com.openmychat.mobile.core.network.ServerEndpointPolicy
 import com.openmychat.mobile.core.network.ValidatedEndpoint
 import com.openmychat.mobile.data.model.User
@@ -24,14 +24,37 @@ class SecureStorageUnavailableException : IllegalStateException(
     "Secure device storage is unavailable. Unlock the device or restore screen lock, then try again."
 )
 
-class SessionManager internal constructor(
+/**
+ * Fail-closed encrypted store for the session (token, user, device secret).
+ *
+ * The server is fixed at build time ([ServerConfig]); [serverEndpoint] is never read from storage.
+ * The stored `server_url` only records which server issued the stored credentials: anything issued
+ * by another server (an older install's custom address, or a debug build pointed elsewhere) is
+ * wiped on start, so the user signs in again instead of sending a token to the wrong host.
+ */
+class SessionManager private constructor(
     private val prefs: SharedPreferences?,
-    private val isDebuggableBuild: Boolean
+    val serverEndpoint: ValidatedEndpoint,
+    private val invalidationStore: SessionInvalidationStore,
+    @Suppress("UNUSED_PARAMETER") private val constructorMarker: Unit
 ) {
+
+    internal constructor(
+        prefs: SharedPreferences?,
+        serverEndpoint: ValidatedEndpoint
+    ) : this(prefs, serverEndpoint, NoOpSessionInvalidationStore, Unit)
+
+    internal constructor(
+        prefs: SharedPreferences?,
+        serverEndpoint: ValidatedEndpoint,
+        invalidationStore: SessionInvalidationStore
+    ) : this(prefs, serverEndpoint, invalidationStore, Unit)
 
     constructor(context: Context) : this(
         prefs = createEncryptedPreferences(context),
-        isDebuggableBuild = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        serverEndpoint = ServerConfig.endpoint,
+        invalidationStore = createSessionInvalidationStore(context),
+        constructorMarker = Unit
     )
 
     private val json = Json {
@@ -40,7 +63,11 @@ class SessionManager internal constructor(
     }
 
     private val _storageState = MutableStateFlow(
-        if (prefs == null) SessionStorageState.UNAVAILABLE else SessionStorageState.AVAILABLE
+        if (prefs == null || isPersistentlyInvalidated()) {
+            SessionStorageState.UNAVAILABLE
+        } else {
+            SessionStorageState.AVAILABLE
+        }
     )
     val storageState: StateFlow<SessionStorageState> = _storageState.asStateFlow()
 
@@ -53,26 +80,79 @@ class SessionManager internal constructor(
     private val _mustChangePasswordFlow = MutableStateFlow(false)
     val mustChangePasswordFlow: StateFlow<Boolean> = _mustChangePasswordFlow.asStateFlow()
 
-    private val _serverUrlFlow = MutableStateFlow(DEFAULT_SERVER_URL)
-    val serverUrlFlow: StateFlow<String> = _serverUrlFlow.asStateFlow()
+    /** A committed sign-in, separate from JWT refreshes and individual user/token flow updates. */
+    data class AuthenticatedSession(val userId: Long, val generation: Long)
+    private var sessionGeneration = 0L
+    private val _authenticatedSession = MutableStateFlow<AuthenticatedSession?>(null)
+    val authenticatedSession: StateFlow<AuthenticatedSession?> = _authenticatedSession.asStateFlow()
+
+    private fun publishAuthenticatedSession() {
+        val user = _currentUserFlow.value
+        _authenticatedSession.value = if (user != null && _tokenFlow.value != null) {
+            AuthenticatedSession(user.id, ++sessionGeneration)
+        } else null
+    }
+
+    private var ephemeralDeviceId: String? = null
 
     init {
-        _tokenFlow.value = readString(KEY_TOKEN)
-        _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
-        restorePersistedServerEndpoint()
+        if (_storageState.value == SessionStorageState.AVAILABLE) {
+            discardCredentialsIssuedByAnotherServer()
+        }
+        if (_storageState.value == SessionStorageState.AVAILABLE) {
+            _tokenFlow.value = readString(KEY_TOKEN)
+            _mustChangePasswordFlow.value = readBoolean(KEY_MUST_CHANGE_PASSWORD, false)
 
-        val userJson = readString(KEY_CURRENT_USER)
-        if (!userJson.isNullOrBlank()) {
-            try {
-                _currentUserFlow.value = json.decodeFromString<User>(userJson)
-            } catch (e: Exception) {
-                _currentUserFlow.value = null
+            val userJson = readString(KEY_CURRENT_USER)
+            if (!userJson.isNullOrBlank()) {
+                try {
+                    _currentUserFlow.value = json.decodeFromString<User>(userJson)
+                } catch (e: Exception) {
+                    _currentUserFlow.value = null
+                }
             }
+        }
+        publishAuthenticatedSession()
+    }
+
+    /**
+     * A token, user or device secret is only valid on the server that issued it. If the stored
+     * credentials were issued by a different server, or carry no record of their server (they can
+     * only come from an older install), they are removed in one commit and the user signs in again.
+     * The device id is not a credential and is kept. A failed commit fails closed.
+     */
+    private fun discardCredentialsIssuedByAnotherServer() {
+        val stored = readString(KEY_SERVER_URL)
+        val issuedBy = stored?.let {
+            ServerEndpointPolicy.validate(it, allowInsecureDebug = true).getOrNull()?.apiBaseUrl
+        }
+        if (issuedBy == serverEndpoint.apiBaseUrl) return
+        val holdsCredentials = listOf(KEY_TOKEN, KEY_CURRENT_USER, KEY_DEVICE_SECRET)
+            .any { !readString(it).isNullOrEmpty() }
+        if (stored == null && !holdsCredentials) return
+        editSecureStorage {
+            remove(KEY_TOKEN)
+            remove(KEY_CURRENT_USER)
+            remove(KEY_MUST_CHANGE_PASSWORD)
+            remove(KEY_DEVICE_SECRET)
+            remove(KEY_MSG_EDIT_WINDOW)
+            remove(KEY_MSG_DELETE_WINDOW)
+            putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
         }
     }
 
-    private fun markStorageUnavailable() {
+    private fun isPersistentlyInvalidated(): Boolean = try {
+        invalidationStore.isInvalidated()
+    } catch (_: Exception) {
+        true
+    }
+
+    private fun markStorageUnavailable(persistInvalidation: Boolean = true) {
+        if (persistInvalidation) {
+            invalidationStore.invalidate()
+        }
         _storageState.value = SessionStorageState.UNAVAILABLE
+        _authenticatedSession.value = null
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
@@ -96,8 +176,11 @@ class SessionManager internal constructor(
             defaultValue
         }
 
-    private fun editSecureStorage(change: SharedPreferences.Editor.() -> Unit): Boolean {
-        if (_storageState.value == SessionStorageState.UNAVAILABLE) return false
+    private fun editSecureStorage(
+        allowRecoveryFromPersistentInvalidation: Boolean = false,
+        change: SharedPreferences.Editor.() -> Unit
+    ): Boolean {
+        if (_storageState.value == SessionStorageState.UNAVAILABLE && !allowRecoveryFromPersistentInvalidation) return false
         val securePrefs = prefs ?: run {
             markStorageUnavailable()
             return false
@@ -123,53 +206,32 @@ class SessionManager internal constructor(
     private fun writeBoolean(key: String, value: Boolean): Boolean =
         editSecureStorage { putBoolean(key, value) }
 
-    var serverUrl: String
-        get() = _serverUrlFlow.value
-        set(value) {
-            validateServerEndpoint(value).onSuccess(::useServerEndpointForVerification)
-        }
-
-    fun validateServerEndpoint(raw: String): Result<ValidatedEndpoint> =
-        ServerEndpointPolicy.validate(raw, allowInsecureDebug = isDebuggableBuild)
-
-    fun useServerEndpointForVerification(endpoint: ValidatedEndpoint) {
-        _serverUrlFlow.value = endpoint.apiBaseUrl
-    }
-
-    fun commitVerifiedServerEndpoint(endpoint: ValidatedEndpoint) {
-        if (!writeString(KEY_SERVER_URL, endpoint.apiBaseUrl)) {
-            throw SecureStorageUnavailableException()
-        }
-        _serverUrlFlow.value = endpoint.apiBaseUrl
-    }
-
-    fun restorePersistedServerEndpoint() {
-        val stored = readString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
-        val endpoint = validateServerEndpoint(stored).getOrNull()
-        if (endpoint == null && stored.isNotBlank()) {
-            writeString(KEY_SERVER_URL, null)
-        }
-        _serverUrlFlow.value = endpoint?.apiBaseUrl ?: DEFAULT_SERVER_URL
-    }
+    /** API base URL of the build-time server, e.g. `https://host/api`. */
+    val serverUrl: String
+        get() = serverEndpoint.apiBaseUrl
 
     val wsUrl: String
-        get() = validateServerEndpoint(serverUrl).getOrNull()?.webSocketUrl
-            ?: error("A verified server endpoint is required before opening a WebSocket")
+        get() = serverEndpoint.webSocketUrl
 
     var token: String?
         get() = readString(KEY_TOKEN)
         set(value) {
-            if (writeString(KEY_TOKEN, value)) {
-                _tokenFlow.value = value
-            }
+            if (!writeString(KEY_TOKEN, value)) throw SecureStorageUnavailableException()
+            _tokenFlow.value = value
         }
 
     val deviceId: String
         get() {
+            if (_storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()) {
+                return ephemeralDeviceId ?: UUID.randomUUID().toString().also {
+                    // Device IDs are non-secret, but must remain memory-only until recovery commits.
+                    ephemeralDeviceId = it
+                }
+            }
             var id = readString(KEY_DEVICE_ID)
             if (id.isNullOrBlank()) {
                 id = UUID.randomUUID().toString()
-                writeString(KEY_DEVICE_ID, id)
+                if (!writeString(KEY_DEVICE_ID, id)) throw SecureStorageUnavailableException()
             }
             return id
         }
@@ -177,7 +239,7 @@ class SessionManager internal constructor(
     var deviceSecret: String?
         get() = readString(KEY_DEVICE_SECRET)
         set(value) {
-            writeString(KEY_DEVICE_SECRET, value)
+            if (!writeString(KEY_DEVICE_SECRET, value)) throw SecureStorageUnavailableException()
         }
 
     var currentUser: User?
@@ -185,16 +247,14 @@ class SessionManager internal constructor(
         set(value) {
             if (value != null) {
                 val encoded = json.encodeToString(value)
-                if (writeString(KEY_CURRENT_USER, encoded)) {
-                    _currentUserFlow.value = value
-                    if (value.mustChangePassword) {
-                        updateMustChangePassword(true)
-                    }
+                if (!writeString(KEY_CURRENT_USER, encoded)) throw SecureStorageUnavailableException()
+                _currentUserFlow.value = value
+                if (value.mustChangePassword) {
+                    updateMustChangePassword(true)
                 }
             } else {
-                if (writeString(KEY_CURRENT_USER, null)) {
-                    _currentUserFlow.value = null
-                }
+                if (!writeString(KEY_CURRENT_USER, null)) throw SecureStorageUnavailableException()
+                _currentUserFlow.value = null
             }
         }
 
@@ -205,51 +265,170 @@ class SessionManager internal constructor(
         }
 
     private fun updateMustChangePassword(mustChange: Boolean) {
-        if (writeBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange)) {
-            _mustChangePasswordFlow.value = mustChange
-        }
+        if (!writeBoolean(KEY_MUST_CHANGE_PASSWORD, mustChange)) throw SecureStorageUnavailableException()
+        _mustChangePasswordFlow.value = mustChange
     }
 
     var messageEditWindowMinutes: String
         get() = readString(KEY_MSG_EDIT_WINDOW, "60") ?: "60"
         set(value) {
-            writeString(KEY_MSG_EDIT_WINDOW, value)
+            if (!writeString(KEY_MSG_EDIT_WINDOW, value)) throw SecureStorageUnavailableException()
         }
 
     var messageDeleteWindowMinutes: String
         get() = readString(KEY_MSG_DELETE_WINDOW, "60") ?: "60"
         set(value) {
-            writeString(KEY_MSG_DELETE_WINDOW, value)
+            if (!writeString(KEY_MSG_DELETE_WINDOW, value)) throw SecureStorageUnavailableException()
         }
 
     fun saveAuthSuccess(user: User, token: String) {
-        val encodedUser = json.encodeToString(user)
+        persistAuthenticatedSession(user, token, user.mustChangePassword)
+    }
+
+    /**
+     * Replaces an authenticated session after server-side credential rotation.
+     *
+     * Clearing the old session is deliberately committed before the single replacement edit.
+     * If the replacement cannot be committed, a later process cannot resurrect the old or
+     * partially updated credential set.
+     */
+    fun replaceAuthenticatedSession(
+        user: User?,
+        token: String,
+        mustChangePassword: Boolean
+    ) {
+        val authenticatedUser = user ?: _currentUserFlow.value
+            ?: throw IllegalStateException("Cannot replace a session without an authenticated user")
+        if (!clearSession()) throw SecureStorageUnavailableException()
+        persistAuthenticatedSession(authenticatedUser, token, mustChangePassword)
+    }
+
+    @Synchronized
+    private fun persistAuthenticatedSession(user: User, token: String, mustChangePassword: Boolean) {
+        val encodedUser = json.encodeToString(user.copy(mustChangePassword = mustChangePassword))
+        val recoveringFromPersistentInvalidation =
+            _storageState.value == SessionStorageState.UNAVAILABLE && isPersistentlyInvalidated()
+        if (recoveringFromPersistentInvalidation) {
+            commitRecoveredAuthenticatedSession(
+                user = user,
+                token = token,
+                mustChangePassword = mustChangePassword,
+                encodedUser = encodedUser
+            )
+            return
+        }
         if (!editSecureStorage {
+                putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
                 putString(KEY_TOKEN, token)
                 putString(KEY_CURRENT_USER, encodedUser)
-                putBoolean(KEY_MUST_CHANGE_PASSWORD, user.mustChangePassword)
+                putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
             }
         ) throw SecureStorageUnavailableException()
 
+        _storageState.value = SessionStorageState.AVAILABLE
         _tokenFlow.value = token
-        _currentUserFlow.value = user
-        _mustChangePasswordFlow.value = user.mustChangePassword
+        _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
+        _mustChangePasswordFlow.value = mustChangePassword
+        publishAuthenticatedSession()
     }
 
-    fun clearSession() {
-        editSecureStorage {
+    /**
+     * Commits a clean replacement in one encrypted-preferences transaction before any marker is
+     * cleared. A crash before [invalidationStore.clear] remains invalidated; a crash afterwards
+     * can restore only this fresh authenticated session for the build-time server.
+     */
+    private fun commitRecoveredAuthenticatedSession(
+        user: User,
+        token: String,
+        mustChangePassword: Boolean,
+        encodedUser: String
+    ) {
+        if (!editSecureStorage(allowRecoveryFromPersistentInvalidation = true) {
+                clear()
+                putString(KEY_SERVER_URL, serverEndpoint.apiBaseUrl)
+                putString(KEY_TOKEN, token)
+                putString(KEY_CURRENT_USER, encodedUser)
+                putBoolean(KEY_MUST_CHANGE_PASSWORD, mustChangePassword)
+                ephemeralDeviceId?.let { putString(KEY_DEVICE_ID, it) }
+            }
+        ) throw SecureStorageUnavailableException()
+
+        if (!invalidationStore.clear()) {
+            markStorageUnavailable()
+            throw SecureStorageUnavailableException()
+        }
+
+        _storageState.value = SessionStorageState.AVAILABLE
+        _tokenFlow.value = token
+        _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
+        _mustChangePasswordFlow.value = mustChangePassword
+        publishAuthenticatedSession()
+        ephemeralDeviceId = null
+    }
+
+    /**
+     * Ends the session only when [token] is still the session's token: a refusal of an older token
+     * (another account's, or one already replaced) says nothing about the session signed in now.
+     */
+    /**
+     * Stores a renewed token only while [old] — the token it renews — is still the session's token
+     * (review fix round 1). A refresh that lands after a sign-out, or after another account signed in,
+     * stores nothing (false). Runs under the same lock as every other change of the session. Throws
+     * [SecureStorageUnavailableException] when the store refuses the write.
+     */
+    @Synchronized
+    fun replaceTokenIfCurrent(old: String, new: String): Boolean {
+        if (_storageState.value == SessionStorageState.UNAVAILABLE) return false
+        if (readString(KEY_TOKEN) != old) return false
+        // A store that refuses the write is reported, never a token kept only in memory.
+        if (!writeString(KEY_TOKEN, new)) throw SecureStorageUnavailableException()
+        _tokenFlow.value = new
+        return true
+    }
+
+    @Synchronized
+    fun clearSessionIfCurrent(token: String): Boolean {
+        if (readString(KEY_TOKEN) != token) return true
+        return clearSession()
+    }
+
+    /**
+     * Explicit sign-out: the session and the device secret go together, in one commit, so the login
+     * screen's knock cannot sign the same person back in without a password (final review I1). False
+     * when the store could not be written — the caller must not report a sign-out then.
+     */
+    @Synchronized
+    fun clearSessionForSignOut(): Boolean {
+        val cleared = editSecureStorage {
+            remove(KEY_TOKEN)
+            remove(KEY_CURRENT_USER)
+            remove(KEY_MUST_CHANGE_PASSWORD)
+            remove(KEY_DEVICE_SECRET)
+        }
+        _authenticatedSession.value = null
+        _tokenFlow.value = null
+        _currentUserFlow.value = null
+        _mustChangePasswordFlow.value = false
+        return cleared
+    }
+
+    @Synchronized
+    fun clearSession(): Boolean {
+        val cleared = editSecureStorage {
             remove(KEY_TOKEN)
             remove(KEY_CURRENT_USER)
             remove(KEY_MUST_CHANGE_PASSWORD)
         }
+        _authenticatedSession.value = null
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
+        return cleared
     }
 
     companion object {
         private fun createEncryptedPreferences(context: Context): SharedPreferences? = try {
-            val masterKey = MasterKey.Builder(context)
+            val masterKey = MasterKey.Builder(context, SECURE_SESSION_MASTER_KEY_ALIAS)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
 
@@ -264,7 +443,7 @@ class SessionManager internal constructor(
             null
         }
 
-        const val DEFAULT_SERVER_URL = ""
+        /** Records which server issued the stored credentials; never used to pick the endpoint. */
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_TOKEN = "jwt_token"
         private const val KEY_DEVICE_ID = "device_id"

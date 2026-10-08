@@ -1,170 +1,331 @@
 import SwiftUI
+import UIKit
 
-/// Экран авторизации пользователя по корпоративным учетным данным
+/// The app's front door: the CentyChat lockup and one card with login and password.
+///
+/// There is no server field and no way to change the server: the build is fixed to one
+/// (`ServerEnvironment`). The password stays in memory only (`LoginFormModel`).
 public struct LoginView: View {
-    @Environment(AppState.self) private var appState
-    
-    @State private var usernameInput: String = ""
-    @State private var passwordInput: String = ""
-    @State private var isLoading: Bool = false
-    @State private var errorMessage: String? = nil
-    @State private var showChangePasswordModal: Bool = false
-    
+    private enum Field: Hashable {
+        case username
+        case password
+    }
+
+    @Environment(SessionStore.self) private var session
+    @Environment(AppContainer.self) private var container
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsRegistration = false
+
+    @State private var form = LoginFormModel()
+    @State private var isPasswordVisible = false
+    @State private var isMarkVisible = false
+    @FocusState private var focusedField: Field?
+    @ScaledMetric(relativeTo: .largeTitle) private var markSize: CGFloat = 72
+
+    /// The mark animates in once per app launch.
+    @MainActor private static var hasPresentedMark = false
+
     public init() {}
-    
-    private var isFormValid: Bool {
-        !usernameInput.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !passwordInput.isEmpty
-    }
-    
+
     public var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 28) {
-                    // Логотип компании
-                    VStack(spacing: 12) {
-                        Image(systemName: "shield.checkered")
-                            .font(.system(size: 60))
-                            .foregroundColor(CentyColors.primaryBlue)
-                            .padding(.top, 40)
-                        
-                        Text("Вход в CentyChat")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                        
-                        Text(appState.serverInfo.companyName)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    
-                    // Поля ввода учетных данных
-                    VStack(spacing: 14) {
-                        CentyTextField(
-                            placeholder: "Корпоративный логин",
-                            text: $usernameInput,
-                            icon: "person.fill",
-                            textContentType: .username,
-                            autocapitalization: .never
-                        )
-                        
-                        CentyTextField(
-                            placeholder: "Пароль",
-                            text: $passwordInput,
-                            icon: "lock.fill",
-                            isSecure: true,
-                            textContentType: .password
-                        )
-                    }
-                    .padding(.horizontal)
-                    
-                    if let error = errorMessage {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    
-                    // Кнопка входа
-                    CentyButton(
-                        title: isLoading ? "Авторизация..." : "Войти",
-                        icon: "arrow.right.circle.fill",
-                        isLoading: isLoading,
-                        isEnabled: isFormValid
-                    ) {
-                        Task { await performLogin() }
-                    }
-                    .padding(.horizontal)
-                    
-                    // Информация об устройстве
-                    VStack(spacing: 4) {
-                        Text("Устройство: \(UIDevice.current.name)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text("Сервер: \(KeychainManager.shared.serverUrl)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.top, 16)
+        ScrollView {
+            VStack(spacing: 24) {
+                lockup
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    card(at: context.date)
                 }
-            }
-            .background(CentyColors.chatBackground)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
-                        appState.isServerConfigured = false
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text("Сервер")
-                        }
-                        .font(.subheadline)
-                    }
+                // Decision Q: offered only while the server takes registrations; unknown (offline)
+                // keeps it — the server still refuses with REGISTRATION_DISABLED if it is closed.
+                if session.registrationOpen != false {
+                    registrationEntry
                 }
+                Text("Забыли пароль? Обратитесь к администратору.")
+                    .font(.footnote)
+                    .foregroundStyle(CentyColors.textDim)
+                    .multilineTextAlignment(.center)
             }
-            .onAppear {
-                if let saved = KeychainManager.shared.savedUsername {
-                    usernameInput = saved
-                }
-            }
-            .sheet(isPresented: $showChangePasswordModal) {
-                ChangePasswordModalView(isMandatory: true)
-            }
+            .frame(maxWidth: 420)
+            .padding(.horizontal, 16)
+            .padding(.top, 48)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("login-screen")
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.basedOnSize)
+        .background(CentyColors.canvas.ignoresSafeArea())
+        .onAppear {
+            form.prefill(username: session.savedUsername)
+            presentMark()
+        }
+        .fullScreenCover(isPresented: $showsRegistration) {
+            RegistrationFlowView(
+                account: container.accountRepository,
+                signIn: { auth in await session.completeRegistration(auth) },
+                onClose: { showsRegistration = false }
+            )
         }
     }
-    
-    private func performLogin() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-        
-        let cleanedUsername = usernameInput.trimmingCharacters(in: .whitespaces).lowercased()
-        
-        do {
-            let req = LoginRequest(username: cleanedUsername, password: passwordInput)
-            let res = try await APIClient.shared.login(request: req)
-            
-            KeychainManager.shared.savedUsername = cleanedUsername
-            appState.currentUser = res.user
-            
-            // Device Claim для беспарольного входа (Parity Matrix Section 2)
-            let secret = generateDeviceSecret()
-            let deviceId = KeychainManager.shared.deviceId
-            let claimed = try? await APIClient.shared.claimDevice(deviceId: deviceId, deviceSecret: secret)
-            if claimed == true {
-                KeychainManager.shared.deviceSecret = secret
+
+    // MARK: - Registration entry
+
+    private var registrationEntry: some View {
+        VStack(spacing: 4) {
+            Text("Нет аккаунта?")
+                .font(.footnote)
+                .foregroundStyle(CentyColors.textDim)
+            Button {
+                showsRegistration = true
+            } label: {
+                Text("Зарегистрироваться")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(CentyColors.accentText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
             }
-            
-            // Подключение WebSocket
-            await WebSocketClient.shared.connect()
-            
-            // Проверка обязательной смены пароля
-            if res.user.mustChangePassword {
-                appState.mustChangePasswordRequired = true
-                showChangePasswordModal = true
+            .accessibilityHint("Откроется форма регистрации с подтверждением почты")
+            .accessibilityIdentifier("login-register")
+        }
+    }
+
+    // MARK: - Brand
+
+    private var lockup: some View {
+        VStack(spacing: 14) {
+            BrandMark(size: min(markSize, 120))
+                .scaleEffect(isMarkVisible ? 1 : 0.86)
+                .opacity(isMarkVisible ? 1 : 0)
+            // Only the lockup: no company line and no tagline (owner, 2026-10-06 — «это чат, понятно»).
+            BrandWordmark()
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedField = nil }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("login-brand")
+    }
+
+    private func presentMark() {
+        guard !isMarkVisible else { return }
+        if reduceMotion || Self.hasPresentedMark {
+            isMarkVisible = true
+        } else {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                isMarkVisible = true
+            }
+        }
+        Self.hasPresentedMark = true
+    }
+
+    // MARK: - Card
+
+    private func card(at date: Date) -> some View {
+        let message = form.errorMessage(at: date)
+        let canSubmit = form.canSubmit(at: date)
+        return VStack(alignment: .leading, spacing: 16) {
+            if let message {
+                LoginErrorBox(message: message)
+                    .transition(.opacity)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("Логин")
+                TextField("Корпоративный логин", text: $form.username)
+                    .passwordContent(.username)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.next)
+                    .focused($focusedField, equals: .username)
+                    .onSubmit { focusedField = .password }
+                    .modifier(LoginFieldStyle(isFocused: focusedField == .username))
+                    .accessibilityLabel("Логин")
+                    .accessibilityIdentifier("login-username")
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("Пароль")
+                HStack(spacing: 0) {
+                    passwordField
+                    Button {
+                        isPasswordVisible.toggle()
+                        focusedField = .password
+                    } label: {
+                        Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
+                            .foregroundStyle(CentyColors.textDim)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(isPasswordVisible ? "Скрыть пароль" : "Показать пароль")
+                    .accessibilityIdentifier("login-password-visibility")
+                }
+                .modifier(LoginFieldStyle(isFocused: focusedField == .password, trailingPadding: 0))
+            }
+
+            Button(action: submit) {
+                ZStack {
+                    Text("Войти")
+                        .opacity(form.isSubmitting ? 0 : 1)
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(CentyColors.onPrimary)
+                        Text("Вход…")
+                    }
+                    .opacity(form.isSubmitting ? 1 : 0)
+                    .accessibilityHidden(!form.isSubmitting)
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(LoginPrimaryButtonStyle(isBusy: form.isSubmitting, reduceMotion: reduceMotion))
+            .disabled(!canSubmit)
+            .accessibilityLabel(form.isSubmitting ? "Выполняется вход" : "Войти")
+            .accessibilityIdentifier("login-submit")
+            .padding(.top, 4)
+        }
+        .disabled(form.isSubmitting)
+        .opacity(form.isSubmitting ? 0.92 : 1)
+        .animation(.easeOut(duration: 0.18), value: form.isSubmitting)
+        .animation(.easeOut(duration: 0.18), value: message)
+        .padding(16)
+        .background(CentyColors.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(CentyColors.border, lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var passwordField: some View {
+        Group {
+            if isPasswordVisible {
+                TextField("Пароль", text: $form.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
             } else {
-                appState.isAuthenticated = true
-                await appState.loadAllData()
+                SecureField("Пароль", text: $form.password)
             }
-            
-            CentyHaptics.success()
-        } catch APIError.mustChangePassword(let msg) {
-            appState.mustChangePasswordRequired = true
-            showChangePasswordModal = true
-            errorMessage = msg
-            CentyHaptics.warning()
-        } catch {
-            errorMessage = error.localizedDescription
-            CentyHaptics.error()
         }
+        .passwordContent(.password)
+        .submitLabel(.go)
+        .focused($focusedField, equals: .password)
+        .onSubmit(submit)
+        .privacySensitive()
+        .accessibilityLabel("Пароль")
+        .accessibilityIdentifier("login-password")
     }
-    
-    private func generateDeviceSecret() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+
+    private func fieldLabel(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(CentyColors.textSecondary)
+            .accessibilityHidden(true)
+    }
+
+    // MARK: - Actions
+
+    private func submit() {
+        guard form.canSubmit(at: .now) else { return }
+        focusedField = nil
+        Task {
+            let outcome = await form.submit { username, password in
+                try await session.login(username: username, password: password)
+            }
+            switch outcome {
+            case .authenticated:
+                CentyHaptics.success()
+            case .passwordChangeRequired:
+                CentyHaptics.warning()
+            case nil:
+                CentyHaptics.error()
+                if let message = form.errorMessage(at: .now) {
+                    UIAccessibility.post(notification: .announcement, argument: message)
+                }
+            }
+        }
     }
 }
+
+/// Error box styled like desktop `.login-error-box`: danger-soft fill, danger hairline.
+struct LoginErrorBox: View {
+    let message: String
+    var identifier: String = "login-error"
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .accessibilityHidden(true)
+            Text(message)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.numericText())
+        }
+        .font(.footnote)
+        .foregroundStyle(CentyColors.dangerText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CentyColors.dangerSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(CentyColors.dangerLine, lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// A filled field (`bg-sunken`, radius 8); the outline appears only while it is focused (anti-
+/// generated polish rule 1: outlines only where the desktop has them).
+struct LoginFieldStyle: ViewModifier {
+    let isFocused: Bool
+    var trailingPadding: CGFloat = 12
+
+    func body(content: Content) -> some View {
+        content
+            .font(.body)
+            .foregroundStyle(CentyColors.textMain)
+            .padding(.leading, 12)
+            .padding(.trailing, trailingPadding)
+            .frame(minHeight: 48)
+            .background(CentyColors.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isFocused ? CentyColors.primaryBlue : Color.clear, lineWidth: 1.5)
+            }
+            .animation(.easeOut(duration: CentyMotion.fast), value: isFocused)
+    }
+}
+
+/// The primary button of the auth screens: the system-wide primary style (50 pt, radius 12,
+/// disabled at 38 % with a dim label, a request in flight at full strength).
+struct LoginPrimaryButtonStyle: ButtonStyle {
+    let isBusy: Bool
+    let reduceMotion: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(isBusy: Bool, reduceMotion: Bool) {
+        self.isBusy = isBusy
+        self.reduceMotion = reduceMotion
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        let enabled = isEnabled || isBusy
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(enabled ? CentyColors.onPrimary : CentyColors.textDim)
+            .frame(minHeight: 50)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill((configuration.isPressed ? CentyColors.primaryPressed : CentyColors.primaryBlue).opacity(enabled ? 1 : 0.38))
+            )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(.easeOut(duration: CentyMotion.fast), value: configuration.isPressed)
+    }
+}
+
+#if DEBUG
+#Preview("Вход") {
+    LoginView()
+        .previewEnvironment(.preview(signedIn: false))
+}
+#endif

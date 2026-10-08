@@ -1,0 +1,167 @@
+{
+  "name": "67-unread-snapshot-last-message-ids",
+  "description": "G7: живое сообщение, пришедшее после того, как сервер посчитал unread_count, но до применения снимка, больше не теряется: снимок несёт last_message_ids (last_message_id из GET /api/channels и /api/conversations/direct), и к счётчику добавляются чужие сообщения с бОльшим id из messages. Своё сообщение в канале новее снимка обнуляет счётчик (досчитываются только чужие после него). Переписка без last_message_id в снимке (старый сервер) — прежнее поведение: счётчик как есть.",
+  "covers": [
+    "T53",
+    "T30"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": "direct:5",
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 0,
+    "outbox": [],
+    "ops": [],
+    "messages": {
+      "direct:3": [
+        {
+          "id": 400,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 405,
+          "client_msg_id": null,
+          "sender_id": 3,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "channel:9": [
+        {
+          "id": 401,
+          "client_msg_id": null,
+          "sender_id": 7,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        },
+        {
+          "id": 406,
+          "client_msg_id": null,
+          "sender_id": 2,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": "sent"
+        },
+        {
+          "id": 407,
+          "client_msg_id": null,
+          "sender_id": 7,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "channel:10": [
+        {
+          "id": 408,
+          "client_msg_id": null,
+          "sender_id": 7,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ],
+      "direct:5": [
+        {
+          "id": 409,
+          "client_msg_id": null,
+          "sender_id": 5,
+          "text": "Текст",
+          "type": "text",
+          "reply_to_id": null,
+          "metadata_json": null,
+          "created_at": "2026-10-02T09:00:00.000Z",
+          "updated_at": null,
+          "is_deleted": 0,
+          "status": null
+        }
+      ]
+    },
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "unread_snapshot",
+      "now": 1000,
+      "counts": {
+        "direct:3": 2,
+        "channel:9": 4,
+        "channel:10": 1,
+        "direct:5": 0,
+        "direct:6": 3
+      },
+      "last_message_ids": {
+        "direct:3": 404,
+        "channel:9": 403,
+        "direct:5": 400,
+        "direct:6": 300
+      }
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "mark_read",
+          "conversationType": "direct",
+          "targetId": 5
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "unread": {
+      "direct:3": 3,
+      "channel:9": 1,
+      "channel:10": 1,
+      "direct:6": 3
+    }
+  }
+}

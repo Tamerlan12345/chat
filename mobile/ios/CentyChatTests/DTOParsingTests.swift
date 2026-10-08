@@ -1,16 +1,18 @@
+import Foundation
+import Security
 import XCTest
 @testable import CentyChat
 
 final class DTOParsingTests: XCTestCase {
-    
+
     func testUserParsing() throws {
         let json = """
         {
             "id": 7,
-            "username": "k.akhmetov",
-            "full_name": "Ахметов Канат",
-            "email": "k.akhmetov@cic.kz",
-            "phone": "+7 (727) 250-00-11",
+            "username": "k.testov",
+            "full_name": "Тестов Канат",
+            "email": "k.testov@example.com",
+            "phone": "+7 (700) 000-00-11",
             "job_title": "Ведущий разработчик",
             "department_id": 3,
             "department_name": "Отдел мобильной разработки",
@@ -34,12 +36,12 @@ final class DTOParsingTests: XCTestCase {
             "created_at": "2025-01-10T08:00:00.000Z"
         }
         """.data(using: .utf8)!
-        
+
         let user = try JSONDecoder().decode(User.self, from: json)
-        
+
         XCTAssertEqual(user.id, 7)
-        XCTAssertEqual(user.username, "k.akhmetov")
-        XCTAssertEqual(user.fullName, "Ахметов Канат")
+        XCTAssertEqual(user.username, "k.testov")
+        XCTAssertEqual(user.fullName, "Тестов Канат")
         XCTAssertEqual(user.status, .online)
         XCTAssertTrue(user.isActive)
         XCTAssertFalse(user.mustChangePassword)
@@ -47,7 +49,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(user.permissions?.canCreateChannels, true)
         XCTAssertEqual(user.uin, 1042)
     }
-    
+
     func testChannelParsing() throws {
         let json = """
         {
@@ -64,9 +66,9 @@ final class DTOParsingTests: XCTestCase {
             "last_message_time": "2026-09-30T09:00:00.000Z"
         }
         """.data(using: .utf8)!
-        
+
         let channel = try JSONDecoder().decode(Channel.self, from: json)
-        
+
         XCTAssertEqual(channel.id, 1)
         XCTAssertEqual(channel.name, "#Общий")
         XCTAssertEqual(channel.type, .public)
@@ -74,7 +76,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(channel.unreadCount, 5)
         XCTAssertEqual(channel.lastMessageText, "Всем доброе утро!")
     }
-    
+
     func testMessageParsingWithMetadata() throws {
         let json = """
         {
@@ -89,15 +91,15 @@ final class DTOParsingTests: XCTestCase {
             "created_at": "2026-09-30T09:20:15.000Z",
             "updated_at": null,
             "is_deleted": 0,
-            "sender_username": "k.akhmetov",
-            "sender_name": "Ахметов Канат",
+            "sender_username": "k.testov",
+            "sender_name": "Тестов Канат",
             "file_original_name": "spec.pdf",
             "delivery_status": "read"
         }
         """.data(using: .utf8)!
-        
+
         let message = try JSONDecoder().decode(Message.self, from: json)
-        
+
         XCTAssertEqual(message.id, 240)
         XCTAssertEqual(message.conversationType, .direct)
         XCTAssertEqual(message.targetId, 12)
@@ -109,7 +111,7 @@ final class DTOParsingTests: XCTestCase {
         XCTAssertEqual(message.metadata?.fileName, "spec.pdf")
         XCTAssertEqual(message.metadata?.fileSize, 1048576)
     }
-    
+
     func testAnnouncementParsing() throws {
         let json = """
         {
@@ -125,16 +127,16 @@ final class DTOParsingTests: XCTestCase {
             "is_confirmed": 0
         }
         """.data(using: .utf8)!
-        
+
         let announcement = try JSONDecoder().decode(Announcement.self, from: json)
-        
+
         XCTAssertEqual(announcement.id, 3)
         XCTAssertEqual(announcement.title, "Плановые работы")
         XCTAssertEqual(announcement.priority, .urgent)
         XCTAssertFalse(announcement.isConfirmed)
         XCTAssertNil(announcement.confirmedAt)
     }
-    
+
     func testWebSocketEventParsing() throws {
         let rawWsJson = """
         {
@@ -144,14 +146,14 @@ final class DTOParsingTests: XCTestCase {
             "at": 1759230000000
         }
         """.data(using: .utf8)!
-        
+
         let event = WSServerEvent.parse(from: rawWsJson)
-        
+
         guard case .wakeRing(let fromId, let fromName, let at) = event else {
             XCTFail("Failed to parse wake_ring event")
             return
         }
-        
+
         XCTAssertEqual(fromId, 12)
         XCTAssertEqual(fromName, "Данияр Нурпеисов")
         XCTAssertEqual(at, 1759230000000)
@@ -214,9 +216,12 @@ final class EndpointSecurityTests: XCTestCase {
 
         await secondCallerJoined.wait()
         await allowRefreshToFinish.open()
-        XCTAssertEqual(try await first.value, "fresh-token")
-        XCTAssertEqual(try await second.value, "fresh-token")
-        XCTAssertEqual(await counter.value, 1)
+        let firstToken = try await first.value
+        let secondToken = try await second.value
+        let refreshInvocations = await counter.value
+        XCTAssertEqual(firstToken, "fresh-token")
+        XCTAssertEqual(secondToken, "fresh-token")
+        XCTAssertEqual(refreshInvocations, 1)
     }
 }
 
@@ -243,5 +248,334 @@ private actor AsyncGate {
         let pendingWaiters = waiters
         waiters.removeAll()
         pendingWaiters.forEach { $0.resume() }
+    }
+}
+
+final class KeychainFailClosedTests: XCTestCase {
+    func testFailedTokenSaveMakesLoginFailBeforeCallerCanAuthenticate() async throws {
+        let store = InMemoryKeychainItemStore(failure: .add(account: "auth_token", status: errSecAuthFailed))
+        let keychain = KeychainManager(testStore: store)
+        let client = APIClient(session: makeSession(), keychain: keychain, environment: .test)
+        let session = await Self.makeSessionStore(client: client, keychain: keychain)
+
+        do {
+            _ = try await session.login(username: "qa", password: "password")
+            XCTFail("Login must fail when its bearer token cannot be persisted securely.")
+        } catch let error as KeychainManagerError {
+            XCTAssertEqual(error, .addFailed(status: errSecAuthFailed))
+        } catch {
+            XCTFail("Expected a typed KeychainManagerError, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        let isAuthenticated = await MainActor.run { session.isAuthenticated }
+        XCTAssertFalse(isAuthenticated)
+    }
+
+    func testFailedTokenDeleteMakesLogoutFailAndPreservesAuthenticatedState() async throws {
+        let store = InMemoryKeychainItemStore(failure: .delete(account: "auth_token", status: errSecAuthFailed))
+        let keychain = KeychainManager(testStore: store)
+        let client = APIClient(session: makeSession(), keychain: keychain, environment: .test)
+        let session = await Self.makeSessionStore(client: client, keychain: keychain)
+        _ = try await session.login(username: "qa", password: "password")
+        let tokenBeforeLogout = try XCTUnwrap(keychain.authToken)
+
+        await session.logout()
+
+        XCTAssertEqual(keychain.authToken, tokenBeforeLogout)
+        let state = await MainActor.run { (session.isAuthenticated, session.errorMessage) }
+        XCTAssertTrue(state.0)
+        XCTAssertEqual(state.1, KeychainManagerError.deleteFailed(status: errSecAuthFailed).localizedDescription)
+    }
+
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthResponseURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    @MainActor
+    private static func makeSessionStore(client: APIClient, keychain: KeychainManager) -> SessionStore {
+        SessionStore(
+            auth: LiveAuthRepository(client: client, keychain: keychain),
+            server: LiveServerRepository(client: client),
+            realtime: RealtimeStore(repository: FakeRealtimeRepository()),
+            environment: .test,
+            deviceDescriptor: { DeviceDescriptor(name: "Test iPhone", platform: "iOS 17") }
+        )
+    }
+}
+
+private final class AuthResponseURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        let payload: String
+        switch url.path {
+        case "/api/auth/login":
+            payload = """
+            {"user":{"id":1,"username":"qa","full_name":"QA User","is_active":1,"must_change_password":0},"token":"server-token"}
+            """
+        case "/api/auth/logout":
+            payload = "{\"success\":true}"
+        default:
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class InMemoryKeychainItemStore: KeychainItemStore {
+    enum Failure {
+        case add(account: String, status: OSStatus)
+        case delete(account: String, status: OSStatus)
+    }
+
+    private let failure: Failure
+    private var values: [String: Data] = [:]
+
+    init(failure: Failure) {
+        self.failure = failure
+    }
+
+    func update(query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        let account = account(in: query)
+        guard values[account] != nil else { return errSecItemNotFound }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        values[account] = data
+        return errSecSuccess
+    }
+
+    func add(attributes: [String: Any]) -> OSStatus {
+        let account = account(in: attributes)
+        if case let .add(failingAccount, status) = failure, failingAccount == account {
+            return status
+        }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        values[account] = data
+        return errSecSuccess
+    }
+
+    func read(query: [String: Any]) -> (status: OSStatus, data: Data?) {
+        guard let data = values[account(in: query)] else {
+            return (errSecItemNotFound, nil)
+        }
+        return (errSecSuccess, data)
+    }
+
+    func delete(query: [String: Any]) -> OSStatus {
+        let account = account(in: query)
+        if case let .delete(failingAccount, status) = failure, failingAccount == account {
+            return status
+        }
+        return values.removeValue(forKey: account) == nil ? errSecItemNotFound : errSecSuccess
+    }
+
+    private func account(in attributes: [String: Any]) -> String {
+        attributes[kSecAttrAccount as String] as! String
+    }
+}
+
+final class TerminalRefresh401Tests: XCTestCase {
+    func testTerminal401AfterRefreshClearsSessionForStandardRequest() async throws {
+        let keychain = KeychainManager(
+            testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
+        )
+        try keychain.saveAuthToken("stale-token")
+        Terminal401ChannelsURLProtocol.reset()
+        let client = APIClient(session: makeSession(using: Terminal401ChannelsURLProtocol.self), keychain: keychain, environment: .test)
+
+        do {
+            let _: [Channel] = try await client.getChannels()
+            XCTFail("A second 401 after a successful refresh must fail closed.")
+        } catch APIError.unauthorized {
+            // Expected: the retry is terminal and must not start another refresh.
+        } catch {
+            XCTFail("Expected APIError.unauthorized, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        XCTAssertEqual(Terminal401ChannelsURLProtocol.refreshRequestCount, 1)
+    }
+
+    func testTerminal401AfterRefreshClearsSessionForUpload() async throws {
+        let keychain = KeychainManager(
+            testStore: InMemoryKeychainItemStore(failure: .add(account: "unused", status: errSecAuthFailed))
+        )
+        try keychain.saveAuthToken("stale-token")
+        Terminal401UploadURLProtocol.reset()
+        let client = APIClient(session: makeSession(using: Terminal401UploadURLProtocol.self), keychain: keychain, environment: .test)
+
+        do {
+            _ = try await client.uploadFile(
+                fileData: Data("test".utf8),
+                fileName: "test.txt",
+                mimeType: "text/plain"
+            )
+            XCTFail("A second upload 401 after a successful refresh must fail closed.")
+        } catch APIError.unauthorized {
+            // Expected: the retry is terminal and must not start another refresh.
+        } catch {
+            XCTFail("Expected APIError.unauthorized, got: \(error)")
+        }
+
+        XCTAssertNil(keychain.authToken)
+        XCTAssertEqual(Terminal401UploadURLProtocol.refreshRequestCount, 1)
+    }
+
+    private func makeSession(using urlProtocol: AnyClass) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [urlProtocol]
+        return URLSession(configuration: configuration)
+    }
+}
+
+private final class Terminal401ChannelsURLProtocol: URLProtocol {
+    private static let refreshCounter = LockedCounter()
+
+    static func reset() {
+        refreshCounter.reset()
+    }
+
+    static var refreshRequestCount: Int {
+        refreshCounter.value
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let responseData: (statusCode: Int, body: String)
+        switch request.url?.path {
+        case "/api/channels":
+            responseData = (401, "{\"error\":\"expired\"}")
+        case "/api/auth/refresh":
+            Self.refreshCounter.increment()
+            responseData = (200, "{\"token\":\"refreshed-token\"}")
+        default:
+            responseData = (500, "{\"error\":\"unexpected path\"}")
+        }
+        send(statusCode: responseData.statusCode, body: responseData.body)
+    }
+
+    override func stopLoading() {}
+
+    private func send(statusCode: Int, body: String) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: statusCode,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+private final class Terminal401UploadURLProtocol: URLProtocol {
+    private static let refreshCounter = LockedCounter()
+
+    static func reset() {
+        refreshCounter.reset()
+    }
+
+    static var refreshRequestCount: Int {
+        refreshCounter.value
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "chat.example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let responseData: (statusCode: Int, body: String)
+        switch request.url?.path {
+        case "/api/files/upload":
+            responseData = (401, "{\"error\":\"expired\"}")
+        case "/api/auth/refresh":
+            Self.refreshCounter.increment()
+            responseData = (200, "{\"token\":\"refreshed-token\"}")
+        default:
+            responseData = (500, "{\"error\":\"unexpected path\"}")
+        }
+        send(statusCode: responseData.statusCode, body: responseData.body)
+    }
+
+    override func stopLoading() {}
+
+    private func send(statusCode: Int, body: String) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: statusCode,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        count = 0
     }
 }

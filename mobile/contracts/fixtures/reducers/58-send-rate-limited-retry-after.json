@@ -1,0 +1,314 @@
+{
+  "name": "58-send-rate-limited-retry-after",
+  "description": "G2: сервер отвечает на отброшенный пределом частоты send_message кадром error RATE_LIMITED с client_msg_id и retry_after_ms. Запись не проваливается и не ждёт таймаута: возвращается в queued с паузой ровно retry_after_ms (бюджет failures не тратится, maybe_stored остаётся — прежняя попытка могла сохранить), будильник tick на это время, затем уходит тем же ключом. Опоздавший RATE_LIMITED для записи, уже вернувшейся в очередь, и RATE_LIMITED без retry_after_ms (пауза 1000 мс) — тоже здесь.",
+  "covers": [
+    "T44",
+    "T05"
+  ],
+  "initialState": {
+    "me": 2,
+    "connection": "online",
+    "visible": null,
+    "sync": {
+      "cursor": "5e7a1c0d9b3f4a62.11",
+      "running": false,
+      "bootstrap": false,
+      "chain": 0
+    },
+    "seq": 2,
+    "outbox": [
+      {
+        "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Первое",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000202-0000-4000-8000-000000000202",
+        "conversation": "channel:3",
+        "seq": 2,
+        "text": "В канал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "queued",
+        "attempts": 0,
+        "failures": 0,
+        "maybe_stored": false,
+        "transport": null,
+        "ack_deadline": null,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "ops": [],
+    "messages": {},
+    "unread": {},
+    "sendLog": [],
+    "opsLog": [],
+    "wake_at": null,
+    "cancelled": []
+  },
+  "events": [
+    {
+      "type": "tick",
+      "now": 1000
+    },
+    {
+      "type": "ws",
+      "now": 1050,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "text": "Первое",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+        "retry_after_ms": 400
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1060,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "text": "Первое",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+        "retry_after_ms": 400
+      }
+    },
+    {
+      "type": "ws",
+      "now": 1070,
+      "frame": {
+        "type": "error",
+        "context": "send_message",
+        "message": "Слишком много запросов — повторите чуть позже",
+        "text": "В канал",
+        "code": "RATE_LIMITED",
+        "retryable": true,
+        "client_msg_id": "a0000202-0000-4000-8000-000000000202"
+      }
+    },
+    {
+      "type": "tick",
+      "now": 1450
+    },
+    {
+      "type": "tick",
+      "now": 2070
+    }
+  ],
+  "expectedEffects": [
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Первое",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000201-0000-4000-8000-000000000201"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+          "attempt": 1
+        }
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "В канал",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000202-0000-4000-8000-000000000202"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11000,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000202-0000-4000-8000-000000000202",
+          "attempt": 1
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "schedule",
+        "at": 1450,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "direct",
+          "targetId": 3,
+          "text": "Первое",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000201-0000-4000-8000-000000000201"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 11450,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+          "attempt": 2
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 2070,
+        "event": {
+          "type": "tick"
+        }
+      }
+    ],
+    [
+      {
+        "type": "persist",
+        "slices": [
+          "outbox"
+        ]
+      },
+      {
+        "type": "send_ws",
+        "frame": {
+          "type": "send_message",
+          "conversationType": "channel",
+          "targetId": 3,
+          "text": "В канал",
+          "msgType": "text",
+          "replyToId": null,
+          "metadata": null,
+          "client_msg_id": "a0000202-0000-4000-8000-000000000202"
+        }
+      },
+      {
+        "type": "schedule",
+        "at": 12070,
+        "event": {
+          "type": "ack_timeout",
+          "client_msg_id": "a0000202-0000-4000-8000-000000000202",
+          "attempt": 2
+        }
+      }
+    ]
+  ],
+  "expectedState": {
+    "outbox": [
+      {
+        "client_msg_id": "a0000201-0000-4000-8000-000000000201",
+        "conversation": "direct:3",
+        "seq": 1,
+        "text": "Первое",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 11450,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      },
+      {
+        "client_msg_id": "a0000202-0000-4000-8000-000000000202",
+        "conversation": "channel:3",
+        "seq": 2,
+        "text": "В канал",
+        "msgType": "text",
+        "reply_to_id": null,
+        "metadata": null,
+        "state": "sending",
+        "attempts": 2,
+        "failures": 0,
+        "maybe_stored": true,
+        "transport": "ws",
+        "ack_deadline": 12070,
+        "next_attempt_at": null,
+        "failure": null,
+        "pending_edit": null,
+        "pending_delete": false
+      }
+    ],
+    "wake_at": null,
+    "sendLog": [
+      1450,
+      2070
+    ]
+  }
+}

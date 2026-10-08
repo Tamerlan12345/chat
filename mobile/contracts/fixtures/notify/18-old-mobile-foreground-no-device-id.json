@@ -1,0 +1,37 @@
+{
+  "name": "18-old-mobile-foreground-no-device-id",
+  "description": "Старая мобильная сборка на переднем плане в списке чатов, без device_id в auth: сервер не знает, что сокет — это телефон с токеном, поэтому телефон получает и баннер по сокету, и push (двойное уведомление; клиент гасит дубль по messageId). Новые сборки обязаны передавать device_id.",
+  "decision": "message",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "message": {
+      "conversationType": "direct",
+      "targetId": 2,
+      "senderId": 5
+    },
+    "sockets": [
+      {
+        "id": "old-phone",
+        "deviceId": null,
+        "presence": "online",
+        "viewing": null
+      }
+    ],
+    "pushDevices": [
+      {
+        "id": "android-7f3a"
+      }
+    ]
+  },
+  "expected": {
+    "reason": null,
+    "push": [
+      "android-7f3a"
+    ],
+    "banner": [
+      "old-phone"
+    ],
+    "quiet": []
+  }
+}

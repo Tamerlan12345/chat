@@ -1,0 +1,7 @@
+{
+  "type": "user_status_changed",
+  "userId": 3,
+  "user_id": 3,
+  "status": "dnd",
+  "customStatus": null
+}

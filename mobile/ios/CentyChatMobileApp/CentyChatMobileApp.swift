@@ -4,76 +4,46 @@ import SwiftUI
 /// The legacy SwiftPM entry point remains excluded from this target.
 @main
 struct CentyChatMobileApp: App {
-    @State private var appState = AppState()
+    @UIApplicationDelegateAdaptor(CentyAppDelegate.self) private var appDelegate
+    @State private var container: AppContainer
 
     init() {
 #if DEBUG
         if LaunchTestFixture.shouldResetSecureState {
-            KeychainManager.shared.resetForUITesting()
+            try? KeychainManager.shared.resetForUITesting()
+            // A fresh install: no queue, no waiting files of an earlier run.
+            try? SwiftDataDeliveryStore.removeFiles(at: SwiftDataDeliveryStore.defaultDirectory())
+            try? AttachmentFiles(root: AttachmentFiles.defaultRoot()).removeAll()
         }
 #endif
+        // Items of older versions become readable after the first unlock (final review I1).
+        KeychainManager.shared.upgradeItemProtection()
+        let container = AppContainer.live()
+        PushRouter.shared.notifications = container.notifications
+        PushRouter.shared.pushTokens = container.pushTokens
+        PushRouter.shared.routes = container.notificationRoutes
+        PushRouter.shared.session = container.session
+        PushRouter.shared.flushInBackground = { [weak container] in
+            await container?.flushForBackgroundRefresh() ?? .nothingToDo
+        }
+        _container = State(initialValue: container)
     }
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                if !appState.isServerConfigured {
-                    ServerConnectView()
-                        .accessibilityIdentifier("server-setup")
-                } else if !appState.isAuthenticated {
-                    LoginView()
-                } else {
-                    MainTabView()
-                }
+#if DEBUG
+            if LaunchTestFixture.isUnitTestHost {
+                // Unit tests build their own stores; the host app stays idle and offline.
+                Color.clear
+            } else {
+                RootView()
+                    .appEnvironment(container)
+                    .preferredColorScheme(LaunchTestFixture.forcedColorScheme)
             }
-            .environment(appState)
-            .task {
-                await appState.initialize()
-            }
-            .fullScreenCover(isPresented: Binding(
-                get: { appState.activeCall != nil },
-                set: { if !$0 { appState.stopCallSession() } }
-            )) {
-                CallView()
-                    .environment(appState)
-            }
-            .sheet(isPresented: Binding(
-                get: { appState.mustChangePasswordRequired },
-                set: { _ in }
-            )) {
-                ChangePasswordModalView(isMandatory: true)
-                    .environment(appState)
-            }
-            .alert(
-                "Wake alert",
-                isPresented: Binding(
-                    get: { appState.incomingWakeAlert != nil },
-                    set: { if !$0 { appState.incomingWakeAlert = nil } }
-                )
-            ) {
-                Button("Dismiss", role: .cancel) {
-                    appState.incomingWakeAlert = nil
-                }
-            } message: {
-                if let message = appState.incomingWakeAlert {
-                    Text(message)
-                }
-            }
-            .alert(
-                "Error",
-                isPresented: Binding(
-                    get: { appState.errorMessage != nil },
-                    set: { if !$0 { appState.errorMessage = nil } }
-                )
-            ) {
-                Button("OK", role: .cancel) {
-                    appState.errorMessage = nil
-                }
-            } message: {
-                if let message = appState.errorMessage {
-                    Text(message)
-                }
-            }
+#else
+            RootView()
+                .appEnvironment(container)
+#endif
         }
     }
 }

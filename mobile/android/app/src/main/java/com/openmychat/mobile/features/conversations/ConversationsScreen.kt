@@ -1,420 +1,649 @@
 package com.openmychat.mobile.features.conversations
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.openmychat.mobile.features.people.Person
+import com.openmychat.mobile.features.search.MessageHit
+import com.openmychat.mobile.features.search.MessageResults
+import com.openmychat.mobile.features.search.RecentItem
+import com.openmychat.mobile.features.search.SearchMode
+import com.openmychat.mobile.features.search.UniversalSearchActions
+import com.openmychat.mobile.features.search.UniversalSearchContent
+import com.openmychat.mobile.features.search.UniversalSearchState
+import com.openmychat.mobile.features.search.UniversalSearchViewModel
+import com.openmychat.mobile.ui.components.CentySearchField
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
+import com.openmychat.mobile.ui.components.textEdgeAfter
+import com.openmychat.mobile.ui.theme.CentySpace
+import com.openmychat.mobile.ui.components.Illustration
+import com.openmychat.mobile.ui.components.SharedKeys
+import com.openmychat.mobile.ui.components.liftSurface
+import com.openmychat.mobile.ui.components.rememberLift
+import com.openmychat.mobile.ui.components.sharedConversationElement
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.openmychat.mobile.R
+import com.openmychat.mobile.core.network.ConnectionState
 import com.openmychat.mobile.core.util.DateTimeUtils
 import com.openmychat.mobile.data.model.Channel
+import com.openmychat.mobile.data.model.ConversationType
 import com.openmychat.mobile.data.model.DirectConversation
+import com.openmychat.mobile.data.realtime.ConversationRef
 import com.openmychat.mobile.ui.components.CentyAvatar
+import com.openmychat.mobile.ui.components.ConnectionBanner
+import com.openmychat.mobile.ui.components.ConversationSkeleton
+import com.openmychat.mobile.ui.components.EmptyState
+import com.openmychat.mobile.ui.components.ErrorState
+import com.openmychat.mobile.ui.components.LocalSnackbarHostState
+import com.openmychat.mobile.ui.components.TypingIndicator
+import com.openmychat.mobile.ui.components.UnreadPill
+import androidx.compose.animation.core.tween
+import com.openmychat.mobile.ui.theme.CentyMotion
+import com.openmychat.mobile.ui.theme.CentyRadius
+import com.openmychat.mobile.ui.theme.LocalReduceMotion
+import com.openmychat.mobile.ui.theme.CentyTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Avatar of an inbox row. */
+private val ConversationAvatarSize = 44.dp
+
+/** Counters of the «Личные / Каналы» segments (polish pass, rule 6). */
+internal object InboxBadges {
+    fun unreadConversations(list: List<DirectConversation>): Int = list.count { it.unreadCount > 0 }
+    fun unreadChannels(list: List<Channel>): Int = list.count { it.unreadCount > 0 }
+
+    /** No badge on the segment that is open: its rows already carry the pills. */
+    fun segmentCount(selected: Boolean, unreadConversations: Int): Int = if (selected) 0 else unreadConversations
+}
+
+interface ConversationsActions {
+    fun onSelectTab(tab: ConversationsTab) {}
+    fun onSearch(query: String) {}
+    fun onRefresh() {}
+    fun onRetry() {}
+    fun onOpenDirect(conversation: DirectConversation) {}
+    fun onOpenChannel(channel: Channel) {}
+
+    /** The empty inbox's next step: «Найти сотрудника» opens «Сотрудники». */
+    fun onFindPerson() {}
+}
+
 @Composable
 fun ConversationsScreen(
     viewModel: ConversationsViewModel,
+    searchViewModel: UniversalSearchViewModel,
     onOpenDirectChat: (userId: Long, name: String, avatarUrl: String?, status: String?) -> Unit,
     onOpenChannel: (channelId: Long, name: String) -> Unit,
-    onNavigateToAnnouncements: () -> Unit,
-    onNavigateToProfile: () -> Unit
+    onOpenPerson: (Person) -> Unit = {},
+    onOpenMessage: (MessageHit) -> Unit = {},
+    onShowAllPeople: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val directConversations by viewModel.directConversations.collectAsState()
-    val channels by viewModel.channels.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val search by searchViewModel.state.collectAsState()
+    // Поиск — своё состояние экрана, не фильтр поверх списка (спецификация «Universal search»).
+    // Настоящий фокус поля (не сохраняется: после пересоздания фокуса нет, режим тогда держит запрос).
+    var searchFocused by remember { mutableStateOf(false) }
+    // Одно правило для поля и выдачи: есть текст или фокус — показываем поиск.
+    val searchActive = SearchMode.isActive(searchFocused, search.query)
+    LaunchedEffect(searchActive) { if (searchActive) searchViewModel.onOpened() }
+    val uiState by viewModel.uiState.collectAsState()
+    val connection by viewModel.connectionState.collectAsState()
+    val refreshing by viewModel.isRefreshing.collectAsState()
+    val typing by viewModel.typing.collectAsState()
+    val open by viewModel.openConversation.collectAsState()
+    val snackbar = LocalSnackbarHostState.current
+    val refreshFailed = stringResource(R.string.inbox_refresh_failed)
 
-    var isSearchActive by remember { mutableStateOf(false) }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                ConversationsEvent.RefreshFailed -> snackbar.showSnackbar(refreshFailed)
+            }
+        }
+    }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    if (isSearchActive) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { viewModel.setSearchQuery(it) },
-                            placeholder = { Text("Поиск...") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        Text(
-                            text = "CentyChat",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        isSearchActive = !isSearchActive
-                        if (!isSearchActive) viewModel.setSearchQuery("")
-                    }) {
-                        Icon(
-                            imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = "Поиск"
-                        )
-                    }
-                    IconButton(onClick = { viewModel.loadData() }) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Обновить"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
+    val searchActions = remember(searchViewModel) {
+        object : UniversalSearchActions {
+            override fun onOpenPerson(match: Person) {
+                searchViewModel.rememberPerson(match)
+                onOpenPerson(match)
+            }
+            override fun onOpenChannel(channel: Channel) {
+                searchViewModel.rememberChannel(channel)
+                onOpenChannel(channel.id, channel.name)
+            }
+            override fun onOpenRecent(item: RecentItem) {
+                searchViewModel.remember(item)
+                when (item.kind) {
+                    RecentItem.Kind.PERSON -> onOpenPerson(Person(id = item.id, fullName = item.title, avatarUrl = item.avatarUrl))
+                    RecentItem.Kind.CHANNEL -> onOpenChannel(item.id, item.title)
+                }
+            }
+            override fun onShowAllPeople(query: String) {
+                searchViewModel.showAllPeople(query)
+                onShowAllPeople()
+            }
+            override fun onOpenMessage(hit: MessageHit) = onOpenMessage(hit)
+            override fun onClear() = searchViewModel.clear()
+        }
+    }
+
+    val actions = remember(viewModel) {
+        object : ConversationsActions {
+            override fun onSelectTab(tab: ConversationsTab) = viewModel.selectTab(tab)
+            override fun onSearch(query: String) = searchViewModel.setQuery(query)
+            override fun onRefresh() = viewModel.refresh()
+            override fun onRetry() = viewModel.loadData()
+            override fun onOpenDirect(conversation: DirectConversation) =
+                onOpenDirectChat(conversation.userId, conversation.fullName, conversation.avatarUrl, conversation.status.value)
+            override fun onOpenChannel(channel: Channel) = onOpenChannel(channel.id, channel.name)
+            override fun onFindPerson() = onShowAllPeople()
+        }
+    }
+
+    ConversationsContent(
+        uiState = uiState,
+        selectedTab = selectedTab,
+        searchQuery = search.query,
+        searchActive = searchActive,
+        onSearchFocusChange = { searchFocused = it },
+        onSearchActiveChange = { active ->
+            searchFocused = active
+            if (!active) searchViewModel.clear()
         },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { /* already here */ },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Чаты") },
-                    label = { Text("Сообщения") }
+        search = search,
+        searchActions = searchActions,
+        connectionState = connection,
+        isRefreshing = refreshing,
+        typing = typing,
+        openConversation = open,
+        currentUserId = viewModel.currentUserId,
+        actions = actions
+    )
+}
+
+/**
+ * The inbox, stateless: «Чаты» top bar, connection banner when the link is down, name search,
+ * «Личные / Каналы», 72dp rows (avatar with presence, name, time, one-line preview, unread pill).
+ */
+@Composable
+fun ConversationsContent(
+    uiState: ConversationsUiState,
+    selectedTab: ConversationsTab,
+    searchQuery: String,
+    connectionState: ConnectionState,
+    actions: ConversationsActions,
+    modifier: Modifier = Modifier,
+    isRefreshing: Boolean = false,
+    typing: Set<ConversationRef> = emptySet(),
+    openConversation: ConversationRef? = null,
+    currentUserId: Long? = null,
+    searchActive: Boolean = false,
+    onSearchActiveChange: (Boolean) -> Unit = {},
+    onSearchFocusChange: (Boolean) -> Unit = {},
+    search: UniversalSearchState = UniversalSearchState(query = searchQuery),
+    searchActions: UniversalSearchActions = object : UniversalSearchActions {}
+) {
+    val tokens = CentyTheme.tokens
+    val reduce = LocalReduceMotion.current
+    val focus = LocalFocusManager.current
+    BackHandler(enabled = searchActive) {
+        onSearchActiveChange(false)
+        focus.clearFocus()
+    }
+    val collapse = if (reduce) tween<Float>(CentyMotion.REDUCED_CROSSFADE) else tween(200, easing = CentyMotion.EaseOut)
+    val directState = rememberLazyListState()
+    val channelState = rememberLazyListState()
+    val listState = if (selectedTab == ConversationsTab.CHATS) directState else channelState
+    // The header (bar, banner, search, segments) is flat on the list plane until rows pass under it.
+    val scrolledUnder by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val lift = rememberLift(scrolledUnder)
+    Scaffold(
+        modifier = modifier,
+        containerColor = tokens.list,
+        topBar = {
+            Column(Modifier.liftSurface(lift, rest = tokens.list)) {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.inbox_title)) },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
+                        titleContentColor = tokens.textStrong
+                    )
                 )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToAnnouncements,
-                    icon = { Icon(Icons.Default.Campaign, contentDescription = "Объявления") },
-                    label = { Text("Объявления") }
+                ConnectionBanner(connectionState)
+                CentySearchField(
+                    query = searchQuery,
+                    onQueryChange = actions::onSearch,
+                    placeholder = stringResource(R.string.search_hint),
+                    active = searchActive,
+                    onActiveChange = { active ->
+                        onSearchActiveChange(active)
+                        if (!active) focus.clearFocus()
+                    },
+                    onFocusChange = onSearchFocusChange,
+                    onSearch = { openFirstResult(search, searchActions) },
+                    testTag = "inbox-search",
+                    modifier = Modifier.padding(start = CentySpace.gutter, end = CentySpace.gutter, top = CentySpace.xs, bottom = CentySpace.s)
                 )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = onNavigateToProfile,
-                    icon = { Icon(Icons.Default.AccountCircle, contentDescription = "Профиль") },
-                    label = { Text("Профиль") }
-                )
+                AnimatedVisibility(
+                    visible = !searchActive,
+                    enter = fadeIn(collapse) + expandVertically(tween(200)),
+                    exit = fadeOut(collapse) + shrinkVertically(tween(200))
+                ) {
+                    Segments(selectedTab, uiState, actions::onSelectTab)
+                }
             }
         }
     ) { innerPadding ->
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(top = innerPadding.calculateTopPadding())
                 .consumeWindowInsets(innerPadding)
         ) {
-            TabRow(
-                selectedTabIndex = selectedTab.ordinal,
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                Tab(
-                    selected = selectedTab == ConversationsTab.CHATS,
-                    onClick = { viewModel.selectTab(ConversationsTab.CHATS) },
-                    text = { Text("Личные (${directConversations.size})") }
-                )
-                Tab(
-                    selected = selectedTab == ConversationsTab.CHANNELS,
-                    onClick = { viewModel.selectTab(ConversationsTab.CHANNELS) },
-                    text = { Text("Каналы (${channels.size})") }
-                )
-            }
 
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else if (error != null) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = error ?: "Ошибка",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = { viewModel.loadData() }) {
-                            Text("Повторить")
+            val listPadding = PaddingValues(top = 4.dp, bottom = innerPadding.calculateBottomPadding() + 8.dp)
+            AnimatedContent(
+                targetState = searchActive,
+                transitionSpec = {
+                    fadeIn(tween(if (reduce) CentyMotion.REDUCED_CROSSFADE else 150)) togetherWith
+                        fadeOut(tween(if (reduce) CentyMotion.REDUCED_CROSSFADE else 90))
+                },
+                label = "inbox-search"
+            ) { searching ->
+            if (searching) {
+                UniversalSearchContent(state = search, actions = searchActions, contentPadding = listPadding)
+            } else when (uiState) {
+                is ConversationsUiState.Loading -> ConversationSkeleton(contentPadding = PaddingValues(top = 4.dp))
+                is ConversationsUiState.Error -> ErrorState(title = stringResource(R.string.inbox_error), onRetry = actions::onRetry)
+                is ConversationsUiState.Content -> {
+                    val pullState = rememberPullToRefreshState()
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = actions::onRefresh,
+                        state = pullState,
+                        modifier = Modifier.fillMaxSize(),
+                        indicator = {
+                            PullToRefreshDefaults.Indicator(
+                                state = pullState,
+                                isRefreshing = isRefreshing,
+                                color = tokens.accentText,
+                                containerColor = tokens.elevated,
+                                modifier = Modifier.align(Alignment.TopCenter)
+                            )
                         }
-                    }
-                }
-            } else {
-                when (selectedTab) {
-                    ConversationsTab.CHATS -> {
-                        val filtered = if (searchQuery.isBlank()) {
-                            directConversations
-                        } else {
-                            directConversations.filter {
-                                it.fullName.contains(searchQuery, ignoreCase = true) ||
-                                (it.username?.contains(searchQuery, ignoreCase = true) == true) ||
-                                (it.departmentName?.contains(searchQuery, ignoreCase = true) == true)
-                            }
-                        }
-
-                        if (filtered.isEmpty()) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (searchQuery.isBlank()) "Нет активных чатов" else "Ничего не найдено",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                items(filtered, key = { it.userId }) { conv ->
-                                    DirectConversationItem(
-                                        conversation = conv,
-                                        onClick = {
-                                            onOpenDirectChat(
-                                                conv.userId,
-                                                conv.fullName,
-                                                conv.avatarUrl,
-                                                conv.status.value
-                                            )
-                                        }
-                                    )
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = 72.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    ConversationsTab.CHANNELS -> {
-                        val filtered = if (searchQuery.isBlank()) {
-                            channels
-                        } else {
-                            channels.filter {
-                                it.name.contains(searchQuery, ignoreCase = true) ||
-                                (it.topic?.contains(searchQuery, ignoreCase = true) == true)
-                            }
-                        }
-
-                        if (filtered.isEmpty()) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (searchQuery.isBlank()) "Нет доступных каналов" else "Ничего не найдено",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                items(filtered, key = { it.id }) { channel ->
-                                    ChannelItem(
-                                        channel = channel,
-                                        onClick = { onOpenChannel(channel.id, channel.name) }
-                                    )
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = 72.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun DirectConversationItem(
-    conversation: DirectConversation,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        CentyAvatar(
-            name = conversation.fullName,
-            avatarUrl = conversation.avatarUrl,
-            status = conversation.status,
-            size = 48.dp
-        )
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = conversation.fullName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                if (!conversation.lastMessageTime.isNullOrBlank()) {
-                    Text(
-                        text = DateTimeUtils.formatTime(conversation.lastMessageTime),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val snippet = conversation.lastMessageText
-                    ?: conversation.jobTitle
-                    ?: conversation.departmentName
-                    ?: "Нет сообщений"
-
-                Text(
-                    text = snippet,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                if (conversation.unreadCount > 0) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (conversation.unreadCount > 99) "99+" else conversation.unreadCount.toString(),
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (selectedTab == ConversationsTab.CHATS) {
+                            DirectList(directState, uiState.directConversations, "", listPadding, typing, openConversation, currentUserId, actions)
+                        } else {
+                            ChannelList(channelState, uiState.channels, "", listPadding, typing, openConversation, actions)
+                        }
                     }
                 }
+            }
             }
         }
     }
 }
 
+/** Return в поиске открывает первый результат: человека, затем канал, затем сообщение. */
+private fun openFirstResult(state: UniversalSearchState, actions: UniversalSearchActions) {
+    state.people.firstOrNull()?.let { return actions.onOpenPerson(it.person) }
+    state.channels.firstOrNull()?.let { return actions.onOpenChannel(it.channel) }
+    (state.messages as? MessageResults.Found)?.hits?.firstOrNull()?.let { actions.onOpenMessage(it) }
+}
+
 @Composable
-fun ChannelItem(
-    channel: Channel,
-    onClick: () -> Unit
-) {
-    Row(
+private fun Segments(selected: ConversationsTab, uiState: ConversationsUiState, onSelect: (ConversationsTab) -> Unit) {
+    val tokens = CentyTheme.tokens
+    val content = uiState as? ConversationsUiState.Content
+    // Badge rule (polish pass, rule 6): conversations with something unread, not messages, and no
+    // counter on the segment that is already open.
+    val directUnread = content?.directConversations?.let(InboxBadges::unreadConversations) ?: 0
+    val channelUnread = content?.channels?.let(InboxBadges::unreadChannels) ?: 0
+    val colors = SegmentedButtonDefaults.colors(
+        activeContainerColor = tokens.primarySoft,
+        activeContentColor = tokens.accentText,
+        activeBorderColor = tokens.primaryLine,
+        inactiveContainerColor = tokens.card,
+        inactiveContentColor = tokens.textSecondary,
+        inactiveBorderColor = tokens.borderStrong
+    )
+    SingleChoiceSegmentedButtonRow(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(start = CentySpace.gutter, end = CentySpace.gutter, bottom = CentySpace.s)
     ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Tag,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
+        listOf(
+            Triple(ConversationsTab.CHATS, R.string.inbox_segment_direct, directUnread),
+            Triple(ConversationsTab.CHANNELS, R.string.inbox_segment_channels, channelUnread)
+        ).forEachIndexed { index, (tab, label, unread) ->
+            SegmentedButton(
+                selected = selected == tab,
+                onClick = { onSelect(tab) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = 2, baseShape = RoundedCornerShape(CentyRadius.control)),
+                colors = colors,
+                icon = {},
+                label = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(stringResource(label), maxLines = 1)
+                        UnreadPill(InboxBadges.segmentCount(selected == tab, unread))
+                    }
+                }
             )
         }
+    }
+}
 
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = channel.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+@Composable
+private fun DirectList(
+    state: LazyListState,
+    all: List<DirectConversation>,
+    query: String,
+    padding: PaddingValues,
+    typing: Set<ConversationRef>,
+    open: ConversationRef?,
+    currentUserId: Long?,
+    actions: ConversationsActions
+) {
+    val list = remember(all, query) { filterByName(all, query) }
+    val reduce = LocalReduceMotion.current
+    when {
+        list.isEmpty() && query.isNotBlank() -> EmptyState(
+            illustration = Illustration.SEARCH,
+            title = stringResource(R.string.inbox_no_results),
+            message = stringResource(R.string.inbox_no_results_message)
+        )
+        list.isEmpty() -> EmptyState(
+            illustration = Illustration.INBOX,
+            title = stringResource(R.string.inbox_empty_direct),
+            message = stringResource(R.string.inbox_empty_direct_message),
+            actionLabel = stringResource(R.string.inbox_find_person),
+            onAction = actions::onFindPerson
+        )
+        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
+            itemsIndexed(list, key = { _, it -> "d-${it.userId}" }) { index, conversation ->
+                val ref = ConversationRef(ConversationType.DIRECT, conversation.userId)
+                DirectRow(
+                    conversation = conversation,
+                    divider = index < list.lastIndex,
+                    isTyping = ref in typing,
+                    isSelected = ref == open,
+                    currentUserId = currentUserId,
+                    onClick = { actions.onOpenDirect(conversation) },
+                    modifier = Modifier.animateItem(placementSpec = if (reduce) null else tween(CentyMotion.BASE, easing = CentyMotion.EaseOut))
                 )
+            }
+        }
+    }
+}
 
-                if (!channel.lastMessageTime.isNullOrBlank()) {
-                    Text(
-                        text = DateTimeUtils.formatTime(channel.lastMessageTime),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+@Composable
+private fun ChannelList(
+    state: LazyListState,
+    all: List<Channel>,
+    query: String,
+    padding: PaddingValues,
+    typing: Set<ConversationRef>,
+    open: ConversationRef?,
+    actions: ConversationsActions
+) {
+    val list = remember(all, query) { filterChannelsByName(all, query) }
+    val reduce = LocalReduceMotion.current
+    when {
+        list.isEmpty() && query.isNotBlank() -> EmptyState(
+            illustration = Illustration.SEARCH,
+            title = stringResource(R.string.inbox_no_results),
+            message = stringResource(R.string.inbox_no_results_message)
+        )
+        list.isEmpty() -> EmptyState(
+            illustration = Illustration.CHANNELS,
+            title = stringResource(R.string.inbox_empty_channels),
+            message = stringResource(R.string.inbox_empty_channels_message)
+        )
+        else -> LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = state, contentPadding = padding) {
+            itemsIndexed(list, key = { _, it -> "c-${it.id}" }) { index, channel ->
+                val ref = ConversationRef(ConversationType.CHANNEL, channel.id)
+                ChannelRow(
+                    channel = channel,
+                    divider = index < list.lastIndex,
+                    isTyping = ref in typing,
+                    isSelected = ref == open,
+                    onClick = { actions.onOpenChannel(channel) },
+                    modifier = Modifier.animateItem(placementSpec = if (reduce) null else tween(CentyMotion.BASE, easing = CentyMotion.EaseOut))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectRow(
+    conversation: DirectConversation,
+    divider: Boolean,
+    isTyping: Boolean,
+    isSelected: Boolean,
+    currentUserId: Long?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val last = conversation.lastMessageText?.takeIf { it.isNotBlank() }
+    val preview = when {
+        last != null && conversation.lastMessageSenderId != null && conversation.lastMessageSenderId == currentUserId ->
+            stringResource(R.string.inbox_preview_you, last)
+        last != null -> last
+        else -> conversation.jobTitle ?: conversation.departmentName ?: stringResource(R.string.inbox_preview_empty)
+    }
+    val shared = SharedKeys.conversation(isChannel = false, id = conversation.userId)
+    ConversationRow(
+        title = conversation.fullName,
+        sharedKey = shared,
+        preview = preview,
+        time = DateTimeUtils.formatTime(conversation.lastMessageTime),
+        unread = conversation.unreadCount,
+        isTyping = isTyping,
+        isSelected = isSelected,
+        divider = divider,
+        onClick = onClick,
+        modifier = modifier,
+        avatar = { ring ->
+            CentyAvatar(
+                conversation.fullName,
+                avatarUrl = conversation.avatarUrl,
+                status = conversation.status,
+                size = ConversationAvatarSize,
+                ringColor = ring,
+                typing = isTyping,
+                modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared))
+            )
+        }
+    )
+}
+
+@Composable
+private fun ChannelRow(channel: Channel, divider: Boolean, isTyping: Boolean, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val preview = channel.lastMessageText?.takeIf { it.isNotBlank() }
+        ?: channel.topic?.takeIf { it.isNotBlank() }
+        ?: pluralStringResource(R.plurals.channel_members, channel.membersCount, channel.membersCount)
+    val shared = SharedKeys.conversation(isChannel = true, id = channel.id)
+    ConversationRow(
+        title = channel.name,
+        sharedKey = shared,
+        preview = preview,
+        time = DateTimeUtils.formatTime(channel.lastMessageTime),
+        unread = channel.unreadCount,
+        isTyping = isTyping,
+        isSelected = isSelected,
+        divider = divider,
+        onClick = onClick,
+        modifier = modifier,
+        avatar = { ring ->
+            CentyAvatar(channel.name, size = ConversationAvatarSize, isChannel = true, ringColor = ring, modifier = Modifier.sharedConversationElement(SharedKeys.avatar(shared)))
+        }
+    )
+}
+
+@Composable
+private fun ConversationRow(
+    title: String,
+    sharedKey: String,
+    preview: String,
+    time: String,
+    unread: Int,
+    isTyping: Boolean,
+    isSelected: Boolean,
+    divider: Boolean,
+    onClick: () -> Unit,
+    avatar: @Composable (ringColor: androidx.compose.ui.graphics.Color) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tokens = CentyTheme.tokens
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // Press: the ripple plus a 120 ms primary-soft highlight (brief), the tint of a selected row.
+    val background by animateColorAsState(
+        if (isSelected || pressed) tokens.primarySoft else Color.Transparent,
+        CentyMotion.fast(),
+        label = "row-press"
+    )
+    val unreadText = if (unread > 0) pluralStringResource(R.plurals.unread_messages, unread, unread) else null
+    val typingText = stringResource(R.string.inbox_typing)
+    val hairline = tokens.border
+    val textEdge = textEdgeAfter(ConversationAvatarSize)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .background(background)
+            // Borderless rows, a hairline from the text edge (polish pass, rule 1).
+            .drawBehind {
+                if (divider) {
+                    val y = size.height - 0.5.dp.toPx()
+                    drawLine(hairline, Offset(textEdge.toPx(), y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
                 }
             }
-
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val snippet = channel.lastMessageText
-                    ?: channel.topic
-                    ?: "${channel.membersCount} участников"
-
-                Text(
-                    text = snippet,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                if (channel.unreadCount > 0) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+            .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick, role = Role.Button)
+            .semantics(mergeDescendants = true) {
+                if (unreadText != null) stateDescription = unreadText
+            }
+            .padding(horizontal = CentySpace.gutter, vertical = CentySpace.m),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // The presence dot is cut out of whatever is behind the row.
+        avatar(if (isSelected) tokens.primarySoft.compositeOver(tokens.list) else tokens.list)
+        Spacer(Modifier.width(CentySpace.rowGap))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tokens.textStrong,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.sharedConversationElement(SharedKeys.title(sharedKey))
+                    )
+                }
+                if (time.isNotEmpty()) {
+                    Spacer(Modifier.width(CentySpace.s))
+                    // Meta is one step: labelSmall in text-dim, read or not (rule 3).
+                    Text(time, style = MaterialTheme.typography.labelSmall, color = tokens.textDim)
+                }
+            }
+            Spacer(Modifier.size(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    if (isTyping) {
+                        TypingIndicator(typingText)
+                    } else {
+                        // Unread: the preview steps up to text-main 600, so the row reads as unread
+                        // without the pill (rule 3).
                         Text(
-                            text = if (channel.unreadCount > 99) "99+" else channel.unreadCount.toString(),
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            preview,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (unread > 0) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (unread > 0) tokens.textMain else tokens.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
+                Spacer(Modifier.width(CentySpace.s))
+                UnreadPill(unread)
             }
         }
     }

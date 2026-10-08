@@ -1,0 +1,13 @@
+{
+  "type": "conversation_read",
+  "conversationType": "direct",
+  "targetId": 2,
+  "byUserId": 3,
+  "at": "2026-10-02T09:00:00.000Z",
+  "messageIds": [
+    1,
+    3,
+    7,
+    8
+  ]
+}

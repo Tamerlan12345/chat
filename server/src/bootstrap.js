@@ -58,6 +58,9 @@ async function bootstrap() {
     seedChatDefaults(chatDb, admin ? admin.id : null);
     await syncDefaultChannelMembers();
     await pruneStaleDevices();
+    const Registration = require('./services/registration.service');
+    await Registration.seedAllowlistFromEnv().catch((err) => console.warn('[Registration] список из окружения не загружен:', err.message));
+    await Registration.purgeExpired().catch(() => {});
     await require('./updates/client-installs').pruneClientInstalls();
 
     // Наполнить индекс «знакомых» адресов из базы, пока не пошли запросы: после

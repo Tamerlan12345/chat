@@ -1,0 +1,6111 @@
+{
+  "sourceLanguage" : "ru",
+  "strings" : {
+    "%@ %@ · %@ в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ %@ · %@ в сети"
+          }
+        }
+      }
+    },
+    "%@ из %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ из %@"
+          }
+        }
+      }
+    },
+    "%@ печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ печатает..."
+          }
+        }
+      }
+    },
+    "%@, %@ из %@ в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %@ из %@ в сети"
+          }
+        }
+      }
+    },
+    "%@, %lld из %lld в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %lld из %lld в сети"
+          }
+        }
+      }
+    },
+    "%@/%@ в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@/%@ в сети"
+          }
+        }
+      }
+    },
+    "%lld %@ · %lld в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld %@ · %lld в сети"
+          }
+        }
+      }
+    },
+    "%lld мин" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин"
+          }
+        }
+      }
+    },
+    "%lld мин %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мин %lld с"
+          }
+        }
+      }
+    },
+    "%lld неотправленное сообщение будет удалено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld неотправленное сообщение будет удалено"
+          }
+        }
+      }
+    },
+    "%lld неотправленных сообщений будут удалены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld неотправленных сообщений будут удалены"
+          }
+        }
+      }
+    },
+    "%lld неотправленных сообщения будут удалены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld неотправленных сообщения будут удалены"
+          }
+        }
+      }
+    },
+    "%lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld с"
+          }
+        }
+      }
+    },
+    "%lld/%lld в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld/%lld в сети"
+          }
+        }
+      }
+    },
+    ". Осталось попыток: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ". Осталось попыток: %@."
+          }
+        }
+      }
+    },
+    "А это прямо сейчас отправляется" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "А это прямо сейчас отправляется"
+          }
+        }
+      }
+    },
+    "АО \"Страховая компания \"Сентрас Иншуранс\"" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "АО \"Страховая компания \"Сентрас Иншуранс\""
+          }
+        }
+      }
+    },
+    "Автор: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автор: %@"
+          }
+        }
+      }
+    },
+    "Авторизация..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Авторизация..."
+          }
+        }
+      }
+    },
+    "Администратор" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Администратор"
+          }
+        }
+      }
+    },
+    "Администрация" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Администрация"
+          }
+        }
+      }
+    },
+    "Адрес сервера компании" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес сервера компании"
+          }
+        }
+      }
+    },
+    "Аккаунт" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт"
+          }
+        }
+      }
+    },
+    "Аккаунт, переписка и личные данные будут удалены безвозвратно. Восстановить их нельзя." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт, переписка и личные данные будут удалены безвозвратно. Восстановить их нельзя."
+          }
+        }
+      }
+    },
+    "Алиса Тестова" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Алиса Тестова"
+          }
+        }
+      }
+    },
+    "Алфавитный указатель" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Алфавитный указатель"
+          }
+        }
+      }
+    },
+    "Аудиосвязь прервалась. Проверьте микрофон и попробуйте снова." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аудиосвязь прервалась. Проверьте микрофон и попробуйте снова."
+          }
+        }
+      }
+    },
+    "Без звука" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без звука"
+          }
+        }
+      }
+    },
+    "Без подразделения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без подразделения"
+          }
+        }
+      }
+    },
+    "Безопасность" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Безопасность"
+          }
+        }
+      }
+    },
+    "Безопасность и поддержка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Безопасность и поддержка"
+          }
+        }
+      }
+    },
+    "Боб Тестов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Боб Тестов"
+          }
+        }
+      }
+    },
+    "Боб печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Боб печатает..."
+          }
+        }
+      }
+    },
+    "Будить можно не чаще раза в минуту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Будить можно не чаще раза в минуту"
+          }
+        }
+      }
+    },
+    "Бухгалтер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бухгалтер"
+          }
+        }
+      }
+    },
+    "Бухгалтерия" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бухгалтерия"
+          }
+        }
+      }
+    },
+    "Был(а) в сети %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Был(а) в сети %@"
+          }
+        }
+      }
+    },
+    "Был(а) в сети вчера в %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Был(а) в сети вчера в %@"
+          }
+        }
+      }
+    },
+    "Был(а) в сети сегодня в %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Был(а) в сети сегодня в %@"
+          }
+        }
+      }
+    },
+    "В канале пока тихо" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В канале пока тихо"
+          }
+        }
+      }
+    },
+    "В сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В сети"
+          }
+        }
+      }
+    },
+    "В сообщениях ничего не нашли" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В сообщениях ничего не нашли"
+          }
+        }
+      }
+    },
+    "В справочнике пока никого нет" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В справочнике пока никого нет"
+          }
+        }
+      }
+    },
+    "Важность: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Важность: %@"
+          }
+        }
+      }
+    },
+    "Вас вызывает: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вас вызывает: %@"
+          }
+        }
+      }
+    },
+    "Введите код из письма" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите код из письма"
+          }
+        }
+      }
+    },
+    "Введите корректный URL (например, https://chat.example.com)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите корректный URL (например, https://chat.example.com)"
+          }
+        }
+      }
+    },
+    "Введите корректный адрес эл. почты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите корректный адрес эл. почты"
+          }
+        }
+      }
+    },
+    "Введите пароль для подтверждения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите пароль для подтверждения"
+          }
+        }
+      }
+    },
+    "Введите текущий пароль и новый надежный пароль (минимум 8 символов)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите текущий пароль и новый надежный пароль (минимум 8 символов)."
+          }
+        }
+      }
+    },
+    "Ведущий аналитик" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ведущий аналитик"
+          }
+        }
+      }
+    },
+    "Вернуться ко входу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вернуться ко входу"
+          }
+        }
+      }
+    },
+    "Вкл. микрофон" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вкл. микрофон"
+          }
+        }
+      }
+    },
+    "Включён" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включён"
+          }
+        }
+      }
+    },
+    "Вложение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вложение"
+          }
+        }
+      }
+    },
+    "Вн. номер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вн. номер"
+          }
+        }
+      }
+    },
+    "Внутренний номер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Внутренний номер"
+          }
+        }
+      }
+    },
+    "Войти" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войти"
+          }
+        }
+      }
+    },
+    "Все" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все"
+          }
+        }
+      }
+    },
+    "Все объявления подтверждены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все объявления подтверждены"
+          }
+        }
+      }
+    },
+    "Все распоряжения подписаны" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все распоряжения подписаны"
+          }
+        }
+      }
+    },
+    "Все сотрудники (%@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все сотрудники (%@)"
+          }
+        }
+      }
+    },
+    "Все сотрудники (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все сотрудники (%lld)"
+          }
+        }
+      }
+    },
+    "Всем сотрудникам" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всем сотрудникам"
+          }
+        }
+      }
+    },
+    "Вход" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход"
+          }
+        }
+      }
+    },
+    "Вход в CentyChat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход в CentyChat"
+          }
+        }
+      }
+    },
+    "Входящий звонок..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входящий звонок..."
+          }
+        }
+      }
+    },
+    "Вход…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход…"
+          }
+        }
+      }
+    },
+    "Вчера" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вчера"
+          }
+        }
+      }
+    },
+    "Вы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы"
+          }
+        }
+      }
+    },
+    "Вы заблокировали этого пользователя. Его сообщения скрыты." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы заблокировали этого пользователя. Его сообщения скрыты."
+          }
+        }
+      }
+    },
+    "Вы никого не блокировали." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы никого не блокировали."
+          }
+        }
+      }
+    },
+    "Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы — единственный администратор. Назначьте другого администратора, затем удалите аккаунт."
+          }
+        }
+      }
+    },
+    "Выберите диалог" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите диалог"
+          }
+        }
+      }
+    },
+    "Выбранным сотрудникам" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранным сотрудникам"
+          }
+        }
+      }
+    },
+    "Выбрать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать"
+          }
+        }
+      }
+    },
+    "Выбрать, кому отправить сигнал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать, кому отправить сигнал"
+          }
+        }
+      }
+    },
+    "Вызов не удался" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызов не удался"
+          }
+        }
+      }
+    },
+    "Вызов отклонен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызов отклонен"
+          }
+        }
+      }
+    },
+    "Вызов..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызов..."
+          }
+        }
+      }
+    },
+    "Вызывает виброотклик и звуковой сигнал на устройстве коллеги" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызывает виброотклик и звуковой сигнал на устройстве коллеги"
+          }
+        }
+      }
+    },
+    "Выйти" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выйти"
+          }
+        }
+      }
+    },
+    "Выйти из аккаунта" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выйти из аккаунта"
+          }
+        }
+      }
+    },
+    "Выйти из аккаунта?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выйти из аккаунта?"
+          }
+        }
+      }
+    },
+    "Выключен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключен"
+          }
+        }
+      }
+    },
+    "Выключите фильтр «В сети», чтобы увидеть всех." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключите фильтр «В сети», чтобы увидеть всех."
+          }
+        }
+      }
+    },
+    "Выполнено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнено"
+          }
+        }
+      }
+    },
+    "Выполняется вход" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется вход"
+          }
+        }
+      }
+    },
+    "Галерея" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Галерея"
+          }
+        }
+      }
+    },
+    "Головной офис" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Головной офис"
+          }
+        }
+      }
+    },
+    "Готов к вызову" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готов к вызову"
+          }
+        }
+      }
+    },
+    "Да, уже открыла." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Да, уже открыла."
+          }
+        }
+      }
+    },
+    "Данияр Нурпеисов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данияр Нурпеисов"
+          }
+        }
+      }
+    },
+    "Действия с пользователем" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Действия с пользователем"
+          }
+        }
+      }
+    },
+    "Динамик" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Динамик"
+          }
+        }
+      }
+    },
+    "Длительность %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Длительность %@"
+          }
+        }
+      }
+    },
+    "Для защиты сессии требуется защищённое соединение (HTTPS)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для защиты сессии требуется защищённое соединение (HTTPS)."
+          }
+        }
+      }
+    },
+    "Для звонка нужен доступ к микрофону." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для звонка нужен доступ к микрофону."
+          }
+        }
+      }
+    },
+    "Договор согласован, подпишите, пожалуйста, до пятницы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Договор согласован, подпишите, пожалуйста, до пятницы"
+          }
+        }
+      }
+    },
+    "Документ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Документ"
+          }
+        }
+      }
+    },
+    "Должность" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Должность"
+          }
+        }
+      }
+    },
+    "Доставлено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доставлено"
+          }
+        }
+      }
+    },
+    "Другое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другое"
+          }
+        }
+      }
+    },
+    "Елена Ким" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Елена Ким"
+          }
+        }
+      }
+    },
+    "Жалоба" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалоба"
+          }
+        }
+      }
+    },
+    "Жалоба на пользователя" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалоба на пользователя"
+          }
+        }
+      }
+    },
+    "Жалоба на сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалоба на сообщение"
+          }
+        }
+      }
+    },
+    "Жалоба отправлена" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалоба отправлена"
+          }
+        }
+      }
+    },
+    "Жалобу рассмотрит администратор. Автор не узнает, кто пожаловался." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жалобу рассмотрит администратор. Автор не узнает, кто пожаловался."
+          }
+        }
+      }
+    },
+    "Заблокированные" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокированные"
+          }
+        }
+      }
+    },
+    "Заблокированные пользователи" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокированные пользователи"
+          }
+        }
+      }
+    },
+    "Заблокировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокировать"
+          }
+        }
+      }
+    },
+    "Заблокировать автора" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокировать автора"
+          }
+        }
+      }
+    },
+    "Заблокировать пользователя?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокировать пользователя?"
+          }
+        }
+      }
+    },
+    "Заблокировать человека можно в диалоге: меню «⋯» вверху, пункт «Заблокировать»." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокировать человека можно в диалоге: меню «⋯» вверху, пункт «Заблокировать»."
+          }
+        }
+      }
+    },
+    "Забыли пароль? Обратитесь к администратору." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забыли пароль? Обратитесь к администратору."
+          }
+        }
+      }
+    },
+    "Завершить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить"
+          }
+        }
+      }
+    },
+    "Загрузка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка"
+          }
+        }
+      }
+    },
+    "Загрузка %@%" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка %@%"
+          }
+        }
+      }
+    },
+    "Загрузка более ранних сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка более ранних сообщений"
+          }
+        }
+      }
+    },
+    "Загрузка фото" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка фото"
+          }
+        }
+      }
+    },
+    "Загрузка…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка…"
+          }
+        }
+      }
+    },
+    "Закрыть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть"
+          }
+        }
+      }
+    },
+    "Занят" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Занят"
+          }
+        }
+      }
+    },
+    "Запрос не выполнен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос не выполнен"
+          }
+        }
+      }
+    },
+    "Зарегистрироваться" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарегистрироваться"
+          }
+        }
+      }
+    },
+    "Защищённое хранилище получило недопустимое значение." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Защищённое хранилище получило недопустимое значение."
+          }
+        }
+      }
+    },
+    "Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения."
+          }
+        }
+      }
+    },
+    "Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании."
+          }
+        }
+      }
+    },
+    "Заявка отправлена" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заявка отправлена"
+          }
+        }
+      }
+    },
+    "Заявка отправлена на рассмотрение администратору" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заявка отправлена на рассмотрение администратору"
+          }
+        }
+      }
+    },
+    "Звонки запрещены политикой безопасности" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонки запрещены политикой безопасности"
+          }
+        }
+      }
+    },
+    "Звонки недоступны для вашей роли" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонки недоступны для вашей роли"
+          }
+        }
+      }
+    },
+    "Звонок" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок"
+          }
+        }
+      }
+    },
+    "Звонок завершен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок завершен"
+          }
+        }
+      }
+    },
+    "Звонок запрещен политикой" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок запрещен политикой"
+          }
+        }
+      }
+    },
+    "Звук прерван. Повторите звонок, когда аудиоустройство станет доступно." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук прерван. Повторите звонок, когда аудиоустройство станет доступно."
+          }
+        }
+      }
+    },
+    "Здесь отображаются важные корпоративные приказы и новости компании" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь отображаются важные корпоративные приказы и новости компании"
+          }
+        }
+      }
+    },
+    "Здесь появятся люди и каналы, которые вы открывали из поиска." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь появятся люди и каналы, которые вы открывали из поиска."
+          }
+        }
+      }
+    },
+    "Здесь появятся приказы и новости компании." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь появятся приказы и новости компании."
+          }
+        }
+      }
+    },
+    "И таблицу тоже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "И таблицу тоже."
+          }
+        }
+      }
+    },
+    "ИТ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ИТ"
+          }
+        }
+      }
+    },
+    "Идентификатор (UIN)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идентификатор (UIN)"
+          }
+        }
+      }
+    },
+    "Идет разговор" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идет разговор"
+          }
+        }
+      }
+    },
+    "Изменить данные" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить данные"
+          }
+        }
+      }
+    },
+    "Имя, должность, отдел, вн. номер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Имя, должность, отдел, вн. номер"
+          }
+        }
+      }
+    },
+    "Инженер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инженер"
+          }
+        }
+      }
+    },
+    "Ищем сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищем сообщения"
+          }
+        }
+      }
+    },
+    "К последним сообщениям" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "К последним сообщениям"
+          }
+        }
+      }
+    },
+    "Канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Канал"
+          }
+        }
+      }
+    },
+    "Канал для разработки мобильных клиентов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Канал для разработки мобильных клиентов"
+          }
+        }
+      }
+    },
+    "Каналы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каналы"
+          }
+        }
+      }
+    },
+    "Каналы (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каналы (%lld)"
+          }
+        }
+      }
+    },
+    "Каналы собирают отдел или проект в одной переписке." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каналы собирают отдел или проект в одной переписке."
+          }
+        }
+      }
+    },
+    "Карина Смирнова" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карина Смирнова"
+          }
+        }
+      }
+    },
+    "Карина печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карина печатает..."
+          }
+        }
+      }
+    },
+    "Карточка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карточка"
+          }
+        }
+      }
+    },
+    "Карточка сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карточка сотрудника"
+          }
+        }
+      }
+    },
+    "Кнопки" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кнопки"
+          }
+        }
+      }
+    },
+    "Когда администратор добавит сотрудников, они появятся здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Когда администратор добавит сотрудников, они появятся здесь."
+          }
+        }
+      }
+    },
+    "Код действует ещё %lld:%@%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код действует ещё %lld:%@%@"
+          }
+        }
+      }
+    },
+    "Код из письма" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код из письма"
+          }
+        }
+      }
+    },
+    "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код недействителен: срок истёк, он уже использован или попытки закончились. Запросите новый код."
+          }
+        }
+      }
+    },
+    "Компания" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компания"
+          }
+        }
+      }
+    },
+    "Компоненты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компоненты"
+          }
+        }
+      }
+    },
+    "Кому отправить сигнал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кому отправить сигнал"
+          }
+        }
+      }
+    },
+    "Конфиденциальность" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Конфиденциальность"
+          }
+        }
+      }
+    },
+    "Копировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копировать"
+          }
+        }
+      }
+    },
+    "Корпоративные реквизиты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративные реквизиты"
+          }
+        }
+      }
+    },
+    "Корпоративный защищённый мессенджер\nАО СК «Сентрас Иншуранс»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративный защищённый мессенджер\nАО СК «Сентрас Иншуранс»"
+          }
+        }
+      }
+    },
+    "Корпоративный логин" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративный логин"
+          }
+        }
+      }
+    },
+    "Корпоративный мессенджер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корпоративный мессенджер"
+          }
+        }
+      }
+    },
+    "Критический" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Критический"
+          }
+        }
+      }
+    },
+    "Латиница, цифры, точка, дефис" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Латиница, цифры, точка, дефис"
+          }
+        }
+      }
+    },
+    "Личные" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Личные"
+          }
+        }
+      }
+    },
+    "Личные (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Личные (%lld)"
+          }
+        }
+      }
+    },
+    "Логин" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логин"
+          }
+        }
+      }
+    },
+    "Логин: латинские буквы, цифры, точка, дефис и подчёркивание" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логин: латинские буквы, цифры, точка, дефис и подчёркивание"
+          }
+        }
+      }
+    },
+    "Логин: от 3 до 32 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логин: от 3 до 32 символов"
+          }
+        }
+      }
+    },
+    "Логин: от 3 до 64 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логин: от 3 до 64 символов"
+          }
+        }
+      }
+    },
+    "Люди" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Люди"
+          }
+        }
+      }
+    },
+    "Люди, каналы, сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Люди, каналы, сообщения"
+          }
+        }
+      }
+    },
+    "Микрофон" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон"
+          }
+        }
+      }
+    },
+    "Микрофон выкл." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон выкл."
+          }
+        }
+      }
+    },
+    "Мобильный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мобильный"
+          }
+        }
+      }
+    },
+    "Можно через %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Можно через %lld с"
+          }
+        }
+      }
+    },
+    "Мы отправили 6-значный код на %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мы отправили 6-значный код на %@."
+          }
+        }
+      }
+    },
+    "На что жалоба" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На что жалоба"
+          }
+        }
+      }
+    },
+    "На этот адрес почты уже подана заявка или есть аккаунт." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этот адрес почты уже подана заявка или есть аккаунт."
+          }
+        }
+      }
+    },
+    "Нажмите карандаш сверху, чтобы начать диалог с коллегой" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите карандаш сверху, чтобы начать диалог с коллегой"
+          }
+        }
+      }
+    },
+    "Название (например: #Проект)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Название (например: #Проект)"
+          }
+        }
+      }
+    },
+    "Найти сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найти сотрудника"
+          }
+        }
+      }
+    },
+    "Написать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Написать"
+          }
+        }
+      }
+    },
+    "Написать письмо" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Написать письмо"
+          }
+        }
+      }
+    },
+    "Напишите коллеге — переписка появится здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напишите коллеге — переписка появится здесь."
+          }
+        }
+      }
+    },
+    "Напишите первое сообщение — оно появится здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напишите первое сообщение — оно появится здесь."
+          }
+        }
+      }
+    },
+    "Не беспокоить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не беспокоить"
+          }
+        }
+      }
+    },
+    "Не беспокоить — звонок не пройдёт" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не беспокоить — звонок не пройдёт"
+          }
+        }
+      }
+    },
+    "Не в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не в сети"
+          }
+        }
+      }
+    },
+    "Не в сети — звонок сейчас не дойдёт" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не в сети — звонок сейчас не дойдёт"
+          }
+        }
+      }
+    },
+    "Не выполнено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не выполнено"
+          }
+        }
+      }
+    },
+    "Не короче 8 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не короче 8 символов"
+          }
+        }
+      }
+    },
+    "Не отправлено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не отправлено"
+          }
+        }
+      }
+    },
+    "Не отправлено: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не отправлено: %@"
+          }
+        }
+      }
+    },
+    "Не отправлять сообщение?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не отправлять сообщение?"
+          }
+        }
+      }
+    },
+    "Не удалось включить звук. Проверьте аудиоустройство и попробуйте снова." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось включить звук. Проверьте аудиоустройство и попробуйте снова."
+          }
+        }
+      }
+    },
+    "Не удалось войти. Повторите попытку позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось войти. Повторите попытку позже."
+          }
+        }
+      }
+    },
+    "Не удалось выполнить действие" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось выполнить действие"
+          }
+        }
+      }
+    },
+    "Не удалось выполнить действие. Повторите попытку позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось выполнить действие. Повторите попытку позже."
+          }
+        }
+      }
+    },
+    "Не удалось загрузить диалоги" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить диалоги"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить каналы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить каналы"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить объявления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить объявления"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить переписку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить переписку"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить распоряжения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить распоряжения"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить сотрудников" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить сотрудников"
+          }
+        }
+      }
+    },
+    "Не удалось загрузить файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить файл"
+          }
+        }
+      }
+    },
+    "Не удалось запустить звук звонка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запустить звук звонка"
+          }
+        }
+      }
+    },
+    "Не удалось изменить статус. Проверьте подключение." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось изменить статус. Проверьте подключение."
+          }
+        }
+      }
+    },
+    "Не удалось надёжно сохранить данные сессии на этом устройстве." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось надёжно сохранить данные сессии на этом устройстве."
+          }
+        }
+      }
+    },
+    "Не удалось надёжно удалить данные сессии с этого устройства." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось надёжно удалить данные сессии с этого устройства."
+          }
+        }
+      }
+    },
+    "Не удалось найти сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось найти сообщения"
+          }
+        }
+      }
+    },
+    "Не удалось обновить список" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить список"
+          }
+        }
+      }
+    },
+    "Не удалось отправить письмо с кодом. Повторите попытку позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отправить письмо с кодом. Повторите попытку позже."
+          }
+        }
+      }
+    },
+    "Не удалось подготовить файл к отправке" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить файл к отправке"
+          }
+        }
+      }
+    },
+    "Не удалось подключиться: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подключиться: %@"
+          }
+        }
+      }
+    },
+    "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось проверить неотправленные сообщения — если они есть, они будут удалены"
+          }
+        }
+      }
+    },
+    "Не удалось продлить сессию" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось продлить сессию"
+          }
+        }
+      }
+    },
+    "Не удалось прочитать фото" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать фото"
+          }
+        }
+      }
+    },
+    "Не удалось разблокировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось разблокировать"
+          }
+        }
+      }
+    },
+    "Не удалось скачать файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось скачать файл"
+          }
+        }
+      }
+    },
+    "Не удалось скачать файл (код %@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось скачать файл (код %@)"
+          }
+        }
+      }
+    },
+    "Не удалось создать канал. Проверьте название и попробуйте ещё раз." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать канал. Проверьте название и попробуйте ещё раз."
+          }
+        }
+      }
+    },
+    "Не удалось удалить неотправленные сообщения — выход отменён" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить неотправленные сообщения — выход отменён"
+          }
+        }
+      }
+    },
+    "Неверный URL сервера: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный URL сервера: %@"
+          }
+        }
+      }
+    },
+    "Неверный код" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный код"
+          }
+        }
+      }
+    },
+    "Неверный код. Проверьте письмо и попробуйте ещё раз." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный код. Проверьте письмо и попробуйте ещё раз."
+          }
+        }
+      }
+    },
+    "Неверный логин или пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный логин или пароль"
+          }
+        }
+      }
+    },
+    "Неверный пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный пароль"
+          }
+        }
+      }
+    },
+    "Неверный пароль." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неверный пароль."
+          }
+        }
+      }
+    },
+    "Недавние" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние"
+          }
+        }
+      }
+    },
+    "Недопустимое содержимое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недопустимое содержимое"
+          }
+        }
+      }
+    },
+    "Некорректный ответ от сервера" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Некорректный ответ от сервера"
+          }
+        }
+      }
+    },
+    "Нельзя отправить пустое сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нельзя отправить пустое сообщение"
+          }
+        }
+      }
+    },
+    "Нет аккаунта?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет аккаунта?"
+          }
+        }
+      }
+    },
+    "Нет активных диалогов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет активных диалогов"
+          }
+        }
+      }
+    },
+    "Нет активных оповещений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет активных оповещений"
+          }
+        }
+      }
+    },
+    "Нет доступа к микрофону" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет доступа к микрофону"
+          }
+        }
+      }
+    },
+    "Нет доступа к файлу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет доступа к файлу"
+          }
+        }
+      }
+    },
+    "Нет доступных каналов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет доступных каналов"
+          }
+        }
+      }
+    },
+    "Нет подключения к серверу. Проверьте интернет или адрес сервера." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет подключения к серверу. Проверьте интернет или адрес сервера."
+          }
+        }
+      }
+    },
+    "Нет связи с сервером" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет связи с сервером"
+          }
+        }
+      }
+    },
+    "Нет связи с сервером — файл не скачан" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет связи с сервером — файл не скачан"
+          }
+        }
+      }
+    },
+    "Нет связи с сервером. Проверьте подключение к интернету." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет связи с сервером. Проверьте подключение к интернету."
+          }
+        }
+      }
+    },
+    "Нет сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сети"
+          }
+        }
+      }
+    },
+    "Нет сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сообщений"
+          }
+        }
+      }
+    },
+    "Никого не нашли по «%@»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никого не нашли по «%@»"
+          }
+        }
+      }
+    },
+    "Ничего не найдено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ничего не найдено"
+          }
+        }
+      }
+    },
+    "Ничего не нашли по «%@»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ничего не нашли по «%@»"
+          }
+        }
+      }
+    },
+    "Новое сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новое сообщение"
+          }
+        }
+      }
+    },
+    "Новые распоряжения, требующие ознакомления, появятся здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новые распоряжения, требующие ознакомления, появятся здесь."
+          }
+        }
+      }
+    },
+    "Новый диалог" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый диалог"
+          }
+        }
+      }
+    },
+    "Новый канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый канал"
+          }
+        }
+      }
+    },
+    "Новый пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый пароль"
+          }
+        }
+      }
+    },
+    "Новый пароль (мин. 8 симв.)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый пароль (мин. 8 симв.)"
+          }
+        }
+      }
+    },
+    "Новый пароль должен содержать не менее 8 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый пароль должен содержать не менее 8 символов"
+          }
+        }
+      }
+    },
+    "ОК" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ОК"
+          }
+        }
+      }
+    },
+    "Обновить список" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить список"
+          }
+        }
+      }
+    },
+    "Обновление регламента командировок" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновление регламента командировок"
+          }
+        }
+      }
+    },
+    "Объявление" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объявление"
+          }
+        }
+      }
+    },
+    "Объявлений пока нет" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объявлений пока нет"
+          }
+        }
+      }
+    },
+    "Объявления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объявления"
+          }
+        }
+      }
+    },
+    "Обычный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обычный"
+          }
+        }
+      }
+    },
+    "Обязательная смена пароля" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обязательная смена пароля"
+          }
+        }
+      }
+    },
+    "Ожидает отправки" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидает отправки"
+          }
+        }
+      }
+    },
+    "Ознакомлен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ознакомлен"
+          }
+        }
+      }
+    },
+    "Ознакомлен: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ознакомлен: %@"
+          }
+        }
+      }
+    },
+    "Оскорбления или травля" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оскорбления или травля"
+          }
+        }
+      }
+    },
+    "Ответ %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ %@"
+          }
+        }
+      }
+    },
+    "Ответ на сообщение %@: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ на сообщение %@: %@"
+          }
+        }
+      }
+    },
+    "Ответить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответить"
+          }
+        }
+      }
+    },
+    "Отдел" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отдел"
+          }
+        }
+      }
+    },
+    "Отделы" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отделы"
+          }
+        }
+      }
+    },
+    "Отклонить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отклонить"
+          }
+        }
+      }
+    },
+    "Отключено сервером" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключено сервером"
+          }
+        }
+      }
+    },
+    "Откроется форма регистрации с подтверждением почты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откроется форма регистрации с подтверждением почты"
+          }
+        }
+      }
+    },
+    "Открывает настройки приложения, чтобы разрешить доступ к микрофону" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открывает настройки приложения, чтобы разрешить доступ к микрофону"
+          }
+        }
+      }
+    },
+    "Открыть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть"
+          }
+        }
+      }
+    },
+    "Открыть карточку сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть карточку сотрудника"
+          }
+        }
+      }
+    },
+    "Открыть настройки" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть настройки"
+          }
+        }
+      }
+    },
+    "Открыть настройки микрофона" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть настройки микрофона"
+          }
+        }
+      }
+    },
+    "Открыть объявление" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть объявление"
+          }
+        }
+      }
+    },
+    "Открыть переписку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть переписку"
+          }
+        }
+      }
+    },
+    "Открыть файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть файл"
+          }
+        }
+      }
+    },
+    "Отмена" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмена"
+          }
+        }
+      }
+    },
+    "Отменить ответ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить ответ"
+          }
+        }
+      }
+    },
+    "Отменить редактирование" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить редактирование"
+          }
+        }
+      }
+    },
+    "Отошел" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отошел"
+          }
+        }
+      }
+    },
+    "Отошёл(ла)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отошёл(ла)"
+          }
+        }
+      }
+    },
+    "Отправила правки." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправила правки."
+          }
+        }
+      }
+    },
+    "Отправить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить"
+          }
+        }
+      }
+    },
+    "Отправить жалобу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить жалобу"
+          }
+        }
+      }
+    },
+    "Отправить код ещё раз" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить код ещё раз"
+          }
+        }
+      }
+    },
+    "Отправить код ещё раз через %@ с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить код ещё раз через %@ с"
+          }
+        }
+      }
+    },
+    "Отправить сигнал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить сигнал"
+          }
+        }
+      }
+    },
+    "Отправить сигнал коллеге" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить сигнал коллеге"
+          }
+        }
+      }
+    },
+    "Отправка %@%" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка %@%"
+          }
+        }
+      }
+    },
+    "Отправка почты не настроена" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка почты не настроена"
+          }
+        }
+      }
+    },
+    "Отправка…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка…"
+          }
+        }
+      }
+    },
+    "Отправлено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправлено"
+          }
+        }
+      }
+    },
+    "Отправляется" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется"
+          }
+        }
+      }
+    },
+    "Очистить поиск" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистить поиск"
+          }
+        }
+      }
+    },
+    "Ошибка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка"
+          }
+        }
+      }
+    },
+    "Ошибка авторизации" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка авторизации"
+          }
+        }
+      }
+    },
+    "Ошибка звука: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка звука: %@"
+          }
+        }
+      }
+    },
+    "Ошибка обработки данных: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка обработки данных: %@"
+          }
+        }
+      }
+    },
+    "Ошибка побудки: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка побудки: %@"
+          }
+        }
+      }
+    },
+    "Ошибка сервера (%lld): %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка сервера (%lld): %@"
+          }
+        }
+      }
+    },
+    "Ошибка: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка: %@"
+          }
+        }
+      }
+    },
+    "Параметры канала" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параметры канала"
+          }
+        }
+      }
+    },
+    "Пароли не совпадают" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароли не совпадают"
+          }
+        }
+      }
+    },
+    "Пароли совпадают" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароли совпадают"
+          }
+        }
+      }
+    },
+    "Пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль"
+          }
+        }
+      }
+    },
+    "Пароль слишком длинный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль слишком длинный"
+          }
+        }
+      }
+    },
+    "Пароль: не короче 8 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль: не короче 8 символов"
+          }
+        }
+      }
+    },
+    "Перейти ко входу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перейти ко входу"
+          }
+        }
+      }
+    },
+    "Переписка откроется здесь." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписка откроется здесь."
+          }
+        }
+      }
+    },
+    "Переподключение…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переподключение…"
+          }
+        }
+      }
+    },
+    "По требованиям корпоративной безопасности АО СК «Сентрас Иншуранс» вам необходимо установить новый пароль перед продолжением работы." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По требованиям корпоративной безопасности АО СК «Сентрас Иншуранс» вам необходимо установить новый пароль перед продолжением работы."
+          }
+        }
+      }
+    },
+    "Побудить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудить"
+          }
+        }
+      }
+    },
+    "Побудить коллегу" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудить коллегу"
+          }
+        }
+      }
+    },
+    "Побудка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Побудка"
+          }
+        }
+      }
+    },
+    "Повторите новый пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторите новый пароль"
+          }
+        }
+      }
+    },
+    "Повторить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить"
+          }
+        }
+      }
+    },
+    "Повторить загрузку" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить загрузку"
+          }
+        }
+      }
+    },
+    "Повторить подключение звука" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить подключение звука"
+          }
+        }
+      }
+    },
+    "Поддержка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддержка"
+          }
+        }
+      }
+    },
+    "Подключение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение"
+          }
+        }
+      }
+    },
+    "Подразделениям" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подразделениям"
+          }
+        }
+      }
+    },
+    "Подробности" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подробности"
+          }
+        }
+      }
+    },
+    "Подтвердить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтвердить"
+          }
+        }
+      }
+    },
+    "Подтверждаю ознакомление" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтверждаю ознакомление"
+          }
+        }
+      }
+    },
+    "Подтверждение почты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтверждение почты"
+          }
+        }
+      }
+    },
+    "Пожаловаться" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пожаловаться"
+          }
+        }
+      }
+    },
+    "Пожаловаться на пользователя" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пожаловаться на пользователя"
+          }
+        }
+      }
+    },
+    "Позвонить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позвонить"
+          }
+        }
+      }
+    },
+    "Позвонить по номеру" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позвонить по номеру"
+          }
+        }
+      }
+    },
+    "Поиск по имени" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск по имени"
+          }
+        }
+      }
+    },
+    "Поиск по переписке и сотрудникам" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск по переписке и сотрудникам"
+          }
+        }
+      }
+    },
+    "Пока нет диалогов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет диалогов"
+          }
+        }
+      }
+    },
+    "Пока нет каналов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет каналов"
+          }
+        }
+      }
+    },
+    "Пока нет сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет сообщений"
+          }
+        }
+      }
+    },
+    "Показаны только требующие ознакомления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показаны только требующие ознакомления"
+          }
+        }
+      }
+    },
+    "Показать в «Отделах»" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать в «Отделах»"
+          }
+        }
+      }
+    },
+    "Показать все" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать все"
+          }
+        }
+      }
+    },
+    "Показать всех" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать всех"
+          }
+        }
+      }
+    },
+    "Показать пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать пароль"
+          }
+        }
+      }
+    },
+    "Показывать только тех, кто в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать только тех, кто в сети"
+          }
+        }
+      }
+    },
+    "Получить код" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Получить код"
+          }
+        }
+      }
+    },
+    "Пользователь" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пользователь"
+          }
+        }
+      }
+    },
+    "Пользователь %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пользователь %@"
+          }
+        }
+      }
+    },
+    "Попробуйте изменить поисковый запрос" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Попробуйте изменить поисковый запрос"
+          }
+        }
+      }
+    },
+    "Посмотришь отчёт до обеда?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Посмотришь отчёт до обеда?"
+          }
+        }
+      }
+    },
+    "Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен — попробуйте войти позже." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен — попробуйте войти позже."
+          }
+        }
+      }
+    },
+    "Приватный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приватный"
+          }
+        }
+      }
+    },
+    "Приватный канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приватный канал"
+          }
+        }
+      }
+    },
+    "Привет, Алиса! Всё работает." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привет, Алиса! Всё работает."
+          }
+        }
+      }
+    },
+    "Привлечение внимания (Побудка)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Привлечение внимания (Побудка)"
+          }
+        }
+      }
+    },
+    "Придумайте пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Придумайте пароль"
+          }
+        }
+      }
+    },
+    "Прикрепить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепить"
+          }
+        }
+      }
+    },
+    "Прикрепить фото" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепить фото"
+          }
+        }
+      }
+    },
+    "Принять" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принять"
+          }
+        }
+      }
+    },
+    "Причина" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Причина"
+          }
+        }
+      }
+    },
+    "Пробует заново подключить звук текущего звонка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пробует заново подключить звук текущего звонка"
+          }
+        }
+      }
+    },
+    "Проверить подключение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить подключение"
+          }
+        }
+      }
+    },
+    "Проверка связи..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка связи..."
+          }
+        }
+      }
+    },
+    "Проверка…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка…"
+          }
+        }
+      }
+    },
+    "Проверьте введённые данные." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте введённые данные."
+          }
+        }
+      }
+    },
+    "Проверьте написание или поищите по должности, отделу и внутреннему номеру." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте написание или поищите по должности, отделу и внутреннему номеру."
+          }
+        }
+      }
+    },
+    "Проверьте написание: ищем по людям, каналам и тексту сообщений." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте написание: ищем по людям, каналам и тексту сообщений."
+          }
+        }
+      }
+    },
+    "Проверьте подключение и попробуйте ещё раз." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте подключение и попробуйте ещё раз."
+          }
+        }
+      }
+    },
+    "Прокрутить к последнему сообщению" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить к последнему сообщению"
+          }
+        }
+      }
+    },
+    "Профиль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Профиль"
+          }
+        }
+      }
+    },
+    "Прочитано" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прочитано"
+          }
+        }
+      }
+    },
+    "Публичный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Публичный"
+          }
+        }
+      }
+    },
+    "Разблокировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разблокировать"
+          }
+        }
+      }
+    },
+    "Разблокировать %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разблокировать %@"
+          }
+        }
+      }
+    },
+    "Развернуть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развернуть"
+          }
+        }
+      }
+    },
+    "Развёрнут" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развёрнут"
+          }
+        }
+      }
+    },
+    "Разговор завершен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разговор завершен"
+          }
+        }
+      }
+    },
+    "Раздел" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раздел"
+          }
+        }
+      }
+    },
+    "Разработка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разработка"
+          }
+        }
+      }
+    },
+    "Распоряжение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Распоряжение"
+          }
+        }
+      }
+    },
+    "Распоряжения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Распоряжения"
+          }
+        }
+      }
+    },
+    "Регистрация" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Регистрация"
+          }
+        }
+      }
+    },
+    "Регламент.pdf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Регламент.pdf"
+          }
+        }
+      }
+    },
+    "Редактирование" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактирование"
+          }
+        }
+      }
+    },
+    "Редактировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать"
+          }
+        }
+      }
+    },
+    "Редактировать профиль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать профиль"
+          }
+        }
+      }
+    },
+    "Роль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Роль"
+          }
+        }
+      }
+    },
+    "Руководитель отдела продаж" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Руководитель отдела продаж"
+          }
+        }
+      }
+    },
+    "С 1 ноября авансовые отчёты подаются через систему в течение трёх рабочих дней после возвращения." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С 1 ноября авансовые отчёты подаются через систему в течение трёх рабочих дней после возвращения."
+          }
+        }
+      }
+    },
+    "Сборка зелёная" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сборка зелёная"
+          }
+        }
+      }
+    },
+    "Свернуть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свернуть"
+          }
+        }
+      }
+    },
+    "Связаться с поддержкой" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Связаться с поддержкой"
+          }
+        }
+      }
+    },
+    "Связь потеряна" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Связь потеряна"
+          }
+        }
+      }
+    },
+    "Связь прервалась — нажмите ещё раз, загрузка продолжится" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Связь прервалась — нажмите ещё раз, загрузка продолжится"
+          }
+        }
+      }
+    },
+    "Свёрнут" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свёрнут"
+          }
+        }
+      }
+    },
+    "Сегодня" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сегодня"
+          }
+        }
+      }
+    },
+    "Сейчас никого нет в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас никого нет в сети"
+          }
+        }
+      }
+    },
+    "Сервер" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер"
+          }
+        }
+      }
+    },
+    "Сервер временно недоступен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер временно недоступен"
+          }
+        }
+      }
+    },
+    "Сервер доступен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер доступен"
+          }
+        }
+      }
+    },
+    "Сервер не ответил" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не ответил"
+          }
+        }
+      }
+    },
+    "Сервер не подтвердил удаление — сообщение снова видно" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не подтвердил удаление — сообщение снова видно"
+          }
+        }
+      }
+    },
+    "Сервер не принял сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не принял сообщение"
+          }
+        }
+      }
+    },
+    "Сервер не принял файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не принял файл"
+          }
+        }
+      }
+    },
+    "Сервер не принял это сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не принял это сообщение"
+          }
+        }
+      }
+    },
+    "Сервер обрабатывает много входов. Повторите через %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер обрабатывает много входов. Повторите через %@."
+          }
+        }
+      }
+    },
+    "Сервер ответил статусом: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер ответил статусом: %@"
+          }
+        }
+      }
+    },
+    "Сервер пока не может отправить письмо с кодом: почта не настроена. Регистрация временно недоступна — обратитесь к администратору." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер пока не может отправить письмо с кодом: почта не настроена. Регистрация временно недоступна — обратитесь к администратору."
+          }
+        }
+      }
+    },
+    "Сервер: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер: %@"
+          }
+        }
+      }
+    },
+    "Сессия истекла. Пожалуйста, выполните вход заново." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сессия истекла. Пожалуйста, выполните вход заново."
+          }
+        }
+      }
+    },
+    "Сигнал и вибрация на устройстве коллеги" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сигнал и вибрация на устройстве коллеги"
+          }
+        }
+      }
+    },
+    "Сигнал от коллеги" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сигнал от коллеги"
+          }
+        }
+      }
+    },
+    "Системный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Системный"
+          }
+        }
+      }
+    },
+    "Скопировано" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано"
+          }
+        }
+      }
+    },
+    "Скопировать" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать"
+          }
+        }
+      }
+    },
+    "Скопировать текст" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать текст"
+          }
+        }
+      }
+    },
+    "Скрыть" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть"
+          }
+        }
+      }
+    },
+    "Скрыть пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть пароль"
+          }
+        }
+      }
+    },
+    "Слишком много неверных попыток. Запросите новый код." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много неверных попыток. Запросите новый код."
+          }
+        }
+      }
+    },
+    "Слишком много поисков подряд — повторите через минуту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много поисков подряд — повторите через минуту"
+          }
+        }
+      }
+    },
+    "Слишком много попыток входа. Повторите через %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много попыток входа. Повторите через %@."
+          }
+        }
+      }
+    },
+    "Слишком много попыток. Повторите через %@ с." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слишком много попыток. Повторите через %@ с."
+          }
+        }
+      }
+    },
+    "Смена пароля" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смена пароля"
+          }
+        }
+      }
+    },
+    "Сменить пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сменить пароль"
+          }
+        }
+      }
+    },
+    "Снова в сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снова в сети"
+          }
+        }
+      }
+    },
+    "Собеседник занят или недоступен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник занят или недоступен"
+          }
+        }
+      }
+    },
+    "Собеседник не отвечает" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник не отвечает"
+          }
+        }
+      }
+    },
+    "Собеседник недоступен" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник недоступен"
+          }
+        }
+      }
+    },
+    "Собеседник печатает" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник печатает"
+          }
+        }
+      }
+    },
+    "Совещание в 15:00" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Совещание в 15:00"
+          }
+        }
+      }
+    },
+    "Соединение..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Соединение..."
+          }
+        }
+      }
+    },
+    "Создайте новый канал для координации" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создайте новый канал для координации"
+          }
+        }
+      }
+    },
+    "Создать канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать канал"
+          }
+        }
+      }
+    },
+    "Сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение"
+          }
+        }
+      }
+    },
+    "Сообщение будет удалено у вас и у собеседника." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение будет удалено у вас и у собеседника."
+          }
+        }
+      }
+    },
+    "Сообщение будет удалено у всех участников переписки." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение будет удалено у всех участников переписки."
+          }
+        }
+      }
+    },
+    "Сообщение длиннее 16 000 символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение длиннее 16 000 символов"
+          }
+        }
+      }
+    },
+    "Сообщение ещё не отправлено. Оно будет удалено с этого устройства и не будет отправлено." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение ещё не отправлено. Оно будет удалено с этого устройства и не будет отправлено."
+          }
+        }
+      }
+    },
+    "Сообщение не найдено — возможно, его удалили" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение не найдено — возможно, его удалили"
+          }
+        }
+      }
+    },
+    "Сообщение не сохранено — попробуйте ещё раз" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение не сохранено — попробуйте ещё раз"
+          }
+        }
+      }
+    },
+    "Сообщение нельзя изменить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение нельзя изменить"
+          }
+        }
+      }
+    },
+    "Сообщение нельзя удалить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение нельзя удалить"
+          }
+        }
+      }
+    },
+    "Сообщение удалено" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение удалено"
+          }
+        }
+      }
+    },
+    "Сообщение..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение..."
+          }
+        }
+      }
+    },
+    "Сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения"
+          }
+        }
+      }
+    },
+    "Сообщения «%@» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения «%@» будут скрыты на этом устройстве. Разблокировать можно в чате или в профиле."
+          }
+        }
+      }
+    },
+    "Сообщения заблокированных людей скрыты на этом устройстве." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения заблокированных людей скрыты на этом устройстве."
+          }
+        }
+      }
+    },
+    "Сообщения ищутся от двух символов" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения ищутся от двух символов"
+          }
+        }
+      }
+    },
+    "Состояния" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояния"
+          }
+        }
+      }
+    },
+    "Сотрудник" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сотрудник"
+          }
+        }
+      }
+    },
+    "Сотрудник больше не работает" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сотрудник больше не работает"
+          }
+        }
+      }
+    },
+    "Сотрудники" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сотрудники"
+          }
+        }
+      }
+    },
+    "Сохранение..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение..."
+          }
+        }
+      }
+    },
+    "Сохранить изменения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить изменения"
+          }
+        }
+      }
+    },
+    "Спам или реклама" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спам или реклама"
+          }
+        }
+      }
+    },
+    "Спасибо, прочитала." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спасибо, прочитала."
+          }
+        }
+      }
+    },
+    "Спасибо. Администратор рассмотрит её. Чтобы больше не видеть сообщения этого человека, его можно заблокировать." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спасибо. Администратор рассмотрит её. Чтобы больше не видеть сообщения этого человека, его можно заблокировать."
+          }
+        }
+      }
+    },
+    "Срок действия кода истёк. Запросите новый код." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Срок действия кода истёк. Запросите новый код."
+          }
+        }
+      }
+    },
+    "Срочный" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Срочный"
+          }
+        }
+      }
+    },
+    "Статус" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Статус"
+          }
+        }
+      }
+    },
+    "Статус присутствия" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Статус присутствия"
+          }
+        }
+      }
+    },
+    "Счёт отправила на почту" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Счёт отправила на почту"
+          }
+        }
+      }
+    },
+    "Такой логин или адрес почты уже зарегистрирован." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Такой логин или адрес почты уже зарегистрирован."
+          }
+        }
+      }
+    },
+    "Текущий пароль" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текущий пароль"
+          }
+        }
+      }
+    },
+    "Телефон" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Телефон"
+          }
+        }
+      }
+    },
+    "Тема (необязательно)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тема (необязательно)"
+          }
+        }
+      }
+    },
+    "Тестовое оповещение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тестовое оповещение"
+          }
+        }
+      }
+    },
+    "Только требующие ознакомления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только требующие ознакомления"
+          }
+        }
+      }
+    },
+    "Требует ознакомления" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требует ознакомления"
+          }
+        }
+      }
+    },
+    "Требуется подпись" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требуется подпись"
+          }
+        }
+      }
+    },
+    "У файла нет расширения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У файла нет расширения"
+          }
+        }
+      }
+    },
+    "Угрозы или опасные действия" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Угрозы или опасные действия"
+          }
+        }
+      }
+    },
+    "Удаление аккаунта" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление аккаунта"
+          }
+        }
+      }
+    },
+    "Удаление аккаунта необратимо." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление аккаунта необратимо."
+          }
+        }
+      }
+    },
+    "Удаление…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление…"
+          }
+        }
+      }
+    },
+    "Удалить" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить"
+          }
+        }
+      }
+    },
+    "Удалить аккаунт" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить аккаунт"
+          }
+        }
+      }
+    },
+    "Удалить аккаунт навсегда?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить аккаунт навсегда?"
+          }
+        }
+      }
+    },
+    "Удалить сообщение?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить сообщение?"
+          }
+        }
+      }
+    },
+    "Уже есть аккаунт? Войти" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уже есть аккаунт? Войти"
+          }
+        }
+      }
+    },
+    "Укажите ФИО (не короче 2 символов)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите ФИО (не короче 2 символов)"
+          }
+        }
+      }
+    },
+    "Укажите адрес эл. почты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите адрес эл. почты"
+          }
+        }
+      }
+    },
+    "Укажите рабочую почту: мы отправим на неё код подтверждения. После этого вход откроется сразу или после одобрения администратором." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите рабочую почту: мы отправим на неё код подтверждения. После этого вход откроется сразу или после одобрения администратором."
+          }
+        }
+      }
+    },
+    "Уровень звука собеседника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уровень звука собеседника"
+          }
+        }
+      }
+    },
+    "Устройство: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство: %@"
+          }
+        }
+      }
+    },
+    "ФИО" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ФИО"
+          }
+        }
+      }
+    },
+    "ФИО слишком длинное" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ФИО слишком длинное"
+          }
+        }
+      }
+    },
+    "Файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл"
+          }
+        }
+      }
+    },
+    "Файл больше 100 МБ — такой файл загрузить нельзя" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл больше 100 МБ — такой файл загрузить нельзя"
+          }
+        }
+      }
+    },
+    "Файл не найден" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл не найден"
+          }
+        }
+      }
+    },
+    "Файл недоступен — удалите его и выберите снова" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл недоступен — удалите его и выберите снова"
+          }
+        }
+      }
+    },
+    "Файл пустой" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл пустой"
+          }
+        }
+      }
+    },
+    "Файлы .%@ к отправке не разрешены" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы .%@ к отправке не разрешены"
+          }
+        }
+      }
+    },
+    "Фамилия Имя Отчество" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фамилия Имя Отчество"
+          }
+        }
+      }
+    },
+    "Фиксация..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фиксация..."
+          }
+        }
+      }
+    },
+    "Филиал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Филиал"
+          }
+        }
+      }
+    },
+    "Фото" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фото"
+          }
+        }
+      }
+    },
+    "Фото %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фото %@"
+          }
+        }
+      }
+    },
+    "Чат" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат"
+          }
+        }
+      }
+    },
+    "Чаты" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты"
+          }
+        }
+      }
+    },
+    "Через %@ с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через %@ с"
+          }
+        }
+      }
+    },
+    "Через %lld с" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через %lld с"
+          }
+        }
+      }
+    },
+    "Что произошло (необязательно)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Что произошло (необязательно)"
+          }
+        }
+      }
+    },
+    "Шесть цифр" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шесть цифр"
+          }
+        }
+      }
+    },
+    "Эл. почта" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эл. почта"
+          }
+        }
+      }
+    },
+    "Это действие нельзя отменить." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это действие нельзя отменить."
+          }
+        }
+      }
+    },
+    "Это объявление создано сидированием dev-стенда." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это объявление создано сидированием dev-стенда."
+          }
+        }
+      }
+    },
+    "Это ушло, пока не было сети" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это ушло, пока не было сети"
+          }
+        }
+      }
+    },
+    "Этот логин уже занят. Выберите другой." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот логин уже занят. Выберите другой."
+          }
+        }
+      }
+    },
+    "Юрист" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Юрист"
+          }
+        }
+      }
+    },
+    "Я" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я"
+          }
+        }
+      }
+    },
+    "авг." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "авг."
+          }
+        }
+      }
+    },
+    "апр." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "апр."
+          }
+        }
+      }
+    },
+    "вн. %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вн. %@"
+          }
+        }
+      }
+    },
+    "внутренний номер %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "внутренний номер %@"
+          }
+        }
+      }
+    },
+    "дек." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "дек."
+          }
+        }
+      }
+    },
+    "е" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "е"
+          }
+        }
+      }
+    },
+    "изм." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "изм."
+          }
+        }
+      }
+    },
+    "июля" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "июля"
+          }
+        }
+      }
+    },
+    "июня" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "июня"
+          }
+        }
+      }
+    },
+    "канал" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "канал"
+          }
+        }
+      }
+    },
+    "личная переписка" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "личная переписка"
+          }
+        }
+      }
+    },
+    "марта" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "марта"
+          }
+        }
+      }
+    },
+    "мая" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "мая"
+          }
+        }
+      }
+    },
+    "непрочитанное сообщение" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанное сообщение"
+          }
+        }
+      }
+    },
+    "непрочитанных сообщений" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанных сообщений"
+          }
+        }
+      }
+    },
+    "непрочитанных сообщения" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанных сообщения"
+          }
+        }
+      }
+    },
+    "новое" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "новое"
+          }
+        }
+      }
+    },
+    "новых" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "новых"
+          }
+        }
+      }
+    },
+    "нояб." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "нояб."
+          }
+        }
+      }
+    },
+    "общий" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "общий"
+          }
+        }
+      }
+    },
+    "окт." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "окт."
+          }
+        }
+      }
+    },
+    "переписка с %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "переписка с %@"
+          }
+        }
+      }
+    },
+    "печатает..." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "печатает..."
+          }
+        }
+      }
+    },
+    "сент." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сент."
+          }
+        }
+      }
+    },
+    "сотрудник" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сотрудник"
+          }
+        }
+      }
+    },
+    "сотрудника" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сотрудника"
+          }
+        }
+      }
+    },
+    "сотрудников" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сотрудников"
+          }
+        }
+      }
+    },
+    "требуется защищённый адрес сервера (https)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "требуется защищённый адрес сервера (https)"
+          }
+        }
+      }
+    },
+    "файл" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "файл"
+          }
+        }
+      }
+    },
+    "февр." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "февр."
+          }
+        }
+      }
+    },
+    "янв." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "янв."
+          }
+        }
+      }
+    },
+    "ё" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ё"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

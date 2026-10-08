@@ -1,9 +1,11 @@
 package com.openmychat.mobile.core.network
 
 import android.util.Base64
+import com.openmychat.mobile.core.session.SecureStorageUnavailableException
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.data.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -13,6 +15,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 class ApiClient(
     private val sessionManager: SessionManager,
@@ -27,6 +30,12 @@ class ApiClient(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val refreshCoordinator = RefreshCoordinator()
 
+    /**
+     * The same client for avatar images (Coil): bearer credentials go only to the fixed HTTPS
+     * server ([BearerCredentialsInterceptor]); any other host is fetched without them.
+     */
+    val imageHttpClient: OkHttpClient get() = client
+
     private val client: OkHttpClient by lazy {
         okHttpClient ?: OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -34,52 +43,30 @@ class ApiClient(
             .writeTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(BearerCredentialsInterceptor(
                 tokenProvider = { sessionManager.token },
+                trustedApiBaseUrlProvider = ::trustedApiBaseUrl,
                 markMustChangePassword = { sessionManager.mustChangePassword = true }
             ))
-            .authenticator(object : Authenticator {
-                override fun authenticate(route: Route?, response: Response): Request? {
-                    val path = response.request.url.encodedPath
-                    if (path.contains("/auth/refresh") || path.contains("/auth/login") || path.contains("/auth/knock")) {
-                        return null
-                    }
-
-                    if (responseCount(response) >= 3) {
-                        return null
-                    }
-
-                    if (!ServerEndpointPolicy.canSendBearerCredentials(response.request.url)) return null
-
-                    val requestToken = response.request.header("Authorization")
-                        ?.removePrefix("Bearer ")
-                        ?.trim()
-                    val validToken = refreshCoordinator.refreshIfNeeded(
-                        requestToken = requestToken,
-                        currentToken = { sessionManager.token },
-                        refresh = ::refreshTokenForAuthenticator,
-                        updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
-                    ) ?: return null
-
-                    return response.request.newBuilder()
-                        .header("Authorization", "Bearer $validToken")
-                        .build()
-                }
-            })
+            // A refresh that gets no definitive answer fails the request as a network error instead of
+            // ending the session (which would also have dropped the unsent messages).
+            .authenticator(SessionAuthenticator(
+                coordinator = refreshCoordinator,
+                currentToken = { sessionManager.token },
+                // The refresh stores the renewed token itself, only over the token it renewed.
+                updateToken = {},
+                canSendCredentials = ::canSendCurrentSessionCredentials,
+                refresh = ::refreshTokenForAuthenticator
+            ))
             .build()
     }
 
-    private fun responseCount(response: Response): Int {
-        var result = 1
-        var prior = response.priorResponse
-        while (prior != null) {
-            result++
-            prior = prior.priorResponse
-        }
-        return result
-    }
+    private fun trustedApiBaseUrl(): HttpUrl? = sessionManager.serverEndpoint.apiBaseUrl.toHttpUrlOrNull()
 
-    private fun refreshTokenForAuthenticator(currentToken: String): String? {
-        val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return null
-        if (!ServerEndpointPolicy.canSendBearerCredentials(refreshUrl)) return null
+    private fun canSendCurrentSessionCredentials(url: HttpUrl): Boolean =
+        ServerEndpointPolicy.canSendBearerCredentials(url, trustedApiBaseUrl())
+
+    private fun refreshTokenForAuthenticator(currentToken: String): RefreshOutcome {
+        val refreshUrl = "${getBaseUrl()}/auth/refresh".toHttpUrlOrNull() ?: return RefreshOutcome.Rejected
+        if (!canSendCurrentSessionCredentials(refreshUrl)) return RefreshOutcome.Rejected
 
         return try {
             val refreshRequest = Request.Builder()
@@ -95,17 +82,24 @@ class ApiClient(
                 .build()
 
             unauthenticatedClient.newCall(refreshRequest).execute().use { response ->
-                if (!response.isSuccessful) {
-                    if (RefreshFailurePolicy.shouldClearSession(response.code)) {
-                        sessionManager.clearSession()
-                    }
-                    return null
+                val token = if (response.isSuccessful) {
+                    runCatching { json.decodeFromString<RefreshResponse>(response.body?.string().orEmpty()).token }.getOrNull()
+                } else {
+                    null
                 }
-                val authSuccess = json.decodeFromString<AuthSuccessResponse>(response.body?.string().orEmpty())
-                authSuccess.token
+                when (val outcome = RefreshFailurePolicy.classify(response.code, token)) {
+                    // The refused session ends — unless another one was signed in meanwhile.
+                    RefreshOutcome.Rejected -> outcome.also { sessionManager.clearSessionIfCurrent(currentToken) }
+                    // Stored only over the token it renewed: never after a sign-out, never over
+                    // another account's session (review fix round 1).
+                    is RefreshOutcome.Renewed ->
+                        if (sessionManager.replaceTokenIfCurrent(currentToken, outcome.token)) outcome else RefreshOutcome.Superseded
+                    else -> outcome
+                }
             }
         } catch (_: Exception) {
-            null
+            // No answer (network, TLS, timeout): nothing is known about the session — it stands.
+            RefreshFailurePolicy.classify(null, null)
         }
     }
 
@@ -125,8 +119,8 @@ class ApiClient(
                     expiresAtEpochSeconds = exp,
                     nowEpochSeconds = nowSeconds,
                     currentToken = { sessionManager.token },
-                    refresh = ::refreshTokenForAuthenticator,
-                    updateToken = { refreshedToken -> sessionManager.token = refreshedToken }
+                    refresh = { current -> (refreshTokenForAuthenticator(current) as? RefreshOutcome.Renewed)?.token },
+                    updateToken = {}
                 )
             }
         } catch (_: Exception) {}
@@ -183,35 +177,138 @@ class ApiClient(
         response
     }
 
-    suspend fun refreshToken(): AuthSuccessResponse = withContext(Dispatchers.IO) {
+    // --- Self-registration, account deletion, reports and blocks (contracts/registration.md) ---
+
+    suspend fun requestRegistration(request: RegisterRequestBody): RegistrationChallenge = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/register/request")
+            .post(json.encodeToString(request).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequest(httpRequest)
+    }
+
+    /** `200` is a sign-in exactly like `/auth/login` (the session is stored); `202` is a pending registration. */
+    suspend fun verifyRegistration(registrationId: String, code: String): RegistrationOutcome = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/register/verify")
+            .post(json.encodeToString(RegisterVerifyBody(registrationId, code)).toRequestBody(jsonMediaType))
+            .build()
+
+        val answer: JsonObject = executeRequest(httpRequest)
+        val token = (answer["token"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        when {
+            token != null -> {
+                val user = json.decodeFromJsonElement<User>(
+                    answer["user"] ?: throw ApiException(200, "SERIALIZATION_ERROR", "Ответ без пользователя")
+                )
+                sessionManager.saveAuthSuccess(user, token)
+                RegistrationOutcome.SignedIn(user)
+            }
+            (answer["status"] as? JsonPrimitive)?.contentOrNull == "pending" -> RegistrationOutcome.Pending
+            else -> throw ApiException(200, "SERIALIZATION_ERROR", "Ни сессии, ни заявки в ответе")
+        }
+    }
+
+    /** Server side only: the caller wipes the local session once this returns. */
+    suspend fun deleteAccount(password: String): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/users/me")
+            .delete(json.encodeToString(DeleteAccountBody(password)).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun report(request: ReportBody): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/reports")
+            .post(json.encodeToString(request).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun blockUser(userId: Long): Unit = withContext(Dispatchers.IO) {
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/blocks")
+            .post(json.encodeToString(BlockBody(userId)).toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    suspend fun unblockUser(userId: Long): Unit = withContext(Dispatchers.IO) {
+        executeRequestNoContent(Request.Builder().url("${getBaseUrl()}/blocks/$userId").delete().build())
+    }
+
+    /** `GET /api/blocks`: `{ blocks: [...] }`; a bare array is accepted too. */
+    suspend fun blockedUsers(): List<BlockedUser> = withContext(Dispatchers.IO) {
+        val answer: JsonElement = executeRequest(Request.Builder().url("${getBaseUrl()}/blocks").get().build())
+        BlockedUser.list(answer)
+    }
+
+    suspend fun refreshToken(): RefreshResponse = withContext(Dispatchers.IO) {
+        val refreshing = sessionManager.token
         try {
             val httpRequest = Request.Builder()
                 .url("${getBaseUrl()}/auth/refresh")
                 .post("{}".toRequestBody(jsonMediaType))
                 .build()
 
-            val response: AuthSuccessResponse = executeRequest(httpRequest)
-            sessionManager.token = response.token
+            val response: RefreshResponse = executeRequest(httpRequest)
+            // Only over the token it renewed: a sign-out or another sign-in meanwhile wins.
+            if (refreshing != null) sessionManager.replaceTokenIfCurrent(refreshing, response.token)
             response
         } catch (error: ApiException) {
-            if (RefreshFailurePolicy.shouldClearSession(error.statusCode)) {
-                sessionManager.clearSession()
+            if (RefreshFailurePolicy.shouldClearSession(error.statusCode) && refreshing != null) {
+                sessionManager.clearSessionIfCurrent(refreshing)
             }
             throw error
         }
     }
 
+    /**
+     * Explicit sign-out. The session and the device secret are wiped here first (fail closed); then
+     * `/auth/logout` names this device (push.md §2, final review I1), so the server revokes the token,
+     * unbinds the device secret and drops this device's push tokens in one request.
+     */
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
-        try {
-            val httpRequest = Request.Builder()
-                .url("${getBaseUrl()}/auth/logout")
-                .post("{}".toRequestBody(jsonMediaType))
-                .build()
-
-            executeRequestNoContent(httpRequest)
-        } finally {
-            sessionManager.clearSession()
+        val tokenForRemoteLogout = sessionManager.token
+        val deviceId = runCatching { sessionManager.deviceId }.getOrNull()
+        if (!sessionManager.clearSessionForSignOut()) {
+            throw SecureStorageUnavailableException()
         }
+
+        if (tokenForRemoteLogout.isNullOrBlank()) return@withContext
+
+        val body = buildJsonObject { if (deviceId != null) put("device_id", JsonPrimitive(deviceId)) }
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/auth/logout")
+            .header("Authorization", "Bearer $tokenForRemoteLogout")
+            .post(body.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
+    }
+
+    /**
+     * `POST /api/devices/push-token` (push.md §2): this device's FCM token for the signed-in account.
+     * Only the token and ids go to the server; the answer says whether the server sends push at all.
+     */
+    suspend fun registerPushToken(token: String, deviceId: String?, appVersion: String): Unit = withContext(Dispatchers.IO) {
+        val body = buildJsonObject {
+            put("platform", JsonPrimitive("android"))
+            put("token", JsonPrimitive(token))
+            put("app_version", JsonPrimitive(appVersion))
+            if (deviceId != null) put("device_id", JsonPrimitive(deviceId))
+        }
+        val httpRequest = Request.Builder()
+            .url("${getBaseUrl()}/devices/push-token")
+            .post(body.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        executeRequestNoContent(httpRequest)
     }
 
     suspend fun getMe(): User = withContext(Dispatchers.IO) {
@@ -221,7 +318,7 @@ class ApiClient(
             .get()
             .build()
 
-        val user: User = executeRequest(httpRequest)
+        val user = executeRequest<MeResponse>(httpRequest).user
         sessionManager.currentUser = user
         user
     }
@@ -234,10 +331,15 @@ class ApiClient(
             .build()
 
         val response: ChangePasswordResponse = executeRequest(httpRequest)
-        if (response.success && !response.token.isNullOrBlank()) {
-            sessionManager.token = response.token
-            sessionManager.mustChangePassword = false
-            response.user?.let { sessionManager.currentUser = it }
+        if (response.success) {
+            val replacementToken = response.token?.takeIf { it.isNotBlank() }
+                ?: sessionManager.token?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("The password was changed but no authenticated session is available")
+            sessionManager.replaceAuthenticatedSession(
+                user = response.user,
+                token = replacementToken,
+                mustChangePassword = false
+            )
         }
         response
     }
@@ -272,12 +374,36 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    /** Справочник сотрудников (поля, открытые любому вошедшему). */
+    suspend fun getUsers(): List<User> = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users").get().build())
+    }
+
+    /** Карточка сотрудника: себе — полная запись, коллеге — поля справочника. */
+    suspend fun getUser(id: Long): User = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/users/$id").get().build())
+    }
+
+    suspend fun getOrgTree(): OrgTree = withContext(Dispatchers.IO) {
+        executeRequest(Request.Builder().url("${getBaseUrl()}/org/tree").get().build())
+    }
+
+    /** Поиск по сообщениям, доступным сотруднику: до 30 последних совпадений (сервер: 30 запросов в минуту). */
+    suspend fun searchMessages(query: String): List<Message> = withContext(Dispatchers.IO) {
+        val url = "${getBaseUrl()}/messages/search".toHttpUrlOrNull()?.newBuilder()
+            ?.addQueryParameter("q", query)
+            ?.build()
+            ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/search")
+        executeRequest(Request.Builder().url(url).get().build())
+    }
+
+    suspend fun getDirectMessages(targetId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/direct/$targetId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/direct/$targetId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()
@@ -288,12 +414,13 @@ class ApiClient(
             executeRequest(httpRequest)
         }
 
-    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50): List<Message> =
+    suspend fun getChannelMessages(channelId: Long, beforeId: Long? = null, limit: Int = 50, afterId: Long? = null): List<Message> =
         withContext(Dispatchers.IO) {
             val urlBuilder = "${getBaseUrl()}/messages/channels/$channelId".toHttpUrlOrNull()?.newBuilder()
                 ?: throw IllegalArgumentException("Invalid URL: ${getBaseUrl()}/messages/channels/$channelId")
 
             if (beforeId != null) urlBuilder.addQueryParameter("beforeId", beforeId.toString())
+            if (afterId != null) urlBuilder.addQueryParameter("afterId", afterId.toString())
             urlBuilder.addQueryParameter("limit", limit.toString())
 
             val httpRequest = Request.Builder()
@@ -332,13 +459,18 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+    /** Public server settings (no authentication). Has no side effects. */
+    suspend fun fetchServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
         val httpRequest = Request.Builder()
             .url("${getBaseUrl()}/settings/info")
             .get()
             .build()
 
-        val info: ServerInfo = executeRequest(httpRequest)
+        executeRequest(httpRequest)
+    }
+
+    suspend fun getServerInfo(): ServerInfo = withContext(Dispatchers.IO) {
+        val info = fetchServerInfo()
         sessionManager.messageEditWindowMinutes = info.messageEditWindowMinutes
         sessionManager.messageDeleteWindowMinutes = info.messageDeleteWindowMinutes
         info
@@ -353,17 +485,69 @@ class ApiClient(
         executeRequest(httpRequest)
     }
 
-    private inline fun <reified T> executeRequest(request: Request): T {
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
+    /**
+     * A request whose status the caller interprets (the delivery engine: `/sync` 410, `POST` 409/503).
+     * Never throws for an HTTP status: no answer at all is status 0. The session rules still apply —
+     * a 401 (after the token refresh failed) ends the session, as for every other request, but only
+     * when it refused the session signed in now.
+     *
+     * Run in a [RequestOwner] context, the request is that account's: it goes only with its token,
+     * and not at all (status 0) when another account, or nobody, is signed in (final review I4).
+     */
+    suspend fun raw(method: String, path: String, body: JsonElement? = null): RawResponse {
+        val owner = currentCoroutineContext()[RequestOwner]?.userId
+        return withContext(Dispatchers.IO) {
+            // Contract paths carry the /api prefix; the base URL already ends with it.
+            val relative = path.removePrefix("/api")
+            val url = "${getBaseUrl()}$relative".toHttpUrlOrNull() ?: return@withContext RawResponse(0, "", null)
+            val credentials = credentialsFor(owner) ?: return@withContext RawResponse(0, "", null)
+            val request = Request.Builder().url(url).tag(BoundCredentials::class.java, credentials).apply {
+                if (method == "GET") get() else method(method, (body ?: JsonObject(emptyMap())).toString().toRequestBody(jsonMediaType))
+            }.build()
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: IOException) {
+                return@withContext RawResponse(0, "", null)
+            }
+            response.use {
+                val text = it.body?.string().orEmpty()
+                if (it.code == 401) endSessionRefused(refusedToken(it))
+                if (it.code == 403 && text.contains("MUST_CHANGE_PASSWORD")) sessionManager.mustChangePassword = true
+                RawResponse(it.code, text, retryAfterSeconds(it))
+            }
         }
+    }
+
+    /**
+     * The binding of a request made now: the current token, and [owner] when stated. Null — a
+     * request for [owner] that must not go out, because the session is not that account's.
+     */
+    internal fun credentialsFor(owner: Long?): BoundCredentials? {
+        val token = sessionManager.token
+        if (owner != null && (token == null || JwtClaims.userId(token) != owner)) return null
+        return BoundCredentials(token, owner)
+    }
+
+    /** The token a 401 refused: the one the request carried, else the one it was made with. */
+    private fun refusedToken(response: Response): String? =
+        response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: response.request.tag(BoundCredentials::class.java)?.token
+
+    /** A 401 ends the session only when it refused the session signed in now (final review I4). */
+    private fun endSessionRefused(token: String?) {
+        if (token != null) sessionManager.clearSessionIfCurrent(token)
+    }
+
+    private inline fun <reified T> executeRequest(
+        request: Request,
+        requestClient: OkHttpClient = client
+    ): T {
+        val response = execute(requestClient, request)
 
         val bodyString = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response), refusedToken(response))
         }
 
         return try {
@@ -374,21 +558,41 @@ class ApiClient(
     }
 
     private fun executeRequestNoContent(request: Request) {
-        val response = try {
-            client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
-        }
+        val response = execute(client, request)
 
         if (!response.isSuccessful) {
             val bodyString = response.body?.string() ?: ""
-            handleErrorResponse(response.code, bodyString)
+            handleErrorResponse(response.code, bodyString, retryAfterSeconds(response), refusedToken(response))
         }
     }
 
-    private fun handleErrorResponse(code: Int, bodyString: String): Nothing {
+    /** Transport failures: a refused certificate is reported apart from being offline. */
+    private fun execute(requestClient: OkHttpClient, request: Request): Response = try {
+        // Bound to the session of the moment it is made, not of the moment OkHttp sends it.
+        val bound = if (request.tag(BoundCredentials::class.java) != null) request
+        else request.newBuilder().tag(BoundCredentials::class.java, BoundCredentials(sessionManager.token, null)).build()
+        requestClient.newCall(bound).execute()
+    } catch (e: SSLException) {
+        throw ApiException(0, "TLS_ERROR", e.message ?: "Ошибка защищённого соединения")
+    } catch (e: IOException) {
+        throw ApiException(0, "NETWORK_ERROR", e.message ?: "Ошибка сети")
+    }
+
+    /** `Retry-After` in delta-seconds or as an HTTP-date ([RetryAfter]); anything else is ignored. */
+    private fun retryAfterSeconds(response: Response): Long? =
+        RetryAfter.seconds(response.header("Retry-After"), System.currentTimeMillis())
+
+    /**
+     * A refusal of a request made outside this class (attachments): the same session rules and
+     * Russian text. [refusedToken] — the token the refused request carried.
+     */
+    internal fun raise(code: Int, bodyString: String, retryAfterSeconds: Long?, refusedToken: String?): Nothing =
+        handleErrorResponse(code, bodyString, retryAfterSeconds, refusedToken)
+
+    private fun handleErrorResponse(code: Int, bodyString: String, retryAfterSeconds: Long?, refusedToken: String?): Nothing {
         var errorCode: String? = null
         var errorMessage = "HTTP error $code"
+        var attemptsLeft: Int? = null
 
         try {
             val jsonElement = json.parseToJsonElement(bodyString).jsonObject
@@ -396,6 +600,7 @@ class ApiClient(
                 ?: jsonElement["message"]?.jsonPrimitive?.content
                 ?: errorMessage
             errorCode = jsonElement["code"]?.jsonPrimitive?.content
+            attemptsLeft = (jsonElement["attemptsLeft"] as? JsonPrimitive)?.intOrNull
         } catch (_: Exception) {}
 
         if (code == 403 && errorCode == "MUST_CHANGE_PASSWORD") {
@@ -404,9 +609,13 @@ class ApiClient(
         }
 
         if (code == 401) {
+            // A protected request reached the server and the session was rejected. Clear local
+            // credentials so the navigation guard can return to sign-in — when it is this session's
+            // refusal; a late refusal of an earlier account's token leaves the current one alone.
+            endSessionRefused(refusedToken)
             throw UnauthorizedException(errorMessage)
         }
 
-        throw ApiException(code, errorCode, errorMessage)
+        throw ApiException(code, errorCode, errorMessage, retryAfterSeconds, attemptsLeft)
     }
 }

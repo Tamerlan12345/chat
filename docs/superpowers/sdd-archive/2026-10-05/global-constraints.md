@@ -1,0 +1,17 @@
+## Global Constraints (binding for every task)
+
+- Integration branch: `mobile-release-parity-impl` (worktree `C:/Users/user/Documents/Нет в репо/chat/.claude/worktrees/mobile-release-parity`). Lane worktrees, created by the controller, each fast-forwarded to the integration branch before a task starts:
+  - Desktop → `.../worktrees/m-desktop` (branch `work/desktop`), owns `desktop/**`.
+  - Android → `.../worktrees/m-android` (branch `mobile/android`), owns `mobile/android/**`, `.github/workflows/mobile-android.yml`.
+  - iOS → `.../worktrees/m-ios` (branch `mobile/ios`), owns `mobile/ios/**`, `.github/workflows/mobile-ios.yml`.
+  - Never edit paths you do not own. `server/**` and `mobile/contracts/**` are read-only for every task in this plan; if a task needs a server change, stop and report NEEDS_CONTEXT.
+  - Never push, except the iOS lane pushes `mobile/ios` to `origin` to run CI (no `--force`). Never touch `master`.
+- Behaviour follows `mobile/contracts/*` exactly (`registration.md`, `delivery-state.md`, `ws-protocol.md`, `multi-device.md`, `push.md`, `openapi.yaml`, vectors in `fixtures/reducers/`).
+- Security: release builds HTTPS/WSS only; tokens fail closed (Keychain / Android Keystore); no plaintext secrets or private keys committed; push payloads carry ids only. **Never send test traffic or credentials to production** (`https://centychat-production.up.railway.app`): debug builds default to the dev stand (`https://10.0.2.2:8443` Android, stand URL via launch argument on iOS). Do not touch the owner's local server on port 2004. Passwords never logged.
+- UI: iOS = SwiftUI + HIG (semantic colours, Dynamic Type, 44pt targets, VoiceOver labels, `ContentUnavailableView`, String Catalog `ru`). Android = Compose + Material 3 (edge-to-edge, IME insets, 48dp targets, `stringResource`, semantics, DayNight). Desktop = existing React components and `desktop/src/renderer/src/styles/theme.css` tokens. Brand: primary `#5b4ee6`/`#6457ee`, online `#2da44e`, away `#d4951c`, dnd `#d9363b`, gradient `#ec8ee0→#c078ee→#7c44ea→#2a72ee→#00daff`. All user-facing copy in Russian. Design rules: `docs/superpowers/plans/2026-10-02-design-brief.md` (read only the sections a task names).
+- TDD: a failing test first for every behaviour change; never weaken or delete existing tests. Small logical commits, conventional messages, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Verification commands:
+  - Desktop: `cd desktop && npm test` (≈470 pass today) and `npm run build` if the task touches the renderer.
+  - Android (Windows, Cyrillic path workaround, 32 GB machine shared with other lanes): `cd mobile/android && JAVA_HOME=/c/tmp/jdk17/jdk-17.0.20.1+1 GRADLE_USER_HOME=/c/tmp/gradle-user-home ./gradlew.bat --project-cache-dir /c/tmp/m-android-project-cache --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2g testDebugUnitTest lint assembleDebug`. Emulator AVD `Pixel_8` (`emulator-5554`, adb at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`) may be started for `connectedDebugAndroidTest` and screenshots; dev stand: `node mobile/dev/stand.mjs` (+ `mobile/dev/seed.mjs`), never production.
+  - iOS: no local Xcode. Push `mobile/ios` and watch `gh run list --branch mobile/ios --workflow mobile-ios` / `gh run watch <id> --exit-status`; failures via `gh run view <id> --log-failed` (artifact downloads are blocked from this network; screenshots arrive on branch `ci/ios-screenshots`, readable with `gh api`). A task is not done until the run is green.
+

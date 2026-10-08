@@ -1,0 +1,15 @@
+build-evidence/
+local.properties
+# Local release signing material. Never commit keystores or passwords.
+keystore.properties
+*.jks
+*.keystore
+# The owner's Firebase project configuration (docs/PUSH-SETUP.md): never committed.
+app/google-services.json
+# Gradle output only. Anchored so that source packages named "build"
+# (app/src/test/java/com/openmychat/mobile/build/) are never ignored.
+/build/
+/app/build/
+/.kotlin/
+/app/.kotlin/
+/.gradle/

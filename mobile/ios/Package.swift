@@ -17,9 +17,6 @@ let package = Package(
         .target(
             name: "CentyChat",
             path: "CentyChat",
-            exclude: [
-                "App/CentyChatApp.swift"
-            ],
             resources: [
                 .process("Resources")
             ]

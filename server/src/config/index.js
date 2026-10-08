@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 
 const ROOT_DIR = path.resolve(__dirname, '../../');
-const DATA_DIR = path.join(ROOT_DIR, 'data');
+// DATA_DIR переопределяет каталог данных (локальный стенд mobile/dev, изолированные запуски).
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, 'data');
 const DB_PATH = path.join(DATA_DIR, 'mychat.db');
 // Учётные записи живут отдельно от переписки. Когда задан DATABASE_URL —
 // в PostgreSQL; без него (локальная разработка и тесты) — в отдельном файле
@@ -292,6 +293,27 @@ module.exports = {
   // чтобы вместить весь офис за одним NAT; у каждой установки, кроме того, свой
   // предел по install-id (проверка раунда 4, M7). Через boundedInt (M6).
   UPDATES_MAX_REQ_PER_MIN_PER_IP: boundedInt('UPDATES_MAX_REQ_PER_MIN_PER_IP', 6000, { min: 60, max: 10000000 }),
+
+  // Исходящая почта (SMTP). Пустые SMTP_HOST или SMTP_FROM — отправка отключена
+  // и честно сообщает об этом (см. services/mailer.service.js). Проверка TLS-
+  // сертификата не отключается ничем. SMTP_SECURE=true — неявный TLS (порт 465),
+  // иначе обязателен STARTTLS.
+  SMTP_HOST: (process.env.SMTP_HOST || '').trim(),
+  SMTP_PORT: boundedInt('SMTP_PORT', 587, { min: 1, max: 65535 }),
+  SMTP_SECURE: String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true',
+  SMTP_USER: (process.env.SMTP_USER || '').trim(),
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_FROM: (process.env.SMTP_FROM || '').trim(),
+  SMTP_REPLY_TO: (process.env.SMTP_REPLY_TO || '').trim(),
+
+  // Самостоятельная регистрация: адреса и @домены, которым учётная запись
+  // активируется сразу после кода из письма (через запятую). Дополняет список,
+  // заданный администратором в базе; остальные адреса попадают на рассмотрение.
+  REGISTRATION_ALLOWED_EMAILS: (process.env.REGISTRATION_ALLOWED_EMAILS || '').trim(),
+  // Общие (на весь сервер) пределы самостоятельной регистрации: заявок на код
+  // в час и неудачных проверок кода в час — со всех адресов вместе (решение R).
+  REGISTRATION_GLOBAL_REQUESTS_PER_HOUR: boundedInt('REGISTRATION_GLOBAL_REQUESTS_PER_HOUR', 60, { min: 1, max: 100000 }),
+  REGISTRATION_GLOBAL_FAILED_VERIFIES_PER_HOUR: boundedInt('REGISTRATION_GLOBAL_FAILED_VERIFIES_PER_HOUR', 300, { min: 1, max: 100000 }),
 
   SERVER_VERSION: '2026.1.0-pro'
 };

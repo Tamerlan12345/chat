@@ -198,3 +198,13 @@ test('publish-update.ps1 существует и содержит закрепл
   const content = fs.readFileSync(scriptPath, 'utf8');
   assert.match(content, /0EB61614FC390FCD11BDF8DBFD40BE62EE10862A/);
 });
+
+// @electron/get 5 (override для app-builder-lib) — только ESM и требует
+// Node >= 22.12; на более старом Node `npm run dist` падал бы на машине
+// выпуска (final review desktop M5).
+test('engines.node — не ниже 22.12, как требует @electron/get 5', () => {
+  assert.strictEqual(pkg.overrides['app-builder-lib']['@electron/get'], '^5.1.0');
+  assert.strictEqual(pkg.engines?.node, '>=22.12');
+  const lock = JSON.parse(fs.readFileSync(path.join(DESKTOP_DIR, 'package-lock.json'), 'utf8'));
+  assert.strictEqual(lock.packages[''].engines?.node, '>=22.12', 'package-lock.json в согласии с package.json');
+});

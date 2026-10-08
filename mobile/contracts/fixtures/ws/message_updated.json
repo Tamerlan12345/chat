@@ -1,0 +1,25 @@
+{
+  "type": "message_updated",
+  "message": {
+    "id": 8,
+    "conversation_type": "direct",
+    "target_id": 3,
+    "sender_id": 2,
+    "text": "Привет, Боб! Договор готов, жду подпись до 17:00.",
+    "type": "text",
+    "reply_to_id": null,
+    "metadata_json": null,
+    "created_at": "2026-10-02T09:00:00.000Z",
+    "updated_at": "2026-10-02T09:00:01.000Z",
+    "is_deleted": 0,
+    "client_msg_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+    "sender_username": "alice",
+    "sender_name": "Алиса Тестова",
+    "sender_avatar": null,
+    "sender_department": null,
+    "file_original_name": null,
+    "file_width": null,
+    "file_height": null,
+    "file_dominant_color": null
+  }
+}

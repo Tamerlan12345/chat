@@ -1,43 +1,65 @@
 import SwiftUI
 
-/// Главный экран с вкладками после успешной авторизации
+/// Главный экран с вкладками после успешной авторизации: Чаты, Сотрудники, Объявления, Профиль.
+/// Каждая вкладка держит свой стек и своё состояние (прокрутку, поиск).
+///
+/// Badges count conversations with unread messages and announcements awaiting acknowledgement; the
+/// tab the user is on carries none (anti-generated polish rule 6). The tab bar is the L0 plane:
+/// the system bar material, content scrolls under it.
 public struct MainTabView: View {
-    @Environment(AppState.self) private var appState
-    
-    private var totalChatUnread: Int {
-        let direct = appState.directConversations.reduce(0) { $0 + $1.unreadCount }
-        let channels = appState.channels.reduce(0) { $0 + $1.unreadCount }
-        return direct + channels
+    @Environment(ConversationsStore.self) private var conversations
+    @Environment(AnnouncementsStore.self) private var announcements
+
+    @State private var navigation = AppNavigation()
+    @State private var peopleRequests = PeopleRequests()
+
+    private var unreadConversations: Int {
+        conversations.unreadDirectConversations + conversations.unreadChannelConversations
     }
-    
-    private var unconfirmedAnnouncementsCount: Int {
-        appState.announcements.filter { !$0.isConfirmed }.count
-    }
-    
+
     public init() {}
-    
+
     public var body: some View {
-        TabView {
-            // Вкладка 1: Чаты
+        TabView(selection: $navigation.selectedTab) {
             ChatListView()
                 .tabItem {
-                    Label("Чаты", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("Чаты", systemImage: "bubble.left.and.bubble.right")
                 }
-                .badge(totalChatUnread > 0 ? "\(totalChatUnread)" : nil)
-            
-            // Вкладка 2: Корпоративные распоряжения
+                .badge(TabBadge.text(unreadConversations, isSelected: navigation.selectedTab == .chats).map { Text($0) })
+                .tag(AppTab.chats)
+
+            PeopleView()
+                .tabItem {
+                    Label("Сотрудники", systemImage: "person.2")
+                }
+                .tag(AppTab.people)
+
             AnnouncementsView()
                 .tabItem {
-                    Label("Распоряжения", systemImage: "megaphone.fill")
+                    Label("Объявления", systemImage: "megaphone")
                 }
-                .badge(unconfirmedAnnouncementsCount > 0 ? "\(unconfirmedAnnouncementsCount)" : nil)
-            
-            // Вкладка 3: Профиль сотрудника
+                .badge(TabBadge.text(announcements.unconfirmedCount, isSelected: navigation.selectedTab == .announcements).map { Text($0) })
+                .tag(AppTab.announcements)
+
             ProfileView()
                 .tabItem {
-                    Label("Профиль", systemImage: "person.crop.circle.fill")
+                    Label("Профиль", systemImage: "person.crop.circle")
                 }
+                .tag(AppTab.profile)
         }
         .tint(CentyColors.primaryBlue)
+        .environment(navigation)
+        .environment(peopleRequests)
+        // «Все сотрудники (N)» from the search, «Отдел» from a card: show «Сотрудники».
+        .onChange(of: peopleRequests.serial) {
+            navigation.selectedTab = .people
+        }
     }
 }
+
+#if DEBUG
+#Preview("Tabs") {
+    MainTabView()
+        .previewEnvironment()
+}
+#endif

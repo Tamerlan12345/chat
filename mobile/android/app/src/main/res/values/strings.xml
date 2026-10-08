@@ -1,27 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CentyChat</string>
-    <string name="server_url">Адрес сервера</string>
-    <string name="connect">Подключиться</string>
+    <string name="app_name" translatable="false">CentyChat</string>
+
+    <!-- Common -->
+    <string name="action_retry">Повторить</string>
+    <string name="action_cancel">Отмена</string>
+    <string name="action_close">Закрыть</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_copy">Копировать</string>
+    <string name="action_reply">Ответить</string>
+    <string name="action_edit">Редактировать</string>
+    <string name="action_back">Назад</string>
+    <string name="loading">Загрузка…</string>
+    <string name="error_check_connection">Проверьте подключение к интернету и повторите попытку.</string>
+
+    <!-- Presence -->
+    <string name="status_online">В сети</string>
+    <string name="status_away">Отошёл</string>
+    <string name="status_dnd">Не беспокоить</string>
+    <string name="status_offline">Не в сети</string>
+
+    <!-- Realtime link banner -->
+    <string name="connection_offline">Нет сети</string>
+    <string name="connection_reconnecting">Переподключение…</string>
+    <string name="connection_back_online">Снова в сети</string>
+    <string name="connection_refused">Сервер временно не принимает подключения. Повторяем…</string>
+    <string name="connection_signed_out">Сеанс завершён. Войдите снова.</string>
+
+    <!-- Delivery state of an own message -->
+    <string name="delivery_queued">Ожидает отправки</string>
+    <string name="delivery_sending">Отправляется</string>
+    <string name="delivery_sent">Отправлено</string>
+    <string name="delivery_delivered">Доставлено</string>
+    <string name="delivery_read">Прочитано</string>
+    <string name="delivery_failed">Не отправлено</string>
+    <string name="delivery_failed_with_reason">Не отправлено: %1$s</string>
+
+    <plurals name="unread_messages">
+        <item quantity="one">%d непрочитанное сообщение</item>
+        <item quantity="few">%d непрочитанных сообщения</item>
+        <item quantity="many">%d непрочитанных сообщений</item>
+        <item quantity="other">%d непрочитанного сообщения</item>
+    </plurals>
+    <plurals name="channel_members">
+        <item quantity="one">%d участник</item>
+        <item quantity="few">%d участника</item>
+        <item quantity="many">%d участников</item>
+        <item quantity="other">%d участника</item>
+    </plurals>
+    <plurals name="new_messages_pill">
+        <item quantity="one">%d новое</item>
+        <item quantity="few">%d новых</item>
+        <item quantity="many">%d новых</item>
+        <item quantity="other">%d новых</item>
+    </plurals>
+    <plurals name="new_messages_jump">
+        <item quantity="one">%d новое сообщение. Перейти к нему</item>
+        <item quantity="few">%d новых сообщения. Перейти к ним</item>
+        <item quantity="many">%d новых сообщений. Перейти к ним</item>
+        <item quantity="other">%d нового сообщения. Перейти к ним</item>
+    </plurals>
+
+    <!-- Navigation -->
+    <string name="tab_chats">Чаты</string>
+    <string name="tab_announcements">Объявления</string>
+    <string name="tab_profile">Профиль</string>
+
+    <!-- Login -->
     <string name="login">Войти</string>
     <string name="username">Логин</string>
     <string name="password">Пароль</string>
+    <string name="login_show_password">Показать пароль</string>
+    <string name="login_hide_password">Скрыть пароль</string>
+    <string name="login_in_progress">Выполняется вход…</string>
+    <string name="login_error_empty">Введите логин и пароль.</string>
+    <string name="login_error_invalid_credentials">Неверный логин или пароль</string>
+    <string name="login_error_throttled">Слишком много попыток входа. Повторите через %1$s.</string>
+    <string name="login_error_throttled_done">Слишком много попыток входа. Повторите позже.</string>
+    <string name="login_error_busy">Сервер сейчас занят. Повторите через %1$s.</string>
+    <string name="login_error_busy_done">Сервер сейчас занят. Повторите попытку.</string>
+    <string name="login_error_offline">Нет связи с сервером. Проверьте подключение к интернету.</string>
+    <string name="login_error_insecure">Не удалось установить защищённое соединение с сервером.</string>
+    <string name="login_error_storage">Защищённое хранилище устройства недоступно. Разблокируйте устройство и повторите попытку.</string>
+    <string name="login_error_unexpected">Не удалось войти. Повторите попытку позже.</string>
+
+    <!-- Password change -->
     <string name="must_change_password_title">Обязательная смена пароля</string>
-    <string name="must_change_password_desc">Срок действия вашего временного пароля истек или администратор запросил смену пароля.</string>
+    <string name="must_change_password_desc">Администратор попросил сменить пароль. Придумайте новый, чтобы продолжить работу.</string>
     <string name="current_password">Текущий пароль</string>
     <string name="new_password">Новый пароль</string>
     <string name="confirm_new_password">Повторите новый пароль</string>
     <string name="change_password_action">Сменить пароль</string>
-    <string name="chats">Чаты</string>
-    <string name="channels">Каналы</string>
-    <string name="announcements">Объявления</string>
-    <string name="profile">Профиль</string>
-    <string name="typing_suffix">печатает…</string>
-    <string name="wake_sent">Сигнал побудки отправлен</string>
-    <string name="wake_received">Вас вызывает коллега!</string>
-    <string name="call">Позвонить</string>
-    <string name="end_call">Завершить</string>
-    <string name="accept_call">Ответить</string>
-    <string name="mute">Микрофон</string>
-    <string name="speaker">Динамик</string>
-    <string name="acknowledge">Ознакомлен</string>
+    <string name="password_rule_length">Не короче 8 символов</string>
+    <string name="password_rule_differs">Отличается от текущего</string>
+    <string name="password_rule_match">Пароли совпадают</string>
+    <string name="password_rule_met">выполнено</string>
+    <string name="password_error_failed">Не удалось сменить пароль. Повторите попытку.</string>
+    <string name="password_rule_unmet">не выполнено</string>
+
+    <!-- Inbox -->
+    <string name="inbox_title">Чаты</string>
+    <string name="inbox_segment_direct">Личные</string>
+    <string name="inbox_segment_channels">Каналы</string>
+    <string name="inbox_search_hint">Люди, каналы, сообщения</string>
+    <string name="inbox_search_clear">Очистить поиск</string>
+    <string name="inbox_empty_direct">Пока нет диалогов</string>
+    <string name="inbox_empty_direct_message">Когда вы или коллега напишете первое сообщение, диалог появится здесь.</string>
+    <string name="inbox_empty_channels">Пока нет каналов</string>
+    <string name="inbox_empty_channels_message">Каналы, в которых вы состоите, появятся здесь.</string>
+    <string name="inbox_no_results">Никого не нашли</string>
+    <string name="inbox_no_results_message">Проверьте, как написано имя.</string>
+    <string name="inbox_error">Не удалось загрузить чаты</string>
+    <string name="inbox_refresh_failed">Не удалось обновить список чатов</string>
+    <string name="inbox_preview_you">Вы: %1$s</string>
+    <string name="inbox_preview_empty">Сообщений пока нет</string>
+    <string name="inbox_typing">печатает</string>
+    <string name="inbox_find_person">Найти сотрудника</string>
+
+    <!-- Chat -->
+    <string name="chat_wake">Побудка</string>
+    <string name="chat_wake_cooldown">Побудка снова будет доступна через %1$d с</string>
+    <string name="chat_wake_sent">Сигнал побудки отправлен</string>
+    <string name="chat_call">Позвонить</string>
+    <string name="chat_typing">печатает</string>
+    <string name="chat_typing_named">%1$s печатает</string>
+    <string name="chat_composer_hint">Сообщение</string>
+    <string name="chat_send">Отправить</string>
+    <string name="chat_save_edit">Сохранить изменения</string>
+    <string name="chat_editing">Изменение сообщения</string>
+    <string name="chat_cancel_edit">Отменить изменение</string>
+    <string name="chat_edited">изменено</string>
+    <string name="chat_deleted">Сообщение удалено</string>
+    <string name="chat_empty">Сообщений пока нет</string>
+    <string name="chat_empty_message">Напишите первое сообщение.</string>
+    <string name="chat_empty_locked">Сообщений нет</string>
+    <string name="chat_error">Не удалось загрузить переписку</string>
+    <string name="chat_delete_title">Удалить сообщение?</string>
+    <string name="chat_delete_message">Сообщение удалится у всех участников переписки.</string>
+    <string name="chat_discard_message">Сообщение не будет отправлено.</string>
+    <string name="chat_copied">Сообщение скопировано</string>
+    <string name="chat_reply_to">В ответ</string>
+    <string name="chat_replying_to">Ответ · %1$s</string>
+    <string name="chat_cancel_reply">Отменить ответ</string>
+    <string name="chat_attach">Прикрепить файл</string>
+    <string name="chat_jump_latest">К последним сообщениям</string>
+    <string name="chat_refresh_failed">Не удалось обновить переписку</string>
+    <string name="chat_typing_bubble">Собеседник печатает</string>
+    <string name="attachment_failed">Не загрузилось</string>
+    <string name="attachment_uploading">Загрузка: %1$d%%</string>
+    <string name="attachment_open">Открыть «%1$s»</string>
+    <string name="attachment_open_image">Открыть картинку «%1$s»</string>
+    <string name="attachment_downloading">Скачивание: %1$d%%</string>
+    <string name="attachment_download_waiting">Скачивание…</string>
+    <string name="attachment_cancel">Отменить загрузку</string>
+    <string name="attachment_pick_title">Прикрепить</string>
+    <string name="attachment_pick_photo">Фото</string>
+    <string name="attachment_pick_photo_hint">Из галереи, без доступа ко всем файлам</string>
+    <string name="attachment_pick_file">Файл</string>
+    <string name="attachment_pick_file_hint">Документ, таблица, архив</string>
+    <string name="attachment_no_app">Нет приложения, чтобы открыть этот файл</string>
+    <string name="viewer_image">Картинка «%1$s»</string>
+    <string name="call_level_meter">Громкость собеседника</string>
+    <string name="chat_file">Файл</string>
+    <string name="file_size_bytes">%1$d Б</string>
+    <string name="file_size_kb">%1$.1f КБ</string>
+    <string name="file_size_mb">%1$.1f МБ</string>
+    <string name="chat_message_actions">Действия с сообщением</string>
+    <string name="chat_from_you">Вы</string>
+    <string name="chat_today">Сегодня</string>
+    <string name="chat_yesterday">Вчера</string>
+    <string name="chat_message_description">%1$s, %2$s: %3$s</string>
+
+<!-- People («Сотрудники») -->
+    <string name="tab_people">Сотрудники</string>
+    <string name="people_title">Сотрудники</string>
+    <string name="people_search_hint">Имя, должность, отдел, вн. номер</string>
+    <plurals name="people_count">
+        <item quantity="one">%d сотрудник</item>
+        <item quantity="few">%d сотрудника</item>
+        <item quantity="many">%d сотрудников</item>
+        <item quantity="other">%d сотрудника</item>
+    </plurals>
+    <string name="people_online_count">%1$d в сети</string>
+    <string name="people_scope_all">Все</string>
+    <string name="people_scope_departments">Отделы</string>
+    <string name="people_online_filter">В сети</string>
+    <string name="people_refresh_failed">Не удалось обновить список сотрудников</string>
+    <string name="people_error">Не удалось загрузить сотрудников</string>
+    <string name="people_empty">В справочнике пока никого нет</string>
+    <string name="people_empty_message">Когда администратор добавит сотрудников, они появятся здесь.</string>
+    <string name="people_not_found">Никого не нашли по «%1$s»</string>
+    <string name="people_not_found_message">Проверьте написание или поищите по должности, отделу и внутреннему номеру.</string>
+    <string name="people_clear_search">Очистить поиск</string>
+    <string name="people_nobody_online">Сейчас никого нет в сети</string>
+    <string name="people_nobody_online_message">Выключите фильтр «В сети», чтобы увидеть всех.</string>
+    <string name="people_show_everyone">Показать всех</string>
+    <string name="people_extension">вн. %1$s</string>
+    <string name="people_unassigned">Без подразделения</string>
+    <string name="people_department_online">%1$d/%2$d в сети</string>
+    <string name="people_department_expand">Развернуть</string>
+    <string name="people_department_collapse">Свернуть</string>
+    <string name="people_fast_scroll">Буква %1$s</string>
+
+    <!-- Person card -->
+    <string name="person_write">Написать</string>
+    <string name="person_call">Позвонить</string>
+    <string name="person_wake">Побудить</string>
+    <string name="person_wake_wait">Через %1$d с</string>
+    <string name="person_call_not_permitted">Звонки недоступны для вашей роли</string>
+    <string name="person_call_offline">Не в сети — звонок сейчас не дойдёт</string>
+    <string name="person_call_dnd">Не беспокоить — звонок не пройдёт</string>
+    <string name="person_inactive">Сотрудник больше не работает</string>
+    <string name="search_in_direct">личная переписка</string>
+    <string name="search_in_direct_with">переписка с %1$s</string>
+    <string name="person_status_away">Отошёл(ла)</string>
+    <string name="person_seen_today">Был(а) в сети сегодня в %1$s</string>
+    <string name="person_seen_yesterday">Был(а) в сети вчера в %1$s</string>
+    <string name="person_seen_on">Был(а) в сети %1$s</string>
+    <string name="person_custom_status">«%1$s»</string>
+    <string name="person_job">Должность</string>
+    <string name="person_department">Отдел</string>
+    <string name="person_extension">Вн. номер</string>
+    <string name="person_phone">Мобильный</string>
+    <string name="person_email">Email</string>
+    <string name="person_role">Роль</string>
+    <string name="person_copied">Скопировано</string>
+    <string name="person_copy_hint">скопировать</string>
+    <string name="person_call_phone">позвонить по номеру</string>
+    <string name="person_write_email">написать письмо</string>
+    <string name="person_show_department">показать в «Отделах»</string>
+    <string name="person_edit_profile">Редактировать профиль</string>
+    <string name="person_not_found">Карточка недоступна</string>
+    <string name="person_not_found_message">Сотрудник мог быть удалён из справочника.</string>
+    <string name="person_no_app">Нет приложения, чтобы открыть это</string>
+
+    <!-- Universal search in «Чаты» -->
+    <string name="search_hint">Люди, каналы, сообщения</string>
+    <string name="search_close">Закрыть поиск</string>
+    <string name="search_recent">Недавние</string>
+    <string name="search_recent_empty">Здесь появятся люди и каналы, которые вы открывали из поиска.</string>
+    <string name="search_people">Люди</string>
+    <string name="search_channels">Каналы</string>
+    <string name="search_messages">Сообщения</string>
+    <string name="search_all_people">Все сотрудники (%1$d)</string>
+    <string name="search_messages_short">Сообщения ищутся от двух символов</string>
+    <string name="search_messages_none">В сообщениях ничего не нашли</string>
+    <string name="search_messages_failed">Не удалось найти сообщения</string>
+    <string name="search_messages_rate_limited">Слишком много поисков подряд — повторите через минуту</string>
+    <string name="search_nothing">Ничего не нашли по «%1$s»</string>
+    <string name="search_nothing_message">Проверьте написание: ищем по людям, каналам и тексту сообщений.</string>
+    <string name="search_message_from_you">Вы</string>
+    <string name="search_message_in">%1$s · %2$s</string>
+    <string name="chat_jump_unavailable">Сообщение слишком давнее — показаны последние</string>
+    <string name="chat_open_card">Карточка сотрудника</string>
+
+
+    <!-- Announcements -->
+    <string name="announcements_title">Объявления</string>
+    <string name="announcements_section_new">Требуют ознакомления</string>
+    <string name="announcements_section_read">Ознакомлены</string>
+    <string name="announcements_empty">Объявлений нет</string>
+    <string name="announcements_empty_message">Новые объявления компании появятся здесь.</string>
+    <string name="announcements_error">Не удалось загрузить объявления</string>
+    <string name="announcements_refresh_failed">Не удалось обновить объявления</string>
+    <string name="announcements_ack_failed">Не удалось отметить «Ознакомлен». Повторите попытку.</string>
+    <string name="announcements_acknowledged">Ознакомлен</string>
+    <string name="announcements_needs_ack">Требует ознакомления</string>
+    <string name="announcements_acknowledge">Ознакомлен</string>
+    <string name="announcements_published">Опубликовано %1$s</string>
+    <string name="announcements_expires">Действует до %1$s</string>
+    <string name="announcements_author">%1$s · %2$s</string>
+    <string name="priority_normal">Оповещение</string>
+    <string name="priority_urgent">Срочно</string>
+    <string name="priority_critical">Критично</string>
+
+    <!-- Profile -->
+    <string name="profile_title">Профиль</string>
+    <string name="profile_status_section">Статус</string>
+    <string name="profile_custom_status">Свой статус</string>
+    <string name="profile_custom_status_hint">Чем вы сейчас заняты?</string>
+    <string name="profile_presence_now">Сейчас: %1$s</string>
+    <string name="profile_presence_auto">Меняется само: приложение открыто — «В сети», свёрнуто — «Отошёл».</string>
+    <string name="profile_dnd_hint">Звонки к вам не проходят, коллеги видят «Не беспокоить».</string>
+    <string name="profile_save_status">Сохранить статус</string>
+    <string name="profile_status_saved">Статус сохранён</string>
+    <string name="profile_status_failed">Не удалось сохранить статус</string>
+    <string name="profile_account_section">Учётная запись</string>
+    <string name="profile_login">Логин</string>
+    <string name="profile_company">Компания</string>
+    <string name="profile_department">Отдел</string>
+    <string name="profile_extension">Внутренний номер</string>
+    <string name="profile_email">Почта</string>
+    <string name="profile_phone">Телефон</string>
+    <string name="profile_wake_section">Побудка</string>
+    <string name="profile_wake_hint">Позовите коллегу: у него прозвучит сигнал и завибрирует телефон. Повторно — через минуту.</string>
+    <string name="profile_wake_target">ID сотрудника</string>
+    <string name="profile_wake_send">Позвать</string>
+    <string name="profile_wake_wait">%1$d с</string>
+    <string name="profile_app_section">Приложение</string>
+    <string name="profile_server">Сервер</string>
+    <string name="profile_version_value">Версия %1$s</string>
+    <string name="profile_logout">Выйти</string>
+    <string name="profile_logout_title">Выйти из учётной записи?</string>
+    <string name="profile_logout_message">Чтобы снова войти на этом устройстве, понадобятся логин и пароль.</string>
+    <string name="profile_logout_unsent_unknown">Не удалось проверить неотправленные сообщения. Если они есть, они будут удалены.</string>
+    <plurals name="profile_logout_unsent">
+        <item quantity="one">%d неотправленное сообщение будет удалено.</item>
+        <item quantity="few">%d неотправленных сообщения будут удалены.</item>
+        <item quantity="many">%d неотправленных сообщений будут удалены.</item>
+        <item quantity="other">%d неотправленных сообщений будут удалены.</item>
+    </plurals>
+    <string name="profile_storage_error">Защищённое хранилище недоступно. Разблокируйте устройство и повторите попытку.</string>
+    <string name="profile_unknown_user">Пользователь</string>
+
+    <!-- Call -->
+    <string name="call_incoming">Входящий звонок</string>
+    <string name="call_outgoing">Вызов…</string>
+    <string name="call_ended">Звонок завершён</string>
+    <string name="call_accept">Ответить</string>
+    <string name="call_decline">Отклонить</string>
+    <string name="call_end">Завершить</string>
+    <string name="call_mute">Микрофон</string>
+    <string name="call_speaker">Динамик</string>
+    <string name="call_mic_on">Микрофон включён</string>
+    <string name="call_mic_off">Микрофон выключен</string>
+    <string name="call_speaker_on">Громкая связь включена</string>
+    <string name="call_speaker_off">Громкая связь выключена</string>
+    <string name="call_mic_denied">Нет доступа к микрофону</string>
+    <string name="call_mic_denied_message">Разрешите CentyChat использовать микрофон, чтобы разговаривать.</string>
+    <string name="call_open_settings">Открыть настройки</string>
+
+    <!-- App-wide events -->
+    <string name="wake_received">Вас зовёт %1$s</string>
+    <string name="wake_received_unknown">Вас зовёт коллега</string>
+    <string name="notification_channel_messages">Сообщения</string>
+    <string name="notification_channel_calls">Звонки</string>
+    <string name="notification_incoming_call">Входящий звонок</string>
+    <string name="notification_incoming_call_unknown">Звонит сотрудник</string>
+    <string name="notifications_explain_title">Уведомления о сообщениях</string>
+    <string name="notifications_explain_message">Разрешите уведомления, чтобы не пропускать новые сообщения, звонки и побудки, когда CentyChat свёрнут.</string>
+    <string name="notifications_allow">Разрешить уведомления</string>
+    <string name="notifications_later">Не сейчас</string>
+
+    <!-- Self-registration (contracts/registration.md §1) -->
+    <string name="login_register">Зарегистрироваться</string>
+    <string name="register_title_form">Регистрация</string>
+    <string name="register_title_code">Подтверждение почты</string>
+    <string name="register_intro">Укажите рабочую почту: мы отправим на неё код подтверждения. После этого вход откроется сразу или после одобрения администратором.</string>
+    <string name="register_email">Эл. почта</string>
+    <string name="register_email_hint">name@company.kz</string>
+    <string name="register_name">ФИО</string>
+    <string name="register_name_hint">Фамилия Имя Отчество</string>
+    <string name="register_username">Логин</string>
+    <string name="register_username_hint">Латиница, цифры, точка, дефис</string>
+    <string name="register_password">Пароль</string>
+    <string name="register_password_hint">Не короче 8 символов</string>
+    <string name="register_get_code">Получить код</string>
+    <string name="register_sending">Отправка…</string>
+    <string name="register_have_account">Уже есть аккаунт? Войти</string>
+    <string name="register_code_heading">Введите код из письма</string>
+    <string name="register_code_sent_to">Мы отправили 6-значный код на %1$s.</string>
+    <string name="register_code_label">Код из письма</string>
+    <string name="register_code_expires">Код действует ещё %1$s</string>
+    <string name="register_code_expired">Срок действия кода истёк. Запросите новый код.</string>
+    <string name="register_verify">Подтвердить</string>
+    <string name="register_verifying">Проверка…</string>
+    <string name="register_resend">Отправить код ещё раз</string>
+    <string name="register_resend_in">Отправить код ещё раз через %1$s</string>
+    <string name="register_change_data">Изменить данные</string>
+    <string name="register_problem_email_missing">Укажите адрес эл. почты</string>
+    <string name="register_problem_email_invalid">Введите корректный адрес эл. почты</string>
+    <string name="register_problem_name_short">Укажите ФИО (не короче 2 символов)</string>
+    <string name="register_problem_name_long">ФИО слишком длинное</string>
+    <string name="register_problem_username_length">Логин: от 3 до 64 символов</string>
+    <string name="register_problem_username_characters">Логин: латинские буквы, цифры, точка, дефис и подчёркивание</string>
+    <string name="register_problem_password_missing">Придумайте пароль</string>
+    <string name="register_problem_password_short">Пароль: не короче 8 символов</string>
+    <string name="register_problem_password_long">Пароль слишком длинный</string>
+    <string name="account_pending_title">Заявка на рассмотрении</string>
+    <string name="account_pending_message">Почта подтверждена. Вход станет доступен после одобрения заявки администратором. Срок рассмотрения заранее неизвестен.</string>
+    <string name="account_pending_login_message">Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения.</string>
+    <string name="account_rejected_title">Заявка отклонена</string>
+    <string name="account_rejected_message">Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании.</string>
+    <string name="account_back_to_login">Вернуться ко входу</string>
+
+    <!-- Account failures (AccountFailure) -->
+    <string name="account_error_offline">Нет связи с сервером. Проверьте подключение к интернету.</string>
+    <string name="account_error_registration_disabled">Регистрация сейчас закрыта. Обратитесь к администратору.</string>
+    <string name="account_error_mail_not_configured">Сервер не может отправить письмо с кодом: почта не настроена. Регистрация временно недоступна — обратитесь к администратору.</string>
+    <string name="account_error_throttled">Слишком много попыток. Повторите через %1$s.</string>
+    <string name="account_error_busy">Сервер сейчас занят. Повторите через %1$s.</string>
+    <string name="account_error_invalid_input">Проверьте введённые данные.</string>
+    <string name="account_error_username_taken">Этот логин уже занят. Выберите другой.</string>
+    <string name="account_error_email_taken">На этот адрес почты уже подана заявка или есть учётная запись.</string>
+    <string name="account_error_conflict">Такой логин или адрес почты уже зарегистрирован.</string>
+    <string name="account_error_wrong_code">Неверный код. Проверьте письмо и попробуйте ещё раз.</string>
+    <string name="account_error_attempts_left">%1$s Осталось попыток: %2$d.</string>
+    <string name="account_error_code_expired">Код больше не действует: срок истёк, он уже использован или попытки закончились. Запросите новый код.</string>
+    <string name="account_error_mail_send_failed">Не удалось отправить письмо с кодом. Повторите попытку позже.</string>
+    <string name="account_error_wrong_password">Неверный пароль.</string>
+    <string name="account_error_last_admin">Вы — единственный администратор. Назначьте другого администратора, затем удалите учётную запись.</string>
+    <string name="account_error_storage">Защищённое хранилище устройства недоступно. Разблокируйте устройство и повторите попытку.</string>
+    <string name="account_error_unavailable">Не удалось выполнить действие. Повторите попытку позже.</string>
+
+    <!-- Profile: privacy and account deletion -->
+    <string name="profile_privacy_section">Конфиденциальность</string>
+    <string name="profile_blocked_users">Заблокированные пользователи</string>
+    <string name="profile_delete_account">Удалить аккаунт</string>
+    <string name="profile_delete_hint">Удаление аккаунта необратимо.</string>
+    <string name="blocked_title">Заблокированные</string>
+    <string name="blocked_empty">Вы никого не блокировали</string>
+    <string name="blocked_empty_message">Заблокировать человека можно в его карточке или в меню личной переписки.</string>
+    <string name="blocked_footer">Вы не можете писать друг другу, пока блокировка не снята.</string>
+    <string name="blocked_unblock_person">Разблокировать: %1$s</string>
+    <string name="blocked_unknown_name">Пользователь</string>
+    <string name="blocked_load_failed">Не удалось загрузить список заблокированных</string>
+    <string name="blocked_unblock_failed">Не удалось разблокировать. Повторите попытку.</string>
+    <string name="delete_title">Удаление аккаунта</string>
+    <string name="delete_warning">Учётная запись и личные данные (имя, почта, телефон, фото) будут удалены безвозвратно. Отправленные сообщения останутся у собеседников с подписью «Удалённый сотрудник». Восстановить учётную запись нельзя.</string>
+    <string name="delete_password_label">Пароль для подтверждения</string>
+    <string name="delete_in_progress">Удаление аккаунта…</string>
+    <string name="delete_dialog_title">Удалить учётную запись навсегда?</string>
+    <string name="delete_dialog_message">Это действие нельзя отменить.</string>
+
+    <!-- Reports and blocks -->
+    <string name="report_title_message">Жалоба на сообщение</string>
+    <string name="report_title_user">Жалоба на пользователя</string>
+    <string name="report_subject">На что жалоба</string>
+    <string name="report_reason">Причина</string>
+    <string name="report_reason_spam">Спам или реклама</string>
+    <string name="report_reason_abuse">Оскорбления или травля</string>
+    <string name="report_reason_inappropriate">Недопустимое содержимое</string>
+    <string name="report_reason_threat">Угрозы или опасные действия</string>
+    <string name="report_reason_other">Другое</string>
+    <string name="report_details">Что произошло (необязательно)</string>
+    <string name="report_footer">Жалобу рассмотрит администратор. Автор не узнает, кто пожаловался.</string>
+    <string name="report_send">Отправить жалобу</string>
+    <string name="report_sending">Отправка жалобы…</string>
+    <string name="report_sent_title">Жалоба отправлена</string>
+    <string name="report_sent_message">Спасибо. Администратор рассмотрит её. Чтобы не получать сообщения этого человека, его можно заблокировать.</string>
+    <string name="safety_report">Пожаловаться</string>
+    <string name="safety_block">Заблокировать</string>
+    <string name="safety_unblock">Разблокировать</string>
+    <string name="safety_block_title">Заблокировать пользователя?</string>
+    <string name="safety_block_message">%1$s не сможет писать вам, а вы — ему. Его личные сообщения будут скрыты. В каналах ничего не изменится. Разблокировать можно в чате или в профиле.</string>
+    <string name="safety_blocked">Пользователь заблокирован</string>
+    <string name="safety_unblocked">Пользователь разблокирован. Скрытые сообщения снова видны.</string>
+    <string name="chat_more_actions">Ещё</string>
+    <string name="chat_blocked_banner">Вы заблокировали этого пользователя. Пока блокировка действует, писать друг другу нельзя.</string>
+    <string name="chat_dm_not_allowed">Сообщение не может быть доставлено. Писать в эту переписку сейчас нельзя.</string>
+    <string name="chat_composer_unavailable">Отправка недоступна</string>
 </resources>

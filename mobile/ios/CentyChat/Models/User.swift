@@ -9,10 +9,10 @@ public enum UserStatus: String, Codable, Sendable, CaseIterable {
     
     public var displayName: String {
         switch self {
-        case .online: return "В сети"
-        case .away: return "Отошел"
-        case .dnd: return "Не беспокоить"
-        case .offline: return "Не в сети"
+        case .online: return String(localized: "В сети")
+        case .away: return String(localized: "Отошел")
+        case .dnd: return String(localized: "Не беспокоить")
+        case .offline: return String(localized: "Не в сети")
         }
     }
 }
@@ -65,6 +65,20 @@ public struct RolePermissions: Codable, Sendable, Equatable, Hashable {
         case canRemoteControl = "can_remote_control"
         case canCreateChannels = "can_create_channels"
         case canUploadFiles = "can_upload_files"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isAdmin = try container.decodeIfPresent(Bool.self, forKey: .isAdmin) ?? false
+        isScopedAdmin = try container.decodeIfPresent(Bool.self, forKey: .isScopedAdmin) ?? false
+        canManageUsers = try container.decodeIfPresent(Bool.self, forKey: .canManageUsers) ?? false
+        canManageStructure = try container.decodeIfPresent(Bool.self, forKey: .canManageStructure) ?? false
+        canManageDb = try container.decodeIfPresent(Bool.self, forKey: .canManageDb) ?? false
+        canBroadcast = try container.decodeIfPresent(Bool.self, forKey: .canBroadcast) ?? false
+        canCall = try container.decodeIfPresent(Bool.self, forKey: .canCall) ?? false
+        canRemoteControl = try container.decodeIfPresent(Bool.self, forKey: .canRemoteControl) ?? false
+        canCreateChannels = try container.decodeIfPresent(Bool.self, forKey: .canCreateChannels) ?? false
+        canUploadFiles = try container.decodeIfPresent(Bool.self, forKey: .canUploadFiles) ?? false
     }
 }
 

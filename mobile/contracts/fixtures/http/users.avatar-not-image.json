@@ -1,0 +1,4 @@
+{
+  "error": "Файл не является изображением JPEG, PNG, GIF или WebP",
+  "code": "NOT_AN_IMAGE"
+}

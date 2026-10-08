@@ -1,0 +1,29 @@
+{
+  "name": "c10-away-phone-without-token",
+  "description": "Телефон в фоне без токена (push не настроен) — получает кадр и звонит по нему; разбудить нечем, но вызов доходит.",
+  "decision": "call",
+  "input": {
+    "recipientId": 2,
+    "dnd": false,
+    "call": {
+      "callerId": 5
+    },
+    "sockets": [
+      {
+        "id": "phone",
+        "deviceId": "android-7f3a",
+        "presence": "away",
+        "viewing": null
+      }
+    ],
+    "pushDevices": []
+  },
+  "expected": {
+    "reason": null,
+    "push": [],
+    "ring": [
+      "phone"
+    ],
+    "quiet": []
+  }
+}

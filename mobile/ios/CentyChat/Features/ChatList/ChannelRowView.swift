@@ -1,73 +1,46 @@
 import SwiftUI
 
-/// Строка корпоративного канала в списке чатов
+/// A channel in the inbox: the slate `#` tile (a lock for a private channel) and the same three type
+/// steps as a dialog row.
 public struct ChannelRowView: View {
     public let channel: Channel
-    
+    var typing: String?
+    var zoom: Namespace.ID?
+
     public init(channel: Channel) {
         self.channel = channel
     }
-    
-    private var formattedTime: String {
-        guard let time = channel.lastMessageTime else { return "" }
-        let calendar = Calendar.current
-        if calendar.isDateInToday(time) {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            return formatter.string(from: time)
-        } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "dd.MM"
-            return formatter.string(from: time)
-        }
+
+    init(channel: Channel, typing: String?, zoom: Namespace.ID?) {
+        self.channel = channel
+        self.typing = typing
+        self.zoom = zoom
     }
-    
+
     public var body: some View {
-        HStack(spacing: 12) {
-            // Иконка канала
-            ZStack {
-                Circle()
-                    .fill(Color(uiColor: .tertiarySystemFill))
-                    .frame(width: 50, height: 50)
-                
-                Image(systemName: channel.type == .private ? "lock.fill" : "number")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(CentyColors.primaryBlue)
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(channel.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    Text(formattedTime)
-                        .font(.caption2)
-                        .foregroundColor(channel.unreadCount > 0 ? CentyColors.primaryBlue : .secondary)
-                }
-                
-                HStack {
-                    Text(channel.lastMessageText ?? (channel.topic ?? "Канал"))
-                        .font(.subheadline)
-                        .foregroundColor(channel.unreadCount > 0 ? Color(uiColor: .label) : .secondary)
-                        .lineLimit(2)
-                    
-                    Spacer()
-                    
-                    if channel.unreadCount > 0 {
-                        Text("\(channel.unreadCount)")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(CentyColors.primaryBlue)
-                            .clipShape(Capsule())
-                    }
-                }
+        InboxRowLayout(
+            name: channel.name,
+            preview: channel.lastMessageText ?? channel.topic ?? String(localized: "Канал"),
+            time: channel.lastMessageTime,
+            unread: channel.unreadCount,
+            typing: typing
+        ) {
+            let tile = ChannelAvatar(isPrivate: channel.type == .private, size: 44)
+            if let zoom {
+                tile.chatZoomSource(type: .channel, id: channel.id, namespace: zoom)
+            } else {
+                tile
             }
         }
-        .padding(.vertical, 4)
     }
+}
+
+#Preview("Channel rows") {
+    List {
+        ChannelRowView(channel: Channel(id: 10, name: "mobile-dev", topic: "Разработка", unreadCount: 5, lastMessageText: "Сборка зелёная", lastMessageTime: Date()))
+        ChannelRowView(channel: Channel(id: 11, name: "общий", type: .private, lastMessageText: "Совещание в 15:00", lastMessageTime: Date().addingTimeInterval(-7_200)))
+    }
+    .listStyle(.plain)
+    .scrollContentBackground(.hidden)
+    .background(CentyColors.list)
 }

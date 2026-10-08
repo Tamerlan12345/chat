@@ -10,7 +10,7 @@ import android.media.MediaRecorder
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 
-class AudioEngine(private val context: Context) {
+class AudioEngine(private val context: Context) : CallAudio {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
@@ -27,9 +27,9 @@ class AudioEngine(private val context: Context) {
     private var recordJob: Job? = null
     private var playbackJob: Job? = null
 
-    var onFrameRecorded: ((ShortArray) -> Unit)? = null
+    override var onFrameRecorded: ((ShortArray) -> Unit)? = null
 
-    fun start(scope: CoroutineScope) {
+    override fun start(scope: CoroutineScope) {
         startRecording(scope)
         startPlayback(scope)
     }
@@ -132,15 +132,15 @@ class AudioEngine(private val context: Context) {
         }
     }
 
-    fun onIncomingAudioFrame(pcmSamples: ShortArray) {
+    override fun onIncomingAudioFrame(pcmSamples: ShortArray) {
         jitterBuffer.enqueue(pcmSamples)
     }
 
-    fun setMute(muted: Boolean) {
+    override fun setMute(muted: Boolean) {
         isMuted.set(muted)
     }
 
-    fun setSpeakerphone(enabled: Boolean) {
+    override fun setSpeakerphone(enabled: Boolean) {
         isSpeakerOn.set(enabled)
         try {
             audioManager?.isSpeakerphoneOn = enabled
@@ -148,7 +148,7 @@ class AudioEngine(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun stop() {
+    override fun stop() {
         isRecording.set(false)
         isPlaying.set(false)
 

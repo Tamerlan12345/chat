@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Template for the owner's signing (decision P, docs/PUSH-SETUP.md section 3). Not referenced by the
+	project, so simulator and CI builds (no Apple account) never need it. To turn push on, set
+	CODE_SIGN_ENTITLEMENTS = Signing/CentyChat.entitlements for the CentyChat target, or add the
+	Push Notifications capability in Xcode. Xcode rewrites "development" to "production" when the app
+	is exported for the App Store, TestFlight or Apple Business Manager.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

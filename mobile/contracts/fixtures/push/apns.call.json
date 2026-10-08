@@ -1,0 +1,12 @@
+{
+  "headers": {
+    "apns-topic": "com.example.centychat.voip",
+    "apns-push-type": "voip",
+    "apns-priority": "10",
+    "apns-expiration": "1790931630"
+  },
+  "payload": {
+    "type": "call",
+    "callerId": 2
+  }
+}

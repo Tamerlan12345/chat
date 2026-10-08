@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "app-store-review": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "skillPath": "skills/app-store-review/SKILL.md",
+      "computedHash": "605f639cec6284117dee978d07677b8f8fc66bdebfd40b83cd511798e8b6fa49"
+    },
+    "edge-to-edge": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "system/edge-to-edge/SKILL.md",
+      "computedHash": "7ccf71d4ff4d16509ee07df3312d6475741cd68006156c1a90e0638aa67b5fa0"
+    },
+    "mobile-android-design": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/ui-design/skills/mobile-android-design/SKILL.md",
+      "computedHash": "143a60d6a0744a5058adf984e3a64b75cd2ef3714a15557f4ff6fd95e39ff23a"
+    },
+    "mobile-ios-design": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/ui-design/skills/mobile-ios-design/SKILL.md",
+      "computedHash": "30f9f969f4fa664addff529ca3f62352f951cd672e6f10b8a9ea26fb5c55b9b5"
+    },
+    "navigation-3": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "navigation/navigation-3/SKILL.md",
+      "computedHash": "89c4afc16d707a7e3a56438ea60be0ed0451736e929528fe8fb50a112a731a3e"
+    },
+    "parallel-feature-development": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/agent-teams/skills/parallel-feature-development/SKILL.md",
+      "computedHash": "a081b1d98bfa9bba52096b1d540310f484140f75ce2bf0b84c4609cff06def26"
+    },
+    "swiftui-patterns": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "skillPath": "skills/swiftui-patterns/SKILL.md",
+      "computedHash": "769eee943f7f6c9c7e231996ade6f2893c4dacb33c24f5239ee93e44eddc08e4"
+    },
+    "task-coordination-strategies": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/agent-teams/skills/task-coordination-strategies/SKILL.md",
+      "computedHash": "64b27a5d50838f2d8c03bbabcb12ccfbba57afe30b12631405376f4b6b3bd8d5"
+    },
+    "team-composition-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/agent-teams/skills/team-composition-patterns/SKILL.md",
+      "computedHash": "31af3116b114bac7de5536716ad50690fa794850b6464b97f8ebec19aac2fb0a"
+    },
+    "write-swift": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/write-swift/SKILL.md",
+      "computedHash": "3c4854221f2c654172c3532e71dcb4ece25ef62057d97bec1c26c3ab17eca191"
+    }
+  }
+}

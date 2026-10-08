@@ -27,8 +27,11 @@ import WakeAlert from './components/WakeAlert';
 import { initialWake, reduceWake } from './lib/wake.mjs';
 import { uploadProblem } from './lib/attachments.mjs';
 import { applyUpdate, applyDelete } from './lib/message-actions.mjs';
-import { isSuperAdmin as userIsSuperAdmin } from './lib/admin-access.mjs';
+import { conversationSnippet, registrationToast, toastTarget } from './lib/live-events.mjs';
+import { isSuperAdmin as userIsSuperAdmin, canOpenAdminConsole } from './lib/admin-access.mjs';
+import { COPY, connectionLabel } from './lib/copy-ru.mjs';
 import { mergeAlerts, severityLabel, summarizeDetails } from './lib/security-labels.mjs';
+import { viewingKey, viewingFrame, applyConversationRead, authFrame, toastIsForConversation, isViewingHere, incomingMessagePlan, createReadMarks } from './lib/multi-device.mjs';
 
 // Токен живёт 12 часов; продлеваем с большим запасом, чтобы работающий
 // человек не упирался в истечение посреди дня.
@@ -97,6 +100,22 @@ export default function App() {
     return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://centychat-production.up.railway.app';
   });
   const [wsConnected, setWsConnected] = useState(false);
+  // До какого сообщения каждая переписка уже отмечена прочитанной на этом сокете.
+  const readMarksRef = useRef(null);
+  if (readMarksRef.current === null) readMarksRef.current = createReadMarks();
+  // Есть ли сеть у самого компьютера: без неё строка состояния говорит «Нет
+  // сети», с ней и без сокета — «Переподключение…».
+  const [networkOnline, setNetworkOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+  useEffect(() => {
+    const on = () => setNetworkOnline(true);
+    const off = () => setNetworkOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
 
   // Обработчики WebSocket, таймеры и подписки создаются один раз и видят
   // значения на момент создания. Токен же меняется — после входа по паролю,
@@ -191,8 +210,14 @@ export default function App() {
   const [newChannelTopic, setNewChannelTopic] = useState('');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  // Растёт с каждым registration_pending: открытая консоль перечитывает заявки.
+  const [registrationTick, setRegistrationTick] = useState(0);
   // Сотрудник, чью карточку надо открыть сразу при входе в консоль.
   const [adminFocusUserId, setAdminFocusUserId] = useState(null);
+  // Вкладка консоли, которую открыть (клик по уведомлению о заявке):
+  // { tab, at } — at меняется при каждом запросе, и уже открытая консоль
+  // переключается тоже.
+  const [adminFocusTab, setAdminFocusTab] = useState(null);
   // Отказ при загрузке базовых данных. Без него боковая панель показывала
   // «Загрузка…» вечно и ничего не объясняла.
   const [baseDataError, setBaseDataError] = useState(null);
@@ -506,14 +531,20 @@ export default function App() {
   // Прочитанным считается только то, что человек реально мог увидеть: окно в
   // фокусе и открыт именно этот диалог. Иначе «прочитано» означало бы лишь
   // «приложение запущено».
-  const markConversationRead = (chat = activeChatRef.current) => {
-    if (!chat || !windowFocusedRef.current || !isChatVisibleRef.current) return;
+  // Простаивающий компьютер («отошёл») переписку не читает: ни viewing, ни
+  // mark_read — вернулся «в сети», тогда и прочитано (updateMyPresence).
+  // upToId — до какого сообщения прочитано: одно сообщение даёт один кадр,
+  // даже если его отмечают и обработчик кадра, и лента (readMarksRef).
+  const markConversationRead = (chat = activeChatRef.current, upToId) => {
+    if (!chat || !isViewingHere({ ...currentView(), chat }, chat.type, chat.id)) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({
-      type: 'mark_read',
-      conversationType: chat.type,
-      targetId: chat.id
-    }));
+    if (readMarksRef.current.shouldSend(`${chat.type}:${chat.id}`, upToId)) {
+      wsRef.current.send(JSON.stringify({
+        type: 'mark_read',
+        conversationType: chat.type,
+        targetId: chat.id
+      }));
+    }
     if (chat.type === 'channel') {
       setChannelUnread((prev) => (prev[chat.id] ? { ...prev, [chat.id]: 0 } : prev));
     } else {
@@ -562,9 +593,9 @@ export default function App() {
     // переход в профиль. Выйти по неосторожности — значит заново вводить
     // пароль, поэтому спрашиваем.
     const confirmed = await confirm({
-      title: 'Выход из учётной записи',
-      message: 'Выйти из учётной записи? Для продолжения работы потребуется снова ввести пароль.',
-      confirmText: 'Выйти',
+      title: COPY['signout.title'],
+      message: COPY['signout.body'],
+      confirmText: COPY['signout.confirm'],
       cancelText: 'Остаться'
     });
     if (!confirmed) {
@@ -881,16 +912,15 @@ export default function App() {
   }, [unreadMap, windowFocused]);
   // Set Window Title dynamically matching Screenshot 1 & 2
   useEffect(() => {
-    const company = serverInfo?.company_name || 'АО "Страховая компания "Сентрас Иншуранс"';
     if (currentUser) {
       const statusText = currentUser.status === 'online' ? 'В сети' : currentUser.status === 'away' ? 'Отошёл' : currentUser.status === 'dnd' ? 'Не беспокоить' : 'Не в сети';
       const extText = currentUser.extension ? ` (в.н.${currentUser.extension})` : '';
       const name = currentUser.full_name || currentUser.username;
-      document.title = `CentyChat — ${name}${extText} [${company}] (${statusText})`;
+      document.title = `CentyChat — ${name}${extText} (${statusText})`;
     } else {
-      document.title = `CentyChat — [${company}]`;
+      document.title = 'CentyChat';
     }
-  }, [currentUser, serverInfo]);
+  }, [currentUser]);
 
   // Ровно одно уведомление на событие. Раньше показывались оба сразу —
   // карточка в приложении и системное окно Windows поверх неё.
@@ -1054,7 +1084,18 @@ export default function App() {
     // Раньше зелёная точка загоралась на открытии сокета, и отвергнутый сеанс
     // выглядел рабочим, а отправленные сообщения пропадали.
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'auth', token: authToken }));
+      // Настоящее состояние окна (свёрнуто/простой — away) и открытый чат —
+      // сразу в auth (multi-device.md §3): сервер не считает свёрнутое окно
+      // «в сети» и не уведомляет о чате, который человек уже читает.
+      const viewing = viewingKey({
+        chat: activeChatRef.current,
+        chatVisible: isChatVisibleRef.current,
+        focused: windowFocusedRef.current,
+        connected: true,
+        presence: presenceRef.current
+      });
+      lastViewingRef.current = viewing;
+      ws.send(JSON.stringify(authFrame({ token: authToken, presence: presenceRef.current, viewing })));
     };
 
     ws.onclose = () => {
@@ -1096,9 +1137,15 @@ export default function App() {
 
       // ── Состояние сеанса ────────────────────────────────────────────────
       case 'auth_success':
-        // Сервер считает только что подключившегося человека «в сети».
-        presenceRef.current = 'online';
+        // Новый сокет: сервер не знает прежних отметок этого окна.
+        readMarksRef.current.reset();
+        // Присутствие ушло в auth. Сервер прежней версии поле не знает и
+        // считает вход «в сети» — свёрнутое окно повторяет away кадром.
+        if (presenceRef.current === 'away') {
+          wsRef.current?.send(JSON.stringify({ type: 'presence', state: 'away' }));
+        }
         setWsConnected(true);
+        syncViewing();
         reconnectAttemptRef.current = 0;
         // Пока связи не было, могли прийти сообщения и смениться статусы —
         // без досинхронизации они не появлялись до перезапуска приложения.
@@ -1265,6 +1312,22 @@ export default function App() {
         break;
       }
 
+      // Переписку прочитали на другом своём устройстве (телефоне):
+      // счётчик здесь обнуляется (multi-device.md §6).
+      case 'conversation_read': {
+        if (event.conversationType === 'channel') {
+          setChannelUnread((prev) => applyConversationRead({ unreadMap: {}, channelUnread: prev }, event).channelUnread);
+        } else {
+          setUnreadMap((prev) => applyConversationRead({ unreadMap: prev, channelUnread: {} }, event).unreadMap);
+        }
+        // Прочитано на телефоне — карточки этой переписки и мигание кнопки
+        // на панели задач здесь больше не нужны. Системные уведомления
+        // Windows, уже показанные, приложение снять не может.
+        setToasts((prev) => (prev.some((t) => toastIsForConversation(t, event)) ? prev.filter((t) => !toastIsForConversation(t, event)) : prev));
+        window.electronAPI?.flashFrame?.(false);
+        break;
+      }
+
       case 'message_status_updated':
         setMessages((prev) => {
           let changed = false;
@@ -1373,18 +1436,23 @@ export default function App() {
         refreshConversations();
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive =
-            isChatVisibleRef.current &&
-            activeChatRef.current?.type === 'direct' &&
-            activeChatRef.current.id === msg.sender_id &&
-            windowFocusedRef.current;
-
-          if (!isCurrentActive) {
+          // Смотрят здесь (в фокусе, «в сети») — прочитано сразу, даже если
+          // лента прокручена вверх (multi-device.md §4 п. 4). Иначе счётчик и
+          // уведомление — только если сервер не сказал «чат читают на другом
+          // устройстве» (notify: false, §5).
+          const plan = incomingMessagePlan({
+            own: false,
+            viewingHere: isViewingHere(currentView(), 'direct', msg.sender_id),
+            notify: event.notify
+          });
+          if (plan.markRead) markConversationRead(undefined, msg.id);
+          if (plan.countUnread) {
             setUnreadMap((prev) => ({
               ...prev,
               [msg.sender_id]: (prev[msg.sender_id] || 0) + 1
             }));
-
+          }
+          if (plan.notify) {
             const sender = usersRef.current.find((u) => u.id === msg.sender_id);
             const senderName = sender ? (sender.full_name || sender.username) : 'Коллега';
 
@@ -1417,13 +1485,16 @@ export default function App() {
         });
 
         if (msg.sender_id !== cUser?.id) {
-          const isCurrentActive =
-            isChatVisibleRef.current &&
-            activeChatRef.current?.type === 'channel' &&
-            activeChatRef.current.id === msg.target_id &&
-            windowFocusedRef.current;
-          if (!isCurrentActive) {
+          const plan = incomingMessagePlan({
+            own: false,
+            viewingHere: isViewingHere(currentView(), 'channel', msg.target_id),
+            notify: event.notify
+          });
+          if (plan.markRead) markConversationRead(undefined, msg.id);
+          if (plan.countUnread) {
             setChannelUnread((prev) => ({ ...prev, [msg.target_id]: (prev[msg.target_id] || 0) + 1 }));
+          }
+          if (plan.notify) {
             const ch = channelsRef.current.find((c) => c.id === msg.target_id);
             addToast({
               title: ch ? channelLabel(ch.name) : 'Канал',
@@ -1457,6 +1528,11 @@ export default function App() {
         });
         break;
       }
+
+      case 'registration_pending':
+        setRegistrationTick((n) => n + 1);
+        addToast(registrationToast(event));
+        break;
 
       case 'user_status_changed':
       case 'user_status': {
@@ -1609,18 +1685,24 @@ export default function App() {
   // Подписка одна на всё время работы окна: раньше на каждую смену токена
   // добавлялась ещё одна, и после смены учётной записи клик по уведомлению
   // отрабатывал и за прежнего сотрудника.
-  const openDirectChatRef = useRef(openDirectChat);
-  const openChannelChatRef = useRef(openChannelChat);
-  openDirectChatRef.current = openDirectChat;
-  openChannelChatRef.current = openChannelChat;
+  // Куда ведёт уведомление (карточка в приложении или системное окно):
+  // личный чат, канал или вкладка консоли (новая заявка на регистрацию).
+  const openToastTarget = (data) => {
+    const target = toastTarget(data);
+    if (!target) return;
+    if (target.kind === 'direct') openDirectChat(target.user);
+    else if (target.kind === 'channel') openChannelChat(target.channel);
+    else if (target.kind === 'admin' && canOpenAdminConsole(currentUserRef.current)) {
+      setAdminFocusTab({ tab: target.tab, at: Date.now() });
+      setShowAdminModal(true);
+    }
+  };
+  const openToastTargetRef = useRef(openToastTarget);
+  openToastTargetRef.current = openToastTarget;
   useEffect(() => {
     if (!window.electronAPI?.onToastAction) return undefined;
     const off = window.electronAPI.onToastAction((toastData) => {
-      if (toastData?.data?.user) {
-        openDirectChatRef.current(toastData.data.user);
-      } else if (toastData?.data?.channel) {
-        openChannelChatRef.current(toastData.data.channel);
-      }
+      openToastTargetRef.current(toastData?.data);
     });
     return () => { if (typeof off === 'function') off(); };
   }, []);
@@ -1751,7 +1833,7 @@ export default function App() {
         try { data = JSON.parse(xhr.responseText); } catch {}
         if (xhr.status === 401) forceLogout('Сеанс истёк или был отозван — войдите заново');
         if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data });
-        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? 'Файл больше 100 МБ — такой файл отправить нельзя' : 'Сервер не принял файл') });
+        else resolve({ ok: false, status: xhr.status, error: data.error || (xhr.status === 413 ? COPY['upload.too_big'] : COPY['upload.refused']) });
       };
       xhr.onerror = () => resolve({ ok: false, error: 'Нет связи с сервером' });
       xhr.onabort = () => resolve({ ok: false, cancelled: true });
@@ -1814,6 +1896,8 @@ export default function App() {
   // только режимом «Не беспокоить». Итоговый статус присылает сервер
   // (user_status_changed) — он учитывает и режим, и последний сигнал системы.
   const presenceRef = useRef('online');
+  // Последний отправленный viewing: undefined — ещё не отправлялся на этом сокете.
+  const lastViewingRef = useRef(undefined);
 
   const applyUserStatus = (userId, newStatus) => {
     setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u)));
@@ -1844,7 +1928,47 @@ export default function App() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'presence', state }));
     }
+    // away сервер снимает viewing сам; вернулись — открытый чат снова «смотрят»
+    // и прочитан: пришедшее за время простоя человек видит сейчас (§4 п. 4).
+    syncViewing();
+    if (state === 'online') markConversationRead();
   };
+
+  // Какой чат этот компьютер сейчас показывает человеку (кадр viewing,
+  // multi-device.md §4): пока он открыт в фокусе, о новых сообщениях в нём
+  // не уведомляется ни одно устройство сотрудника, включая телефон.
+  // Шлётся только при смене.
+  // Что окно показывает человеку сейчас: открытая переписка, виден ли раздел
+  // переписок, фокус, присутствие (для isViewingHere).
+  function currentView() {
+    return {
+      chat: activeChatRef.current,
+      chatVisible: isChatVisibleRef.current,
+      focused: windowFocusedRef.current,
+      presence: presenceRef.current
+    };
+  }
+
+  function syncViewing() {
+    const ws = wsRef.current;
+    const connected = Boolean(ws && ws.readyState === WebSocket.OPEN);
+    const key = viewingKey({
+      chat: activeChatRef.current,
+      chatVisible: isChatVisibleRef.current,
+      focused: windowFocusedRef.current,
+      connected,
+      presence: presenceRef.current
+    });
+    if (!connected || key === lastViewingRef.current) return;
+    lastViewingRef.current = key;
+    ws.send(JSON.stringify(viewingFrame(key)));
+  }
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    syncViewing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChat, activeTab, windowFocused, wsConnected, authState]);
 
   const isDnd = currentUser?.status === 'dnd';
 
@@ -1871,6 +1995,11 @@ export default function App() {
     const offPower = window.electronAPI?.onPowerMonitorEvent?.(({ status }) => {
       updateMyPresence(status);
     });
+    // Окно, запущенное в трее, сообщает away при загрузке страницы — до этой
+    // подписки кадр мог потеряться. Спрашиваем состояние сами (новые оболочки).
+    window.electronAPI?.getWindowPresence?.()
+      .then((status) => { if (status === 'away') updateMyPresence('away'); })
+      .catch(() => {});
 
     // Меню значка в трее. Новое меню присылает «dnd-on» / «dnd-off»; старые
     // установленные версии — прежние пункты статуса, из которых осмысленны
@@ -2340,7 +2469,7 @@ export default function App() {
                 const displayName = u.full_name || u.username;
 
                 const lastConvo = directConvos.find((c) => c.user_id === u.id);
-                const snippet = lastConvo?.last_message_text || 'Нажмите для беседы';
+                const snippet = conversationSnippet(lastConvo);
                 const timeStr = lastConvo?.last_message_time ? formatDialogTime(lastConvo.last_message_time) : '';
                 const unreadBadge = unreadMap[u.id] !== undefined ? unreadMap[u.id] : (lastConvo?.unread_count || 0);
 
@@ -2531,8 +2660,8 @@ export default function App() {
                 deleteWindowMinutes={Number(serverInfo?.message_delete_window_minutes ?? 60)}
                 onStartCall={handleStartCall}
                 onRequestRemoteDesktop={handleRequestRemoteDesktop}
-                onMarkRead={(conversationType, targetId) =>
-                  markConversationRead({ type: conversationType, id: targetId })
+                onMarkRead={(conversationType, targetId, upToId) =>
+                  markConversationRead({ type: conversationType, id: targetId }, upToId)
                 }
                 onTyping={(conversationType, targetId, isTyping) => {
                   if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -2587,7 +2716,7 @@ export default function App() {
         <div className="status-bar-left">
           <span className={`status-net-dot ${wsConnected ? 'online' : 'offline'}`} />
           <span className="status-bar-text">
-            {wsConnected ? 'Подключено' : 'Нет связи с сервером'}
+            {connectionLabel({ connected: wsConnected, networkOnline })}
           </span>
         </div>
 
@@ -2642,10 +2771,7 @@ export default function App() {
       <ToastNotificationStack
         toasts={toasts}
         onDismiss={dismissToast}
-        onAction={(t) => {
-          if (t.data?.user) openDirectChat(t.data.user);
-          else if (t.data?.channel) openChannelChat(t.data.channel);
-        }}
+        onAction={(t) => openToastTarget(t.data)}
       />
 
       {showCommandPalette && (
@@ -2739,9 +2865,12 @@ export default function App() {
           serverInfo={serverInfo}
           serverUrl={serverUrl}
           focusUserId={adminFocusUserId}
+          focusTab={adminFocusTab}
+          registrationTick={registrationTick}
           onClose={() => {
             setShowAdminModal(false);
             setAdminFocusUserId(null);
+            setAdminFocusTab(null);
           }}
           onRefreshData={() => {
             loadBaseData();

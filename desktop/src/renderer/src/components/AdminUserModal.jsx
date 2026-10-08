@@ -7,8 +7,11 @@ import { ResetPasswordDialog, OneTimePasswordDialog } from './PasswordDialogs';
 import SecurityCenter from './SecurityCenter';
 import FilePolicyAdmin from './FilePolicyAdmin';
 import UpdatesAdmin from './UpdatesAdmin';
+import RegistrationAllowlistAdmin from './RegistrationAllowlistAdmin';
+import ReportsAdmin from './ReportsAdmin';
 import { isSuperAdmin, isScopedAdmin, formatPing, readError, toDepartmentId } from '../lib/admin-access.mjs';
 import { isValidMessageWindowValue } from '../lib/message-actions.mjs';
+import { REGISTRATION_SWITCH } from '../lib/registration-admin.mjs';
 
 // Окна правки/удаления сообщений — единственные числовые настройки этого
 // раздела с содержательным «пусто»: пустое поле в PUT ушло бы как '' и
@@ -56,6 +59,9 @@ export default function AdminUserModal({
   onClose,
   onRefreshData,
   focusUserId = null,
+  // { tab, at } — открыть вкладку (клик по уведомлению о новой заявке).
+  focusTab = null,
+  registrationTick = 0,
   securityAlerts = [],
   onSecurityAlertAcknowledged
 }) {
@@ -67,7 +73,7 @@ export default function AdminUserModal({
 
   // Разделы консоли управления сервером
   const [activeTab, setActiveTab] = useState(superAdmin ? 'server' : 'users');
-  // 'server' | 'users' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
+  // 'server' | 'users' | 'allowlist' | 'reports' | 'conferences' | 'rights' | 'tools' | 'filters' | 'settings' | 'security' | 'licenses'
 
   const [loading, setLoading] = useState(false);
   const [showToast, toastElement] = useInlineToast();
@@ -187,6 +193,9 @@ export default function AdminUserModal({
     telegram_offline_alerts: 'true',
     telegram_mask_pii: 'true'
   });
+  // До загрузки настроек allow_registration — значение по умолчанию, а не
+  // настоящее: предупреждения о выключенной регистрации ждут загрузки.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [telegramTestResult, setTelegramTestResult] = useState(null);
 
@@ -322,6 +331,12 @@ export default function AdminUserModal({
       setParserLoading(false);
     }
   };
+
+  // Новая заявка пришла по WebSocket: обновляем список и бейдж, не дожидаясь
+  // повторного открытия консоли (первичную загрузку делает эффект ниже).
+  useEffect(() => {
+    if (registrationTick > 0) loadRegistrations();
+  }, [registrationTick]);
 
   // Initial load
   useEffect(() => {
@@ -493,6 +508,7 @@ export default function AdminUserModal({
       if (res.ok) {
         const data = await res.json();
         setSysSettings((prev) => ({ ...prev, ...data }));
+        setSettingsLoaded(true);
       }
     } catch (err) {}
   };
@@ -593,6 +609,12 @@ export default function AdminUserModal({
     setFormError('');
     setFormMode('edit');
   };
+
+  // Консоль открыли кликом по уведомлению (новая заявка) — сразу нужная
+  // вкладка, в том числе когда консоль уже открыта.
+  useEffect(() => {
+    if (focusTab?.tab) setActiveTab(focusTab.tab);
+  }, [focusTab]);
 
   // Консоль открыли из карточки конкретного сотрудника — значит и показать
   // надо его, а не начальную вкладку. Ждём загрузки списка: до неё открывать
@@ -1188,6 +1210,20 @@ export default function AdminUserModal({
 
               {superAdmin && (
                 <>
+                  <button
+                    className={`admin-nav-item ${activeTab === 'allowlist' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('allowlist')}
+                  >
+                    <Icon name="circleCheck" size={16} /> <span>Разрешённые адреса</span>
+                  </button>
+
+                  <button
+                    className={`admin-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('reports')}
+                  >
+                    <Icon name="alert" size={16} /> <span>Жалобы</span>
+                  </button>
+
                   <button
                     className={`admin-nav-item ${activeTab === 'conferences' ? 'active' : ''}`}
                     onClick={() => setActiveTab('conferences')}
@@ -2171,13 +2207,13 @@ export default function AdminUserModal({
                   ни в справочнике, ни в общих каналах человек не появляется.
                   {/* Настройки сервера доступны только суперадминистратору: у
                       остальных здесь стояло бы значение по умолчанию, а не настоящее. */}
-                  {superAdmin && sysSettings.allow_registration !== 'true' && (
+                  {superAdmin && settingsLoaded && sysSettings.allow_registration !== 'true' && (
                     <>
                       <br />
                       <strong style={{ color: 'var(--warning-text)' }}>
-                        Самостоятельная регистрация сейчас отключена — новых заявок не появится.
+                        {REGISTRATION_SWITCH.offTitle}
                       </strong>{' '}
-                      Включить её можно в разделе «Настройки».
+                      {REGISTRATION_SWITCH.offBody}
                     </>
                   )}
                 </p>
@@ -2241,6 +2277,18 @@ export default function AdminUserModal({
                     </table>
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'allowlist' && superAdmin && (
+              <div className="admin-tab-pane">
+                <RegistrationAllowlistAdmin serverUrl={serverUrl} showToast={showToast} allowRegistration={sysSettings.allow_registration === 'true' || !settingsLoaded} />
+              </div>
+            )}
+
+            {activeTab === 'reports' && superAdmin && (
+              <div className="admin-tab-pane">
+                <ReportsAdmin serverUrl={serverUrl} showToast={showToast} />
               </div>
             )}
 
@@ -2731,6 +2779,24 @@ export default function AdminUserModal({
                       value={sysSettings.message_delete_window_minutes}
                       onChange={(e) => setSysSettings({ ...sysSettings, message_delete_window_minutes: e.target.value })}
                     />
+                  </div>
+
+                  {/* Главный выключатель самостоятельной регистрации (решение Q):
+                      форма на компьютере и код из письма на телефоне. Раньше
+                      галочки не было вовсе, хотя «Заявки» отсылали сюда. */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={sysSettings.allow_registration === 'true'}
+                        onChange={(e) => setSysSettings({ ...sysSettings, allow_registration: e.target.checked ? 'true' : 'false' })}
+                        aria-describedby="allow-registration-hint"
+                      />
+                      <span>{REGISTRATION_SWITCH.label}</span>
+                    </label>
+                    <p id="allow-registration-hint" style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 24px', lineHeight: 1.5 }}>
+                      {REGISTRATION_SWITCH.hint}
+                    </p>
                   </div>
 
                   {/* Telegram Gateway Section */}

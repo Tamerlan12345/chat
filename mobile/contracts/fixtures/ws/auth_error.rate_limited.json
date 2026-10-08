@@ -1,0 +1,5 @@
+{
+  "type": "auth_error",
+  "code": "RATE_LIMITED",
+  "message": "Слишком много попыток. Повторите через минуту."
+}

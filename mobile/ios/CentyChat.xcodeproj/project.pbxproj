@@ -10,11 +10,13 @@
 		A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* CentyChatMobileApp.swift */; };
 		A10000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* Assets.xcassets */; };
 		A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* PrivacyInfo.xcprivacy */; };
-		A10000000000000000000021 /* AudioRelayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* AudioRelayTests.swift */; };
-		A10000000000000000000022 /* CallStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* CallStateMachineTests.swift */; };
-		A10000000000000000000023 /* DTOParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* DTOParsingTests.swift */; };
-		A10000000000000000000024 /* EditWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000034 /* EditWindowTests.swift */; };
+		A10000000000000000000005 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* fixtures */; };
 		A10000000000000000000025 /* AppLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* AppLaunchTests.swift */; };
+		A10000000000000000000201 /* UserPathQATests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000202 /* UserPathQATests.swift */; };
+		A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000039 /* ScreenshotTourTests.swift */; };
+		A100000000000000000000E2 /* RegistrationFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000E1 /* RegistrationFlowUITests.swift */; };
+		A10000000000000000000301 /* PeopleSearchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000302 /* PeopleSearchUITests.swift */; };
+		A10000000000000000000401 /* OfflineQueueUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000402 /* OfflineQueueUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,18 +33,19 @@
 		A10000000000000000000015 /* CentyChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CentyChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000016 /* CentyChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CentyChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000017 /* CentyChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CentyChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000031 /* AudioRelayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRelayTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000032 /* CallStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallStateMachineTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000033 /* DTOParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DTOParsingTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000034 /* EditWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditWindowTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000018 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = ../contracts/fixtures; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000035 /* AppLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000202 /* UserPathQATests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserPathQATests.swift; sourceTree = "<group>"; };
+		A10000000000000000000039 /* ScreenshotTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTourTests.swift; sourceTree = "<group>"; };
+		A100000000000000000000E1 /* RegistrationFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegistrationFlowUITests.swift; sourceTree = "<group>"; };
+		A10000000000000000000302 /* PeopleSearchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleSearchUITests.swift; sourceTree = "<group>"; };
+		A10000000000000000000402 /* OfflineQueueUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineQueueUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		A10000000000000000000051 /* Application source exclusions */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				App/CentyChatApp.swift,
 				Resources/Assets.xcassets,
 				Resources/Info.plist,
 				Resources/PrivacyInfo.xcprivacy,
@@ -56,6 +59,11 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (A10000000000000000000051 /* Application source exclusions */);
 			path = CentyChat;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000062 /* CentyChatTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CentyChatTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -72,13 +80,15 @@
 			children = (
 				A10000000000000000000061 /* CentyChat */,
 				A10000000000000000000081 /* CentyChatMobileApp */,
-				A10000000000000000000082 /* CentyChatTests */,
+				A10000000000000000000062 /* CentyChatTests */,
+				A10000000000000000000084 /* CentyChatUITests */,
+				A10000000000000000000018 /* fixtures */,
 				A10000000000000000000083 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
 		A10000000000000000000081 /* CentyChatMobileApp */ = {isa = PBXGroup; children = (A10000000000000000000012 /* CentyChatMobileApp.swift */); path = CentyChatMobileApp; sourceTree = "<group>"; };
-		A10000000000000000000082 /* CentyChatTests */ = {isa = PBXGroup; children = (A10000000000000000000031 /* AudioRelayTests.swift */, A10000000000000000000032 /* CallStateMachineTests.swift */, A10000000000000000000033 /* DTOParsingTests.swift */, A10000000000000000000034 /* EditWindowTests.swift */, A10000000000000000000035 /* AppLaunchTests.swift */); path = CentyChatTests; sourceTree = "<group>"; };
+		A10000000000000000000084 /* CentyChatUITests */ = {isa = PBXGroup; children = (A10000000000000000000035 /* AppLaunchTests.swift */, A10000000000000000000039 /* ScreenshotTourTests.swift */, A10000000000000000000202 /* UserPathQATests.swift */, A100000000000000000000E1 /* RegistrationFlowUITests.swift */, A10000000000000000000302 /* PeopleSearchUITests.swift */, A10000000000000000000402 /* OfflineQueueUITests.swift */); path = CentyChatUITests; sourceTree = "<group>"; };
 		A10000000000000000000083 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000015 /* CentyChat.app */, A10000000000000000000016 /* CentyChatTests.xctest */, A10000000000000000000017 /* CentyChatUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -102,6 +112,7 @@
 			buildPhases = (A10000000000000000000095 /* Sources */, A10000000000000000000073 /* Frameworks */, A10000000000000000000096 /* Resources */);
 			buildRules = ();
 			dependencies = (A100000000000000000000D2 /* PBXTargetDependency */);
+			fileSystemSynchronizedGroups = (A10000000000000000000062 /* CentyChatTests */);
 			name = CentyChatTests;
 			productName = CentyChatTests;
 			productReference = A10000000000000000000016 /* CentyChatTests.xctest */;
@@ -140,15 +151,15 @@
 /* Begin PBXResourcesBuildPhase section */
 		A10000000000000000000092 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000003 /* Assets.xcassets in Resources */, A10000000000000000000004 /* PrivacyInfo.xcprivacy in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 
-		A10000000000000000000096 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000096 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000005 /* fixtures in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 		A10000000000000000000098 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000091 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* CentyChatMobileApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 
-		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021 /* AudioRelayTests.swift in Sources */, A10000000000000000000022 /* CallStateMachineTests.swift in Sources */, A10000000000000000000023 /* DTOParsingTests.swift in Sources */, A10000000000000000000024 /* EditWindowTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000095 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000097 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000025 /* AppLaunchTests.swift in Sources */, A10000000000000000000029 /* ScreenshotTourTests.swift in Sources */, A10000000000000000000201 /* UserPathQATests.swift in Sources */, A100000000000000000000E2 /* RegistrationFlowUITests.swift in Sources */, A10000000000000000000301 /* PeopleSearchUITests.swift in Sources */, A10000000000000000000401 /* OfflineQueueUITests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -160,13 +171,13 @@
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000101 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; SDKROOT = iphoneos; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; name = Debug; };
 		A10000000000000000000102 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0; }; name = Release; };
-		A10000000000000000000111 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = CentyChat/Resources/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat; PRODUCT_NAME = CentyChat; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A10000000000000000000112 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = CentyChat/Resources/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat; PRODUCT_NAME = CentyChat; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A10000000000000000000111 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CENTYCHAT_SERVER_URL = "https://centychat-production.up.railway.app"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = CentyChat/Resources/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat; PRODUCT_NAME = CentyChat; LOCALIZATION_PREFERS_STRING_CATALOGS = YES; SWIFT_EMIT_LOC_STRINGS = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A10000000000000000000112 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CENTYCHAT_SERVER_URL = "https://centychat-production.up.railway.app"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = CentyChat/Resources/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat; PRODUCT_NAME = CentyChat; LOCALIZATION_PREFERS_STRING_CATALOGS = YES; SWIFT_EMIT_LOC_STRINGS = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 
-		A10000000000000000000131 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.tests; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CentyChat.app/CentyChat"; TEST_TARGET_NAME = CentyChat; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A10000000000000000000132 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.tests; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CentyChat.app/CentyChat"; TEST_TARGET_NAME = CentyChat; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
-		A10000000000000000000141 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.uitests; TEST_TARGET_NAME = CentyChat; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A10000000000000000000142 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.uitests; TEST_TARGET_NAME = CentyChat; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A10000000000000000000131 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.tests; PRODUCT_MODULE_NAME = CentyChatTests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CentyChat.app/CentyChat"; TEST_TARGET_NAME = CentyChat; WRAPPER_EXTENSION = xctest; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A10000000000000000000132 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.tests; PRODUCT_MODULE_NAME = CentyChatTests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CentyChat.app/CentyChat"; TEST_TARGET_NAME = CentyChat; WRAPPER_EXTENSION = xctest; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A10000000000000000000141 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.uitests; PRODUCT_MODULE_NAME = CentyChatUITests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = CentyChat; WRAPPER_EXTENSION = xctest; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A10000000000000000000142 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = kz.centras.centychat.uitests; PRODUCT_MODULE_NAME = CentyChatUITests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = CentyChat; WRAPPER_EXTENSION = xctest; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

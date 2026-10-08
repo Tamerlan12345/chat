@@ -294,6 +294,7 @@ test('main.js не перехватывает клавиши масштаба д
   assert.match(inputHandlers[0], /isF12 \|\| isCtrlShiftI\) event\.preventDefault\(\)/, 'F12 и Ctrl+Shift+I по-прежнему гасятся');
   assert.ok(!/Equal|Minus|Digit0|NumpadAdd/.test(inputHandlers[0]));
   assert.match(main, /if \(app\.isPackaged\) Menu\.setApplicationMenu\(null\);/, 'меню в собранной сборке не возвращается');
+  assert.match(main, /autoHideMenuBar: !app\.isPackaged/, 'системное меню в разработке скрыто и не дублирует меню приложения');
   assert.ok(!/openDevTools|toggleDevTools/.test(main), 'DevTools нигде не открываются');
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'main', 'zoom-keys.js')), 'единственный источник — preload.js');
 

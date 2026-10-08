@@ -1,0 +1,23 @@
+{
+  "headers": {
+    "apns-topic": "com.example.centychat",
+    "apns-push-type": "alert",
+    "apns-priority": "10",
+    "apns-expiration": "1791018000",
+    "apns-collapse-id": "m-direct-2"
+  },
+  "payload": {
+    "aps": {
+      "alert": {
+        "body": "Новое сообщение"
+      },
+      "sound": "default",
+      "mutable-content": 1,
+      "thread-id": "direct-2"
+    },
+    "type": "message",
+    "conversationType": "direct",
+    "targetId": 2,
+    "messageId": 13
+  }
+}
