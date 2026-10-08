@@ -5,8 +5,15 @@
 [extend]
 useDefault = true
 
+#
+# The one regex is the fixed example password typed by the iOS registration and
+# account-deletion unit tests (mobile/ios/CentyChatTests); it is not a credential
+# of any real account.
 [allowlist]
-description = "Public RFC 7515 JWS test vectors (not secrets)"
+description = "Public RFC 7515 JWS test vectors and the iOS tests' example password (not secrets)"
 paths = [
   '''^server/test/helpers/rfc7515-vectors\.json$''',
+]
+regexes = [
+  '''^Str0ng-Passw0rd$''',
 ]
