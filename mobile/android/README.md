@@ -67,3 +67,25 @@ release builds never see it. Without the file the checked-in debug config applie
 
 Debug builds also allow cleartext HTTP to local hosts, but bearer tokens are only ever sent over HTTPS.
 Screenshots go to `build-evidence/` (git-ignored).
+
+## Release signing
+
+Release artifacts require a signing keystore and explicit version metadata. Supply
+`-Pcentychat.versionCode=<positive integer>` and `-Pcentychat.versionName=<version>` to the Gradle
+release build. These project properties are required for release artifacts; debug builds use
+development defaults.
+
+For local builds, create an untracked `mobile/android/keystore.properties` file with:
+
+```properties
+storeFile=C:/secure/path/centychat-release.jks
+storePassword=<keystore password>
+keyAlias=<release key alias>
+keyPassword=<key password>
+```
+
+Alternatively, CI can provide `CENTYCHAT_KEYSTORE_FILE`, `CENTYCHAT_KEYSTORE_PASSWORD`,
+`CENTYCHAT_KEY_ALIAS`, and `CENTYCHAT_KEY_PASSWORD` as environment secrets. Environment values
+override matching properties-file values. Keep the keystore outside version control. The local
+properties file and common `.jks` / `.keystore` files are ignored. Release packaging fails when
+version metadata, any signing value, or the keystore file is missing.
