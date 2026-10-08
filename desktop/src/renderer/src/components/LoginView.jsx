@@ -1,3 +1,4 @@
+import { assertCredentialOrigin } from '../lib/credentials.mjs';
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
 import { BrandLockup, BRAND_C_PATH } from './BrandMark';
@@ -175,6 +176,7 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
     }
 
     try {
+      assertCredentialOrigin(cleanUrl);
       // Сервер под наплывом входов отвечает 503 (LOGIN_BUSY/PASSWORD_HASH_BUSY)
       // с Retry-After — это не отказ, а просьба повторить. Повторяем до двух
       // раз, соблюдая Retry-After (пауза не дольше ~5 с), с видимым статусом.
@@ -203,10 +205,9 @@ export default function LoginView({ onLoginSuccess, initialServerUrl = '' }) {
         localStorage.removeItem('mychat_saved_username');
       }
 
-      localStorage.setItem('mychat_token', data.token);
       localStorage.setItem('mychat_server_url', cleanUrl);
 
-      onLoginSuccess(data.user, data.token, cleanUrl);
+      await onLoginSuccess(data.user, data.token, cleanUrl);
     } catch (err) {
       setRetryNote('');
       setError(

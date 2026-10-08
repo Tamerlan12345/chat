@@ -1,3 +1,4 @@
+import { getSessionToken } from '../lib/credentials.mjs';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Icon from './Icon';
 import { readError } from '../lib/admin-access.mjs';
@@ -29,7 +30,7 @@ function normalizeExt(raw) {
 
 function useApi(serverUrl) {
   return useCallback(async (path, { method = 'GET', body, fallback = 'Сервер отклонил запрос' } = {}) => {
-    const token = localStorage.getItem('mychat_token') || '';
+    const token = getSessionToken();
     let res;
     try {
       res = await fetch(serverUrl + path, {

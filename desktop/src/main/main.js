@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard, shell, net, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, desktopCapturer, screen, powerMonitor, globalShortcut, clipboard, shell, net, dialog, session, safeStorage } = require('electron');
 const path = require('node:path');
 const { pinUserData, userDataPath } = require('./app-paths');
 
@@ -12,6 +12,7 @@ const crypto = require('node:crypto');
 const { RemoteInput } = require('./remote-input');
 const { HostSession } = require('./host-session');
 const { findCapturedDisplay, physicalRect } = require('./display-map');
+const { createCredentialVault, registerCredentialHandlers } = require('./credentials');
 const { originOf, isSameOrigin, isTrustedFrame, isExternalLink } = require('./security');
 const {
   HEALTH_RETRY_MS,
@@ -341,6 +342,13 @@ function isMainWindowFrame(frame) {
     return false;
   }
 }
+
+// Main-window, top-frame, configured-origin checks precede every vault access.
+registerCredentialHandlers({
+  ipcMain,
+  isAllowed: (event) => isFromServerPage(event, { mainWindowOnly: true }) && isMainWindowFrame(event.senderFrame),
+  vault: createCredentialVault({ directory: app.getPath('userData'), origin: SERVER_ORIGIN, safeStorage })
+});
 
 // ── Страница «Нет связи с сервером» ─────────────────────────────────────────
 

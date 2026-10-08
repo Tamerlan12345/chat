@@ -1,3 +1,4 @@
+import { getSessionToken } from '../lib/credentials.mjs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Icon from './Icon';
 import { useConfirm } from './ConfirmDialog';
@@ -20,7 +21,7 @@ const CHANNELS = ['stable', 'beta'];
 
 function useApi(serverUrl) {
   return useCallback(async (path, { method = 'GET', body, fallback = 'Сервер отклонил запрос' } = {}) => {
-    const token = localStorage.getItem('mychat_token') || '';
+    const token = getSessionToken();
     let res;
     try {
       res = await fetch(serverUrl + path, {
@@ -191,7 +192,7 @@ function UploadForm({ serverUrl, onChanged, showToast }) {
     if (files.portable) form.append('portable', files.portable);
     form.append('notes', notes);
 
-    const token = localStorage.getItem('mychat_token') || '';
+    const token = getSessionToken();
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
     xhr.open('POST', serverUrl + '/api/admin/updates/releases');

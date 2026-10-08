@@ -1,3 +1,4 @@
+import { hasSecureCredentials, assertCredentialOrigin, restoreCredentials, getSessionToken, getDeviceId, saveSessionToken, clearCredentials, knockDevice, claimDevice } from './lib/credentials.mjs';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import OrgTree from './components/OrgTree';
@@ -87,7 +88,7 @@ function isAllowedServerUrl(url) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem('mychat_token') || '');
+  const [token, setToken] = useState(getSessionToken());
   const [currentUser, setCurrentUser] = useState(null);
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
   const [serverInfo, setServerInfo] = useState(null);
@@ -95,6 +96,7 @@ export default function App() {
   // (или подсказанный «настройте сервер так-то») молча отправлял бы их открытым
   // текстом; http допустим лишь для localhost при разработке.
   const [serverUrl, setServerUrl] = useState(() => {
+    if (hasSecureCredentials()) return window.location.origin;
     const stored = localStorage.getItem('mychat_server_url');
     if (stored && isAllowedServerUrl(stored)) return stored;
     return isAllowedServerUrl(window.location.origin) ? window.location.origin : 'https://centychat-production.up.railway.app';
@@ -398,29 +400,8 @@ export default function App() {
   // Номер устройства — открытый: его видят администраторы при привязке.
   // Секрет — 256 случайных бит, которые знает только этот компьютер: без него
   // сервер не пускает без пароля, как бы ни стал известен номер.
-  const deviceIdentity = () => {
-    const random = (bytes) => {
-      const buf = new Uint8Array(bytes);
-      crypto.getRandomValues(buf);
-      return btoa(String.fromCharCode(...buf)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-    let deviceId = localStorage.getItem('mychat_device_id');
-    if (!deviceId) {
-      deviceId = 'dev-' + random(12);
-      localStorage.setItem('mychat_device_id', deviceId);
-    }
-    let deviceSecret = localStorage.getItem('mychat_device_secret');
-    if (!deviceSecret) {
-      deviceSecret = random(32);
-      localStorage.setItem('mychat_device_secret', deviceSecret);
-    }
-    return { deviceId, deviceSecret };
-  };
-
   const attemptSilentDeviceLogin = async () => {
     try {
-      const { deviceId, deviceSecret } = deviceIdentity();
-
       let devInfo = null;
       if (window.electronAPI && window.electronAPI.getDeviceInfo) {
         try {
@@ -440,24 +421,18 @@ export default function App() {
         } catch (e) {}
       }
 
-      const knockRes = await fetch(serverUrl + '/api/auth/knock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: deviceId,
-          device_secret: deviceSecret,
-          device_name: (devInfo && devInfo.hostname) || 'ПК пользователя',
-          platform: (devInfo && devInfo.platform) || 'Windows 11',
-          client_version: clientVersion
-        })
+      const knockRes = await knockDevice(serverUrl, {
+        device_name: (devInfo && devInfo.hostname) || 'ПК пользователя',
+        platform: (devInfo && devInfo.platform) || 'Windows 11',
+        client_version: clientVersion
       });
 
       if (knockRes.ok) {
         const knockData = await knockRes.json();
         if (knockData.status === 'paired' && knockData.token) {
+          await saveSessionToken(knockData.token);
           tokenRef.current = knockData.token;
           setToken(knockData.token);
-          localStorage.setItem('mychat_token', knockData.token);
           setCurrentUser(knockData.user);
           setAuthState('authenticated');
           openSessionChannels(knockData.user, knockData.token);
@@ -472,7 +447,13 @@ export default function App() {
 
   const initializeSession = async () => {
     setAuthState('checking');
-    const storedToken = localStorage.getItem('mychat_token');
+    let storedToken;
+    try { storedToken = await restoreCredentials(); }
+    catch (error) {
+      sessionStorage.setItem('mychat_logout_reason', error.message || 'Защищённое хранилище недоступно — проверьте настройки ОС.');
+      setAuthState('unauthenticated');
+      return;
+    }
 
     if (storedToken) {
       // Повторяем несколько раз: сервер может быть ещё не поднят (в облаке
@@ -490,13 +471,14 @@ export default function App() {
     // A device paired by an admin logs in silently, which would otherwise
     // undo an explicit logout on the very next launch.
     if (localStorage.getItem('mychat_logged_out') !== '1' && (await attemptSilentDeviceLogin())) return;
-    localStorage.removeItem('mychat_token');
     setToken('');
     setCurrentUser(null);
     setAuthState('unauthenticated');
   };
 
-  const handleLoginSuccess = (user, authToken, cleanServerUrl) => {
+  const handleLoginSuccess = async (user, authToken, cleanServerUrl) => {
+    assertCredentialOrigin(cleanServerUrl || serverUrl);
+    await saveSessionToken(authToken);
     if (cleanServerUrl && cleanServerUrl !== serverUrl) {
       setServerUrl(cleanServerUrl);
       localStorage.setItem('mychat_server_url', cleanServerUrl);
@@ -511,12 +493,7 @@ export default function App() {
     // Вход по паролю подтверждает, что устройство принадлежит этому сотруднику:
     // если администратор его привязал, следующие запуски пройдут без пароля.
     // Отказ не мешает работе — просто в следующий раз снова спросят пароль.
-    const { deviceId, deviceSecret } = deviceIdentity();
-    fetch((cleanServerUrl || serverUrl) + '/api/auth/device/claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-      body: JSON.stringify({ device_id: deviceId, device_secret: deviceSecret })
-    }).catch(() => {});
+    claimDevice(cleanServerUrl || serverUrl, authToken).catch(() => {});
   };
 
   // The operator asks the SERVER for a session and waits: it checks the
@@ -615,11 +592,10 @@ export default function App() {
     // выход всё равно должен случиться; keepalive даёт запросу пережить
     // перезагрузку окна.
     await revokeTokenOnServer();
-    localStorage.removeItem('mychat_device_secret');
     // Раньше очищались только токен и пользователь: открытый чат, сообщения,
     // счётчики и уведомления прежнего сотрудника оставались в памяти, и тот,
     // кто входил следующим за этим компьютером, видел чужую переписку.
-    forceLogout(null);
+    await forceLogout(null);
   };
 
   // Сервер больше не принимает этот сеанс: пароль сброшен, права роли
@@ -627,7 +603,7 @@ export default function App() {
   // со старыми данными и молча получал отказы. Перезагрузка окна — надёжный
   // способ сбросить всё состояние прежнего сеанса разом: чат, счётчики,
   // звонок, открытые окна.
-  const forceLogout = (reason) => {
+  const forceLogout = async (reason) => {
     if (loggingOutRef.current) return;
     loggingOutRef.current = true;
     const ws = wsRef.current;
@@ -635,7 +611,16 @@ export default function App() {
       ws.noReconnect = true;
       try { ws.close(); } catch {}
     }
-    localStorage.removeItem('mychat_token');
+    try { await clearCredentials(); }
+    catch {
+      tokenRef.current = '';
+      setToken('');
+      setCurrentUser(null);
+      sessionStorage.setItem('mychat_logout_reason', 'Не удалось удалить сохранённый сеанс. Проверьте доступ к папке приложения перед перезапуском.');
+      setAuthState('unauthenticated');
+      loggingOutRef.current = false;
+      return;
+    }
     if (reason) {
       try { sessionStorage.setItem('mychat_logout_reason', reason); } catch {}
     }
@@ -650,7 +635,7 @@ export default function App() {
     // server/src/api/index.js). Это работает независимо от того, успел ли
     // unbindDeviceOnServer выполниться раньше, — второй, избыточный путь к
     // тому же результату, а не замена ему.
-    const deviceId = localStorage.getItem('mychat_device_id');
+    const deviceId = getDeviceId();
     let timer = null;
     try {
       // По таймауту запрос не отменяется: keepalive доводит его до сервера
@@ -681,7 +666,7 @@ export default function App() {
   // находка №9б) — тогда секрет оставался действующим до истечения TTL.
   const unbindDeviceOnServer = async () => {
     const currentToken = tokenRef.current;
-    const deviceId = localStorage.getItem('mychat_device_id');
+    const deviceId = getDeviceId();
     if (!currentToken || !deviceId) return;
     let timer = null;
     try {
@@ -727,10 +712,11 @@ export default function App() {
       const data = await res.json().catch(() => null);
       // Пока шёл запрос, токен мог смениться (смена пароля) — более новый
       // не затираем.
-      if (typeof data?.token !== 'string' || !data.token || tokenRef.current !== sentToken) return;
+      if (loggingOutRef.current || typeof data?.token !== 'string' || !data.token || tokenRef.current !== sentToken) return;
+      await saveSessionToken(data.token);
+      if (loggingOutRef.current) return;
       tokenRef.current = data.token;
       setToken(data.token);
-      localStorage.setItem('mychat_token', data.token);
       lastTokenRefreshRef.current = Date.now();
     } catch {
       // Нет связи — попробуем при следующем срабатывании таймера или фокусе.
@@ -776,11 +762,12 @@ export default function App() {
   // возвращает новый. Его нужно принять и сохранить, иначе следующий запрос
   // получит 401 и выбросит человека на экран входа — сразу после того, как он
   // успешно сменил пароль.
-  const handleTokenRenewed = (nextToken) => {
+  const handleTokenRenewed = async (nextToken) => {
     if (!nextToken) return;
+    await saveSessionToken(nextToken);
+    if (loggingOutRef.current) return;
     tokenRef.current = nextToken;
     setToken(nextToken);
-    localStorage.setItem('mychat_token', nextToken);
     initWebSocket(nextToken);
   };
 
@@ -817,9 +804,10 @@ export default function App() {
       // после успешной смены пароля.
       const nextToken = data.token || token;
       if (data.token) {
+        await saveSessionToken(data.token);
+        if (loggingOutRef.current) return;
         tokenRef.current = data.token;
         setToken(data.token);
-        localStorage.setItem('mychat_token', data.token);
       }
       initWebSocket(nextToken);
       loadBaseData(nextToken);
@@ -864,6 +852,10 @@ export default function App() {
 
   const handleApplyServer = (newUrl) => {
     if (!isAllowedServerUrl(newUrl)) return;
+    try { assertCredentialOrigin(newUrl); } catch (error) {
+      addToast({ title: 'Адрес сервера', body: error.message, type: 'system' });
+      return;
+    }
     setServerUrl(newUrl);
     localStorage.setItem('mychat_server_url', newUrl);
     if (wsRef.current) {
