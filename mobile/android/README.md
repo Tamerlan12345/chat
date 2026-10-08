@@ -1,5 +1,7 @@
 # CentyChat Android
 
+**Статус на 2026-10-08:** функциональная реализация завершена, разработка новых функций пока на паузе. Debug unit, lint, сборка и инструментальные тесты эмулятора прошли в CI на merge-коммите `6fe90ed`. Подписанный release, установка на физическом Android-устройстве и реальные FCM push остаются выпускными проверками; готовность к публикации ими пока не подтверждена.
+
 Kotlin, Jetpack Compose, Material 3. minSdk 26, compileSdk/targetSdk 36.
 
 Toolchain: Gradle 9.8.0, AGP 9.4.1 (built-in Kotlin, so no `kotlin-android` plugin), Kotlin 2.4.20,
