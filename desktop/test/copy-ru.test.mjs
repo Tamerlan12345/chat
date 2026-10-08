@@ -4,53 +4,39 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Общие русские тексты трёх клиентов (copy-ru-proposal.md, Task 11 → в
-// контракте mobile/contracts/copy-ru.md). Здесь — ключи, чьи состояния есть
-// на компьютере; тексты сверены дословно с канонической таблицей.
-
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (...p) => fs.readFileSync(path.join(here, '..', 'src', 'renderer', 'src', ...p), 'utf8');
+const contractCopy = JSON.parse(fs.readFileSync(
+  path.resolve(here, '../../mobile/contracts/copy/ru.json'),
+  'utf8'
+));
+const desktopCopyKeys = [
+  'signout.title', 'signout.body', 'signout.confirm', 'reg.disabled',
+  'login.pending.title', 'login.pending.body', 'login.rejected.title', 'login.rejected.body',
+  'login.busy_retrying', 'login.invalid', 'login.offline',
+  'conn.offline', 'conn.reconnecting', 'conn.online',
+  'upload.too_big', 'upload.empty', 'upload.no_extension', 'upload.refused',
+  'download.forbidden', 'download.failed', 'download.no_network', 'delivery.DM_NOT_ALLOWED'
+];
 
-const CANON = {
-  'signout.title': 'Выйти из учётной записи?',
-  'signout.body': 'Чтобы снова войти на этом устройстве, понадобятся логин и пароль.',
-  'signout.confirm': 'Выйти',
-  'reg.disabled': 'Регистрация сейчас закрыта. Обратитесь к администратору.',
-  'login.pending.title': 'Заявка на рассмотрении',
-  'login.pending.body': 'Заявка на регистрацию ещё рассматривается администратором. Вход откроется после одобрения.',
-  'login.rejected.title': 'Заявка отклонена',
-  'login.rejected.body': 'Заявка на регистрацию отклонена администратором. Обратитесь к администратору вашей компании.',
-  'login.busy_retrying': 'Сервер занят. Повторяем вход…',
-  'login.invalid': 'Неверный логин или пароль',
-  'login.offline': 'Нет связи с сервером. Проверьте подключение к интернету.',
-  'conn.offline': 'Нет сети',
-  'conn.reconnecting': 'Переподключение…',
-  'conn.online': 'Подключено',
-  'upload.too_big': 'Файл больше 100 МБ — такой файл загрузить нельзя',
-  'upload.empty': 'Файл пустой',
-  'upload.no_extension': 'У файла нет расширения',
-  'upload.refused': 'Сервер не принял файл',
-  'download.forbidden': 'Нет доступа к файлу',
-  'download.failed': 'Не удалось скачать файл',
-  'download.no_network': 'Нет связи с сервером — файл не скачан',
-  'delivery.DM_NOT_ALLOWED': 'Сообщение не может быть доставлено'
-};
-
-test('COPY совпадает с канонической таблицей дословно', async () => {
+test('COPY совпадает с mobile/contracts/copy/ru.json дословно', async () => {
   const { COPY } = await import('../src/renderer/src/lib/copy-ru.mjs');
-  for (const [key, text] of Object.entries(CANON)) assert.strictEqual(COPY[key], text, key);
+  for (const key of desktopCopyKeys) {
+    assert.equal(typeof contractCopy[key], 'string', `canonical contract key ${key} must be a string`);
+    assert.strictEqual(COPY[key], contractCopy[key], key);
+  }
 });
 
 test('describeAuthFailure: код сервера важнее короткого текста — заявка, отказ, регистрация закрыта', async () => {
   const { describeAuthFailure } = await import('../src/renderer/src/lib/copy-ru.mjs');
-  assert.strictEqual(describeAuthFailure(403, { code: 'ACCOUNT_PENDING', error: 'Заявка на рассмотрении' }, 'x'), CANON['login.pending.body']);
-  assert.strictEqual(describeAuthFailure(403, { code: 'ACCOUNT_REJECTED', error: 'Заявка отклонена' }, 'x'), CANON['login.rejected.body']);
-  assert.strictEqual(describeAuthFailure(403, { code: 'REGISTRATION_DISABLED', error: 'что угодно' }, 'x'), CANON['reg.disabled']);
+  assert.strictEqual(describeAuthFailure(403, { code: 'ACCOUNT_PENDING', error: 'Заявка на рассмотрении' }, 'x'), contractCopy['login.pending.body']);
+  assert.strictEqual(describeAuthFailure(403, { code: 'ACCOUNT_REJECTED', error: 'Заявка отклонена' }, 'x'), contractCopy['login.rejected.body']);
+  assert.strictEqual(describeAuthFailure(403, { code: 'REGISTRATION_DISABLED', error: 'что угодно' }, 'x'), contractCopy['reg.disabled']);
 });
 
 test('describeAuthFailure: прочее — текст сервера, без него — понятная замена', async () => {
   const { describeAuthFailure } = await import('../src/renderer/src/lib/copy-ru.mjs');
-  assert.strictEqual(describeAuthFailure(401, { error: 'Неверный логин или пароль' }, 'x'), 'Неверный логин или пароль');
+  assert.strictEqual(describeAuthFailure(401, { error: contractCopy['login.invalid'] }, 'x'), contractCopy['login.invalid']);
   assert.strictEqual(describeAuthFailure(403, {}, 'x'), 'Доступ с этого адреса запрещён — обратитесь к администратору');
   assert.strictEqual(describeAuthFailure(404, null, 'x'), 'По этому адресу сервер CentyChat не отвечает');
   assert.strictEqual(describeAuthFailure(429, {}, 'x'), 'Слишком много попыток — повторите через минуту');
@@ -60,9 +46,9 @@ test('describeAuthFailure: прочее — текст сервера, без н
 
 test('connectionLabel: связь есть — «Подключено»; сети нет — «Нет сети»; сеть есть, сокета нет — «Переподключение…»', async () => {
   const { connectionLabel } = await import('../src/renderer/src/lib/copy-ru.mjs');
-  assert.strictEqual(connectionLabel({ connected: true, networkOnline: true }), 'Подключено');
-  assert.strictEqual(connectionLabel({ connected: false, networkOnline: false }), 'Нет сети');
-  assert.strictEqual(connectionLabel({ connected: false, networkOnline: true }), 'Переподключение…');
+  assert.strictEqual(connectionLabel({ connected: true, networkOnline: true }), contractCopy['conn.online']);
+  assert.strictEqual(connectionLabel({ connected: false, networkOnline: false }), contractCopy['conn.offline']);
+  assert.strictEqual(connectionLabel({ connected: false, networkOnline: true }), contractCopy['conn.reconnecting']);
 });
 
 test('экраны берут тексты из COPY: выход, вход, строка состояния, вложения', () => {
@@ -91,8 +77,8 @@ test('правило L: на экране входа только знак Centy
 test('проверки вложений до загрузки говорят теми же словами, что сервер и телефоны', async () => {
   const { uploadProblem, MAX_UPLOAD_BYTES } = await import('../src/renderer/src/lib/attachments.mjs');
   const { checkFileAgainstPolicy } = await import('../src/renderer/src/lib/file-policy.mjs');
-  assert.strictEqual(uploadProblem({ size: MAX_UPLOAD_BYTES + 1 }), CANON['upload.too_big']);
-  assert.strictEqual(uploadProblem({ size: 0 }), CANON['upload.empty']);
-  assert.strictEqual(checkFileAgainstPolicy({ name: 'README' }, { enabled: true, allowed: ['pdf'] }), CANON['upload.no_extension']);
+  assert.strictEqual(uploadProblem({ size: MAX_UPLOAD_BYTES + 1 }), contractCopy['upload.too_big']);
+  assert.strictEqual(uploadProblem({ size: 0 }), contractCopy['upload.empty']);
+  assert.strictEqual(checkFileAgainstPolicy({ name: 'README' }, { enabled: true, allowed: ['pdf'] }), contractCopy['upload.no_extension']);
   assert.strictEqual(checkFileAgainstPolicy({ name: 'a‮fdp.exe' }, { enabled: true, allowed: ['pdf'] }), 'Имя файла содержит недопустимые символы');
 });
