@@ -15,6 +15,13 @@ function subscribe(channel, toArgs = (data) => [data]) {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  credentials: {
+    restore: (legacy) => ipcRenderer.invoke('credentials-restore', legacy),
+    saveToken: (token) => ipcRenderer.invoke('credentials-save-token', { token }),
+    clear: () => ipcRenderer.invoke('credentials-clear'),
+    claim: () => ipcRenderer.invoke('credentials-claim'),
+    knock: (info) => ipcRenderer.invoke('credentials-knock', info)
+  },
   isElectron: true,
   openRemoteDesktopViewer: (data) => ipcRenderer.invoke('open-remote-desktop-viewer', data),
   showNotification: (data) => ipcRenderer.invoke('show-notification', data),

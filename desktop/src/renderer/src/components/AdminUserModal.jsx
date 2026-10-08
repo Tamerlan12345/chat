@@ -1,3 +1,4 @@
+import { getSessionToken } from '../lib/credentials.mjs';
 import React, { useState, useEffect, useRef } from 'react';
 import { useConfirm } from './ConfirmDialog';
 import { useInlineToast } from './InlineToast';
@@ -202,7 +203,7 @@ export default function AdminUserModal({
   // Tab 8: Licenses
   const [licenseData, setLicenseData] = useState(null);
 
-  const token = localStorage.getItem('mychat_token') || '';
+  const token = getSessionToken();
 
   const loadPendingDevices = async () => {
     try {

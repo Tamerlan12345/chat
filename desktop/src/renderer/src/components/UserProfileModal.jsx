@@ -136,7 +136,7 @@ export default function UserProfileModal({ currentUser, serverInfo, onClose, onU
       }
       // Прежний токен только что отозван вместе со старым паролем — сервер
       // вернул новый, и без него ближайший запрос получил бы отказ.
-      if (data.token && onTokenRenewed) onTokenRenewed(data.token);
+      if (data.token && onTokenRenewed) await onTokenRenewed(data.token);
       setPwSuccess('Пароль изменен');
       setPwOld('');
       setPwNew('');

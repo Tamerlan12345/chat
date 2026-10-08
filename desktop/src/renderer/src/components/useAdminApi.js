@@ -1,3 +1,4 @@
+import { getSessionToken } from '../lib/credentials.mjs';
 import { useCallback } from 'react';
 import { errorMessageFrom, httpError } from '../lib/admin-access.mjs';
 
@@ -6,7 +7,7 @@ import { errorMessageFrom, httpError } from '../lib/admin-access.mjs';
 // общий; fallback — текст конкретного действия, когда тело ничего не объясняет.
 export function useAdminApi(serverUrl) {
   return useCallback(async (path, { method = 'GET', body, fallback = 'Сервер отклонил запрос', explain } = {}) => {
-    const token = localStorage.getItem('mychat_token') || '';
+    const token = getSessionToken();
     let res;
     try {
       res = await fetch(serverUrl + path, {

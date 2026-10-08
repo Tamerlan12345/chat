@@ -2066,7 +2066,7 @@ router.post('/channels', requireAuth, (req, res) => {
   try {
     const { name, topic, type = 'public' } = req.body || {};
     if (!name) return res.status(400).json({ error: 'Укажите название канала' });
-    if (!req.user.permissions?.can_create_channels && !req.user.permissions?.is_admin) {
+    if (!req.user.permissions?.can_create_channels && !isSuperAdmin(req.user)) {
       return res.status(403).json({ error: 'Создание каналов не разрешено для вашей роли' });
     }
     const channel = MessageService.createChannel(name, topic, type, req.user.id);
@@ -2091,7 +2091,7 @@ router.post('/channels', requireAuth, (req, res) => {
 // Право проверяется до приёма тела: иначе сотрудник без права загрузки всё
 // равно заставлял сервер держать в памяти до 100 МБ, прежде чем получить 403.
 function requireUploadPermission(req, res, next) {
-  if (!req.user.permissions?.can_upload_files && !req.user.permissions?.is_admin) {
+  if (!req.user.permissions?.can_upload_files && !isSuperAdmin(req.user)) {
     return res.status(403).json({ error: 'Загрузка файлов не разрешена для вашей роли' });
   }
   next();

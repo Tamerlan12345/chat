@@ -1,3 +1,4 @@
+import { getSessionToken } from '../lib/credentials.mjs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Icon from './Icon';
 import { readError } from '../lib/admin-access.mjs';
@@ -36,7 +37,7 @@ const ALERTS_LIMIT = 100;
 // а консоль может быть открыта дольше.
 function useApi(serverUrl) {
   return useCallback(async (path, { method = 'GET', body, fallback = 'Сервер отклонил запрос' } = {}) => {
-    const token = localStorage.getItem('mychat_token') || '';
+    const token = getSessionToken();
     let res;
     try {
       res = await fetch(serverUrl + path, {
