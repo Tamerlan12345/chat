@@ -1,13 +1,19 @@
 package com.openmychat.mobile.data.push
 
 import com.openmychat.mobile.BuildConfig
+import com.openmychat.mobile.core.network.RequestOwner
 import com.openmychat.mobile.core.network.ApiClient
 import com.openmychat.mobile.core.session.SessionManager
 import com.openmychat.mobile.di.ApplicationScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,44 +44,56 @@ class PushRegistrar @Inject constructor(
     @ApplicationScope private val scope: CoroutineScope
 ) {
     private var started = false
+    private val registration = Mutex()
+    private val tokenVersion = AtomicLong()
 
     @Synchronized
     fun start() {
         if (started) return
         started = true
         scope.launch {
-            session.currentUserFlow.map { it?.id }.distinctUntilChanged().collect { account ->
-                if (account != null) tokens.currentToken()?.let { register(it, account) }
+            session.authenticatedSession.collectLatest { signedIn ->
+                if (signedIn != null) bestEffort {
+                    val version = tokenVersion.get()
+                    tokens.currentToken()?.let { register(it, signedIn, version) }
+                }
             }
         }
     }
 
-    /** FCM `onNewToken`: the new token goes to the server for the account signed in now, if any. */
+    /** FCM callbacks are ordered at entry, before coroutine scheduling can reorder them. */
     fun onNewToken(token: String) {
-        scope.launch {
-            val account = session.currentUser?.id ?: return@launch
-            register(token, account)
+        val version = tokenVersion.incrementAndGet()
+        val signedIn = session.authenticatedSession.value ?: return
+        scope.launch { bestEffort { register(token, signedIn, version) } }
+    }
+
+    private suspend fun register(
+        token: String,
+        signedIn: SessionManager.AuthenticatedSession,
+        version: Long
+    ) = registration.withLock {
+        // Keep the lock until the HTTP call completes: an older request cannot land last.
+        if (session.authenticatedSession.value != signedIn || tokenVersion.get() != version) return@withLock
+        withContext(RequestOwner(signedIn.userId)) {
+            // raw() binds credentials to this owner after IO dispatch, closing the account-switch
+            // race between this check and constructing the actual HTTP request.
+            api.raw("POST", "/api/devices/push-token", buildJsonObject {
+                put("platform", "android")
+                put("token", token)
+                put("app_version", BuildConfig.VERSION_NAME)
+                runCatching { session.deviceId }.getOrNull()?.let { put("device_id", it) }
+            })
         }
     }
 
-    private suspend fun register(token: String, account: Long) {
+    private suspend fun bestEffort(action: suspend () -> Unit) {
         try {
-            // The request is bound to the session of the moment it is made (ApiClient); a sign-in
-            // of another account meanwhile registers again for that one.
-            if (session.currentUser?.id != account) return
-            send(token)
+            action()
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            // Best effort: the next start, sign-in or token rotation registers it again.
+            // Provider and network errors are retried on the next start, sign-in or token rotation.
         }
-    }
-
-    private suspend fun send(token: String) {
-        api.registerPushToken(
-            token = token,
-            deviceId = runCatching { session.deviceId }.getOrNull(),
-            appVersion = BuildConfig.VERSION_NAME
-        )
     }
 }

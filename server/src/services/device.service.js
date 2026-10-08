@@ -22,6 +22,25 @@ function capLength(value, max, fallback = null) {
   return str.length > max ? str.slice(0, max) : str;
 }
 
+// Role permissions are JSON text in both stores. Parse fields as JSON here:
+// formatting whitespace must not turn an administrator into an employee.
+function ownerIsNotAdminSql(dialect) {
+  if (dialect === 'postgres') {
+    return `((owner_role.permissions_json::jsonb -> 'is_admin') IS NULL OR
+             (owner_role.permissions_json::jsonb -> 'is_admin') IN ('null'::jsonb, 'false'::jsonb, '0'::jsonb))
+      AND ((owner_role.permissions_json::jsonb -> 'is_scoped_admin') IS NULL OR
+           (owner_role.permissions_json::jsonb -> 'is_scoped_admin') IN ('null'::jsonb, 'false'::jsonb, '0'::jsonb))`;
+  }
+  return `(json_type(owner_role.permissions_json, '$.is_admin') IS NULL OR
+           json_type(owner_role.permissions_json, '$.is_admin') IN ('null', 'false') OR
+           (json_type(owner_role.permissions_json, '$.is_admin') IN ('integer', 'real')
+            AND json_extract(owner_role.permissions_json, '$.is_admin') = 0))
+    AND (json_type(owner_role.permissions_json, '$.is_scoped_admin') IS NULL OR
+         json_type(owner_role.permissions_json, '$.is_scoped_admin') IN ('null', 'false') OR
+         (json_type(owner_role.permissions_json, '$.is_scoped_admin') IN ('integer', 'real')
+          AND json_extract(owner_role.permissions_json, '$.is_scoped_admin') = 0))`;
+}
+
 class DeviceService {
   /**
    * Клиент «стучится» при запуске. Если его устройство уже связано с
@@ -211,6 +230,7 @@ class DeviceService {
    */
   static async getPendingDevices(adminUser) {
     const db = identity();
+    if (adminUser?.permissions?.is_scoped_admin && !adminUser.admin_scope_dept_id) return [];
     const scopeDeptIds =
       adminUser && adminUser.admin_scope_dept_id
         ? await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id)
@@ -245,11 +265,19 @@ class DeviceService {
     return withSuggestions.filter((device) => {
       const pairedInScope =
         device.paired_user_dept_id && scopeDeptIds.includes(Number(device.paired_user_dept_id));
+      // A suggested employee cannot make an already paired device owned by
+      // another department visible to this scoped administrator.
+      if (device.paired_user_id) return Boolean(pairedInScope);
       const suggestedInScope =
         device.suggested_user?.department_id &&
         scopeDeptIds.includes(Number(device.suggested_user.department_id));
-      return pairedInScope || suggestedInScope;
-    });
+      return Boolean(suggestedInScope);
+    }).map((device) => ({
+      ...device,
+      suggested_user: device.suggested_user && scopeDeptIds.includes(Number(device.suggested_user.department_id))
+        ? device.suggested_user
+        : null
+    }));
   }
 
   static async bindDevice({ device_id, user_id, ip_address, device_name, adminUser }) {
@@ -259,8 +287,9 @@ class DeviceService {
     const user = await UserService.getUserById(user_id);
     if (!user) throw new Error('Сотрудник не найден');
 
+    let scopeDeptIds = null;
     if (adminUser && adminUser.admin_scope_dept_id) {
-      const scopeDeptIds = await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
+      scopeDeptIds = await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id);
       if (!user.department_id || !scopeDeptIds.includes(Number(user.department_id))) {
         throw new Error('Сотрудник вне вашего контура управления');
       }
@@ -279,7 +308,16 @@ class DeviceService {
     // секрет — намного меньше цены унаследованного чужого входа (аудит,
     // находка №1). secret_expires_at и secret_auth_time чистятся вместе с
     // ним — без хэша они не имеют смысла.
-    await db.run(
+    // The conflict row is locked by the upsert. Check its current owner in the
+    // same statement so a concurrent rebind cannot bypass the scope check.
+    const ownerGuard = scopeDeptIds
+      ? ` WHERE EXISTS (SELECT 1 FROM users owner JOIN roles owner_role ON owner_role.id = owner.role_id
+            WHERE owner.id = device_pairings.user_id
+              AND owner.department_id IN (${scopeDeptIds.map((_, i) => `$${i + 6}`).join(', ')})
+              AND (owner.id = $${scopeDeptIds.length + 6} OR
+                   (${ownerIsNotAdminSql(db.dialect)})))`
+      : '';
+    const binding = await db.run(
       `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
        VALUES ($1, $2, $3, $4, $5, 1)
        ON CONFLICT (device_id) DO UPDATE SET
@@ -292,9 +330,10 @@ class DeviceService {
          secret_token_version = NULL,
          secret_user_id = NULL,
          secret_expires_at = NULL,
-         secret_auth_time = NULL`,
-      [String(device_id), Number(user_id), ip_address || null, finalDeviceName || 'ПК сотрудника', now]
+         secret_auth_time = NULL${ownerGuard}`,
+      [String(device_id), Number(user_id), ip_address || null, finalDeviceName || 'ПК сотрудника', now, ...(scopeDeptIds || []), ...(scopeDeptIds ? [Number(adminUser.id)] : [])]
     );
+    if (!Number(binding.changes)) throw new Error('Устройство привязано к сотруднику вне вашего контура управления');
 
     if (ip_address) {
       await db.run('UPDATE users SET bound_ip = $1 WHERE id = $2', [ip_address, Number(user_id)]);
@@ -324,6 +363,10 @@ class DeviceService {
     const db = identity();
     const now = new Date().toISOString();
 
+    if (adminUser?.permissions?.is_scoped_admin && !adminUser.admin_scope_dept_id) {
+      throw new Error('Администратору не назначено подразделение — управление устройствами недоступно');
+    }
+
     const scopeDeptIds =
       adminUser && adminUser.admin_scope_dept_id
         ? await OrgService.getSubtreeDepartmentIds(adminUser.admin_scope_dept_id)
@@ -340,12 +383,23 @@ class DeviceService {
     let count = 0;
     for (const match of matches) {
       if (scopeDeptIds && !scopeDeptIds.includes(Number(match.department_id))) continue;
+      if (adminUser?.permissions?.is_scoped_admin && Number(match.user_id) !== Number(adminUser.id)) {
+        const target = await UserService.getUserById(match.user_id);
+        if (target?.permissions?.is_admin || target?.permissions?.is_scoped_admin) continue;
+      }
 
       // Тот же довод, что и в bindDevice: обнулять секрет при каждой
       // привязке, а не только при смене владельца — иначе перепривязка на
       // прежнего же пользователя оставляет лазейку разбирать значение по
       // побочным эффектам.
-      await db.run(
+      const ownerGuard = scopeDeptIds
+        ? ` WHERE EXISTS (SELECT 1 FROM users owner JOIN roles owner_role ON owner_role.id = owner.role_id
+              WHERE owner.id = device_pairings.user_id
+                AND owner.department_id IN (${scopeDeptIds.map((_, i) => `$${i + 6}`).join(', ')})
+                AND (owner.id = $${scopeDeptIds.length + 6} OR
+                     (${ownerIsNotAdminSql(db.dialect)})))`
+        : '';
+      const binding = await db.run(
         `INSERT INTO device_pairings (device_id, user_id, ip_address, device_name, paired_at, is_active)
          VALUES ($1, $2, $3, $4, $5, 1)
          ON CONFLICT (device_id) DO UPDATE SET
@@ -356,9 +410,10 @@ class DeviceService {
            secret_token_version = NULL,
            secret_user_id = NULL,
            secret_expires_at = NULL,
-           secret_auth_time = NULL`,
-        [match.device_id, match.user_id, match.ip_address, match.device_name, now]
+           secret_auth_time = NULL${ownerGuard}`,
+        [match.device_id, match.user_id, match.ip_address, match.device_name, now, ...(scopeDeptIds || []), ...(scopeDeptIds ? [Number(adminUser.id)] : [])]
       );
+      if (!Number(binding.changes)) continue;
 
       await db.run(`UPDATE pending_devices SET status = 'paired' WHERE device_id = $1`, [
         match.device_id

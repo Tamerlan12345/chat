@@ -1845,23 +1845,25 @@ router.get('/admin/registrations', requireAuth, requireAdminOrScopedAdmin, route
   if (!['pending', 'rejected', 'approved'].includes(wanted)) {
     return res.status(400).json({ error: 'status: pending, rejected или approved' });
   }
+  // Scope must be part of the query before LIMIT, otherwise 500 earlier
+  // registrations in sibling departments hide legitimate local registrations.
+  if (isScopedAdmin(req.user) && !req.user.admin_scope_dept_id) return res.json([]);
+  const allowed = isScopedAdmin(req.user)
+    ? await OrgService.getSubtreeDepartmentIds(req.user.admin_scope_dept_id)
+    : null;
+  if (allowed && !allowed.length) return res.json([]);
+  const scopeSql = allowed
+    ? ` AND u.department_id IN (${allowed.map((_, i) => `$${i + 2}`).join(', ')})`
+    : '';
   const rows = await identity().all(`
     SELECT u.id, u.username, u.full_name, u.email, u.phone, u.job_title, u.approval_status,
            u.department_id, d.name AS department_name, u.registered_at
     FROM users u
     LEFT JOIN departments d ON d.id = u.department_id
-    WHERE u.approval_status = $1 AND u.registered_at IS NOT NULL
+    WHERE u.approval_status = $1 AND u.registered_at IS NOT NULL${scopeSql}
     ORDER BY u.registered_at ASC
     LIMIT 500
-  `, [wanted]);
-
-  // Администратор подразделения, у которого подразделение сняли (например,
-  // его удалили), не видит ничего — а не заявки всей компании.
-  if (isScopedAdmin(req.user) && !req.user.admin_scope_dept_id) return res.json([]);
-  if (isScopedAdmin(req.user) && req.user.admin_scope_dept_id) {
-    const allowed = new Set(await OrgService.getSubtreeDepartmentIds(req.user.admin_scope_dept_id));
-    return res.json(rows.filter((row) => allowed.has(Number(row.department_id))));
-  }
+  `, [wanted, ...(allowed || [])]);
   res.json(rows);
 }));
 
@@ -2505,6 +2507,10 @@ router.get('/admin/devices/pending', requireAuth, requireAdminOrScopedAdmin, rou
 router.post('/admin/devices/bind', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
   try {
     await assertWithinAdminScope(req.user, { targetUserId: Number(req.body?.user_id) });
+    // Rebinding also mutates the current owner's pairing. A scoped admin may
+    // assign a device to a local employee only if its current owner is local.
+    const owner = await DeviceService.getPairingOwner(req.body?.device_id);
+    if (owner) await assertWithinAdminScope(req.user, { targetUserId: Number(owner.user_id) });
     const result = await DeviceService.bindDevice({ ...req.body, adminUser: req.user });
     AuditService.log({
       userId: req.user.id,
@@ -2520,6 +2526,7 @@ router.post('/admin/devices/bind', requireAuth, requireAdminOrScopedAdmin, route
 
 router.post('/admin/devices/auto-match', requireAuth, requireAdminOrScopedAdmin, route(async (req, res) => {
   try {
+    await assertWithinAdminScope(req.user);
     res.json(await DeviceService.autoMatchByIp(req.user));
   } catch (err) {
     res.status(400).json({ error: err.message });

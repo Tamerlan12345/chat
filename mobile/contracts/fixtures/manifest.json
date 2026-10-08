@@ -357,7 +357,7 @@
   "push/apns.message.direct.json": {
     "kind": "push",
     "provider": "apns",
-    "description": "Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.",
+    "description": "Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert показывает общий текст «Новое сообщение»; mutable-content: 1 оставлен для возможного будущего Notification Service Extension, которой пока нет; id — числа.",
     "trigger": "личное сообщение alice → bob, у bob нет сокета"
   },
   "push/apns.read.json": {

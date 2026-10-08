@@ -487,3 +487,178 @@ test('публичный канал по-прежнему объявляется
 
   await waitFor(sockets.sidorov, (m) => m.type === 'channel_created' && m.channel.id === res.json.id);
 });
+
+// Two sibling branches make a scope failure observable even when both have a
+// legitimate employee, registration and device operation.
+test('scoped admin cannot list or mutate sibling users, registrations or devices', async () => {
+  const now = new Date().toISOString();
+  const addDept = async (name, sortOrder) => Number((await identity.run(
+    `INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+     VALUES (NULL, $1, '', 'branch', $2, $3) RETURNING id`, [name, sortOrder, now]
+  )).rows[0].id);
+  const deptA = await addDept('Scope A', 81);
+  const deptB = await addDept('Scope B', 82);
+  const roleId = (await identity.get(`SELECT id FROM roles WHERE name = 'Контурный администратор'`)).id;
+  const scoped = await UserService.createUser({ username: 'scope-a-admin', full_name: 'Scope A Admin', password: 'Рабочий-пароль-1', role_id: roleId, department_id: deptA, admin_scope_dept_id: deptA });
+  await UserService.setMustChangePassword(scoped.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(scoped.id));
+  const inA = await UserService.createUser({ username: 'scope-a-employee', full_name: 'Scope A Employee', password: 'Рабочий-пароль-1', department_id: deptA, job_title: 'Original A' });
+  const inB = await UserService.createUser({ username: 'scope-b-employee', full_name: 'Scope B Employee', password: 'Рабочий-пароль-1', department_id: deptB, job_title: 'Original B' });
+  const regA = await UserService.createUser({ username: 'scope-a-registration', full_name: 'Scope A Registration', password: 'Рабочий-пароль-1', department_id: deptA });
+  const regB = await UserService.createUser({ username: 'scope-b-registration', full_name: 'Scope B Registration', password: 'Рабочий-пароль-1', department_id: deptB });
+  await identity.run(`UPDATE users SET approval_status = 'pending', registered_at = $1 WHERE id IN ($2, $3)`, [now, regA.id, regB.id]);
+  await identity.run(`INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)`, ['scope-b-paired', inB.id, now]);
+  await identity.run(`INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)`, ['scope-a-paired', inA.id, now]);
+  for (const [deviceId, ip] of [['scope-a-pending', '10.81.0.1'], ['scope-b-pending', '10.82.0.1'], ['scope-b-paired', '10.81.0.1'], ['scope-a-paired', '10.82.0.1']]) {
+    await identity.run(`INSERT INTO pending_devices (device_id, device_name, ip_address, status, first_knock_at, last_knock_at)
+      VALUES ($1, $2, $3, 'pending', $4, $4)`, [deviceId, deviceId, ip, now]);
+  }
+  await identity.run('UPDATE users SET bound_ip = $1 WHERE id = $2', ['10.81.0.1', inA.id]);
+  await identity.run('UPDATE users SET bound_ip = $1 WHERE id = $2', ['10.82.0.1', inB.id]);
+
+  const users = await api('GET', '/api/admin/users', { token });
+  assert.strictEqual(users.status, 200, users.text);
+  assert.ok(users.json.some((u) => u.id === inA.id));
+  assert.ok(!users.json.some((u) => u.id === inB.id));
+  const registrations = await api('GET', '/api/admin/registrations', { token });
+  assert.strictEqual(registrations.status, 200, registrations.text);
+  assert.ok(registrations.json.some((u) => u.id === regA.id));
+  assert.ok(!registrations.json.some((u) => u.id === regB.id));
+  const devices = await api('GET', '/api/admin/devices/pending', { token });
+  assert.strictEqual(devices.status, 200, devices.text);
+  assert.ok(devices.json.some((d) => d.device_id === 'scope-a-pending'));
+  const aPaired = devices.json.find((d) => d.device_id === 'scope-a-paired');
+  assert.ok(aPaired);
+  assert.strictEqual(aPaired.suggested_user, null, 'B suggested identity must not leak through A-owned device');
+  assert.ok(!devices.json.some((d) => d.device_id === 'scope-b-pending'));
+  assert.ok(!devices.json.some((d) => d.device_id === 'scope-b-paired'));
+
+  const bBefore = await identity.get('SELECT job_title, is_active, approval_status, registered_at FROM users WHERE id = $1', [inB.id]);
+  for (const [method, path, body] of [
+    ['PUT', `/api/admin/users/${inB.id}`, { job_title: 'Changed B' }],
+    ['DELETE', `/api/admin/users/${inB.id}`],
+    ['POST', `/api/admin/registrations/${regB.id}/approve`],
+    ['POST', `/api/admin/registrations/${regB.id}/reject`, { reason: 'outside' }],
+    ['POST', '/api/admin/devices/bind', { device_id: 'scope-b-pending', user_id: inB.id }],
+    ['POST', '/api/admin/devices/bind', { device_id: 'scope-b-paired', user_id: inA.id }],
+    ['POST', '/api/admin/devices/unbind', { device_id: 'scope-b-paired' }]
+  ]) {
+    const denied = await api(method, path, { token, body });
+    assert.strictEqual(denied.status, 400, `${method} ${path}: ${denied.text}`);
+  }
+  assert.deepStrictEqual(await identity.get('SELECT job_title, is_active, approval_status, registered_at FROM users WHERE id = $1', [inB.id]), bBefore);
+  assert.strictEqual((await identity.get('SELECT approval_status FROM users WHERE id = $1', [regB.id])).approval_status, 'pending');
+  assert.strictEqual(await identity.get('SELECT * FROM device_pairings WHERE device_id = $1', ['scope-b-pending']), null);
+  const bPairing = await identity.get('SELECT user_id, is_active FROM device_pairings WHERE device_id = $1', ['scope-b-paired']);
+  assert.strictEqual(Number(bPairing.user_id), inB.id);
+  assert.strictEqual(Number(bPairing.is_active), 1);
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['scope-b-pending'])).status, 'pending');
+
+  assert.strictEqual((await api('PUT', `/api/admin/users/${inA.id}`, { token, body: { job_title: 'Changed A' } })).status, 200);
+  assert.strictEqual((await identity.get('SELECT job_title FROM users WHERE id = $1', [inA.id])).job_title, 'Changed A');
+  assert.strictEqual((await api('POST', `/api/admin/registrations/${regA.id}/approve`, { token })).status, 200);
+  assert.strictEqual((await identity.get('SELECT approval_status FROM users WHERE id = $1', [regA.id])).approval_status, 'approved');
+  assert.strictEqual((await api('POST', '/api/admin/devices/bind', { token, body: { device_id: 'scope-a-pending', user_id: inA.id } })).status, 200);
+  assert.strictEqual(Number((await identity.get('SELECT user_id FROM device_pairings WHERE device_id = $1', ['scope-a-pending'])).user_id), inA.id);
+  assert.strictEqual((await api('POST', '/api/admin/devices/unbind', { token, body: { device_id: 'scope-a-pending' } })).status, 200);
+  assert.strictEqual(await identity.get('SELECT * FROM device_pairings WHERE device_id = $1', ['scope-a-pending']), null);
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['scope-a-pending'])).status, 'pending');
+});
+
+test('registration limit applies after department scope', async () => {
+  const now = new Date().toISOString();
+  const deptA = Number((await identity.run(`INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+    VALUES (NULL, 'Scope Pagination A', '', 'branch', 83, $1) RETURNING id`, [now])).rows[0].id);
+  const deptB = Number((await identity.run(`INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+    VALUES (NULL, 'Scope Pagination B', '', 'branch', 84, $1) RETURNING id`, [now])).rows[0].id);
+  const roleId = (await identity.get(`SELECT id FROM roles WHERE name = 'Контурный администратор'`)).id;
+  const scoped = await UserService.createUser({ username: 'scope-pagination-admin', full_name: 'Scope Pagination Admin', password: 'Рабочий-пароль-1', role_id: roleId, department_id: deptA, admin_scope_dept_id: deptA });
+  await UserService.setMustChangePassword(scoped.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(scoped.id));
+  const earlier = new Date(Date.now() - 86400000).toISOString();
+  const later = new Date(Date.now() + 86400000).toISOString();
+  for (let i = 0; i < 500; i++) {
+    await identity.run(`INSERT INTO users (username, full_name, password_hash, role_id, department_id, approval_status, registered_at, created_at)
+      SELECT $1, $2, password_hash, role_id, $3, 'pending', $4, $5 FROM users WHERE id = $6`,
+    [`scope-b-bulk-${i}`, `Scope B Bulk ${i}`, deptB, earlier, now, scoped.id]);
+  }
+  const inScope = await UserService.createUser({ username: 'scope-a-late', full_name: 'Scope A Late', password: 'Рабочий-пароль-1', department_id: deptA });
+  await identity.run(`UPDATE users SET approval_status = 'pending', registered_at = $1 WHERE id = $2`, [later, inScope.id]);
+  const listed = await api('GET', '/api/admin/registrations', { token });
+  assert.strictEqual(listed.status, 200, listed.text);
+  assert.ok(listed.json.some((row) => row.id === inScope.id), 'in-scope registration must survive the 500-row limit');
+});
+
+test('scoped auto-match preserves an existing sibling device owner', async () => {
+  const now = new Date().toISOString();
+  const addDept = async (name, sortOrder) => Number((await identity.run(
+    `INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+     VALUES (NULL, $1, '', 'branch', $2, $3) RETURNING id`, [name, sortOrder, now]
+  )).rows[0].id);
+  const deptA = await addDept('Auto Scope A', 85);
+  const deptB = await addDept('Auto Scope B', 86);
+  const roleId = (await identity.get(`SELECT id FROM roles WHERE name = 'Контурный администратор'`)).id;
+  const scoped = await UserService.createUser({ username: 'auto-scope-admin', full_name: 'Auto Scope Admin', password: 'Рабочий-пароль-1', role_id: roleId, department_id: deptA, admin_scope_dept_id: deptA });
+  await UserService.setMustChangePassword(scoped.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(scoped.id));
+  const inA = await UserService.createUser({ username: 'auto-scope-a', full_name: 'Auto Scope A', password: 'Рабочий-пароль-1', department_id: deptA });
+  const inB = await UserService.createUser({ username: 'auto-scope-b', full_name: 'Auto Scope B', password: 'Рабочий-пароль-1', department_id: deptB });
+  const adminA = await UserService.createUser({ username: 'auto-other-admin-a', full_name: 'Auto Other Admin A', password: 'Рабочий-пароль-1', role_id: roleId, department_id: deptA, admin_scope_dept_id: deptA });
+  const superRoleId = Number((await identity.run(`INSERT INTO roles (name, description, permissions_json)
+    VALUES ($1, $2, $3) RETURNING id`, ['Formatted Super Admin', 'Role JSON with spaces', '{ "is_admin": true, "can_manage_users": true }'])).rows[0].id);
+  const superA = await UserService.createUser({ username: 'auto-super-a', full_name: 'Auto Super A', password: 'Рабочий-пароль-1', role_id: superRoleId, department_id: deptA });
+  const stringRoleId = Number((await identity.run(`INSERT INTO roles (name, description, permissions_json)
+    VALUES ($1, $2, $3) RETURNING id`, ['String Super Admin', 'Truthy string permission', '{ "is_admin": "true" }'])).rows[0].id);
+  const stringAdminA = await UserService.createUser({ username: 'auto-string-admin-a', full_name: 'Auto String Admin A', password: 'Рабочий-пароль-1', role_id: stringRoleId, department_id: deptA });
+  await identity.run('UPDATE users SET bound_ip = $1 WHERE id = $2', ['10.85.0.1', inA.id]);
+  await identity.run('UPDATE users SET bound_ip = $1 WHERE id = $2', ['10.85.0.2', adminA.id]);
+  await identity.run('INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)', ['auto-owned-b', inB.id, now]);
+  await identity.run('INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)', ['auto-owned-super', superA.id, now]);
+  await identity.run('INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)', ['auto-owned-string-admin', stringAdminA.id, now]);
+  for (const [deviceId, ip] of [['auto-owned-b', '10.85.0.1'], ['auto-local', '10.85.0.1'], ['auto-other-admin', '10.85.0.2'], ['auto-owned-super', '10.85.0.1'], ['auto-owned-string-admin', '10.85.0.1']]) {
+    await identity.run(`INSERT INTO pending_devices (device_id, device_name, ip_address, status, first_knock_at, last_knock_at)
+      VALUES ($1, $2, $3, 'pending', $4, $4)`, [deviceId, deviceId, ip, now]);
+  }
+
+  const before = await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-b']);
+  const beforeSuper = await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-super']);
+  const beforeStringAdmin = await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-string-admin']);
+  const result = await api('POST', '/api/admin/devices/auto-match', { token });
+  assert.strictEqual(result.status, 200, result.text);
+  assert.strictEqual(result.json.matched_count, 1, result.text);
+  assert.deepStrictEqual(await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-b']), before);
+  assert.deepStrictEqual(await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-super']), beforeSuper);
+  assert.deepStrictEqual(await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['auto-owned-string-admin']), beforeStringAdmin);
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['auto-owned-b'])).status, 'pending');
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['auto-owned-super'])).status, 'pending');
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['auto-owned-string-admin'])).status, 'pending');
+  assert.strictEqual(Number((await identity.get('SELECT user_id FROM device_pairings WHERE device_id = $1', ['auto-local'])).user_id), inA.id);
+  assert.strictEqual(await identity.get('SELECT * FROM device_pairings WHERE device_id = $1', ['auto-other-admin']), null);
+  assert.strictEqual((await identity.get('SELECT status FROM pending_devices WHERE device_id = $1', ['auto-other-admin'])).status, 'pending');
+});
+
+test('scoped admin without a department cannot list or auto-match devices', async () => {
+  const now = new Date().toISOString();
+  const roleId = (await identity.get(`SELECT id FROM roles WHERE name = 'Контурный администратор'`)).id;
+  const scoped = await UserService.createUser({ username: 'auto-noscope-admin', full_name: 'Auto No Scope Admin', password: 'Рабочий-пароль-1', role_id: roleId });
+  await UserService.setMustChangePassword(scoped.id, false);
+  const token = AuthService.generateToken(await UserService.getUserById(scoped.id));
+  const deptB = Number((await identity.run(`INSERT INTO departments (parent_id, name, description, dept_type, sort_order, created_at)
+    VALUES (NULL, 'No Scope B', '', 'branch', 87, $1) RETURNING id`, [now])).rows[0].id);
+  const ownerB = await UserService.createUser({ username: 'noscope-owner-b', full_name: 'No Scope Owner B', password: 'Рабочий-пароль-1', department_id: deptB });
+  const candidateB = await UserService.createUser({ username: 'noscope-candidate-b', full_name: 'No Scope Candidate B', password: 'Рабочий-пароль-1', department_id: deptB });
+  await identity.run('UPDATE users SET bound_ip = $1 WHERE id = $2', ['10.87.0.1', candidateB.id]);
+  await identity.run('INSERT INTO device_pairings (device_id, user_id, paired_at, is_active) VALUES ($1, $2, $3, 1)', ['noscope-b-pairing', ownerB.id, now]);
+  await identity.run(`INSERT INTO pending_devices (device_id, device_name, ip_address, status, first_knock_at, last_knock_at)
+    VALUES ($1, $2, $3, 'pending', $4, $4)`, ['noscope-b-pairing', 'No Scope B Device', '10.87.0.1', now]);
+
+  const beforePairing = await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['noscope-b-pairing']);
+  const beforePending = await identity.get('SELECT status, last_knock_at FROM pending_devices WHERE device_id = $1', ['noscope-b-pairing']);
+  const matched = await api('POST', '/api/admin/devices/auto-match', { token });
+  assert.strictEqual(matched.status, 400, matched.text);
+  assert.deepStrictEqual(await identity.get('SELECT user_id, is_active, paired_at FROM device_pairings WHERE device_id = $1', ['noscope-b-pairing']), beforePairing);
+  assert.deepStrictEqual(await identity.get('SELECT status, last_knock_at FROM pending_devices WHERE device_id = $1', ['noscope-b-pairing']), beforePending);
+  const listed = await api('GET', '/api/admin/devices/pending', { token });
+  assert.strictEqual(listed.status, 200, listed.text);
+  assert.deepStrictEqual(listed.json, []);
+});

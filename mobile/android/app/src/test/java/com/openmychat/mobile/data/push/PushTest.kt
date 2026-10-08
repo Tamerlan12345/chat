@@ -1,6 +1,8 @@
 package com.openmychat.mobile.data.push
 
 import com.openmychat.mobile.core.network.ApiClient
+import com.openmychat.mobile.core.network.BearerCredentialsInterceptor
+import com.openmychat.mobile.core.network.BoundCredentials
 import com.openmychat.mobile.core.network.AuthContext
 import com.openmychat.mobile.core.network.WsEvent
 import com.openmychat.mobile.data.model.ConversationType
@@ -15,6 +17,7 @@ import com.openmychat.mobile.data.repository.DefaultSessionRepository
 import com.openmychat.mobile.testing.FakeRealtimeRepository
 import com.openmychat.mobile.testing.TestSessions
 import com.openmychat.mobile.testing.jwt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -24,6 +27,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -35,6 +40,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -51,8 +57,11 @@ class PushTest {
     private val answers = CopyOnWriteArrayList<Pair<String, Pair<Int, String>>>()
     private val scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher())
 
+    private var beforeRequest: (Request) -> Unit = {}
+
     private val api = ApiClient(session, OkHttpClient.Builder().addInterceptor { chain ->
         val request: Request = chain.request()
+        beforeRequest(request)
         val path = request.url.encodedPath + (request.url.encodedQuery?.let { "?$it" } ?: "")
         requests += "${request.method} $path" to Buffer().also { request.body?.writeTo(it) }.readUtf8()
         val (code, body) = answers.firstOrNull { path.startsWith(it.first) }?.second ?: (200 to """{"registered":true,"push_enabled":true}""")
@@ -110,6 +119,141 @@ class PushTest {
 
         session.saveAuthSuccess(com.openmychat.mobile.data.model.User(id = 2, username = "carol", fullName = "Кэрол"), jwt(2))
         assertEquals("POST /api/devices/push-token", next().first)
+    }
+
+    @Test
+    fun sameAccountNewSignInRegistersAgainButRefreshDoesNot() = runBlocking {
+        PushRegistrar(Tokens("fcm-token-same-account"), api, session, scope).start()
+        next()
+        val replacement = jwt(1, "second-sign-in")
+        session.saveAuthSuccess(session.currentUser!!, replacement)
+        assertEquals("POST /api/devices/push-token", next().first)
+        assertTrue(session.replaceTokenIfCurrent(replacement, jwt(1, "refresh")))
+        assertNull(requests.poll(300, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun delayedProviderLookupCannotOverwriteANewerCallback() = runBlocking {
+        val lookup = CompletableDeferred<String?>()
+        val registrar = PushRegistrar(object : PushTokenSource {
+            override suspend fun currentToken() = lookup.await()
+        }, api, session, scope)
+        registrar.start()
+        registrar.onNewToken("fcm-token-newer")
+        assertTrue(next().second.contains("fcm-token-newer"))
+        lookup.complete("fcm-token-older")
+        assertNull("stale lookup must be discarded", requests.poll(300, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun providerCallbacksAreSentInOrderEvenWhenTheOlderRequestIsSlow() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        beforeRequest = { request ->
+            val body = Buffer().also { request.body?.writeTo(it) }.readUtf8()
+            if (body.contains("fcm-token-older")) {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+            }
+        }
+        val registrar = PushRegistrar(Tokens(null), api, session, scope)
+        try {
+            registrar.onNewToken("fcm-token-older")
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            registrar.onNewToken("fcm-token-newer")
+            assertNull("newer request waits for older request", requests.poll(300, TimeUnit.MILLISECONDS))
+        } finally {
+            release.countDown()
+        }
+        assertTrue(next().second.contains("fcm-token-older"))
+        assertTrue(next().second.contains("fcm-token-newer"))
+    }
+
+    @Test
+    fun accountSwitchDiscardsOldLookupAndBindsNewRequestToNewAccount() = runBlocking {
+        val oldLookup = CompletableDeferred<String?>()
+        var lookups = 0
+        val owners = LinkedBlockingQueue<Pair<Long?, String?>>()
+        beforeRequest = { request ->
+            val credentials = request.tag(com.openmychat.mobile.core.network.BoundCredentials::class.java)
+            owners += credentials?.owner to credentials?.token
+        }
+        val registrar = PushRegistrar(object : PushTokenSource {
+            override suspend fun currentToken(): String? =
+                if (++lookups == 1) oldLookup.await() else "fcm-token-current"
+        }, api, session, scope)
+        registrar.start()
+        session.saveAuthSuccess(com.openmychat.mobile.data.model.User(id = 2, username = "carol", fullName = "Carol"), jwt(2))
+        oldLookup.complete("fcm-token-stale")
+        assertTrue(next().second.contains("fcm-token-current"))
+        assertEquals(2L to jwt(2), owners.poll(5, TimeUnit.SECONDS))
+        assertNull(requests.poll(300, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun accountSwitchBeforeBearerAttachmentDropsTheOldHttpRegistration() = runBlocking {
+        assertAccountSwitchDuringHttpRegistration(blockBeforeBearer = true)
+    }
+
+    @Test
+    fun accountSwitchAfterBearerAttachmentKeepsOldCredentialsAndSerializesNewRegistration() = runBlocking {
+        assertAccountSwitchDuringHttpRegistration(blockBeforeBearer = false)
+    }
+
+    private fun assertAccountSwitchDuringHttpRegistration(blockBeforeBearer: Boolean) {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val attemptedOwners = CopyOnWriteArrayList<Long?>()
+        val sent = LinkedBlockingQueue<Pair<String, String?>>()
+        val blocker = Interceptor { chain ->
+            val request = chain.request()
+            val owner = request.tag(BoundCredentials::class.java)?.owner
+            attemptedOwners += owner
+            if (owner == 1L) {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+            }
+            chain.proceed(request)
+        }
+        val bearer = BearerCredentialsInterceptor(
+            tokenProvider = { session.token },
+            trustedApiBaseUrlProvider = { session.serverUrl.toHttpUrl() },
+            markMustChangePassword = { session.mustChangePassword = true }
+        )
+        val client = OkHttpClient.Builder().apply {
+            if (blockBeforeBearer) addInterceptor(blocker)
+            addInterceptor(bearer)
+            if (!blockBeforeBearer) addInterceptor(blocker)
+            // This terminal transport keeps the real request/credential pipeline entirely offline.
+            addInterceptor { chain ->
+                val request = chain.request()
+                assertEquals("POST", request.method)
+                assertEquals("/api/devices/push-token", request.url.encodedPath)
+                val body = Buffer().also { request.body?.writeTo(it) }.readUtf8()
+                val token = Json.parseToJsonElement(body).jsonObject["token"]!!.jsonPrimitive.content
+                sent += token to request.header("Authorization")
+                Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                    .code(200).message("OK").body("{}".toResponseBody()).build()
+            }
+        }.build()
+        val tokens = Tokens("fcm-for-account-a")
+        val registrar = PushRegistrar(tokens, ApiClient(session, client), session, scope)
+        try {
+            registrar.start()
+            assertTrue("account A HTTP call reached the latch", entered.await(5, TimeUnit.SECONDS))
+            tokens.token = "fcm-for-account-b"
+            session.saveAuthSuccess(com.openmychat.mobile.data.model.User(id = 2, username = "carol", fullName = "Carol"), jwt(2))
+            assertNull("account B must wait for account A HTTP call", sent.poll(300, TimeUnit.MILLISECONDS))
+            assertEquals(listOf(1L), attemptedOwners.toList())
+        } finally {
+            release.countDown()
+        }
+        if (!blockBeforeBearer) {
+            assertEquals("fcm-for-account-a" to "Bearer ${jwt(1)}", sent.poll(5, TimeUnit.SECONDS))
+        }
+        assertEquals("fcm-for-account-b" to "Bearer ${jwt(2)}", sent.poll(5, TimeUnit.SECONDS))
+        assertEquals(listOf(1L, 2L), attemptedOwners.toList())
+        assertNull("no old registration may be sent with account B credentials", sent.poll(300, TimeUnit.MILLISECONDS))
     }
 
     // ── an incoming push ─────────────────────────────────────────────────────────────────────

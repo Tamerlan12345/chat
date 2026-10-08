@@ -75,8 +75,8 @@
 
 ### Android
 
-- [ ] **Подпись релиза**: создайте ключ (keystore) и `signingConfig` — сейчас его нет, релизный APK не подписан. Ключ храните **вне** репозитория.
-- [ ] **Версии**: увеличивайте `versionCode` (сейчас 1) и `versionName` (сейчас `1.0.0`) в `mobile/android/app/build.gradle.kts` перед каждой выкладкой.
+- [ ] **Подпись релиза**: `signingConfig` и проверка обязательных параметров уже добавлены. Создайте keystore **вне** репозитория, задайте `CENTYCHAT_KEYSTORE_FILE`, `CENTYCHAT_KEYSTORE_PASSWORD`, `CENTYCHAT_KEY_ALIAS`, `CENTYCHAT_KEY_PASSWORD` (или локальный `keystore.properties`), соберите подписанный выпуск и проверьте подпись на устройстве. Без этих значений release-сборка должна завершиться ошибкой.
+- [ ] **Версии**: перед каждой выкладкой передавайте новые `-Pcentychat.versionCode=<положительное число>` и `-Pcentychat.versionName=<версия>`; release-сборка требует оба значения.
 - [ ] **Идентификатор пакета** `com.openmychat.mobile` (у iOS — `kz.centras.centychat`). Если хотите другой — решите до первой выкладки: потом его не сменить.
 - [ ] **Firebase**: `google-services.json` для `com.openmychat.mobile` на машине сборки (или секрет CI) — `docs/PUSH-SETUP.md`, раздел 2.
 - [ ] **Канал**: закрытое приложение Google Play для организации (Managed Google Play) или установка через MDM.

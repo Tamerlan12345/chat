@@ -80,6 +80,19 @@ class SessionManager private constructor(
     private val _mustChangePasswordFlow = MutableStateFlow(false)
     val mustChangePasswordFlow: StateFlow<Boolean> = _mustChangePasswordFlow.asStateFlow()
 
+    /** A committed sign-in, separate from JWT refreshes and individual user/token flow updates. */
+    data class AuthenticatedSession(val userId: Long, val generation: Long)
+    private var sessionGeneration = 0L
+    private val _authenticatedSession = MutableStateFlow<AuthenticatedSession?>(null)
+    val authenticatedSession: StateFlow<AuthenticatedSession?> = _authenticatedSession.asStateFlow()
+
+    private fun publishAuthenticatedSession() {
+        val user = _currentUserFlow.value
+        _authenticatedSession.value = if (user != null && _tokenFlow.value != null) {
+            AuthenticatedSession(user.id, ++sessionGeneration)
+        } else null
+    }
+
     private var ephemeralDeviceId: String? = null
 
     init {
@@ -99,6 +112,7 @@ class SessionManager private constructor(
                 }
             }
         }
+        publishAuthenticatedSession()
     }
 
     /**
@@ -138,6 +152,7 @@ class SessionManager private constructor(
             invalidationStore.invalidate()
         }
         _storageState.value = SessionStorageState.UNAVAILABLE
+        _authenticatedSession.value = null
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
@@ -314,6 +329,7 @@ class SessionManager private constructor(
         _tokenFlow.value = token
         _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
         _mustChangePasswordFlow.value = mustChangePassword
+        publishAuthenticatedSession()
     }
 
     /**
@@ -346,6 +362,7 @@ class SessionManager private constructor(
         _tokenFlow.value = token
         _currentUserFlow.value = user.copy(mustChangePassword = mustChangePassword)
         _mustChangePasswordFlow.value = mustChangePassword
+        publishAuthenticatedSession()
         ephemeralDeviceId = null
     }
 
@@ -388,6 +405,7 @@ class SessionManager private constructor(
             remove(KEY_MUST_CHANGE_PASSWORD)
             remove(KEY_DEVICE_SECRET)
         }
+        _authenticatedSession.value = null
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false
@@ -401,6 +419,7 @@ class SessionManager private constructor(
             remove(KEY_CURRENT_USER)
             remove(KEY_MUST_CHANGE_PASSWORD)
         }
+        _authenticatedSession.value = null
         _tokenFlow.value = null
         _currentUserFlow.value = null
         _mustChangePasswordFlow.value = false

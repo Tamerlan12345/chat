@@ -704,7 +704,7 @@ export async function captureFixtures({ dataDir } = {}) {
       fcmMessageBody(PUSH_FCM_TOKEN, channelNote), 'сообщение в канале, у участника нет сокета');
     pushFixture('push/fcm.call.json', 'fcm', 'Тело запроса FCM v1 о входящем звонке: высокий приоритет, ttl 30 с; data { type: "call", callerId }.',
       fcmMessageBody(PUSH_FCM_TOKEN, callNote), 'call_offer сотруднику без сокета');
-    pushFixture('push/apns.message.direct.json', 'apns', 'Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert — общая заглушка, mutable-content: 1 — текст подставляет Notification Service Extension; id — числа.',
+    pushFixture('push/apns.message.direct.json', 'apns', 'Уведомление APNs о личном сообщении: заголовки apns-* и payload (userInfo на устройстве). aps.alert показывает общий текст «Новое сообщение»; mutable-content: 1 оставлен для возможного будущего Notification Service Extension, которой пока нет; id — числа.',
       apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: dmNote, nowMs: BASE }), 'личное сообщение alice → bob, у bob нет сокета');
     pushFixture('push/apns.message.channel.json', 'apns', 'Уведомление APNs о сообщении в канале.',
       apnsRequest({ bundleId: PUSH_BUNDLE_ID, notification: channelNote, nowMs: BASE }), 'сообщение в канале, у участника нет сокета');
