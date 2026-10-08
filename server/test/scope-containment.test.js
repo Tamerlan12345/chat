@@ -662,3 +662,54 @@ test('scoped admin without a department cannot list or auto-match devices', asyn
   assert.strictEqual(listed.status, 200, listed.text);
   assert.deepStrictEqual(listed.json, []);
 });
+
+test('channel creation and uploads honor scoped capability flags while superadmin retains override', async () => {
+  async function tokenForRole(username, permissions) {
+    const role = await identity.run(
+      'INSERT INTO roles (name, description, permissions_json) VALUES ($1, $2, $3) RETURNING id',
+      [`Capability ${username}`, '', JSON.stringify(permissions)]
+    );
+    const user = await UserService.createUser({
+      username, full_name: username, password: 'Рабочий-пароль-1',
+      role_id: Number(role.rows[0].id), department_id: people.admin.dept,
+      ...(permissions.is_scoped_admin ? { admin_scope_dept_id: people.admin.dept } : {})
+    });
+    await UserService.setMustChangePassword(user.id, false);
+    return AuthService.generateToken(await UserService.getUserById(user.id));
+  }
+
+  async function upload(token) {
+    const form = new FormData();
+    form.set('file', new Blob(['capability check'], { type: 'text/plain' }), 'capability.txt');
+    const res = await fetch(baseUrl + '/api/files/upload', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form
+    });
+    return { status: res.status, text: await res.text() };
+  }
+
+  const denied = await tokenForRole('capability-scoped-denied', {
+    is_admin: true, is_scoped_admin: true,
+    can_create_channels: false, can_upload_files: false
+  });
+  const allowed = await tokenForRole('capability-scoped-allowed', {
+    is_admin: true, is_scoped_admin: true,
+    can_create_channels: true, can_upload_files: true
+  });
+  const superadmin = await tokenForRole('capability-superadmin', {
+    is_admin: true, is_scoped_admin: false,
+    can_create_channels: false, can_upload_files: false
+  });
+
+  for (const [label, token, expected] of [
+    ['scoped denied', denied, 403],
+    ['scoped allowed', allowed, 201],
+    ['superadmin', superadmin, 201]
+  ]) {
+    const channel = await api('POST', '/api/channels', {
+      token, body: { name: `Capability ${label}`, type: 'private' }
+    });
+    assert.strictEqual(channel.status, expected, `${label} channel: ${channel.text}`);
+    const file = await upload(token);
+    assert.strictEqual(file.status, expected, `${label} upload: ${file.text}`);
+  }
+});
