@@ -6,7 +6,7 @@
 
 - App: CentyChat, bundle ID `kz.centras.centychat`; build/version: [EXACT SUBMITTED BUILD].
 - Distribution proposal: [APPLE BUSINESS MANAGER CUSTOM APP / TESTFLIGHT / OTHER OWNER-APPROVED CHANNEL]. The owner has chosen corporate distribution and does not yet have an Apple Developer account. Final channel and reviewer access must be confirmed when an account exists.
-- Review server: [REVIEW SERVER URL], available during [TIME WINDOW/TIME ZONE]. This must be a reviewer-accessible non-production environment with representative test data.
+- **Release-environment blocker:** the current iOS and Android Release builds are pinned at build time to the production CentyChat endpoint and have no Release server override. Do not submit these binaries for review or provide reviewer credentials until the owner has approved and produced a separate review build pointed at a non-production environment with representative test data. The review server URL and availability window remain [REVIEW SERVER URL] and [TIME WINDOW/TIME ZONE]; verify the submitted binary's actual endpoint before completing this template.
 - Test username: [REVIEW ACCOUNT USERNAME]; password: [PROVIDE SECURELY IN APP STORE CONNECT REVIEW INFORMATION]; test organization/role: [ROLE]. Provide a second account [SECOND REVIEW ACCOUNT] if reviewing direct messaging and calls. Do not place credentials in this repository.
 - Network, VPN, allowlist, or device requirements: [EXPLICIT INSTRUCTIONS OR “NONE” AFTER VERIFICATION]. Account registration/approval settings for this build: [CONFIRM].
 
@@ -20,6 +20,6 @@ The app uses microphone access for voice calls and photo-library add access when
 
 ## Before copying to App Store Connect
 
-Replace every placeholder; verify the signed build, server accessibility, reviewer accounts, role permissions, support/privacy URLs, and actual push setup. The owner must confirm the legal entity, data retention, backups, hosting location, and App Privacy answers. No review credentials or production traffic belong in this document.
+Do not use this template with the current production-pinned Release builds. First obtain owner approval for a dedicated non-production review configuration and build, then verify the signed binary's endpoint, server accessibility, reviewer accounts, role permissions, support/privacy URLs, and actual push setup. Replace every placeholder only after those checks. The owner must confirm the legal entity, data retention, backups, hosting location, and App Privacy answers. Do not put review credentials in this document or use production accounts/data for review.
 
 Sources: [evidence.md](evidence.md).
