@@ -237,13 +237,14 @@ final class ScreenshotTourTests: XCTestCase {
             let submit = app.buttons["login-submit"]
             XCTAssertTrue(waitUntil(submit, "isEnabled == true"), "«Войти» must enable once both fields are filled.")
             submit.tap()
-            guard app.tabBars.firstMatch.waitForExistence(timeout: 30) else {
-                capture(app, named: "50-ipad-tabs-not-reached-\(suffix)")
-                print("iPad \(suffix) did not reach authenticated tabs: \(app.debugDescription)")
-                XCTFail("Alice must reach the signed-in tabs on iPad.")
+            let peopleTab = app.buttons.matching(NSPredicate(format: "label == %@", "Сотрудники")).firstMatch
+            guard peopleTab.waitForExistence(timeout: 30) else {
+                capture(app, named: "50-ipad-navigation-not-reached-\(suffix)")
+                print("iPad \(suffix) did not reach authenticated navigation: \(app.debugDescription)")
+                XCTFail("Alice must reach the signed-in navigation on iPad.")
                 return
             }
-            app.dismissSystemPrompts()
+            app.dismissSystemPrompts(timeout: 10)
             let bob = app.staticTexts["Боб Тестов"]
             guard bob.waitForExistence(timeout: 40) else {
                 capture(app, named: "50-ipad-bob-not-reached-\(suffix)")
@@ -251,8 +252,7 @@ final class ScreenshotTourTests: XCTestCase {
                 XCTFail("The inbox must list Bob in the sidebar.")
                 return
             }
-            let peopleTab = app.buttons.matching(NSPredicate(format: "label == %@", "Сотрудники")).firstMatch
-            XCTAssertTrue(peopleTab.waitForExistence(timeout: 10), "The tab bar must be shown on iPad")
+            XCTAssertTrue(peopleTab.exists, "The tab bar must be shown on iPad")
             pause(1)
             capture(app, named: "50-ipad-split-\(suffix)")
 

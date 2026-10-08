@@ -26,6 +26,6 @@ Each task's stated tests match its code scope; Task 2 must preserve silent login
 
 ## Task 4: repeat iOS simulator verification
 
-The PR iOS CI run 37738033173 failed only its iPad split-view assertion for Bob; earlier iPhone UI/unit steps passed and previous run with identical iOS source passed. Investigate prompt overlay and transient inbox loading. Make the iPad UI test wait for authenticated tab bar, dismiss system prompts before Bob assertion, and capture diagnostics on failure. Do not weaken the user-visible Bob or split-view assertion. Re-run CI and review the fix separately.
+The PR iOS CI run 37738033173 failed only its iPad split-view assertion for Bob; earlier iPhone UI/unit steps passed and previous run with identical iOS source passed. Investigate prompt overlay and transient inbox loading. Make the iPad UI test wait for authenticated navigation, dismiss system prompts before Bob assertion, and capture diagnostics on failure. Do not weaken the user-visible Bob or split-view assertion. Re-run CI and review the fix separately. Follow-up: run 37744588440 showed the first `TabBar` selector was invalid for iPad even though Alice, the "Сотрудники" button, and Bob were visible; use the observed button as the navigation signal.
 
 Task 4 touches iOS UI tests only; it shares no source files with Tasks 1-2, but its CI status informs Task 3 release reporting.
