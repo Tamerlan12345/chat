@@ -46,3 +46,41 @@ Self-review caught and fixed migration-origin ambiguity, refresh completion raci
 The test encryption adapter uses authenticated AES encryption to exercise persistence boundaries; real Windows DPAPI/keyring behavior, packaged installation, reboot and in-place upgrade remain untested here. A server-renderer deployment alone does not remediate old installed shells: those retain plaintext localStorage until the new shell is installed. Active bearer tokens remain accessible to trusted-origin renderer JavaScript; same-origin XSS remains a session risk. Migrating legacy secrets cannot erase prior copies/backups or prove forensic erasure. Offline server revocation remains best effort. Origin mismatch requires native configuration correction; destructive reset/re-pair was not automated. Ciphertext deletion when OS storage cannot be opened also loses local device identity and may require re-pairing on later login.
 
 Final full run: npm.cmd test --prefix desktop — 531 tests, 531 pass, 0 fail, 0 skipped, duration 70667.506 ms.
+
+## Review fix round 1
+
+Addressed both independent-review findings with a separate follow-up commit:
+
+- P1: a failed vault clear now keeps `loggingOutRef` set and renders a dedicated exit barrier before either the login or account view. Only retrying credential cleanup is allowed; successful cleanup reloads the entire document. Late callbacks changing auth state cannot bypass the barrier, and a login callback cannot persist or activate a new account while logout is pending.
+- P2: both ordinary and forced password-renewal paths check logout before enqueueing token persistence. The forced path checks again after the password response, before any account-state changes. Existing checks after persistence still prevent reopening a socket if logout starts during a write.
+- Added four App lifecycle regressions in `desktop/test/credentials-app-lifecycle.test.js`, included by `desktop/package.json`. The harness executes actual App handler source and its JSX exit/login render branch; it covers failed cleanup with retained account data, retry/full reload, late ordinary and forced password responses, and a save already enqueued before logout. An initial harness run failed because Windows CRLF prevented locating the render branch; normalization fixed the harness. This was not a product failure or a claimed TDD red run.
+
+Commands and output:
+
+```text
+node --test desktop/test/credentials-app-lifecycle.test.js desktop/test/credentials.test.js desktop/test/credentials-renderer.test.mjs
+ℹ tests 20
+ℹ pass 20
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 151.8708
+
+npm.cmd run build --prefix desktop
+vite v6.4.3 building for production...
+✓ 90 modules transformed.
+✓ built in 2.23s
+```
+
+The existing Vite chunk-size warning remains (657.29 kB main bundle). `git diff --check` passed with no output. Full-suite results appended below. Changed files for this fix: App.jsx, package.json, the new lifecycle test, and this report. Diff inspected; no unrelated change, push or deployment by this implementer.
+
+```text
+npm.cmd test --prefix desktop
+ℹ tests 535
+ℹ suites 0
+ℹ pass 535
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 69229.7028
+```

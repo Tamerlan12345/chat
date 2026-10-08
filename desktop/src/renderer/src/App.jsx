@@ -128,6 +128,7 @@ export default function App() {
   useEffect(() => { tokenRef.current = token; }, [token]);
   useEffect(() => { serverUrlRef.current = serverUrl; }, [serverUrl]);
   const loggingOutRef = useRef(false);
+  const [logoutError, setLogoutError] = useState('');
   const reconnectAttemptRef = useRef(0);
   const hadSocketSessionRef = useRef(false);
   const typingTimersRef = useRef({});
@@ -477,8 +478,10 @@ export default function App() {
   };
 
   const handleLoginSuccess = async (user, authToken, cleanServerUrl) => {
+    if (loggingOutRef.current) return;
     assertCredentialOrigin(cleanServerUrl || serverUrl);
     await saveSessionToken(authToken);
+    if (loggingOutRef.current) return;
     if (cleanServerUrl && cleanServerUrl !== serverUrl) {
       setServerUrl(cleanServerUrl);
       localStorage.setItem('mychat_server_url', cleanServerUrl);
@@ -603,9 +606,11 @@ export default function App() {
   // со старыми данными и молча получал отказы. Перезагрузка окна — надёжный
   // способ сбросить всё состояние прежнего сеанса разом: чат, счётчики,
   // звонок, открытые окна.
-  const forceLogout = async (reason) => {
-    if (loggingOutRef.current) return;
+  const forceLogout = async (reason, retry = false) => {
+    if (loggingOutRef.current && !retry) return;
     loggingOutRef.current = true;
+    setLogoutError('');
+    setAuthState('logging-out');
     const ws = wsRef.current;
     if (ws) {
       ws.noReconnect = true;
@@ -616,9 +621,9 @@ export default function App() {
       tokenRef.current = '';
       setToken('');
       setCurrentUser(null);
-      sessionStorage.setItem('mychat_logout_reason', 'Не удалось удалить сохранённый сеанс. Проверьте доступ к папке приложения перед перезапуском.');
-      setAuthState('unauthenticated');
-      loggingOutRef.current = false;
+      // Keep a permanent barrier until credentials are cleared and the whole
+      // document reloads. Outstanding callbacks may still update account state.
+      setLogoutError('Не удалось удалить сохранённый сеанс. Проверьте доступ к папке приложения и повторите выход.');
       return;
     }
     if (reason) {
@@ -763,7 +768,7 @@ export default function App() {
   // получит 401 и выбросит человека на экран входа — сразу после того, как он
   // успешно сменил пароль.
   const handleTokenRenewed = async (nextToken) => {
-    if (!nextToken) return;
+    if (!nextToken || loggingOutRef.current) return;
     await saveSessionToken(nextToken);
     if (loggingOutRef.current) return;
     tokenRef.current = nextToken;
@@ -773,6 +778,7 @@ export default function App() {
 
   const handleForcedPasswordChange = async (e) => {
     e.preventDefault();
+    if (loggingOutRef.current) return;
     setPwError('');
     // Требование сервера — не короче восьми символов. Проверка здесь нужна
     // только чтобы не гонять заведомо негодный пароль по сети; отказ сервера
@@ -794,6 +800,7 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Не удалось сменить пароль');
+      if (loggingOutRef.current) return;
 
       setPwOld(''); setPwNew(''); setPwConfirm('');
       setCurrentUser((prev) => (prev ? { ...prev, must_change_password: 0 } : prev));
@@ -2197,6 +2204,20 @@ export default function App() {
   // Студия базы данных — только суперадминистратору: у администратора
   // подразделения все её запросы отвечают 403.
   const isSuperAdmin = isAdmin && !currentUser?.permissions?.is_scoped_admin;
+
+  // A failed vault clear must never expose LoginView on this document: it
+  // still contains the prior account's state and pending asynchronous work.
+  if (loggingOutRef.current) {
+    return (
+      <div className="login-container">
+        <div className="login-card login-card--status" role="alert">
+          <BrandMark size={48} />
+          <p>{logoutError || 'Выход из CentyChat…'}</p>
+          {logoutError && <button type="button" onClick={() => forceLogout(null, true)}>Повторить выход</button>}
+        </div>
+      </div>
+    );
+  }
 
   if (authState === 'checking') {
     return (
