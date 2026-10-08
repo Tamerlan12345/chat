@@ -32,7 +32,19 @@ jobs:
       - name: Verify Android client
         run: |
           chmod +x mobile/android/gradlew
-          mobile/android/gradlew -p mobile/android --no-daemon testDebugUnitTest lint assembleDebug assembleDebugAndroidTest assembleRelease
+          mobile/android/gradlew -p mobile/android --no-daemon testDebugUnitTest lint assembleDebug assembleDebugAndroidTest
+      - name: Verify unsigned release is rejected
+        run: |
+          set +e
+          mobile/android/gradlew -p mobile/android --no-daemon :app:validateReleaseSigning \
+            -Pcentychat.versionCode=1 -Pcentychat.versionName=ci-test \
+            > "$RUNNER_TEMP/release-signing-guard.log" 2>&1
+          guard_status=$?
+          set -e
+          if [ "$guard_status" -eq 0 ] || ! grep -Fq 'Release signing is not configured' "$RUNNER_TEMP/release-signing-guard.log"; then
+            cat "$RUNNER_TEMP/release-signing-guard.log"
+            exit 1
+          fi
       - name: Upload Android verification artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
