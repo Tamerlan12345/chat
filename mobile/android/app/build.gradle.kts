@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -44,6 +45,27 @@ require(Regex("""https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?""").matches(debugServerUr
     "centychat.serverUrl must look like https://host[:port], got '$debugServerUrl'"
 }
 
+// Release metadata is passed as Gradle project properties by the release pipeline. Harmless
+// defaults keep debug and local unit-test builds independent of release credentials.
+val releaseVersionCodeProperty = providers.gradleProperty("centychat.versionCode").orNull
+val releaseVersionNameProperty = providers.gradleProperty("centychat.versionName").orNull
+val configuredVersionCode = releaseVersionCodeProperty?.toIntOrNull() ?: 1
+val configuredVersionName = releaseVersionNameProperty?.takeIf { it.isNotBlank() } ?: "1.0.0"
+
+// A local keystore.properties file is git-ignored. Environment values override it, which also
+// supports CI secret stores without writing signing secrets to disk.
+val localSigningProperties = Properties().apply {
+    rootProject.file("keystore.properties").takeIf(File::isFile)?.inputStream()?.use(::load)
+}
+fun signingValue(environmentName: String, propertyName: String): String? =
+    providers.environmentVariable(environmentName).orNull?.takeIf { it.isNotBlank() }
+        ?: localSigningProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
+val releaseStorePath = signingValue("CENTYCHAT_KEYSTORE_FILE", "storeFile")
+val releaseStorePassword = signingValue("CENTYCHAT_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("CENTYCHAT_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("CENTYCHAT_KEY_PASSWORD", "keyPassword")
+
 android {
     namespace = "com.openmychat.mobile"
     compileSdk = 36
@@ -52,8 +74,8 @@ android {
         applicationId = "com.openmychat.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = configuredVersionCode
+        versionName = configuredVersionName
 
         testInstrumentationRunner = "com.openmychat.mobile.HiltTestRunner"
         vectorDrawables {
@@ -61,6 +83,14 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseStorePath != null) storeFile = rootProject.file(releaseStorePath)
+            if (releaseStorePassword != null) storePassword = releaseStorePassword
+            if (releaseKeyAlias != null) keyAlias = releaseKeyAlias
+            if (releaseKeyPassword != null) keyPassword = releaseKeyPassword
+        }
+    }
     buildTypes {
         debug {
             isDebuggable = true
@@ -69,6 +99,7 @@ android {
 
         release {
             isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             buildConfigField("String", "SERVER_URL", "\"$productionServerUrl\"")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -88,6 +119,39 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+// Android otherwise permits unsigned release artifacts when no signing config is populated.
+// Attach an explicit guard to every artifact-producing release task to fail closed.
+val validateReleaseSigning = tasks.register("validateReleaseSigning") {
+    group = "verification"
+    description = "Validates release version metadata and signing material without printing secrets."
+    doLast {
+        require(releaseVersionCodeProperty?.toIntOrNull()?.let { it > 0 } == true) {
+            "Release builds require -Pcentychat.versionCode=<positive integer>."
+        }
+        require(!releaseVersionNameProperty.isNullOrBlank()) {
+            "Release builds require -Pcentychat.versionName=<version string>."
+        }
+        val missing = buildList {
+            if (releaseStorePath.isNullOrBlank()) add("CENTYCHAT_KEYSTORE_FILE / storeFile")
+            if (releaseStorePassword.isNullOrBlank()) add("CENTYCHAT_KEYSTORE_PASSWORD / storePassword")
+            if (releaseKeyAlias.isNullOrBlank()) add("CENTYCHAT_KEY_ALIAS / keyAlias")
+            if (releaseKeyPassword.isNullOrBlank()) add("CENTYCHAT_KEY_PASSWORD / keyPassword")
+        }
+        require(missing.isEmpty()) {
+            "Release signing is not configured. Supply all signing values via environment variables or keystore.properties. Missing: ${missing.joinToString()}"
+        }
+        require(rootProject.file(requireNotNull(releaseStorePath)).isFile) {
+            "Release keystore file was not found. Check CENTYCHAT_KEYSTORE_FILE or storeFile."
+        }
+    }
+}
+
+tasks.configureEach {
+    if (Regex("^(assemble|bundle|package|sign|validateSigning).*Release.*$").matches(name)) {
+        dependsOn(validateReleaseSigning)
     }
 }
 

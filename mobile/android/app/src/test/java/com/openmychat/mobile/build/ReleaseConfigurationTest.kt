@@ -71,8 +71,35 @@ class ReleaseConfigurationTest {
         )
     }
 
+    @Test
+    fun releaseSigningUsesOnlyLocalOrEnvironmentCredentials() {
+        val script = projectBuildScript().readText()
+        val releaseBody = buildTypeBlock("release")!!.groups["body"]!!.value
+
+        assertTrue("release must use the release signing config", releaseBody.contains("signingConfig = signingConfigs.getByName(\"release\")"))
+        assertTrue("signing secrets may be provided by environment variables", script.contains("CENTYCHAT_KEYSTORE_FILE"))
+        assertTrue("signing secrets may be provided by ignored keystore.properties", script.contains("keystore.properties"))
+        assertTrue("the release configuration must reject incomplete or missing signing inputs", script.contains("validateReleaseSigning"))
+    }
+
+    @Test
+    fun releaseVersionMustComeFromGradleBuildProperties() {
+        val script = projectBuildScript().readText()
+
+        assertTrue("version code must read centychat.versionCode", script.contains("centychat.versionCode"))
+        assertTrue("version name must read centychat.versionName", script.contains("centychat.versionName"))
+        assertTrue("release validation must require both explicit version properties", script.contains("validateReleaseSigning"))
+    }
+
+    @Test
+    fun localSigningPropertiesAreIgnoredByGit() {
+        val androidRoot = requireNotNull(requireNotNull(projectBuildScript().parentFile).parentFile)
+        val ignore = File(androidRoot, ".gitignore").readText()
+        assertTrue("keystore.properties must not be committed", ignore.lines().any { it.trim() == "keystore.properties" })
+    }
+
     private fun projectBuildScript(): File =
-        generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+        generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .map { File(it, "app/build.gradle.kts") }
             .firstOrNull(File::isFile)
             ?: error("Unable to locate app/build.gradle.kts from the test working directory")
